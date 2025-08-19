@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "560826039000",
+    "project_id": "naslook-c10ec",
+    "storage_bucket": "naslook-c10ec.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:560826039000:android:c714f2331a18dc4cbe75ad",
+        "android_client_info": {
+          "package_name": "com.example.naslook"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBGdXwDRIfr941_yfxu3bpNg1TKYhPnbj0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
