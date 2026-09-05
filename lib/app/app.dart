@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'i18n/l10n.dart';
 import '../core/app_theme.dart';
 import '../core/nav_provider.dart';
+import '../state/app_state.dart';
+import '../screens/login_page.dart';
 import '../pages/home/home_page.dart';
 import '../pages/map/map_page.dart';
 import '../pages/circles/circles_page.dart';
@@ -17,12 +19,33 @@ class MainApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Naslook App',
+      title: 'Naslife',
       theme: AppTheme.light,
       localizationsDelegates: localizationsDelegates,
       supportedLocales: supportedLocales,
-      home: const HomeShell(),
+      locale: const Locale('ar'),
+      home: const AuthGate(),
     );
+  }
+}
+
+/// يعرض شاشة الدخول أو الواجهة الرئيسية حسب حالة الجلسة.
+class AuthGate extends ConsumerWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(appStateProvider.select((s) => s.status));
+    switch (status) {
+      case AuthStatus.loading:
+        return const Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        );
+      case AuthStatus.signedOut:
+        return const LoginPage();
+      case AuthStatus.signedIn:
+        return const HomeShell();
+    }
   }
 }
 
@@ -50,8 +73,23 @@ class HomeShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final i = ref.watch(navIndexProvider);
+    final user = ref.watch(appStateProvider.select((s) => s.user));
     return Scaffold(
-      appBar: AppBar(title: Text(titles[i])),
+      appBar: AppBar(
+        title: Text(titles[i]),
+        actions: [
+          if (user != null)
+            Padding(
+              padding: const EdgeInsetsDirectional.only(end: 8),
+              child: Center(child: Text(user.nickname)),
+            ),
+          IconButton(
+            tooltip: 'تسجيل الخروج',
+            icon: const Icon(Icons.logout),
+            onPressed: () => ref.read(appStateProvider.notifier).logout(),
+          ),
+        ],
+      ),
       body: screens[i],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: i,

@@ -179,8 +179,8 @@ class _MapPageState extends State<MapPage> {
       ),
       body: FlutterMap(
         options: MapOptions(
-          center: LatLng(21.4858, 39.1925), // تحديث المركز إلى جدة
-          zoom: 12,
+          initialCenter: const LatLng(21.4858, 39.1925), // تحديث المركز إلى جدة
+          initialZoom: 12,
         ),
         children: [
           TileLayer(

@@ -11,14 +11,13 @@ class MapScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('الخريطة')),
       body: FlutterMap(
         options: const MapOptions(
-          center: LatLng(24.7136, 46.6753), // الرياض مثال
-          zoom: 10,
+          initialCenter: LatLng(24.7136, 46.6753), // الرياض مثال
+          initialZoom: 10,
         ),
         children: [
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'com.example.naslook',
-            tileProvider: CancellableNetworkTileProvider(),
           ),
           MarkerLayer(
             markers: [
