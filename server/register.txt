@@ -1,0 +1,2 @@
+await app.register((await import("./tiles.js")).default);
+await app.register((await import("./commerce.js")).default, { pool, auth });
