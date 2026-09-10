@@ -7,6 +7,9 @@ import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
+import '../events/events_page.dart';
+import '../market/market_page.dart';
+import '../wallet/wallet_page.dart';
 
 class MySpacePage extends ConsumerWidget {
   const MySpacePage({super.key});
@@ -59,6 +62,14 @@ class MySpacePage extends ConsumerWidget {
               ]),
             ]),
           ),
+          const SizedBox(height: 14),
+          JoyCard(padding: EdgeInsets.zero, child: Column(children: [
+            ListTile(leading: const Icon(Icons.account_balance_wallet_outlined, color: Joy.primary), title: const Text('المحفظة'), subtitle: const Text('الرصيد والتحويلات والدفع'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()))),
+            const Divider(indent: 16, endIndent: 16),
+            ListTile(leading: const Icon(Icons.confirmation_number_outlined, color: Joy.accent), title: const Text('تذاكري'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()))),
+            const Divider(indent: 16, endIndent: 16),
+            ListTile(leading: const Icon(Icons.storefront_outlined, color: Joy.sunText), title: const Text('عروضي وطلباتي في السوق'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage()))),
+          ])),
           const SizedBox(height: 14),
           if (p != null && (p.skills.isNotEmpty || p.hobbies.isNotEmpty || p.lookingFor.isNotEmpty)) ...[
             const SectionTitle('عني'),

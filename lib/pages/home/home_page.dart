@@ -10,6 +10,9 @@ import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import '../circles/circle_detail_page.dart';
+import '../events/events_page.dart';
+import '../market/market_page.dart';
+import '../wallet/wallet_page.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -69,6 +72,14 @@ class HomePage extends ConsumerWidget {
               ]),
             ),
           ),
+          const SizedBox(height: 14),
+          Row(children: [
+            _Quick(icon: Icons.account_balance_wallet_outlined, label: 'المحفظة', color: Joy.primarySoft, fg: Joy.primary, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()))),
+            const SizedBox(width: 8),
+            _Quick(icon: Icons.event_outlined, label: 'الفعاليات', color: Joy.accentSoft, fg: Joy.accent, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EventsPage()))),
+            const SizedBox(width: 8),
+            _Quick(icon: Icons.storefront_outlined, label: 'السوق', color: Joy.sunSoft, fg: Joy.sunText, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MarketPage()))),
+          ]),
           const SizedBox(height: 18),
           SectionTitle('دوائرك', action: 'الكل', onAction: () => ref.read(navIndexProvider.notifier).state = 2),
           vessels.when(
@@ -197,6 +208,16 @@ class _StoriesRail extends ConsumerWidget {
       ),
     );
   }
+}
+
+class _Quick extends StatelessWidget {
+  final IconData icon; final String label; final Color color; final Color fg; final VoidCallback onTap;
+  const _Quick({required this.icon, required this.label, required this.color, required this.fg, required this.onTap});
+  @override
+  Widget build(BuildContext context) => Expanded(child: InkWell(
+        onTap: onTap, borderRadius: BorderRadius.circular(18),
+        child: Container(height: 64, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: fg), const SizedBox(width: 6), Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 13))])),
+      ));
 }
 
 class _RailItem extends StatelessWidget {
