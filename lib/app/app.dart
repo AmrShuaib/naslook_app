@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'i18n/l10n.dart';
 import '../core/app_theme.dart';
@@ -49,7 +50,7 @@ class AuthGate extends ConsumerWidget {
   }
 }
 
-class HomeShell extends ConsumerWidget {
+class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
   static const titles = [
@@ -71,12 +72,71 @@ class HomeShell extends ConsumerWidget {
   ];
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends ConsumerState<HomeShell> {
+  bool _recoveryShown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowRecovery());
+  }
+
+  Future<void> _maybeShowRecovery() async {
+    final phrase = ref.read(appStateProvider).session?.recoveryPhrase;
+    if (phrase == null || _recoveryShown || !mounted) return;
+    _recoveryShown = true;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('احفظ عبارة الاسترداد'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'هذه هي الطريقة الوحيدة لاستعادة حسابك إن نسيت الرقم السري. لن تُعرض مرة أخرى.',
+              ),
+              const SizedBox(height: 12),
+              SelectableText(
+                phrase,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: phrase));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('تم نسخ عبارة الاسترداد')),
+                );
+              },
+              child: const Text('نسخ'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('حفظتها'),
+            ),
+          ],
+        ),
+      ),
+    );
+    ref.read(appStateProvider.notifier).dismissRecoveryPhrase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final i = ref.watch(navIndexProvider);
     final user = ref.watch(appStateProvider.select((s) => s.user));
     return Scaffold(
       appBar: AppBar(
-        title: Text(titles[i]),
+        title: Text(HomeShell.titles[i]),
         actions: [
           if (user != null)
             Padding(
@@ -90,7 +150,7 @@ class HomeShell extends ConsumerWidget {
           ),
         ],
       ),
-      body: screens[i],
+      body: HomeShell.screens[i],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: i,
         onTap: (newIndex) =>

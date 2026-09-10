@@ -56,7 +56,10 @@ class Session {
   final String token;
   final SessionUser user;
 
-  const Session({required this.token, required this.user});
+  /// عبارة الاسترداد التي يصدرها الخادم مرة واحدة عند التسجيل (لا تُحفظ محلياً).
+  final String? recoveryPhrase;
+
+  const Session({required this.token, required this.user, this.recoveryPhrase});
 
   bool get isValid => token.isNotEmpty;
 
@@ -75,13 +78,18 @@ class Session {
               '')
           .toString(),
       user: SessionUser.fromJson(userJson),
+      recoveryPhrase: json['recoveryPhrase']?.toString(),
     );
   }
 
   Map<String, dynamic> toJson() => {'token': token, 'user': user.toJson()};
 
-  Session copyWith({String? token, SessionUser? user}) =>
-      Session(token: token ?? this.token, user: user ?? this.user);
+  Session copyWith({String? token, SessionUser? user, bool clearRecovery = false}) =>
+      Session(
+        token: token ?? this.token,
+        user: user ?? this.user,
+        recoveryPhrase: clearRecovery ? null : recoveryPhrase,
+      );
 }
 
 /// تخزين الجلسة محلياً (localStorage على الويب عبر shared_preferences).

@@ -101,7 +101,8 @@ class AppStateNotifier extends StateNotifier<AppState> {
     state = state.copyWith(busy: true, clearError: true);
     try {
       final session = await action();
-      await _store.save(session);
+      // عبارة الاسترداد تُعرض مرة واحدة ولا تُخزَّن على الجهاز
+      await _store.save(session.copyWith(clearRecovery: true));
       state = AppState(status: AuthStatus.signedIn, session: session);
       return true;
     } on ApiException catch (e) {
@@ -132,5 +133,13 @@ class AppStateNotifier extends StateNotifier<AppState> {
 
   void clearError() {
     if (state.error != null) state = state.copyWith(clearError: true);
+  }
+
+  /// بعد أن يرى المستخدم عبارة الاسترداد نزيلها من الذاكرة.
+  void dismissRecoveryPhrase() {
+    final s = state.session;
+    if (s?.recoveryPhrase != null) {
+      state = state.copyWith(session: s!.copyWith(clearRecovery: true));
+    }
   }
 }

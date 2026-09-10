@@ -70,6 +70,8 @@ class ApiClient {
   Map<String, String> _headers({bool json = true}) => {
         'Accept': 'application/json',
         if (json) 'Content-Type': 'application/json; charset=utf-8',
+        // خادم Naslife يقرأ رمز الجلسة من ترويسة x-token
+        if (_token != null) 'x-token': _token!,
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
@@ -79,9 +81,9 @@ class ApiClient {
 
   /// تسجيل حساب جديد بالنك نيم + الرقم السري.
   Future<Session> register({required String nickname, required String pin}) async {
-    final data = await post('/api/auth/register', {
+    final data = await post('/register', {
       'nickname': nickname.trim(),
-      'pin': pin.trim(),
+      'password': pin.trim(),
     });
     final session = Session.fromJson(data);
     if (!session.isValid) {
@@ -93,9 +95,9 @@ class ApiClient {
 
   /// الدخول بالنك نيم + الرقم السري.
   Future<Session> login({required String nickname, required String pin}) async {
-    final data = await post('/api/auth/login', {
-      'nickname': nickname.trim(),
-      'pin': pin.trim(),
+    final data = await post('/login', {
+      'handle': nickname.trim(),
+      'password': pin.trim(),
     });
     final session = Session.fromJson(data);
     if (!session.isValid) {
@@ -107,7 +109,7 @@ class ApiClient {
 
   /// بيانات المستخدم الحالي (للتحقق من صلاحية الجلسة المحفوظة).
   Future<SessionUser> me() async {
-    final data = await get('/api/auth/me');
+    final data = await get('/me');
     final raw = data['user'];
     final userJson = raw is Map ? Map<String, dynamic>.from(raw) : data;
     return SessionUser.fromJson(userJson);
@@ -116,7 +118,7 @@ class ApiClient {
   /// إنهاء الجلسة على الخادم (يتجاهل الأخطاء؛ الجلسة المحلية تُمسح دائماً).
   Future<void> logout() async {
     try {
-      await post('/api/auth/logout', const {});
+      await post('/logout', const {});
     } catch (_) {
       // لا شيء
     } finally {
@@ -173,9 +175,30 @@ class ApiClient {
     }
   }
 
+  static const _serverErrors = <String, String>{
+    'nickname-taken': 'النك نيم مستخدم من قبل، اختر غيره',
+    'invalid-nickname': 'النك نيم غير صالح: استخدم حروفاً وأرقاماً بلا مسافات',
+    'invalid-password': 'الرقم السري غير صالح',
+    'weak-password': 'الرقم السري قصير أو ضعيف',
+    'bad-credentials': 'النك نيم أو الرقم السري غير صحيح',
+    'auth': 'انتهت الجلسة، سجّل الدخول مجدداً',
+    'not-found': 'الحساب غير موجود',
+    'deleted': 'هذا الحساب محذوف',
+    'too-many': 'محاولات كثيرة، انتظر دقيقة ثم حاول',
+  };
+
   String _errorMessage(int status, Map<String, dynamic> body) {
-    final fromBody = body['message'] ?? body['error'] ?? body['msg'];
-    if (fromBody is String && fromBody.isNotEmpty) return fromBody;
+    final code = body['error'];
+    if (code is String && _serverErrors.containsKey(code)) {
+      return _serverErrors[code]!;
+    }
+    final fromBody = body['message'] ?? body['msg'];
+    if (fromBody is String && fromBody.isNotEmpty && !fromBody.startsWith('Route ')) {
+      return fromBody;
+    }
+    if (code is String && code.isNotEmpty && status < 500) {
+      return 'رفض الخادم الطلب ($code)';
+    }
     switch (status) {
       case 400:
         return 'بيانات غير صحيحة';
