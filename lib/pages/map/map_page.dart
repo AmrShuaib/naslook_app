@@ -99,8 +99,10 @@ class _MapPageState extends ConsumerState<MapPage> {
           onMapReady: _onMoved,
         ),
         children: [
-          TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
+          // البلاطات تُمرَّر عبر خادم Naslife نفسه (server/tiles.js) فلا تحتاج مصادر خارجية
+          TileLayer(urlTemplate: '${ref.read(apiClientProvider).baseUrl}/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
           MarkerLayer(markers: markers),
+          const SimpleAttributionWidget(source: Text('© OpenStreetMap contributors', style: TextStyle(fontSize: 10))),
         ],
       ),
       Positioned(
