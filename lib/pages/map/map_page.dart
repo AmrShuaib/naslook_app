@@ -146,8 +146,12 @@ class _MapPageState extends ConsumerState<MapPage> {
         child: FilterChip(
           selected: on, onSelected: (_) => onTap(), showCheckmark: false,
           avatar: Icon(icon, size: 16, color: on ? Joy.primaryOn : Joy.textMuted),
-          label: Text(label),
+          label: Text(label, style: TextStyle(color: on ? Joy.primaryOn : Joy.text, fontWeight: on ? FontWeight.w600 : FontWeight.w500)),
           backgroundColor: Joy.surface,
+          selectedColor: Joy.primary,
+          side: BorderSide(color: on ? Joy.primary : Joy.control),
+          elevation: 2,
+          shadowColor: const Color(0x33784614),
         ),
       );
 
