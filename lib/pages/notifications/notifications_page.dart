@@ -33,7 +33,7 @@ class NotificationsPage extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
           children: [
-            const SectionTitle('طلبات الصداقة'),
+            const SectionTitle('طلبات مراسلة'),
             reqs.when(
               data: (list) => list.isEmpty
                   ? const _Hint('لا طلبات جديدة')
@@ -106,7 +106,8 @@ class NotificationsPage extends ConsumerWidget {
       await ref.read(apiClientProvider).addContact(h.trim().toLowerCase());
       ref.invalidate(contactsProvider);
       ref.invalidate(requestsProvider);
-      if (context.mounted) toast(context, 'أُرسل الطلب إلى $h');
+      ref.invalidate(chatsProvider);
+      if (context.mounted) toast(context, 'أُضيف $h إلى أصدقائك');
     } catch (e) {
       if (context.mounted) toast(context, e.toString(), error: true);
     }
@@ -119,12 +120,13 @@ class _RequestRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) => JoyCard(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: r.from))),
         child: Row(children: [
           Avatar(name: r.from.nickname, url: r.from.avatarUrl, size: 44),
           const SizedBox(width: 10),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(r.from.nickname, style: const TextStyle(fontWeight: FontWeight.w600)),
-            Text('يريد إضافتك · ${timeAgo(r.createdAt)}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+            Text('${r.lastContent ?? 'يريد مراسلتك'} · ${timeAgo(r.createdAt)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
           ])),
           IconButton(tooltip: 'تجاهل', onPressed: () => _act(context, ref, accept: false), icon: const Icon(Icons.close_rounded, color: Joy.textMuted)),
           FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(44, 44), padding: const EdgeInsets.symmetric(horizontal: 14)), onPressed: () => _act(context, ref, accept: true), child: const Text('قبول')),
@@ -135,9 +137,9 @@ class _RequestRow extends ConsumerWidget {
     final api = ref.read(apiClientProvider);
     try {
       if (accept) {
-        await api.addContact(r.from.nickname.isNotEmpty ? r.from.nickname : r.from.id);
+        await api.addContact(r.from.id);
       } else {
-        await api.ignoreRequest(r.id.isNotEmpty ? r.id : r.from.id);
+        await api.ignoreRequest(r.from.id);
       }
       ref.invalidate(requestsProvider);
       ref.invalidate(contactsProvider);

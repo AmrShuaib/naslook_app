@@ -14,7 +14,14 @@ extension NaslifeApi on ApiClient {
   // ---- جهات الاتصال والطلبات
   Future<List<Person>> contacts() async => asList(await getList('/contacts')).map(Person.fromJson).toList();
   Future<List<FriendRequest>> requests() async => asList(await getList('/requests')).map(FriendRequest.fromJson).toList();
-  Future<Map<String, dynamic>> addContact(String handle) => post('/contacts', {'handle': handle, 'id': handle, 'nickname': handle});
+  /// يقبل معرّفاً (SA0000000) أو نك نيماً؛ يحوّل النك نيم إلى معرّف أولاً.
+  Future<Map<String, dynamic>> addContact(String handle) async {
+    var id = handle.trim();
+    if (!RegExp(r'^[A-Z]{2}\d{7}$').hasMatch(id)) {
+      id = (await userByHandle(id.toLowerCase())).id;
+    }
+    return post('/contacts', {'contactId': id});
+  }
   Future<void> ignoreRequest(String id) => post('/requests/$id/ignore', const {});
   Future<void> removeContact(String id) => delete('/contacts/$id');
 
@@ -22,7 +29,7 @@ extension NaslifeApi on ApiClient {
   Future<List<Chat>> chats() async => asList(await getList('/chats')).map(Chat.fromJson).toList();
   Future<List<Message>> messages(String peer) async => asList(await getList('/messages/$peer')).map(Message.fromJson).toList();
   Future<Message> sendMessage(String peer, String text) async {
-    final data = await post('/messages', {'to': peer, 'recipientId': peer, 'peer': peer, 'type': 'text', 'content': text});
+    final data = await post('/messages', {'to': peer, 'type': 'text', 'content': text});
     final m = data['message'] is Map ? asMap(data['message']) : data;
     if (m['id'] == null) {
       return Message(id: DateTime.now().microsecondsSinceEpoch.toString(), senderId: 'me', type: 'text', content: text, sentAt: DateTime.now());

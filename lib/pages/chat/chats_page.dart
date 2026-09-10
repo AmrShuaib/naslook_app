@@ -24,7 +24,11 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
       final s = ref.read(socketProvider);
       s?.events.listen((e) {
         final ev = e['event'];
-        if (ev == 'message' || ev == 'read' || ev == 'delivered') ref.invalidate(chatsProvider);
+        final isMessage = ev == null && e['senderId'] != null && e['content'] != null;
+        if (isMessage || ev == 'read' || ev == 'delivered') {
+          ref.invalidate(chatsProvider);
+          if (isMessage && e['isRequest'] == true) ref.invalidate(requestsProvider);
+        }
       });
     });
   }

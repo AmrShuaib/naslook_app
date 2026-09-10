@@ -72,7 +72,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> {
   }
 
   void _onEvent(Map<String, dynamic> e) {
-    final ev = e['event'];
+    var ev = e['event'];
+    if (ev == null && e['id'] != null && e['senderId'] != null && e['content'] != null) ev = 'message';
     final peerId = e['peerId'] ?? e['from'] ?? e['senderId'] ?? asMap(e['message'])['sender_id'];
     if (ev == 'message' || ev == 'new-message') {
       final m = e['message'] is Map ? Message.fromJson(asMap(e['message'])) : Message.fromJson(e);

@@ -353,17 +353,23 @@ class Profile {
   }
 }
 
+/// طلب مراسلة: شخص راسلك وليس في جهات اتصالك بعد (GET /requests).
 class FriendRequest {
   final String id;
   final Person from;
   final DateTime? createdAt;
-  const FriendRequest({required this.id, required this.from, this.createdAt});
+  final String? lastContent;
+  final int unread;
+  const FriendRequest({required this.id, required this.from, this.createdAt, this.lastContent, this.unread = 0});
   factory FriendRequest.fromJson(Map m) {
     final f = asMap(m['from']);
+    final from = f.isNotEmpty ? Person.fromJson(f) : Person(id: _s(m, ['fromId', 'from_id', 'senderId', 'sender_id', 'id']), nickname: _s(m, ['nickname', 'fromNickname']), avatarUrl: _sn(m, ['avatarUrl', 'avatar_url']));
     return FriendRequest(
-      id: _s(m, ['id', 'requestId']),
-      from: f.isNotEmpty ? Person.fromJson(f) : Person(id: _s(m, ['fromId', 'from_id', 'senderId', 'sender_id', 'id']), nickname: _s(m, ['nickname', 'fromNickname']), avatarUrl: _sn(m, ['avatarUrl', 'avatar_url'])),
-      createdAt: _t(m, ['createdAt', 'created_at', 'sentAt']),
+      id: from.id,
+      from: from,
+      createdAt: _t(m, ['lastAt', 'last_at', 'createdAt', 'created_at', 'sentAt']),
+      lastContent: _sn(m, ['lastContent', 'last_content']),
+      unread: _i(m, ['unread']),
     );
   }
 }

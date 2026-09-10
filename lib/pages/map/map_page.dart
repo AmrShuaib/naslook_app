@@ -237,8 +237,9 @@ class _MapPageState extends ConsumerState<MapPage> {
             const SizedBox(width: 8),
             OutlinedButton(onPressed: () async {
               try {
-                await ref.read(apiClientProvider).addContact(p.nickname);
-                if (mounted) { Navigator.pop(context); toast(context, 'أُرسل طلب الصداقة'); }
+                await ref.read(apiClientProvider).addContact(p.id);
+                ref.invalidate(contactsProvider);
+                if (mounted) { Navigator.pop(context); toast(context, 'أُضيف ${p.nickname} إلى أصدقائك'); }
               } catch (e) { if (mounted) toast(context, e.toString(), error: true); }
             }, child: const Text('إضافة')),
           ]),
