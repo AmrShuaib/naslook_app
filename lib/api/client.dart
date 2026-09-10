@@ -64,8 +64,12 @@ class ApiClient {
   String? get token => _token;
   set token(String? value) => _token = (value == null || value.isEmpty) ? null : value;
 
-  Uri _uri(String path, [Map<String, String>? query]) =>
-      Uri.parse('$baseUrl$path').replace(queryParameters: query);
+  Uri _uri(String path, [Map<String, String>? query]) {
+    final u = Uri.parse('$baseUrl$path');
+    if (query == null || query.isEmpty) return u;
+    final q = Map<String, String>.from(query)..removeWhere((k, v) => v.isEmpty);
+    return u.replace(queryParameters: q.isEmpty ? null : q);
+  }
 
   Map<String, String> _headers({bool json = true}) => {
         'Accept': 'application/json',
@@ -143,6 +147,21 @@ class ApiClient {
 
   Future<Map<String, dynamic>> delete(String path) =>
       _send(() => _http.delete(_uri(path), headers: _headers(json: false)));
+
+  Future<Map<String, dynamic>> patch_(String path, Object body) => _send(
+        () => _http.patch(_uri(path), headers: _headers(), body: jsonEncode(body)),
+      );
+
+  /// طلب GET يرجع مصفوفة (يعيد القائمة كما هي).
+  Future<List<dynamic>> getList(String path, {Map<String, String>? query}) async {
+    final data = await get(path, query: query);
+    final raw = data['data'] ?? data['items'] ?? data['rows'] ?? data['list'];
+    if (raw is List) return raw;
+    return const [];
+  }
+
+  /// أصل WebSocket المطابق لعنوان الخادم.
+  String get wsUrl => '${baseUrl.replaceFirst(RegExp(r'^http'), 'ws')}/ws';
 
   Future<Map<String, dynamic>> _send(Future<http.Response> Function() request) async {
     http.Response res;
