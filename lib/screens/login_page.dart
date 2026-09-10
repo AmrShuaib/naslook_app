@@ -57,8 +57,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   String? _validatePin(String? v) {
     final s = (v ?? '').trim();
     if (s.isEmpty) return 'أدخل الرقم السري';
-    if (s.length < 4) return 'الرقم السري يجب أن يكون 4 أرقام على الأقل';
-    if (!RegExp(r'^\d+$').hasMatch(s)) return 'الرقم السري أرقام فقط';
+    if (s.length < 4) return 'الرقم السري يجب أن يكون 4 أحرف أو أرقام على الأقل';
+    if (s.length > 64) return 'الرقم السري طويل جداً';
     return null;
   }
 
@@ -134,10 +134,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 controller: _pin,
                                 enabled: !busy,
                                 obscureText: !_showPin,
-                                keyboardType: TextInputType.number,
+                                keyboardType: TextInputType.visiblePassword,
                                 inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                  LengthLimitingTextInputFormatter(8),
+                                  LengthLimitingTextInputFormatter(64),
                                 ],
                                 autofillHints: const [AutofillHints.password],
                                 textInputAction: TextInputAction.done,
