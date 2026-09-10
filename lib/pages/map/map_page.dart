@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
@@ -29,6 +30,15 @@ class _MapPageState extends ConsumerState<MapPage> {
     _debounce = Timer(const Duration(milliseconds: 500), () {
       final b = _map.camera.visibleBounds;
       ref.read(bboxProvider.notifier).state = BBox(b.west, b.south, b.east, b.north);
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() async {
+      final gps = await DeviceLocation.current(precise: false);
+      if (gps != null && mounted && ref.read(myPresenceProvider).value?.lat == null) _map.move(gps, 14);
     });
   }
 
@@ -120,6 +130,8 @@ class _MapPageState extends ConsumerState<MapPage> {
       Positioned(
         left: 16, bottom: 16,
         child: Column(children: [
+          _fab(Icons.my_location_rounded, _goToMe),
+          const SizedBox(height: 8),
           _fab(Icons.refresh_rounded, () {
             ref.invalidate(presenceProvider);
             ref.invalidate(pinsProvider);
@@ -133,7 +145,11 @@ class _MapPageState extends ConsumerState<MapPage> {
       Positioned(
         right: 16, bottom: 16,
         child: FilledButton.icon(
-          onPressed: () => _hereMenu(_map.camera.center),
+          onPressed: () async {
+            final gps = await DeviceLocation.current();
+            if (gps != null) _map.move(gps, 16);
+            if (mounted) _hereMenu(gps ?? _map.camera.center);
+          },
           icon: const Icon(Icons.add_location_alt_rounded),
           label: const Text('هنا الآن'),
         ),
@@ -161,6 +177,15 @@ class _MapPageState extends ConsumerState<MapPage> {
         elevation: 2,
         child: InkWell(customBorder: const CircleBorder(), onTap: onTap, child: SizedBox(width: 48, height: 48, child: Icon(icon, color: filled ? Joy.primaryOn : Joy.text))),
       );
+
+  Future<void> _goToMe() async {
+    final gps = await DeviceLocation.current();
+    if (gps == null) {
+      if (mounted) toast(context, 'لم يُسمح بالوصول إلى موقعك؛ فعّل الموقع للمتصفح ثم أعد المحاولة');
+      return;
+    }
+    _map.move(gps, 16);
+  }
 
   Future<void> _togglePresence() async {
     final api = ref.read(apiClientProvider);

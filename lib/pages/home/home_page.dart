@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/location.dart';
 import '../../core/nav_provider.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
@@ -157,8 +158,15 @@ class _StoriesRail extends ConsumerWidget {
   Future<void> _newStory(BuildContext context, WidgetRef ref) async {
     final text = await askText(context, title: 'لحظة جديدة', hint: 'ماذا يحدث حولك الآن؟ تظهر 24 ساعة لمن حولك', confirm: 'نشر');
     if (text == null || text.isEmpty) return;
+    // موقع اللحظة: GPS الجهاز أولاً، ثم مكانك المحدد على الخريطة، وإلا نطلب تحديده
+    final gps = await DeviceLocation.current();
     final pres = ref.read(myPresenceProvider).value;
-    final lat = pres?.lat ?? 21.4858, lng = pres?.lng ?? 39.1925;
+    final lat = gps?.latitude ?? pres?.lat, lng = gps?.longitude ?? pres?.lng;
+    if (lat == null || lng == null) {
+      if (context.mounted) toast(context, 'فعّل الموقع أو اضغط مطوّلاً على الخريطة لتحديد مكان اللحظة');
+      if (context.mounted) ref.read(navIndexProvider.notifier).state = 1;
+      return;
+    }
     try {
       await ref.read(apiClientProvider).postStory(text: text, lat: lat, lng: lng);
       ref.invalidate(storiesProvider);

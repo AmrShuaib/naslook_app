@@ -32,15 +32,13 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.6
-  firebase_core: ^2.32.0
-  firebase_auth: ^4.20.0
-  cloud_firestore: ^4.17.5
   flutter_map: ^8.2.1
   latlong2: ^0.9.1
   flutter_riverpod: ^2.4.0
   http: ^1.2.0
   shared_preferences: ^2.3.0
   google_fonts: ^6.2.1
+  geolocator: ^13.0.2
   web_socket_channel: ^3.0.1
   flutter_localizations:
     sdk: flutter
