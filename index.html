@@ -33,6 +33,13 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <script>
+    // نسخ سابقة سجّلت Service Worker يخزّن ملفات قديمة؛ نلغيه كي يصل التحديث فوراً
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { r.unregister(); }); });
+      if (window.caches) { caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); }); }
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
