@@ -177,9 +177,9 @@ class ApiClient {
 
   static const _serverErrors = <String, String>{
     'nickname-taken': 'النك نيم مستخدم من قبل، اختر غيره',
-    'invalid-nickname': 'النك نيم غير صالح: استخدم حروفاً وأرقاماً بلا مسافات',
+    'invalid-nickname': 'النك نيم غير صالح: حروف إنجليزية صغيرة وأرقام و _ فقط (3 إلى 32)',
     'invalid-password': 'الرقم السري غير صالح',
-    'weak-password': 'الرقم السري قصير أو ضعيف',
+    'weak-password': 'الرقم السري يجب أن يكون 8 خانات على الأقل',
     'bad-credentials': 'النك نيم أو الرقم السري غير صحيح',
     'auth': 'انتهت الجلسة، سجّل الدخول مجدداً',
     'not-found': 'الحساب غير موجود',

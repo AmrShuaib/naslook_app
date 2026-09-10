@@ -31,7 +31,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final notifier = ref.read(appStateProvider.notifier);
-    final nickname = _nickname.text.trim();
+    final nickname = _nickname.text.trim().toLowerCase();
     final pin = _pin.text.trim();
     final ok = _isRegister
         ? await notifier.register(nickname, pin)
@@ -46,18 +46,27 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
   }
 
+  // قواعد الخادم: النك نيم [a-z0-9_] من 3 إلى 32، والرقم السري 8 خانات على الأقل عند التسجيل
+  static final _nickRe = RegExp(r'^[a-z0-9_]{3,32}$');
+  static const _pinMin = 8;
+
   String? _validateNickname(String? v) {
-    final s = (v ?? '').trim();
+    final s = (v ?? '').trim().toLowerCase();
     if (s.isEmpty) return 'أدخل النك نيم';
-    if (s.length < 3) return 'النك نيم يجب أن يكون 3 أحرف على الأقل';
-    if (s.length > 30) return 'النك نيم طويل جداً';
+    if (s.length < 3) return 'النك نيم يجب أن يكون 3 خانات على الأقل';
+    if (s.length > 32) return 'النك نيم يجب ألا يتجاوز 32 خانة';
+    if (!_nickRe.hasMatch(s)) {
+      return 'حروف إنجليزية صغيرة وأرقام و _ فقط، بلا مسافات';
+    }
     return null;
   }
 
   String? _validatePin(String? v) {
     final s = (v ?? '').trim();
     if (s.isEmpty) return 'أدخل الرقم السري';
-    if (s.length < 4) return 'الرقم السري يجب أن يكون 4 أحرف أو أرقام على الأقل';
+    if (_isRegister && s.length < _pinMin) {
+      return 'الرقم السري يجب أن يكون $_pinMin خانات على الأقل';
+    }
     if (s.length > 64) return 'الرقم السري طويل جداً';
     return null;
   }
@@ -120,9 +129,19 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 enabled: !busy,
                                 autofillHints: const [AutofillHints.username],
                                 textInputAction: TextInputAction.next,
+                                keyboardType: TextInputType.visiblePassword,
+                                autocorrect: false,
+                                textDirection: TextDirection.ltr,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_]')),
+                                  LengthLimitingTextInputFormatter(32),
+                                ],
                                 validator: _validateNickname,
                                 decoration: InputDecoration(
                                   labelText: 'النك نيم',
+                                  helperText: _isRegister
+                                      ? 'حروف إنجليزية صغيرة وأرقام و _ (3 إلى 32)'
+                                      : null,
                                   prefixIcon: const Icon(Icons.person),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
@@ -144,6 +163,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 validator: _validatePin,
                                 decoration: InputDecoration(
                                   labelText: 'الرقم السري',
+                                  helperText: _isRegister ? '8 خانات على الأقل، حروف أو أرقام أو رموز' : null,
                                   prefixIcon: const Icon(Icons.lock),
                                   suffixIcon: IconButton(
                                     icon: Icon(_showPin
