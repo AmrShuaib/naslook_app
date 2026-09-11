@@ -1,0 +1,123 @@
+# بناء نسخة الويب ونشرها على خادم Naslife تلقائياً عند كل دفعة (push) إلى فرع العمل.
+#
+# 1) build : يبني Flutter web ويدفع الناتج إلى فرع webapp-build (ملفات ثابتة فقط).
+# 2) deploy: إن وُجد السر NASLIFE_SSH_KEY_B64 في إعدادات المستودع
+#            (Settings → Secrets and variables → Actions) يتصل بالخادم عبر SSH
+#            ويثبّت/يحدّث النشر التلقائي (server/install-autodeploy.sh) الذي يسحب
+#            webapp-build وإضافات server/*.js ويعيد تشغيل خدمة naslife عند الحاجة.
+#            بدون السر تُتخطى هذه الخطوة ويبقى الخادم يسحب التحديثات بنفسه إن كان
+#            النشر التلقائي مثبّتاً عليه.
+name: Naslife web build & deploy
+
+on:
+  push:
+    branches:
+      - claude/intelligent-hypatia-owb3fk
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'android/**'
+      - 'ios/**'
+      - 'linux/**'
+      - 'macos/**'
+      - 'windows/**'
+  workflow_dispatch:
+
+concurrency:
+  group: naslife-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: '3.47.3'
+  NASLIFE_HOST: '91.108.111.246'
+
+jobs:
+  build:
+    name: Build Flutter web → webapp-build
+    runs-on: ubuntu-latest
+    outputs:
+      build_sha: ${{ steps.push.outputs.build_sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter build web --release
+
+      - name: Checkout webapp-build branch
+        uses: actions/checkout@v4
+        with:
+          ref: webapp-build
+          path: webapp-build
+
+      - name: Commit build to webapp-build
+        id: push
+        run: |
+          set -euo pipefail
+          rsync -a --delete --exclude .git build/web/ webapp-build/
+          cd webapp-build
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "لا تغيير في ناتج البناء"
+          else
+            git commit -m "Web build: ${GITHUB_SHA::7} (${GITHUB_REF_NAME})"
+            git push origin HEAD:webapp-build
+          fi
+          echo "build_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy to server over SSH
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is the SSH key configured?
+        id: key
+        env:
+          KEY: ${{ secrets.NASLIFE_SSH_KEY_B64 }}
+        run: |
+          if [ -n "$KEY" ]; then echo "present=yes" >> "$GITHUB_OUTPUT"; else
+            echo "present=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::السر NASLIFE_SSH_KEY_B64 غير موجود؛ تُتخطى خطوة النشر عبر SSH. أضفه في Settings → Secrets and variables → Actions."
+          fi
+
+      - name: Install / refresh autodeploy on the server
+        if: steps.key.outputs.present == 'yes'
+        env:
+          KEY: ${{ secrets.NASLIFE_SSH_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "$KEY" | base64 -d > ~/.ssh/naslife && chmod 600 ~/.ssh/naslife
+          ssh-keyscan -T 15 -H "$NASLIFE_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          SSH="ssh -i $HOME/.ssh/naslife -o ConnectTimeout=20 -o BatchMode=yes root@$NASLIFE_HOST"
+          # نرفع autodeploy.sh من هذه الدفعة مباشرة (بدل تنزيله من raw.githubusercontent الذي قد يتأخر بالتخزين المؤقت)
+          $SSH "mkdir -p /opt/naslife/ops && cat > /opt/naslife/ops/autodeploy.sh.upload" < server/autodeploy.sh
+          $SSH "NASLIFE_BRANCH='$GITHUB_REF_NAME' NASLIFE_AUTODEPLOY_SRC=/opt/naslife/ops/autodeploy.sh.upload bash -s" < server/install-autodeploy.sh
+
+      - name: Verify the live site
+        if: steps.key.outputs.present == 'yes'
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6; do
+            live=$(curl -fsS -m 20 "https://naslife.app/.last_build_id" || true)
+            want=$(curl -fsS -m 20 "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/webapp-build/.last_build_id" || true)
+            echo "live=$live want=$want"
+            [ -n "$live" ] && [ "$live" = "$want" ] && break
+            sleep 20
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' -m 20 https://naslife.app/wallet)
+          echo "/wallet -> $code (401 = إضافة التجارة مسجّلة)"
+          [ "$code" = "401" ] || { echo "::warning::إضافة التجارة لم تُسجَّل بعد على الخادم (رمز $code)"; }

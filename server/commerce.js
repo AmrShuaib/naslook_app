@@ -43,10 +43,11 @@ export default async function commerce(app, opts) {
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error) => reply.code(code).send({ error });
-  const isAdmin = async (uid) => (await pool.query("SELECT is_admin FROM users WHERE id=$1", [uid])).rows[0]?.is_admin === true;
+  const userRow = async (id) => { try { return (await pool.query("SELECT * FROM users WHERE id=$1", [id])).rows[0] ?? null; } catch { return null; } };
+  const isAdmin = async (uid) => { const u = await userRow(uid); return u?.is_admin === true || u?.role === "admin"; };
   const person = async (id) => {
-    const r = await pool.query("SELECT id, nickname, avatar_url FROM users WHERE id=$1", [id]);
-    return r.rowCount ? { id: r.rows[0].id, nickname: r.rows[0].nickname, avatarUrl: r.rows[0].avatar_url } : { id, nickname: "", avatarUrl: null };
+    const u = await userRow(id);
+    return u ? { id: u.id, nickname: u.nickname ?? "", avatarUrl: u.avatar_url ?? u.avatarUrl ?? null } : { id, nickname: "", avatarUrl: null };
   };
   const bbox = (s) => {
     const p = String(s ?? "").split(",").map(Number);
@@ -57,7 +58,8 @@ export default async function commerce(app, opts) {
   async function ledger(client, userId, kind, amount, { peerId = null, ref = null, note = null, points = 0 } = {}) {
     await client.query("INSERT INTO wallet_accounts(user_id) VALUES($1) ON CONFLICT DO NOTHING", [userId]);
     const acc = (await client.query("SELECT balance FROM wallet_accounts WHERE user_id=$1 FOR UPDATE", [userId])).rows[0];
-    if (acc.balance + amount < 0) throw Object.assign(new Error("insufficient"), { code: "insufficient-funds" });
+    // BIGINT يصل من pg كنص؛ بدون التحويل لا يعمل فحص الرصيد أبداً
+    if (Number(acc.balance) + amount < 0) throw Object.assign(new Error("insufficient"), { code: "insufficient-funds" });
     await client.query("UPDATE wallet_accounts SET balance=balance+$2, points=points+$3, updated_at=now() WHERE user_id=$1", [userId, amount, points]);
     await client.query("INSERT INTO wallet_tx(id,user_id,kind,amount,peer_id,ref,note) VALUES($1,$2,$3,$4,$5,$6,$7)",
       [crypto.randomUUID(), userId, kind, amount, peerId, ref, note]);
@@ -106,7 +108,8 @@ export default async function commerce(app, opts) {
     const { to } = req.body ?? {}; const amount = SAR(req.body?.amount); const note = String(req.body?.note ?? "").slice(0, 120);
     if (!ID_RE.test(to ?? "") || to === uid) return bad(reply, 400, "bad-recipient");
     if (amount <= 0) return bad(reply, 400, "bad-amount");
-    if (!(await pool.query("SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL", [to])).rowCount) return bad(reply, 404, "not-found");
+    const recipient = await userRow(to);
+    if (!recipient || recipient.deleted_at || recipient.deleted === true) return bad(reply, 404, "not-found");
     try {
       await tx(async (c) => {
         await ledger(c, uid, "transfer_out", -amount, { peerId: to, note });
@@ -207,16 +210,19 @@ export default async function commerce(app, opts) {
   });
   app.post("/events/:id/checkin", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const ev = (await pool.query("SELECT * FROM events WHERE id=$1", [req.params.id])).rows[0];
     if (!ev) return bad(reply, 404, "not-found");
     if (ev.host_id !== uid) return bad(reply, 403, "host-only");
     const code = String(req.body?.code ?? "").trim().toUpperCase();
+    if (!code) return bad(reply, 400, "bad-code");
     const r = await pool.query("UPDATE tickets SET status='used', used_at=now() WHERE event_id=$1 AND code=$2 AND status='valid' RETURNING id, user_id", [ev.id, code]);
     if (!r.rowCount) return bad(reply, 404, "ticket-invalid");
     return { ok: true, holder: await person(r.rows[0].user_id) };
   });
   app.post("/events/:id/cancel", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const ev = (await pool.query("SELECT * FROM events WHERE id=$1", [req.params.id])).rows[0];
     if (!ev) return bad(reply, 404, "not-found");
     if (ev.host_id !== uid) return bad(reply, 403, "host-only");
@@ -275,6 +281,7 @@ export default async function commerce(app, opts) {
   });
   app.delete("/market/:id", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     await pool.query("UPDATE market_listings SET status='hidden' WHERE id=$1 AND seller_id=$2", [req.params.id, uid]);
     return { ok: true };
   });
@@ -297,6 +304,7 @@ export default async function commerce(app, opts) {
   });
   app.post("/market/orders/:id/deliver", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const o = (await pool.query("SELECT o.*, l.title FROM market_orders o JOIN market_listings l ON l.id=o.listing_id WHERE o.id=$1", [req.params.id])).rows[0];
     if (!o) return bad(reply, 404, "not-found");
     if (o.seller_id !== uid) return bad(reply, 403, "seller-only");
@@ -309,6 +317,7 @@ export default async function commerce(app, opts) {
   });
   app.post("/market/orders/:id/cancel", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const o = (await pool.query("SELECT o.*, l.title FROM market_orders o JOIN market_listings l ON l.id=o.listing_id WHERE o.id=$1", [req.params.id])).rows[0];
     if (!o) return bad(reply, 404, "not-found");
     if (o.buyer_id !== uid && o.seller_id !== uid) return bad(reply, 403, "forbidden");
