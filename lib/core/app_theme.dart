@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// نظام «فرح وبهجة»: كريمي مشمس، فيروزي للأفعال، مرجاني للأحداث، أصفر شمسي.
 /// كل الأزواج مقاسة بنِسَب تباين WCAG ≥ 4.5:1.
@@ -40,9 +39,20 @@ class Joy {
 }
 
 class AppTheme {
+  /// الخطوط مضمّنة في التطبيق (pubspec.yaml → fonts/) ولا تُجلب من الإنترنت.
+  static const bodyFont = 'Rubik';
+  static const displayFont = 'BalooBhaijaan2';
+
   static ThemeData get light {
-    final body = GoogleFonts.rubikTextTheme().apply(bodyColor: Joy.text, displayColor: Joy.text);
-    final display = GoogleFonts.balooBhaijaan2(fontWeight: FontWeight.w700, color: Joy.text);
+    // النص الافتراضي بوزن متوسط (500) بدل العادي (400) ليكون أوضح قليلاً
+    final base = ThemeData(useMaterial3: true, fontFamily: bodyFont).textTheme.apply(bodyColor: Joy.text, displayColor: Joy.text);
+    TextStyle? medium(TextStyle? t) => t?.copyWith(fontWeight: FontWeight.w500);
+    final body = base.copyWith(
+      bodyLarge: medium(base.bodyLarge), bodyMedium: medium(base.bodyMedium), bodySmall: medium(base.bodySmall),
+      labelLarge: medium(base.labelLarge), labelMedium: medium(base.labelMedium), labelSmall: medium(base.labelSmall),
+      titleSmall: medium(base.titleSmall),
+    );
+    const display = TextStyle(fontFamily: displayFont, fontWeight: FontWeight.w700, color: Joy.text);
     final scheme = ColorScheme.fromSeed(
       seedColor: Joy.primary,
       primary: Joy.primary,
@@ -96,7 +106,7 @@ class AppTheme {
           foregroundColor: Joy.primaryOn,
           minimumSize: const Size(44, 50),
           shape: const StadiumBorder(),
-          textStyle: GoogleFonts.rubik(fontWeight: FontWeight.w600, fontSize: 15),
+          textStyle: const TextStyle(fontFamily: bodyFont, fontWeight: FontWeight.w600, fontSize: 15),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(

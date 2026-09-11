@@ -27,6 +27,14 @@ class MainApp extends ConsumerWidget {
       localizationsDelegates: localizationsDelegates,
       supportedLocales: supportedLocales,
       locale: const Locale('ar'),
+      // تكبير كل النصوص درجة واحدة (10%) فوق إعداد حجم الخط في نظام المستخدم
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(textScaler: TextScaler.linear(mq.textScaler.scale(1.0) * 1.1)),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const AuthGate(),
     );
   }
