@@ -51,7 +51,8 @@ jobs:
 
       - run: flutter pub get
       - run: flutter analyze
-      - run: flutter build web --release
+      # بدون Service Worker (كما في النسخ المنشورة سابقاً) حتى يصل كل تحديث فوراً دون ملفات مخزّنة قديمة
+      - run: flutter build web --release --pwa-strategy=none
 
       - name: Checkout webapp-build branch
         uses: actions/checkout@v4
