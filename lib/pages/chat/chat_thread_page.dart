@@ -718,10 +718,13 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         ProfileAvatar(person: widget.peer, size: 38, online: _online),
         const SizedBox(width: 10),
         Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(widget.peer.nickname, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
-            Text(_peerTyping ? 'يكتب…' : (_online ? 'متصل الآن' : 'غير متصل'), style: TextStyle(fontSize: 12, color: _online || _peerTyping ? Joy.success : Joy.textMuted, fontWeight: FontWeight.w400)),
-          ]),
+          child: InkWell(
+            onTap: () => openProfile(context, widget.peer),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(widget.peer.nickname, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text(_peerTyping ? 'يكتب…' : (_online ? 'متصل الآن' : 'غير متصل'), style: TextStyle(fontSize: 12, color: _online || _peerTyping ? Joy.success : Joy.textMuted, fontWeight: FontWeight.w400)),
+            ]),
+          ),
         ),
       ]),
       actions: [
