@@ -5,10 +5,14 @@
 // وتُقدَّم بلا مصادقة حتى تعمل في <img> و<audio> مباشرة؛ الحد الأقصى 30 ميغابايت.
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, constants as fsConstants } from "node:fs";
 import path from "node:path";
 
-const MEDIA_DIR = process.env.CHAT_MEDIA_DIR || "/opt/naslife/media/chat";
+import os from "node:os";
+
+// مجلد الوسائط: الأول القابل للكتابة من هذه القائمة (الخدمة قد لا تملك صلاحية /opt/naslife)
+const MEDIA_CANDIDATES = [process.env.CHAT_MEDIA_DIR, "/opt/naslife/media/chat", "/var/lib/naslife/chat-media", path.join(process.cwd(), "media", "chat"),
+  path.join(os.homedir() || "/tmp", ".naslife-chat-media")].filter(Boolean);
 const MAX_BYTES = Number(process.env.CHAT_MEDIA_MAX_BYTES) || 30 * 1024 * 1024;
 const TYPES = {
   "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
@@ -38,10 +42,23 @@ async function setup(app, opts) {
       message_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, reply_to TEXT, quote JSONB, forwarded_from TEXT, extra JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now());
   `);
-  await fs.mkdir(MEDIA_DIR, { recursive: true });
+  let MEDIA_DIR = null;
+  const mediaErrors = [];
+  for (const dir of MEDIA_CANDIDATES) {
+    try {
+      await fs.mkdir(dir, { recursive: true });
+      await fs.access(dir, fsConstants.W_OK);
+      MEDIA_DIR = dir; break;
+    } catch (e) { mediaErrors.push(`${dir}: ${e?.code || e?.message || e}`); }
+  }
+  const logger = app.log?.info ? app.log.info.bind(app.log) : console.log;
+  logger(MEDIA_DIR ? `chat_tools: media dir ${MEDIA_DIR}` : `chat_tools: NO writable media dir (${mediaErrors.join("; ")})`);
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error) => reply.code(code).send({ error });
+
+  // حالة الإضافة (بلا مصادقة وبلا مسارات): يفيد التحقق من النشر
+  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, maxBytes: MAX_BYTES }));
 
   // محلل محتوى ثنائي داخل نطاق هذه الإضافة فقط؛ نتخطى أي نوع سجّله الخادم الأساسي مسبقاً (وإلا رمى Fastify خطأ FST_ERR_CTP_ALREADY_PRESENT)
   for (const type of [...Object.keys(TYPES), "application/octet-stream"]) {
@@ -62,6 +79,7 @@ async function setup(app, opts) {
       const fromName = String(req.headers["x-file-name"] || "").toLowerCase().match(/\.([a-z0-9]{2,5})$/)?.[1];
       if (fromName && EXT_TYPE[fromName]) { ext = fromName; ct = EXT_TYPE[fromName]; }
     }
+    if (!MEDIA_DIR) return bad(reply, 503, "media-storage-unavailable");
     if (!ext) return bad(reply, 415, "unsupported-type");
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) return bad(reply, 400, "empty");
     const name = `${Date.now().toString(36)}-${crypto.randomBytes(12).toString("hex")}.${ext}`;
@@ -72,7 +90,7 @@ async function setup(app, opts) {
   // ---- التقديم مع دعم Range للصوت والفيديو
   app.get("/chat/media/:name", { config: { rateLimit: false } }, async (req, reply) => {
     const name = String(req.params.name);
-    if (!NAME_RE.test(name)) return bad(reply, 404, "not-found");
+    if (!MEDIA_DIR || !NAME_RE.test(name)) return bad(reply, 404, "not-found");
     const file = path.join(MEDIA_DIR, name);
     let st;
     try { st = await fs.stat(file); } catch { return bad(reply, 404, "not-found"); }
@@ -124,7 +142,7 @@ async function setup(app, opts) {
   // ---- فحص: معلومات الوسائط لملف (يفيد التطبيق لمعرفة النوع قبل العرض)
   app.get("/chat/media-info/:name", async (req, reply) => {
     const name = String(req.params.name);
-    if (!NAME_RE.test(name)) return bad(reply, 404, "not-found");
+    if (!MEDIA_DIR || !NAME_RE.test(name)) return bad(reply, 404, "not-found");
     try { const st = await fs.stat(path.join(MEDIA_DIR, name)); return { size: st.size, type: EXT_TYPE[name.split(".").pop()] || null }; }
     catch { return bad(reply, 404, "not-found"); }
   });
