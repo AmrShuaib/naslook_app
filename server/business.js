@@ -135,7 +135,13 @@ export default async function business(app, opts) {
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
   const optionalAuth = async (req) => { try { return (await auth(req)) || null; } catch { return null; } };
   const userRow = async (id) => { try { return (await pool.query("SELECT * FROM users WHERE id=$1", [id])).rows[0] ?? null; } catch { return null; } };
-  const isAdmin = async (uid) => { const u = await userRow(uid); return u?.is_admin === true || u?.role === "admin"; };
+  // مدير النظام: عمود في جدول المستخدمين أو جدول admins الذي تديره لوحة الإدارة (server/admin.js)
+  const isAdmin = async (uid) => {
+    const u = await userRow(uid);
+    if (u?.is_admin === true || u?.role === "admin") return true;
+    try { return (await pool.query("SELECT 1 FROM admins WHERE user_id=$1", [uid])).rowCount > 0; } catch { return false; }
+  };
+  const isSuspended = async (uid) => { try { return (await pool.query("SELECT 1 FROM user_flags WHERE user_id=$1 AND suspended", [uid])).rowCount > 0; } catch { return false; } };
   const person = async (id) => {
     const u = await userRow(id);
     return u ? { id: u.id, nickname: u.nickname ?? "", avatarUrl: u.avatar_url ?? u.avatarUrl ?? null } : { id, nickname: "", avatarUrl: null };
@@ -590,6 +596,7 @@ export default async function business(app, opts) {
   // ---- الشراء والحجز: منتج (كمية)، تذكرة سينما (موعد + عدد)، غرفة (من/إلى + عدد غرف)، سيارة (من/إلى)
   app.post("/biz/:id/orders", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     if (!SLUG_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const body = req.body ?? {};
     if (!SLUG_RE.test(body.itemId ?? "")) return bad(reply, 400, "bad-item");

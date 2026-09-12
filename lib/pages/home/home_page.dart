@@ -6,6 +6,7 @@ import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../core/nav_provider.dart';
+import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
@@ -82,6 +83,20 @@ class HomePage extends ConsumerWidget {
             const SizedBox(width: 8),
             _Quick(icon: Icons.storefront_outlined, label: 'السوق', color: Joy.sunSoft, fg: Joy.sunText, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MarketPage()))),
           ]),
+          Consumer(builder: (context, ref, _) {
+            final ps = ref.watch(publicSettingsProvider).valueOrNull;
+            if (ps == null || (ps.announcement.isEmpty && !ps.maintenance)) return const SizedBox.shrink();
+            return Container(
+              margin: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: ps.maintenance ? Joy.accentSoft : Joy.sunSoft, borderRadius: BorderRadius.circular(14)),
+              child: Row(children: [
+                Icon(ps.maintenance ? Icons.build_circle_outlined : Icons.campaign_outlined, color: ps.maintenance ? Joy.accent : Joy.sunText),
+                const SizedBox(width: 8),
+                Expanded(child: Text(ps.maintenance && ps.announcement.isEmpty ? 'التطبيق تحت الصيانة حالياً؛ قد تتأخر بعض الخدمات.' : ps.announcement, style: TextStyle(color: ps.maintenance ? Joy.accent : Joy.sunText, fontWeight: FontWeight.w600, fontSize: 13, height: 1.5))),
+              ]),
+            );
+          }),
           const SizedBox(height: 10),
           JoyCard(
             onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BusinessesPage())),

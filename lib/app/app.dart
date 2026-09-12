@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../pages/admin/admin_shell.dart';
+import '../state/admin_providers.dart';
 import 'i18n/l10n.dart';
 import '../core/app_theme.dart';
 import '../core/nav_provider.dart';
@@ -54,7 +56,7 @@ class AuthGate extends ConsumerWidget {
       case AuthStatus.signedOut:
         return const LoginPage();
       case AuthStatus.signedIn:
-        return const HomeShell();
+        return ref.watch(adminModeProvider) ? const AdminShell() : const HomeShell();
     }
   }
 }

@@ -44,7 +44,13 @@ export default async function commerce(app, opts) {
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
   const userRow = async (id) => { try { return (await pool.query("SELECT * FROM users WHERE id=$1", [id])).rows[0] ?? null; } catch { return null; } };
-  const isAdmin = async (uid) => { const u = await userRow(uid); return u?.is_admin === true || u?.role === "admin"; };
+  // مدير النظام: عمود في جدول المستخدمين أو جدول admins الذي تديره لوحة الإدارة (server/admin.js)
+  const isAdmin = async (uid) => {
+    const u = await userRow(uid);
+    if (u?.is_admin === true || u?.role === "admin") return true;
+    try { return (await pool.query("SELECT 1 FROM admins WHERE user_id=$1", [uid])).rowCount > 0; } catch { return false; }
+  };
+  const isSuspended = async (uid) => { try { return (await pool.query("SELECT 1 FROM user_flags WHERE user_id=$1 AND suspended", [uid])).rowCount > 0; } catch { return false; } };
   const person = async (id) => {
     const u = await userRow(id);
     return u ? { id: u.id, nickname: u.nickname ?? "", avatarUrl: u.avatar_url ?? u.avatarUrl ?? null } : { id, nickname: "", avatarUrl: null };
@@ -92,7 +98,8 @@ export default async function commerce(app, opts) {
     if (process.env.WALLET_TEST_TOPUP !== "1" && !(await isAdmin(uid))) return bad(reply, 403, "topup-disabled");
     const amount = SAR(req.body?.amount);
     // حتى 100,000 ر.س للشحن التجريبي الواحد (أسعار الفنادق والسيارات تتجاوز السقف القديم 5,000)
-    if (amount <= 0 || amount > 10000000) return bad(reply, 400, "bad-amount", { max: 10000000 });
+    const maxTopup = Number(globalThis.naslifeSettings?.maxTopup) || 10000000;
+    if (amount <= 0 || amount > maxTopup) return bad(reply, 400, "bad-amount", { max: maxTopup });
     await tx((c) => ledger(c, uid, "topup", amount, { note: "شحن" }));
     return { ok: true };
   });
@@ -106,6 +113,7 @@ export default async function commerce(app, opts) {
   });
   app.post("/wallet/transfer", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     const { to } = req.body ?? {}; const amount = SAR(req.body?.amount); const note = String(req.body?.note ?? "").slice(0, 120);
     if (!ID_RE.test(to ?? "") || to === uid) return bad(reply, 400, "bad-recipient");
     if (amount <= 0) return bad(reply, 400, "bad-amount");
@@ -170,6 +178,7 @@ export default async function commerce(app, opts) {
   });
   app.post("/events/:id/tickets", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     const { tierId } = req.body ?? {}; const qty = Math.max(1, Math.min(10, Number(req.body?.qty) || 1));
     if (!UUID_RE.test(req.params.id) || !UUID_RE.test(tierId ?? "")) return bad(reply, 400, "bad-id");
     let made = [];
@@ -288,6 +297,7 @@ export default async function commerce(app, opts) {
   });
   app.post("/market/:id/order", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     const qty = Math.max(1, Math.min(20, Number(req.body?.qty) || 1)); const note = String(req.body?.note ?? "").slice(0, 300);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const l = (await pool.query("SELECT * FROM market_listings WHERE id=$1 AND status='active'", [req.params.id])).rows[0];

@@ -5,10 +5,12 @@ import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/push/push_service.dart';
+import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import '../business/my_bookings_page.dart';
+import '../admin/admin_shell.dart';
 import '../business/owner/my_businesses_page.dart';
 import '../events/events_page.dart';
 import '../market/market_page.dart';
@@ -74,6 +76,10 @@ class MySpacePage extends ConsumerWidget {
             ListTile(leading: const Icon(Icons.receipt_long_outlined, color: Joy.primary), title: const Text('حجوزاتي وطلباتي'), subtitle: const Text('فنادق وسيارات وسينما وبراندات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.storefront_rounded, color: Joy.primary), title: const Text('نشاطي التجاري'), subtitle: const Text('لوحة تحكم دائرتك: الكتالوج والطلبات والإحصاءات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBusinessesPage()))),
+            if (ref.watch(adminStatusProvider).valueOrNull?.isAdmin == true) ...[
+              const Divider(indent: 16, endIndent: 16),
+              ListTile(leading: const Icon(Icons.admin_panel_settings_outlined, color: Joy.accent), title: const Text('لوحة الإدارة'), subtitle: const Text('المستخدمون والبلاغات والمالية والإعدادات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminShell(standalone: false)))),
+            ],
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.storefront_outlined, color: Joy.sunText), title: const Text('عروضي وطلباتي في السوق'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage()))),
           ])),
