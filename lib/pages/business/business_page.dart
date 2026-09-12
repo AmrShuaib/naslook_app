@@ -33,6 +33,39 @@ String dayLabel(DateTime t) {
 
 String shortDate(DateTime t) => '${t.day} ${_months[t.month - 1]}';
 
+/// "اليوم" أو "غداً" أو اسم اليوم فقط (بلا تاريخ).
+String relativeDay(DateTime t) {
+  final now = DateTime.now();
+  final diff = DateTime(t.year, t.month, t.day).difference(DateTime(now.year, now.month, now.day)).inDays;
+  if (diff == 0) return 'اليوم';
+  if (diff == 1) return 'غداً';
+  return _days[t.weekday - 1];
+}
+
+/// ورقة سفلية بمحتوى قابل للتمرير وزر إجراء مثبّت أسفلها فوق منطقة الأمان، حتى لا يُقصّ الزر أو يخرج عن حدود الورقة
+/// على الشاشات الصغيرة (كان الزر يخرج عن الورقة فلا يستجيب للنقر).
+Future<T?> showActionSheet<T>(
+  BuildContext context, {
+  required Widget Function(BuildContext ctx, void Function(VoidCallback fn) setS) body,
+  required Widget Function(BuildContext ctx, void Function(VoidCallback fn) setS) action,
+}) =>
+    showModalBottomSheet<T>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * .9),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => Column(mainAxisSize: MainAxisSize.min, children: [
+          Flexible(child: SingleChildScrollView(padding: const EdgeInsets.fromLTRB(20, 0, 20, 8), child: body(ctx, setS))),
+          Padding(
+            padding: EdgeInsets.fromLTRB(20, 6, 20, 14 + MediaQuery.viewPaddingOf(ctx).bottom + MediaQuery.viewInsetsOf(ctx).bottom),
+            child: SizedBox(width: double.infinity, child: action(ctx, setS)),
+          ),
+        ]),
+      ),
+    );
+
 /// رسالة خطأ الدفع/الحجز المفهومة للمستخدم.
 String bizErrText(Object e) {
   final s = e.toString();
@@ -208,28 +241,17 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
     var qty = 1;
     final max = it.stock == null ? 20 : it.stock!.clamp(0, 20);
     if (max == 0) return;
-    final ok = await showModalBottomSheet<bool>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(it.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
-            if (it.description.isNotEmpty) Text(it.description, style: const TextStyle(color: Joy.textMuted)),
-            const SizedBox(height: 12),
-            Row(children: [
-              const Text('الكمية', style: TextStyle(fontWeight: FontWeight.w600)),
-              const Spacer(),
-              _Stepper(value: qty, min: 1, max: max, onChanged: (v) => setS(() => qty = v)),
-            ]),
-            const SizedBox(height: 8),
-            _TotalRow(total: it.price * qty),
-            const SizedBox(height: 14),
-            FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.shopping_bag_outlined), label: Text('ادفع ${money(it.price * qty)} من المحفظة')),
-          ]),
-        ),
-      ),
+    final ok = await showActionSheet<bool>(
+      context,
+      body: (ctx, setS) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(it.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
+        if (it.description.isNotEmpty) Text(it.description, style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
+        const SizedBox(height: 12),
+        _stepRow('الكمية', _Stepper(value: qty, min: 1, max: max, onChanged: (v) => setS(() => qty = v))),
+        const SizedBox(height: 8),
+        _TotalRow(total: it.price * qty),
+      ]),
+      action: (ctx, _) => FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.shopping_bag_outlined), label: Text('ادفع ${money(it.price * qty)} من المحفظة')),
     );
     if (ok != true) return;
     await _order(b, it, qty: qty);
@@ -251,34 +273,24 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
     if (units < 1) units = 1;
     final start = DateTime(range.start.year, range.start.month, range.start.day), end = start.add(Duration(days: units));
     var qty = 1, guests = 2;
-    final ok = await showModalBottomSheet<bool>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) {
-          final total = it.price * units * qty;
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(it.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
-              Text(it.description, style: const TextStyle(color: Joy.textMuted)),
-              const SizedBox(height: 10),
-              _kv(it.kind == 'room' ? 'الوصول' : 'الاستلام', '${dayLabel(start)} · ${shortDate(start)}'),
-              _kv(it.kind == 'room' ? 'المغادرة' : 'الإرجاع', '${dayLabel(end)} · ${shortDate(end)}'),
-              _kv('المدة', '$units ${it.kind == 'room' ? (units == 1 ? 'ليلة' : 'ليالٍ') : (units == 1 ? 'يوم' : 'أيام')}'),
-              if (it.kind == 'room') ...[
-                Row(children: [const Text('عدد الغرف', style: TextStyle(fontWeight: FontWeight.w600)), const Spacer(), _Stepper(value: qty, min: 1, max: (it.stock ?? 5).clamp(1, 5), onChanged: (v) => setS(() => qty = v))]),
-                Row(children: [const Text('عدد النزلاء', style: TextStyle(fontWeight: FontWeight.w600)), const Spacer(), _Stepper(value: guests, min: 1, max: 10, onChanged: (v) => setS(() => guests = v))]),
-              ] else if (it.meta['pickup'] != null || b.address.isNotEmpty)
-                _kv('الاستلام من', b.address),
-              const SizedBox(height: 6),
-              _TotalRow(total: total, hint: '${money(it.price)} ${it.unitLabel} × $units${qty > 1 ? ' × $qty' : ''}'),
-              const SizedBox(height: 14),
-              FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: Icon(b.category.icon), label: Text('تأكيد الحجز ودفع ${money(total)}')),
-            ]),
-          );
-        },
-      ),
+    final room = it.kind == 'room';
+    final ok = await showActionSheet<bool>(
+      context,
+      body: (ctx, setS) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(it.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
+        if (it.description.isNotEmpty) Text(it.description, style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
+        const SizedBox(height: 12),
+        _DateCards(start: start, end: end, units: units, room: room),
+        const SizedBox(height: 10),
+        if (room) ...[
+          _stepRow('عدد الغرف', _Stepper(value: qty, min: 1, max: (it.stock ?? 5).clamp(1, 5), onChanged: (v) => setS(() => qty = v))),
+          _stepRow('عدد النزلاء', _Stepper(value: guests, min: 1, max: 10, onChanged: (v) => setS(() => guests = v))),
+        ] else if (it.meta['pickup'] != null || b.address.isNotEmpty)
+          _kv('الاستلام من', b.address),
+        const SizedBox(height: 6),
+        _TotalRow(total: it.price * units * qty, hint: '${money(it.price)} ${it.unitLabel} × $units${qty > 1 ? ' × $qty' : ''}'),
+      ]),
+      action: (ctx, _) => FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: Icon(b.category.icon), label: Text('تأكيد الحجز ودفع ${money(it.price * units * qty)}')),
     );
     if (ok != true) return;
     await _order(b, it, qty: qty, startAt: start, endAt: end, guests: it.kind == 'room' ? guests : null);
@@ -308,6 +320,65 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
       }
     }
   }
+}
+
+/// صف تسمية + عدّاد (الكمية، الغرف، النزلاء).
+Widget _stepRow(String label, Widget stepper) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(children: [Text(label, style: const TextStyle(fontWeight: FontWeight.w600)), const Spacer(), stepper]),
+    );
+
+/// بطاقتا الوصول والمغادرة (أو الاستلام والإرجاع) جنباً إلى جنب مع المدة بينهما: أوضح وأقصر من صفوف النص.
+class _DateCards extends StatelessWidget {
+  final DateTime start, end;
+  final int units;
+  final bool room;
+  const _DateCards({required this.start, required this.end, required this.units, required this.room});
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = room ? (units == 1 ? 'ليلة' : units == 2 ? 'ليلتان' : '$units ليالٍ') : (units == 1 ? 'يوم' : units == 2 ? 'يومان' : '$units أيام');
+    // IntrinsicHeight يمنح الصف ارتفاعاً محدوداً داخل التمرير حتى تتساوى البطاقتان دون ارتفاع لانهائي
+    return IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Expanded(child: _DateCard(label: room ? 'الوصول' : 'الاستلام', t: start)),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)),
+            child: Text(duration, style: const TextStyle(color: Joy.primary, fontWeight: FontWeight.w700, fontSize: 12)),
+          ),
+          const SizedBox(height: 4),
+          const Icon(Icons.arrow_forward_rounded, size: 16, color: Joy.textMuted),
+        ]),
+      ),
+      Expanded(child: _DateCard(label: room ? 'المغادرة' : 'الإرجاع', t: end)),
+    ]));
+  }
+}
+
+class _DateCard extends StatelessWidget {
+  final String label;
+  final DateTime t;
+  const _DateCard({required this.label, required this.t});
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+          Text(label, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+          const SizedBox(height: 4),
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('${t.day}', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, height: 1)),
+            const SizedBox(width: 6),
+            Flexible(child: Text(_months[t.month - 1], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+          ]),
+          const SizedBox(height: 3),
+          Text(relativeDay(t), style: const TextStyle(color: Joy.primary, fontSize: 12, fontWeight: FontWeight.w600)),
+        ]),
+      );
 }
 
 Widget _kv(String k, String v) => Padding(
