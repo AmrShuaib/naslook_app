@@ -82,7 +82,8 @@ class JoyCard extends StatelessWidget {
         border: Border.all(color: Joy.line),
       ),
       padding: padding,
-      child: child,
+      // Material شفاف داخل البطاقة حتى ترسم ListTile وتأثيرات اللمس داخلها لا على أقرب Material خارجها
+      child: Material(type: MaterialType.transparency, child: child),
     );
     if (onTap == null) return card;
     return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(16), child: card);
