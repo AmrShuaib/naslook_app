@@ -6,14 +6,17 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../api/biz_models.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
+import '../../state/biz_providers.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../business/business_page.dart';
 import '../chat/chat_thread_page.dart';
 import 'map_cluster.dart';
 
@@ -85,6 +88,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     final pins = ref.watch(pinsProvider).value ?? const <Pin>[];
     final stories = ref.watch(storiesProvider).value ?? const <Story>[];
     final businesses = ref.watch(businessesProvider).value ?? const <Business>[];
+    final circles = ref.watch(mapBizProvider).value ?? const <Biz>[];
     final seen = <String>{};
     final out = <MapItem>[];
     void add(MapItem? i) {
@@ -107,6 +111,9 @@ class _MapPageState extends ConsumerState<MapPage> {
       }
     }
     if (showBusinesses) {
+      for (final c in circles) {
+        add(MapItem.business(c.toBusiness()));
+      }
       for (final b in businesses) {
         add(MapItem.business(b));
       }
@@ -116,6 +123,13 @@ class _MapPageState extends ConsumerState<MapPage> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(mapFocusProvider, (_, next) {
+      if (next == null) return;
+      ref.read(mapFocusProvider.notifier).state = null;
+      try {
+        _map.move(LatLng(next.lat, next.lng), 16.5);
+      } catch (_) {}
+    });
     final mine = ref.watch(myPresenceProvider).value;
     final loading = ref.watch(presenceProvider).isLoading || ref.watch(storiesProvider).isLoading || ref.watch(pinsProvider).isLoading || ref.watch(businessesProvider).isLoading;
     final items = _collect();
@@ -555,7 +569,18 @@ class _MapPageState extends ConsumerState<MapPage> {
             ]),
           ),
         ]),
-        if (b.description.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: Text(b.description)),
+        if (b.description.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: Text(b.description, maxLines: 3, overflow: TextOverflow.ellipsis)),
+        if (b.kind != null) ...[
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              openBusiness(context, b.id);
+            },
+            icon: const Icon(Icons.login_rounded),
+            label: Text(switch (b.kind) { 'cinema' => 'دخول الدائرة وحجز التذاكر', 'hotel' => 'دخول الدائرة وحجز غرفة', 'car_rental' => 'دخول الدائرة وحجز سيارة', _ => 'دخول الدائرة والشراء' }),
+          ),
+        ],
       ]));
 }
 
@@ -617,7 +642,7 @@ class _ItemMarker extends StatelessWidget {
         child = _dot(p.type == 'review' ? Icons.star_rounded : Icons.push_pin_rounded, Joy.accent, Joy.accentOn);
       case MapItemKind.business:
         final b = item.data as Business;
-        child = _dot(b.verified ? Icons.verified_rounded : Icons.storefront_rounded, Joy.primary, Joy.primaryOn);
+        child = _dot(_bizIcon(b.kind), Joy.primary, Joy.primaryOn);
     }
     return Semantics(
       button: true,
@@ -625,6 +650,14 @@ class _ItemMarker extends StatelessWidget {
       child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: onTap, child: Center(child: child)),
     );
   }
+
+  static IconData _bizIcon(String? kind) => switch (kind) {
+        'cinema' => Icons.local_movies_rounded,
+        'hotel' => Icons.hotel_rounded,
+        'car_rental' => Icons.directions_car_rounded,
+        'brand' => Icons.local_mall_rounded,
+        _ => Icons.storefront_rounded,
+      };
 
   static Widget _dot(IconData icon, Color bg, Color fg) => Container(
         width: 26,

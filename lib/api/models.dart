@@ -449,7 +449,9 @@ class Business {
   final int followers;
   final String? ownerId;
   final String? vesselId;
-  const Business({required this.id, required this.name, required this.category, required this.description, this.lat, this.lng, this.verified = false, this.followers = 0, this.ownerId, this.vesselId});
+  /// فئة الدائرة التجارية (brand/cinema/hotel/car_rental) إن كانت من إضافة الدوائر التجارية.
+  final String? kind;
+  const Business({required this.id, required this.name, required this.category, required this.description, this.lat, this.lng, this.verified = false, this.followers = 0, this.ownerId, this.vesselId, this.kind});
   factory Business.fromJson(Map m) => Business(
         id: _s(m, ['id']),
         name: _s(m, ['name']),
@@ -461,6 +463,7 @@ class Business {
         followers: _i(m, ['followers']),
         ownerId: _sn(m, ['ownerId', 'owner_id']),
         vesselId: _sn(m, ['vesselId', 'vessel_id']),
+        kind: _sn(m, ['kind']),
       );
 }
 

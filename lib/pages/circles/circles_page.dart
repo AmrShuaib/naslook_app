@@ -7,6 +7,7 @@ import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
+import '../business/business_list.dart';
 import 'circle_detail_page.dart';
 
 class CirclesPage extends ConsumerStatefulWidget {
@@ -25,7 +26,7 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
     final discover = ref.watch(discoverVesselsProvider(q));
     return Scaffold(
       backgroundColor: Joy.bg,
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: tab == 2 ? null : FloatingActionButton.extended(
         onPressed: _create,
         backgroundColor: Joy.primary,
         foregroundColor: Joy.primaryOn,
@@ -40,7 +41,8 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
             decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)),
             child: Row(children: [
               _seg('دوائري${mine.value != null ? ' · ${mine.value!.length}' : ''}', 0),
-              _seg('اكتشف حولك', 1),
+              _seg('اكتشف', 1),
+              _seg('تجارية', 2),
             ]),
           ),
         ),
@@ -52,6 +54,9 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
               decoration: const InputDecoration(hintText: 'ابحث باسم الدائرة أو موضوعها', prefixIcon: Icon(Icons.search_rounded, color: Joy.textMuted)),
             ),
           ),
+        if (tab == 2)
+          const Expanded(child: BizListView())
+        else
         Expanded(
           child: (tab == 0 ? mine : discover).when(
             data: (list) => list.isEmpty

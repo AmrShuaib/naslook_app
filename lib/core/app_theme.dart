@@ -46,9 +46,9 @@ class AppTheme {
   static const displayFont = 'BalooBhaijaan2';
 
   static ThemeData get light {
-    // النص الافتراضي بوزن متوسط (500) بدل العادي (400) ليكون أوضح قليلاً
+    // النص الافتراضي بوزن شبه عريض (600) بدل العادي (400) ليكون سميكاً قليلاً وأوضح
     final base = ThemeData(useMaterial3: true, fontFamily: bodyFont).textTheme.apply(bodyColor: Joy.text, displayColor: Joy.text);
-    TextStyle? medium(TextStyle? t) => t?.copyWith(fontWeight: FontWeight.w500);
+    TextStyle? medium(TextStyle? t) => t?.copyWith(fontWeight: FontWeight.w600);
     final body = base.copyWith(
       bodyLarge: medium(base.bodyLarge), bodyMedium: medium(base.bodyMedium), bodySmall: medium(base.bodySmall),
       labelLarge: medium(base.labelLarge), labelMedium: medium(base.labelMedium), labelSmall: medium(base.labelSmall),
@@ -130,7 +130,7 @@ class AppTheme {
         side: BorderSide.none,
         // ChipThemeData.labelStyle يحلّ محل نمط السمة كاملاً (لا يُدمج معه)، فلا بد من ذكر الخط صراحةً
         // وإلا سقط النص إلى Roboto الذي يُجلب من Google ويختفي حين تُحجب
-        labelStyle: const TextStyle(fontFamily: bodyFont, color: Joy.text, fontSize: 13, fontWeight: FontWeight.w500),
+        labelStyle: const TextStyle(fontFamily: bodyFont, color: Joy.text, fontSize: 13, fontWeight: FontWeight.w600),
         secondaryLabelStyle: const TextStyle(fontFamily: bodyFont, color: Joy.primaryOn, fontSize: 13, fontWeight: FontWeight.w600),
         shape: const StadiumBorder(),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
@@ -144,7 +144,7 @@ class AppTheme {
         labelTextStyle: WidgetStateProperty.resolveWith((s) => TextStyle(
               fontFamily: bodyFont,
               fontSize: 11,
-              fontWeight: s.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w500,
+              fontWeight: s.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w600,
               color: s.contains(WidgetState.selected) ? Joy.primary : Joy.textMuted,
             )),
         iconTheme: WidgetStateProperty.resolveWith((s) => IconThemeData(color: s.contains(WidgetState.selected) ? Joy.primary : Joy.textMuted)),

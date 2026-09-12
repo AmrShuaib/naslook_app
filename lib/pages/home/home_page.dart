@@ -12,6 +12,7 @@ import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../circles/circle_detail_page.dart';
 import '../events/events_page.dart';
+import '../business/business_list.dart';
 import '../market/market_page.dart';
 import '../wallet/wallet_page.dart';
 
@@ -81,6 +82,19 @@ class HomePage extends ConsumerWidget {
             const SizedBox(width: 8),
             _Quick(icon: Icons.storefront_outlined, label: 'السوق', color: Joy.sunSoft, fg: Joy.sunText, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MarketPage()))),
           ]),
+          const SizedBox(height: 10),
+          JoyCard(
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BusinessesPage())),
+            child: Row(children: [
+              Container(width: 46, height: 46, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.local_mall_outlined, color: Joy.primary)),
+              const SizedBox(width: 12),
+              const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('الدوائر التجارية', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                Text('براندات عالمية · سينما · فنادق · تأجير سيارات', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+              ])),
+              const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+            ]),
+          ),
           const SizedBox(height: 18),
           SectionTitle('دوائرك', action: 'الكل', onAction: () => ref.read(navIndexProvider.notifier).state = 2),
           vessels.when(

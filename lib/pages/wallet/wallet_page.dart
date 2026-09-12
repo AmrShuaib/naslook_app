@@ -12,6 +12,7 @@ import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../business/my_bookings_page.dart';
 import '../events/events_page.dart';
 
 final walletProvider = FutureProvider<Wallet>((ref) => ref.watch(apiClientProvider).wallet());
@@ -57,6 +58,7 @@ class WalletPage extends ConsumerWidget {
                 _action(Icons.send_rounded, 'تحويل', () => _transfer(context, ref)),
                 _action(Icons.qr_code_scanner_rounded, 'دفع', () => _pay(context, ref)),
                 _action(Icons.confirmation_number_outlined, 'تذاكري', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()))),
+                _action(Icons.receipt_long_outlined, 'حجوزاتي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
                 if (wallet.testTopup) _action(Icons.add_rounded, 'شحن', () => _topup(context, ref)),
               ]),
               const SizedBox(height: 18),
@@ -183,7 +185,7 @@ class TxRow extends StatelessWidget {
           Text('${t.positive ? '+' : '−'}${money(t.amount.abs())}', style: TextStyle(fontWeight: FontWeight.w700, color: t.positive ? Joy.success : Joy.text)),
         ]),
       );
-  IconData _icon(String k) => switch (k) { 'ticket' || 'ticket_sale' => Icons.confirmation_number_outlined, 'market' || 'market_sale' => Icons.shopping_bag_outlined, 'topup' || 'credit' => Icons.add_rounded, 'refund' => Icons.replay_rounded, _ => Icons.swap_horiz_rounded };
+  IconData _icon(String k) => switch (k) { 'ticket' || 'ticket_sale' => Icons.confirmation_number_outlined, 'market' || 'market_sale' => Icons.shopping_bag_outlined, 'topup' || 'credit' => Icons.add_rounded, 'refund' || 'biz_refund' => Icons.replay_rounded, 'biz' => Icons.storefront_outlined, _ => Icons.swap_horiz_rounded };
 }
 
 class StatementPage extends ConsumerWidget {
