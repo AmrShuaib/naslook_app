@@ -6,6 +6,7 @@ import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../chat/chat_thread_page.dart';
 
@@ -51,7 +52,7 @@ class NotificationsPage extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: c.peer))),
                   child: Row(children: [
-                    Avatar(name: c.peer.nickname, url: c.peer.avatarUrl, size: 40),
+                    ProfileAvatar(person: c.peer, size: 40),
                     const SizedBox(width: 10),
                     Expanded(child: Text('${c.peer.nickname}: ${c.lastContent ?? ''}', maxLines: 1, overflow: TextOverflow.ellipsis)),
                     Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.primary, borderRadius: BorderRadius.circular(999)), child: Text('${c.unread}', style: const TextStyle(color: Joy.primaryOn, fontSize: 11, fontWeight: FontWeight.w700))),
@@ -67,7 +68,7 @@ class NotificationsPage extends ConsumerWidget {
                 child: JoyCard(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   child: Row(children: [
-                    Avatar(name: p.author.nickname, url: p.author.avatarUrl, size: 40),
+                    ProfileAvatar(person: p.author, size: 40),
                     const SizedBox(width: 10),
                     Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text('${p.author.nickname} في ${p.vesselName ?? 'دائرتك'}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
@@ -87,7 +88,7 @@ class NotificationsPage extends ConsumerWidget {
                         InkWell(
                           onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p))),
                           borderRadius: BorderRadius.circular(16),
-                          child: SizedBox(width: 64, child: Column(children: [Avatar(name: p.nickname, url: p.avatarUrl, size: 52), const SizedBox(height: 4), Text(p.nickname, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5))])),
+                          child: SizedBox(width: 64, child: Column(children: [ProfileAvatar(person: p, size: 52), const SizedBox(height: 4), Text(p.nickname, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5))])),
                         ),
                     ]),
               loading: () => const LinearProgressIndicator(),
@@ -122,7 +123,7 @@ class _RequestRow extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: r.from))),
         child: Row(children: [
-          Avatar(name: r.from.nickname, url: r.from.avatarUrl, size: 44),
+          ProfileAvatar(person: r.from, size: 44),
           const SizedBox(width: 10),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(r.from.nickname, style: const TextStyle(fontWeight: FontWeight.w600)),

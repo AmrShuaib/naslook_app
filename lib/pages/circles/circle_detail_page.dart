@@ -6,6 +6,7 @@ import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../home/home_page.dart';
 
@@ -139,7 +140,7 @@ class _CircleDetailPageState extends ConsumerState<CircleDetailPage> {
                 Text('الأعضاء · ${list.length}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
                 const SizedBox(height: 8),
                 for (final p in list)
-                  ListTile(contentPadding: EdgeInsets.zero, leading: Avatar(name: p.nickname, url: p.avatarUrl, size: 40), title: Text(p.nickname)),
+                  ListTile(contentPadding: EdgeInsets.zero, leading: ProfileAvatar(person: p, size: 40), title: Text(p.nickname), onTap: () => openProfile(context, p)),
               ],
             ),
             loading: () => const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
@@ -193,7 +194,7 @@ class _Comments extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Avatar(name: x.author.nickname, url: x.author.avatarUrl, size: 28),
+                  ProfileAvatar(person: x.author, size: 28),
                   const SizedBox(width: 8),
                   Expanded(child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

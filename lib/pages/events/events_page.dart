@@ -8,6 +8,7 @@ import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../wallet/wallet_page.dart';
 
@@ -152,7 +153,7 @@ class EventDetailPage extends ConsumerWidget {
         data: (e) => ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
           Text(e.title, style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 6),
-          Row(children: [Avatar(name: e.host.nickname, url: e.host.avatarUrl, size: 28), const SizedBox(width: 8), Text('يستضيفها ${e.host.nickname}', style: const TextStyle(color: Joy.textMuted, fontSize: 13))]),
+          Row(children: [ProfileAvatar(person: e.host, size: 28), const SizedBox(width: 8), Text('يستضيفها ${e.host.nickname}', style: const TextStyle(color: Joy.textMuted, fontSize: 13))]),
           const SizedBox(height: 14),
           JoyCard(child: Column(children: [
             _row(Icons.event_rounded, when(e.startsAt), e.endsAt != null ? 'تنتهي ${clockOf(e.endsAt)}' : null),

@@ -10,6 +10,7 @@ import '../../api/session.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../events/events_page.dart';
 
@@ -172,7 +173,7 @@ class TxRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         child: Row(children: [
           t.peer != null && t.peer!.nickname.isNotEmpty
-              ? Avatar(name: t.peer!.nickname, url: t.peer!.avatarUrl, size: 40)
+              ? ProfileAvatar(person: t.peer!, size: 40)
               : Container(width: 40, height: 40, decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)), child: Icon(_icon(t.kind), size: 20, color: Joy.text)),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

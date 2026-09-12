@@ -8,6 +8,7 @@ import '../../core/location.dart';
 import '../../core/nav_provider.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../circles/circle_detail_page.dart';
 import '../events/events_page.dart';
@@ -155,6 +156,7 @@ class _StoriesRail extends ConsumerWidget {
               label: s.nickname,
               child: InkWell(
                 onTap: () => _showStory(context, s),
+                onLongPress: () => openProfile(context, Person(id: s.userId, nickname: s.nickname, avatarUrl: s.avatarUrl)),
                 borderRadius: BorderRadius.circular(34),
                 child: Avatar(name: s.nickname, url: s.avatarUrl, size: 52, ring: true),
               ),
@@ -194,7 +196,7 @@ class _StoriesRail extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Avatar(name: s.nickname, url: s.avatarUrl, size: 44, ring: true),
+            ProfileAvatar(person: Person(id: s.userId, nickname: s.nickname, avatarUrl: s.avatarUrl), size: 44, ring: true),
             const SizedBox(width: 10),
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(s.nickname, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
@@ -266,7 +268,7 @@ class PostCard extends ConsumerWidget {
       onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleDetailPage(vesselId: post.vesselId, focusPostId: post.id))),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Avatar(name: post.author.nickname, url: post.author.avatarUrl, size: 36),
+          ProfileAvatar(person: post.author, size: 36),
           const SizedBox(width: 10),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

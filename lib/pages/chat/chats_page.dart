@@ -8,6 +8,7 @@ import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import 'chat_thread_page.dart';
 
@@ -204,7 +205,7 @@ class _ChatRow extends StatelessWidget {
     return ListRow(
       divider: divider,
       onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: c.peer))),
-      leading: Avatar(name: c.peer.nickname, url: c.peer.avatarUrl, size: 52),
+      leading: ProfileAvatar(person: c.peer, size: 52),
       title: Text(c.peer.nickname, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text('${c.lastMine ? 'أنت: ' : ''}$preview', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: unread ? Joy.text : Joy.textMuted, fontWeight: unread ? FontWeight.w600 : FontWeight.w500)),
       trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
@@ -229,7 +230,7 @@ class _HitRow extends StatelessWidget {
   Widget build(BuildContext context) => ListRow(
         divider: divider,
         onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: h.peer, initialMessageId: h.id))),
-        leading: Avatar(name: h.peer.nickname, url: h.peer.avatarUrl, size: 44),
+        leading: ProfileAvatar(person: h.peer, size: 44),
         title: Text(h.peer.nickname, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text('${h.mine ? 'أنت: ' : ''}${Message.previewOf(h.type, h.content)}', maxLines: 2, overflow: TextOverflow.ellipsis),
         trailing: Text(timeAgo(h.at), style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
@@ -244,7 +245,7 @@ class _RequestRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) => ListRow(
         divider: divider,
         onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: r.from))),
-        leading: Avatar(name: r.from.nickname, url: r.from.avatarUrl, size: 48),
+        leading: ProfileAvatar(person: r.from, size: 48),
         title: Text(r.from.nickname),
         subtitle: Text('${r.lastContent ?? 'يريد مراسلتك'} · ${timeAgo(r.createdAt)}', maxLines: 1, overflow: TextOverflow.ellipsis),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [

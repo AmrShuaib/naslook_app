@@ -21,6 +21,7 @@ import '../../core/media/media.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/pattern_background.dart';
+import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 
 /// تسمية فاصل اليوم: اليوم، أمس، اسم اليوم خلال الأسبوع، وإلا اليوم والشهر (والسنة إن اختلفت).
@@ -714,7 +715,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     return AppBar(
       titleSpacing: 0,
       title: Row(children: [
-        Avatar(name: widget.peer.nickname, url: widget.peer.avatarUrl, size: 38, online: _online),
+        ProfileAvatar(person: widget.peer, size: 38, online: _online),
         const SizedBox(width: 10),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

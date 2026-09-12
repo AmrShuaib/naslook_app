@@ -7,6 +7,7 @@ import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../chat/chat_thread_page.dart';
 import '../wallet/wallet_page.dart';
@@ -115,7 +116,7 @@ class ListingCard extends StatelessWidget {
           Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
             const SizedBox(height: 4),
-            Row(children: [Avatar(name: l.seller.nickname, url: l.seller.avatarUrl, size: 20), const SizedBox(width: 6), Expanded(child: Text(l.seller.nickname, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)))]),
+            Row(children: [ProfileAvatar(person: l.seller, size: 20), const SizedBox(width: 6), Expanded(child: Text(l.seller.nickname, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)))]),
             const SizedBox(height: 6),
             Text(l.price == 0 ? 'مجاناً' : money(l.price), style: const TextStyle(fontWeight: FontWeight.w700, color: Joy.primary, fontSize: 14.5)),
           ])),
@@ -149,7 +150,7 @@ class _ListingPageState extends ConsumerState<ListingPage> {
           Text('${x.kind == 'service' ? 'خدمة' : 'منتج'} · ${marketCategories[x.category] ?? x.category}${x.placeName != null && x.placeName!.isNotEmpty ? ' · ${x.placeName}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
           const SizedBox(height: 12),
           JoyCard(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), child: Row(children: [
-            Avatar(name: x.seller.nickname, url: x.seller.avatarUrl, size: 44),
+            ProfileAvatar(person: x.seller, size: 44),
             const SizedBox(width: 10),
             Expanded(child: Text(x.seller.nickname, style: const TextStyle(fontWeight: FontWeight.w600))),
             if (!x.mine) OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: x.seller))), icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18), label: const Text('مراسلة')),
@@ -216,7 +217,7 @@ class _OrderCard extends ConsumerWidget {
     final status = switch (o.status) { 'paid' => 'مدفوع · بانتظار التسليم', 'delivered' => 'تم التسليم', 'cancelled' => 'ملغى', _ => o.status };
     return JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
-        Avatar(name: other.nickname, url: other.avatarUrl, size: 40),
+        ProfileAvatar(person: other, size: 40),
         const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${o.title} × ${o.qty}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5)),
