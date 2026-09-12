@@ -68,7 +68,13 @@ export default async function business(app, opts) {
       ON CONFLICT (id) DO UPDATE SET biz_id=EXCLUDED.biz_id, kind=EXCLUDED.kind, title=EXCLUDED.title, description=EXCLUDED.description, price=EXCLUDED.price,
         unit=EXCLUDED.unit, stock=EXCLUDED.stock, meta=EXCLUDED.meta, image_url=EXCLUDED.image_url, sort=EXCLUDED.sort, active=true`, ip);
   }
-  const seeding = seedAll().catch((e) => { try { app.log.error({ err: e }, "business: seed failed"); } catch { console.error("business: seed failed", e); } });
+  let seedState = "pending";
+  const seeding = seedAll().then(() => { seedState = "ok"; }).catch((e) => { seedState = "error: " + (e?.message || e); try { app.log.error({ err: e }, "business: seed failed"); } catch { console.error("business: seed failed", e); } });
+  // تشخيص عام خفيف: زمن تشغيل العملية ومنفذ الاستماع الفعلي (يساعد فحص صحة النشر التلقائي)
+  app.get("/biz/status", async () => {
+    let addr = null; try { addr = app.server?.address?.() ?? null; } catch { addr = null; }
+    return { ok: true, uptimeSec: Math.round(process.uptime()), seed: seedState, listen: addr, envPort: process.env.PORT ?? null, node: process.version };
+  });
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
