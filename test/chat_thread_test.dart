@@ -89,6 +89,18 @@ Future<void> _pumpThread(WidgetTester tester, _FakeServer srv, {Widget? home}) a
 }
 
 void main() {
+  group('Message.kindOf', () {
+    test('derives media kind from a chat media URL sent as text', () {
+      expect(Message.kindOf('text', 'https://naslife.app/chat/media/k9x1-ab12cd34ef56ab12cd34ef56.m4a'), 'audio');
+      expect(Message.kindOf('text', 'https://naslife.app/chat/media/k9x1-ab12cd34ef56ab12cd34ef56.jpg'), 'image');
+      expect(Message.kindOf('text', 'https://naslife.app/chat/media/k9x1-ab12cd34ef56ab12cd34ef56.mp4'), 'video');
+      expect(Message.kindOf('text', 'شوف https://naslife.app/chat/media/x.jpg'), 'text');
+      expect(Message.kindOf('text', 'https://example.com/a.jpg'), 'text');
+      expect(Message.kindOf('image', '/chat/media/x.jpg'), 'image');
+      expect(Message.previewOf('text', 'https://naslife.app/chat/media/k9x1-ab12cd34ef56ab12cd34ef56.m4a'), '🎤 رسالة صوتية');
+    });
+  });
+
   group('dayLabel', () {
     final now = DateTime(2026, 9, 11, 15); // الجمعة
     test('today / yesterday / weekday / date / other year', () {

@@ -152,10 +152,25 @@ class Message {
   /// المفتاح الذي يميّز الرسالة في القوائم: معرّف الخادم إن وُجد وإلا المحلي.
   String get key => id.isNotEmpty ? id : (localId ?? '');
   bool get isPending => status != MessageStatus.sent;
-  bool get isMedia => type != 'text';
+  /// النوع الفعلي للعرض: الوسائط تُرسل للخادم كنص محتواه رابط الملف (الخادم الأساسي يقبل النص فقط)،
+  /// ويُستنتج نوعها من امتداد الرابط.
+  String get mediaKind => kindOf(type, content);
+  bool get isMedia => mediaKind != 'text';
   int? get durationMs => extra['durationMs'] is num ? (extra['durationMs'] as num).toInt() : null;
   String get preview => previewOf(type, content);
-  static String previewOf(String type, String content) => switch (type) {
+  static final _mediaUrl = RegExp(r'^https?://[^\s]+/chat/media/[A-Za-z0-9-]+\.([a-z0-9]{2,5})$', caseSensitive: false);
+  static String kindOf(String type, String content) {
+    if (type != 'text') return type;
+    final m = _mediaUrl.firstMatch(content.trim());
+    if (m == null) return 'text';
+    return switch (m.group(1)!.toLowerCase()) {
+      'jpg' || 'jpeg' || 'png' || 'webp' || 'gif' => 'image',
+      'mp4' || 'webm' || 'mov' => 'video',
+      'm4a' || 'weba' || 'ogg' || 'mp3' || 'wav' || 'aac' => 'audio',
+      _ => 'file',
+    };
+  }
+  static String previewOf(String type, String content) => switch (kindOf(type, content)) {
         'text' => content, 'image' => '📷 صورة', 'video' => '🎬 فيديو', 'audio' => '🎤 رسالة صوتية', _ => '📎 ملف',
       };
   Message copyWith({String? id, DateTime? sentAt, DateTime? deliveredAt, DateTime? readAt, MessageStatus? status, String? localId, String? replyTo,

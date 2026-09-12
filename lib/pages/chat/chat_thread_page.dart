@@ -400,7 +400,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     Map<String, dynamic>? extra,
     Message? retry,
   }) async {
-    final quote = retry?.quote ?? (_replyTo == null ? null : MessageQuote(id: _replyTo!.key, senderId: _replyTo!.senderId, senderName: _replyTo!.senderId == myId ? 'أنت' : widget.peer.nickname, type: _replyTo!.type, content: _replyTo!.type == 'text' ? _replyTo!.content : ''));
+    final quote = retry?.quote ?? (_replyTo == null ? null : MessageQuote(id: _replyTo!.key, senderId: _replyTo!.senderId, senderName: _replyTo!.senderId == myId ? 'أنت' : widget.peer.nickname, type: _replyTo!.mediaKind, content: _replyTo!.mediaKind == 'text' ? _replyTo!.content : ''));
     final local = retry?.copyWith(status: MessageStatus.sending) ??
         Message(id: '', localId: 'local-${DateTime.now().microsecondsSinceEpoch}', senderId: myId, type: type, content: content, sentAt: DateTime.now(),
             status: MessageStatus.sending, quote: quote, replyTo: quote?.id, extra: extra ?? const {});
@@ -418,12 +418,15 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         setState(() { _byKey[local.key] = local.copyWith(content: body); _rebuild(); });
       }
       if (body.isEmpty) throw const ApiException(0, 'لا محتوى للإرسال');
-      final m = await _api.sendMessage(_peerId, body, type: local.type, replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: local.extra);
+      // الخادم الأساسي يقبل النص فقط: الوسائط تُرسل كرابط مطلق ويُستنتج نوعها من امتداده
+      if (local.type != 'text') body = _api.absolute(body);
+      final extra = {...local.extra, if (local.type != 'text') 'kind': local.type};
+      final m = await _api.sendMessage(_peerId, body, type: 'text', replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: extra);
       if (!mounted) return;
       final serverId = m.id.isNotEmpty && m.senderId != 'me' ? m.id : null;
       final sent = (serverId != null ? m : local).copyWith(
         id: serverId ?? local.key, status: MessageStatus.sent, localId: local.localId, sentAt: m.sentAt ?? local.sentAt, content: body,
-        quote: local.quote, replyTo: local.replyTo, forwardedFrom: local.forwardedFrom, extra: {...local.extra, ...m.extra},
+        quote: local.quote, replyTo: local.replyTo, forwardedFrom: local.forwardedFrom, extra: {...extra, ...m.extra},
       );
       setState(() {
         _byKey.remove(local.key);
@@ -431,8 +434,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         _metaFetched.add(sent.id);
         _rebuild();
       });
-      if (serverId != null && (local.quote != null || local.forwardedFrom != null || local.extra.isNotEmpty)) {
-        _api.setMessageMeta(serverId, replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: local.extra).catchError((_) {});
+      if (serverId != null && (local.quote != null || local.forwardedFrom != null || extra.isNotEmpty)) {
+        _api.setMessageMeta(serverId, replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: extra).catchError((_) {});
       }
       ref.invalidate(chatsProvider);
     } catch (e) {
@@ -548,7 +551,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     if (target == null || !mounted) return;
     final from = m.senderId == myId ? myName : widget.peer.nickname;
     try {
-      final sent = await _api.sendMessage(target.id, m.content, type: m.type, forwardedFrom: from, extra: m.extra);
+      final sent = await _api.sendMessage(target.id, m.type == 'text' ? m.content : _api.absolute(m.content), type: 'text', forwardedFrom: from, extra: m.extra);
       if (sent.id.isNotEmpty && sent.senderId != 'me') {
         _api.setMessageMeta(sent.id, forwardedFrom: from, extra: m.extra.isEmpty ? null : m.extra).catchError((_) {});
         if (target.id == _peerId && mounted) setState(() { _merge([sent.copyWith(forwardedFrom: from, extra: m.extra)]); });
@@ -570,7 +573,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     final hits = <int>[];
     for (var i = _messages.length - 1; i >= 0; i--) {
       final m = _messages[i];
-      if ((m.type == 'text' && m.content.toLowerCase().contains(q)) || (m.quote?.content.toLowerCase().contains(q) ?? false)) hits.add(i);
+      if ((m.mediaKind == 'text' && m.content.toLowerCase().contains(q)) || (m.quote?.content.toLowerCase().contains(q) ?? false)) hits.add(i);
     }
     _matches = hits;
     if (!keepIndex || _matchIdx >= hits.length) _matchIdx = 0;
@@ -601,7 +604,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
             const SizedBox(height: 8),
             if (m.status == MessageStatus.sent) ListTile(leading: const Icon(Icons.reply_rounded), title: const Text('رد'), onTap: () => Navigator.pop(ctx, 'reply')),
             if (m.status == MessageStatus.sent) ListTile(leading: const Icon(Icons.forward_rounded), title: const Text('إعادة توجيه'), onTap: () => Navigator.pop(ctx, 'forward')),
-            if (m.type == 'text') ListTile(leading: const Icon(Icons.copy_rounded), title: const Text('نسخ النص'), onTap: () => Navigator.pop(ctx, 'copy')),
+            if (m.mediaKind == 'text') ListTile(leading: const Icon(Icons.copy_rounded), title: const Text('نسخ النص'), onTap: () => Navigator.pop(ctx, 'copy')),
             if (m.isMedia && m.content.isNotEmpty) ListTile(leading: const Icon(Icons.open_in_new_rounded), title: const Text('فتح الملف'), onTap: () => Navigator.pop(ctx, 'open')),
             if (m.status == MessageStatus.failed) ListTile(leading: const Icon(Icons.refresh_rounded), title: const Text('إعادة الإرسال'), onTap: () => Navigator.pop(ctx, 'retry')),
             if (m.status == MessageStatus.failed) ListTile(leading: const Icon(Icons.delete_outline_rounded), title: const Text('تجاهل الرسالة'), onTap: () => Navigator.pop(ctx, 'discard')),
@@ -1003,7 +1006,7 @@ class _BubbleState extends State<_Bubble> {
 
   Widget _media(Message m) {
     final url = widget.mediaUrl;
-    switch (m.type) {
+    switch (m.mediaKind) {
       case 'image':
         final img = widget.localBytes != null
             ? Image.memory(widget.localBytes!, fit: BoxFit.cover)
@@ -1084,7 +1087,7 @@ class _BubbleState extends State<_Bubble> {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 400),
                 margin: EdgeInsets.only(top: widget.joinedAbove ? 1.5 : 4, bottom: widget.joinedBelow ? 1.5 : 4),
-                padding: EdgeInsets.fromLTRB(m.type == 'image' ? 6 : 14, m.type == 'image' ? 6 : 9, m.type == 'image' ? 6 : 14, 7),
+                padding: EdgeInsets.fromLTRB(m.mediaKind == 'image' ? 6 : 14, m.mediaKind == 'image' ? 6 : 9, m.mediaKind == 'image' ? 6 : 14, 7),
                 decoration: BoxDecoration(
                   color: widget.highlighted ? Joy.sun.withValues(alpha: .7) : baseColor,
                   border: failed ? Border.all(color: Joy.danger) : mine ? null : Border.all(color: Joy.line),
@@ -1099,7 +1102,7 @@ class _BubbleState extends State<_Bubble> {
                   if (m.forwardedFrom != null)
                     Padding(padding: const EdgeInsets.only(bottom: 4), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.forward_rounded, size: 14, color: Joy.textMuted), const SizedBox(width: 4), Text('معاد توجيهها من ${m.forwardedFrom}', style: const TextStyle(fontSize: 11, color: Joy.textMuted, fontStyle: FontStyle.italic))])),
                   if (m.quote != null) _QuoteBox(name: m.quote!.senderName.isNotEmpty ? m.quote!.senderName : widget.peerName, text: m.quote!.preview, onDark: mine, onTap: widget.onQuoteTap),
-                  if (m.type == 'text') Text.rich(TextSpan(style: style, children: _rich(m.content, style))) else _media(m),
+                  if (m.mediaKind == 'text') Text.rich(TextSpan(style: style, children: _rich(m.content, style))) else _media(m),
                   const SizedBox(height: 2),
                   Row(mainAxisSize: MainAxisSize.min, children: [
                     if (failed)
