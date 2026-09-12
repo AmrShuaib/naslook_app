@@ -49,17 +49,17 @@ class _Srv {
     calls.add(key);
     if ((req.headers['content-type'] ?? '').contains('json') && req.body.startsWith('{')) bodies[key] = jsonDecode(req.body) as Map<String, dynamic>;
     switch (key) {
-      case 'GET /posts':
+      case 'GET /mapposts':
         return _json([_post1(), _post2()]);
-      case 'GET /posts/mine':
+      case 'GET /mapposts/mine':
         return _json([_post2()]);
-      case 'POST /posts':
+      case 'POST /mapposts':
         final b = bodies[key]!;
         return _json({..._post2(), 'id': 'aaaaaaaa-0000-4000-8000-000000000009', 'status': 'active', ...b, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'mine': true});
-      case 'POST /posts/$_p1/like':
+      case 'POST /mapposts/$_p1/like':
         liked = !liked;
         return _json({'ok': true, 'liked': liked, 'likes': liked ? 6 : 5});
-      case 'POST /posts/$_p1/view':
+      case 'POST /mapposts/$_p1/view':
         return _json({'ok': true, 'views': 43});
       case 'GET /me/map-presence':
         return _json({'lat': null, 'lng': null, 'visible': false, 'title': ''});
@@ -150,7 +150,7 @@ void main() {
     await tester.ensureVisible(find.text('نشر على الخريطة'));
     await tester.tap(find.text('نشر على الخريطة'));
     await _settle(tester);
-    final body = srv.bodies['POST /posts']!;
+    final body = srv.bodies['POST /mapposts']!;
     expect(body['kind'], 'text');
     expect(body['lat'], 21.5);
     expect((body['overlays'] as List).first['text'], 'خصم 30٪');
@@ -169,11 +169,11 @@ void main() {
     expect(find.text('عرض'), findsOneWidget);
     expect(find.text('عرض القهوة'), findsOneWidget);
     expect(find.text('اطلب عبر واتساب'), findsOneWidget);
-    expect(srv.calls, contains('POST /posts/$_p1/view'));
+    expect(srv.calls, contains('POST /mapposts/$_p1/view'));
     expect(find.text('5'), findsOneWidget);
     await tester.tap(find.byIcon(Icons.favorite_outline_rounded));
     await _settle(tester);
-    expect(srv.calls, contains('POST /posts/$_p1/like'));
+    expect(srv.calls, contains('POST /mapposts/$_p1/like'));
     expect(find.text('6'), findsOneWidget);
     await tester.pumpWidget(const SizedBox()); // يوقف مؤقّت التقدّم التلقائي
   });

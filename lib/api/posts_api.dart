@@ -67,16 +67,16 @@ class MapPost {
 }
 
 extension PostsApi on ApiClient {
-  Future<MapPost> createPost(Map<String, dynamic> body) async => MapPost.fromJson(await post('/posts', body));
+  Future<MapPost> createPost(Map<String, dynamic> body) async => MapPost.fromJson(await post('/mapposts', body));
   Future<List<MapPost>> posts({BBox? bbox, int limit = 200, String? tag}) async =>
-      asList(await getList('/posts', query: {if (bbox != null) 'bbox': bbox.query, 'limit': '$limit', if (tag != null) 'tag': tag})).map(MapPost.fromJson).toList();
-  Future<List<MapPost>> myPosts() async => asList(await getList('/posts/mine')).map(MapPost.fromJson).toList();
-  Future<MapPost> mapPost(String id) async => MapPost.fromJson(await get('/posts/$id'));
-  Future<MapPost> updatePost(String id, Map<String, dynamic> patch) async => MapPost.fromJson(await patch_('/posts/$id', patch));
-  Future<void> deletePost(String id) => delete('/posts/$id');
-  Future<int> viewPost(String id) async => _i((await post('/posts/$id/view', const {}))['views']);
+      asList(await getList('/mapposts', query: {if (bbox != null) 'bbox': bbox.query, 'limit': '$limit', if (tag != null) 'tag': tag})).map(MapPost.fromJson).toList();
+  Future<List<MapPost>> myPosts() async => asList(await getList('/mapposts/mine')).map(MapPost.fromJson).toList();
+  Future<MapPost> mapPost(String id) async => MapPost.fromJson(await get('/mapposts/$id'));
+  Future<MapPost> updatePost(String id, Map<String, dynamic> patch) async => MapPost.fromJson(await patch_('/mapposts/$id', patch));
+  Future<void> deletePost(String id) => delete('/mapposts/$id');
+  Future<int> viewPost(String id) async => _i((await post('/mapposts/$id/view', const {}))['views']);
   Future<({bool liked, int likes})> likePost(String id) async {
-    final d = await post('/posts/$id/like', const {});
+    final d = await post('/mapposts/$id/like', const {});
     return (liked: d['liked'] == true, likes: _i(d['likes']));
   }
 }

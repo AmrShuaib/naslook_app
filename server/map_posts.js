@@ -1,7 +1,8 @@
 // إضافة Fastify لمنشورات الخريطة في Naslife: منشور بصورة أو فيديو قصير أو تسجيل صوتي أو نص، مع طبقات (نصوص وملصقات) تُرسم
 // فوق الوسائط عند العرض، وحقول احترافية للمسوّقين والمستثمرين (نوع المنشور، عنوان، سعر، زر إجراء)، ومدة ظهور (يوم/3 أيام/أسبوع)،
 // وإعجابات ومشاهدات. الوسائط تُرفع عبر /chat/upload ثم يُمرَّر رابطها هنا.
-// التسجيل في src/index.js (الاسم map_posts.js لأن النواة تملك ملفاً باسم posts.js):
+// المسارات تحت /mapposts (النواة تستخدم /posts لمنشورات الدوائر) والملف map_posts.js (النواة تملك posts.js).
+// التسجيل في src/index.js:
 //   await app.register((await import("./map_posts.js")).default, { pool, auth });
 import crypto from "node:crypto";
 
@@ -97,7 +98,7 @@ export default async function posts(app, opts) {
   const many = async (rows, uid) => { const cache = new Map(); const res = []; for (const r of rows) { if (!cache.has(r.user_id)) cache.set(r.user_id, await person(r.user_id)); res.push({ ...(await out(r, uid)), user: cache.get(r.user_id) }); } return res; };
 
   // ---- إنشاء
-  app.post("/posts", async (req, reply) => {
+  app.post("/mapposts", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     const b = req.body ?? {};
@@ -120,7 +121,7 @@ export default async function posts(app, opts) {
   });
 
   // ---- القوائم: على الخريطة (حدود)، الأحدث للرئيسية، منشوراتي
-  app.get("/posts", async (req) => {
+  app.get("/mapposts", async (req) => {
     const uid = await optionalAuth(req);
     const bb = bbox(req.query?.bbox);
     const limit = Math.max(1, Math.min(300, Number(req.query?.limit) || 200));
@@ -130,12 +131,12 @@ export default async function posts(app, opts) {
       ORDER BY p.created_at DESC LIMIT $7`, [uid, bb?.minLng ?? null, bb?.minLat ?? null, bb?.maxLng ?? null, bb?.maxLat ?? null, tag, limit])).rows;
     return many(rows, uid);
   });
-  app.get("/posts/mine", async (req, reply) => {
+  app.get("/mapposts/mine", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const rows = (await pool.query(`${SELECT} WHERE p.user_id=$1 AND p.created_at > now() - interval '30 days' ORDER BY p.created_at DESC LIMIT 200`, [uid])).rows;
     return many(rows, uid);
   });
-  app.get("/posts/:id", async (req, reply) => {
+  app.get("/mapposts/:id", async (req, reply) => {
     const uid = await optionalAuth(req);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const p = (await pool.query(`${SELECT} WHERE p.id=$2`, [uid, req.params.id])).rows[0];
@@ -145,7 +146,7 @@ export default async function posts(app, opts) {
   });
 
   // ---- تعديل (صاحب المنشور): النص والطبقات والحقول الاحترافية والإظهار/الإخفاء وتمديد المدة
-  app.patch("/posts/:id", async (req, reply) => {
+  app.patch("/mapposts/:id", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const p = (await pool.query("SELECT * FROM map_posts WHERE id=$1", [req.params.id])).rows[0];
@@ -170,7 +171,7 @@ export default async function posts(app, opts) {
     await pool.query(`UPDATE map_posts SET ${sets.join(", ")} WHERE id=$${vals.length}`, vals);
     return out((await pool.query(`${SELECT} WHERE p.id=$2`, [uid, p.id])).rows[0], uid);
   });
-  app.delete("/posts/:id", async (req, reply) => {
+  app.delete("/mapposts/:id", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const p = (await pool.query("SELECT user_id FROM map_posts WHERE id=$1", [req.params.id])).rows[0];
@@ -183,7 +184,7 @@ export default async function posts(app, opts) {
   });
 
   // ---- مشاهدة (مرة لكل مستخدم) وإعجاب (تبديل) وحجب إداري
-  app.post("/posts/:id/view", async (req, reply) => {
+  app.post("/mapposts/:id/view", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const r = await pool.query("INSERT INTO map_post_views(post_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING 1", [req.params.id, uid]);
@@ -191,7 +192,7 @@ export default async function posts(app, opts) {
     const v = (await pool.query("SELECT views FROM map_posts WHERE id=$1", [req.params.id])).rows[0];
     return { ok: true, views: Number(v?.views ?? 0) };
   });
-  app.post("/posts/:id/like", async (req, reply) => {
+  app.post("/mapposts/:id/like", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const p = (await pool.query("SELECT user_id, caption, title FROM map_posts WHERE id=$1 AND status='active'", [req.params.id])).rows[0];
@@ -206,7 +207,7 @@ export default async function posts(app, opts) {
     const n = (await pool.query("SELECT count(*)::int AS n FROM map_post_likes WHERE post_id=$1", [req.params.id])).rows[0].n;
     return { ok: true, liked, likes: n };
   });
-  app.post("/posts/:id/block", async (req, reply) => {
+  app.post("/mapposts/:id/block", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
