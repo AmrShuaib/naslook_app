@@ -65,9 +65,9 @@ fi
 if [[ $restart -eq 1 ]]; then
   if node --check "$ROOT/src/index.js" 2>>"$LOG"; then
     systemctl restart naslife && log "naslife restarted"
-    # فحص صحي: إن لم تستقر الخدمة خلال 20 ثانية نتراجع عن تغييرات الخادم ونعيد التشغيل
+    # فحص صحي: إن لم تستقر الخدمة خلال 60 ثانية نتراجع عن تغييرات الخادم ونعيد التشغيل
     ok=0
-    for i in 1 2 3 4; do sleep 5; if systemctl is-active --quiet naslife && curl -fsS -m 5 http://127.0.0.1:3000/health >/dev/null 2>&1; then ok=1; break; fi; done
+    for i in $(seq 1 12); do sleep 5; if systemctl is-active --quiet naslife && curl -fsS -m 5 http://127.0.0.1:3000/health >/dev/null 2>&1; then ok=1; break; fi; done
     if [[ $ok -eq 0 ]] && systemctl is-active --quiet naslife && [[ -z "$(command -v curl)" ]]; then ok=1; fi
     if [[ $ok -eq 0 ]]; then
       log "HEALTH CHECK FAILED after restart; rolling back server changes"

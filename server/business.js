@@ -43,22 +43,32 @@ export default async function business(app, opts) {
       biz_id TEXT NOT NULL, user_id TEXT NOT NULL, rating INT NOT NULL, text TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (biz_id, user_id));
   `);
 
-  // ---- بذر البيانات الأولية (upsert حتى تُحدَّث التعديلات عند كل نشر دون فقدان الطلبات)
-  for (const [i, b] of SEED.entries()) {
-    await pool.query(`INSERT INTO biz(id,name,name_ar,category,sector,description,lat,lng,address,hours,phone,website,color,highlights,sort)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+  // ---- بذر البيانات الأولية: استعلامان مجمّعان فقط (لا 100+ رحلة إلى قاعدة البيانات) ولا يوقفان الإقلاع،
+  // حتى يمرّ فحص الصحة في النشر التلقائي سريعاً وتبقى الطلبات السابقة محفوظة (upsert).
+  async function seedAll() {
+    const bv = [], bp = [];
+    SEED.forEach((b, i) => {
+      const o = bp.length;
+      bv.push(`($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10},$${o + 11},$${o + 12},$${o + 13},$${o + 14},$${o + 15})`);
+      bp.push(b.id, b.name, b.nameAr ?? "", b.category, b.sector ?? "", b.description ?? "", b.lat, b.lng, b.address ?? "", b.hours ?? "", b.phone ?? null, b.website ?? null, b.color ?? null, JSON.stringify(b.highlights ?? []), i);
+    });
+    await pool.query(`INSERT INTO biz(id,name,name_ar,category,sector,description,lat,lng,address,hours,phone,website,color,highlights,sort) VALUES ${bv.join(",")}
       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, name_ar=EXCLUDED.name_ar, category=EXCLUDED.category, sector=EXCLUDED.sector, description=EXCLUDED.description,
         lat=EXCLUDED.lat, lng=EXCLUDED.lng, address=EXCLUDED.address, hours=EXCLUDED.hours, phone=EXCLUDED.phone, website=EXCLUDED.website, color=EXCLUDED.color,
-        highlights=EXCLUDED.highlights, sort=EXCLUDED.sort, active=true`,
-      [b.id, b.name, b.nameAr ?? "", b.category, b.sector ?? "", b.description ?? "", b.lat, b.lng, b.address ?? "", b.hours ?? "", b.phone ?? null, b.website ?? null, b.color ?? null, JSON.stringify(b.highlights ?? []), i]);
-    for (const [j, it] of (b.items ?? []).entries()) {
-      await pool.query(`INSERT INTO biz_items(id,biz_id,kind,title,description,price,unit,stock,meta,image_url,sort)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-        ON CONFLICT (id) DO UPDATE SET biz_id=EXCLUDED.biz_id, kind=EXCLUDED.kind, title=EXCLUDED.title, description=EXCLUDED.description, price=EXCLUDED.price,
-          unit=EXCLUDED.unit, stock=EXCLUDED.stock, meta=EXCLUDED.meta, image_url=EXCLUDED.image_url, sort=EXCLUDED.sort, active=true`,
-        [it.id, b.id, it.kind, it.title, it.description ?? "", it.price, it.unit ?? "item", it.stock ?? null, JSON.stringify(it.meta ?? {}), it.imageUrl ?? null, j]);
+        highlights=EXCLUDED.highlights, sort=EXCLUDED.sort, active=true`, bp);
+    const iv = [], ip = [];
+    for (const b of SEED) {
+      (b.items ?? []).forEach((it, j) => {
+        const o = ip.length;
+        iv.push(`($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10},$${o + 11})`);
+        ip.push(it.id, b.id, it.kind, it.title, it.description ?? "", it.price, it.unit ?? "item", it.stock ?? null, JSON.stringify(it.meta ?? {}), it.imageUrl ?? null, j);
+      });
     }
+    if (iv.length) await pool.query(`INSERT INTO biz_items(id,biz_id,kind,title,description,price,unit,stock,meta,image_url,sort) VALUES ${iv.join(",")}
+      ON CONFLICT (id) DO UPDATE SET biz_id=EXCLUDED.biz_id, kind=EXCLUDED.kind, title=EXCLUDED.title, description=EXCLUDED.description, price=EXCLUDED.price,
+        unit=EXCLUDED.unit, stock=EXCLUDED.stock, meta=EXCLUDED.meta, image_url=EXCLUDED.image_url, sort=EXCLUDED.sort, active=true`, ip);
   }
+  const seeding = seedAll().catch((e) => { try { app.log.error({ err: e }, "business: seed failed"); } catch { console.error("business: seed failed", e); } });
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
@@ -161,6 +171,7 @@ export default async function business(app, opts) {
 
   // ---- القائمة (عامة) مع تصفية بالفئة والحدود الجغرافية والبحث
   app.get("/biz", async (req) => {
+    await seeding;
     const uid = await optionalAuth(req);
     const cat = CATEGORIES.has(req.query?.category) ? req.query.category : null;
     const bb = bbox(req.query?.bbox);
@@ -178,6 +189,7 @@ export default async function business(app, opts) {
 
   // ---- التفاصيل (عامة): الكتالوج والمراجعات، وطلبات المستخدم إن كان مسجّلاً
   app.get("/biz/:id", async (req, reply) => {
+    await seeding;
     const uid = await optionalAuth(req);
     if (!SLUG_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const r = await pool.query(`${LIST_SQL} AND b.id=$2`, [uid, req.params.id]);
