@@ -8,6 +8,8 @@ Map<String, dynamic> _m(dynamic v) => asMap(v);
 DateTime? _t(dynamic v) => v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
 int _i(dynamic v) => v is num ? v.toInt() : int.tryParse(v?.toString() ?? '') ?? 0;
 double? _d(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '');
+/// قائمة نصوص (asList في models.dart تحوّل العناصر إلى خرائط، فلا تصلح للنصوص).
+List<String> _strings(dynamic v) => v is List ? v.map((e) => e.toString()).where((e) => e.isNotEmpty && e != '{}').toList() : const [];
 
 /// فئات الدوائر التجارية وتخصصها.
 enum BizCategory {
@@ -56,7 +58,7 @@ class Biz {
         id: m['id'].toString(), name: m['name']?.toString() ?? '', nameAr: m['nameAr']?.toString() ?? '', category: BizCategory.of(m['category']?.toString()),
         sector: m['sector']?.toString() ?? '', description: m['description']?.toString() ?? '', lat: _d(m['lat']) ?? 0, lng: _d(m['lng']) ?? 0,
         address: m['address']?.toString() ?? '', hours: m['hours']?.toString() ?? '', phone: m['phone']?.toString(), website: m['website']?.toString(), colorHex: m['color']?.toString(),
-        highlights: asList(m['highlights']).map((e) => e.toString()).toList(), verified: m['verified'] == true, official: m['official'] == true, following: m['following'] == true,
+        highlights: _strings(m['highlights']), verified: m['verified'] == true, official: m['official'] == true, following: m['following'] == true,
         followers: _i(m['followers']), rating: _d(m['rating']), ratingCount: _i(m['ratingCount']), minPrice: m['minPrice'] == null ? null : _i(m['minPrice']), itemsCount: _i(m['itemsCount']),
         items: asList(m['items']).map(BizItem.fromJson).toList(), reviews: asList(m['reviews']).map(BizReview.fromJson).toList(), myOrders: asList(m['myOrders']).map(BizOrder.fromJson).toList(),
       );

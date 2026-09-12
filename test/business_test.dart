@@ -87,6 +87,7 @@ void main() {
     expect(b.title, 'علامة biz-hilton');
     expect(b.color, const Color(0xFF0058A3));
     expect(b.toBusiness().kind, 'hotel');
+    expect(b.highlights, ['توصيل']);
     final o = BizOrder.fromJson({'id': 'o', 'kind': 'room', 'qty': 2, 'units': 3, 'total': 1000, 'status': 'confirmed', 'code': 'X', 'category': 'hotel'});
     expect(o.summary, contains('غرف'));
     expect(o.kindLabel, 'حجز فندقي');
