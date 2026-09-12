@@ -67,7 +67,15 @@ if [[ $restart -eq 1 ]]; then
     systemctl restart naslife && log "naslife restarted"
     # فحص صحي: إن لم تستقر الخدمة خلال 60 ثانية نتراجع عن تغييرات الخادم ونعيد التشغيل
     ok=0
-    for i in $(seq 1 12); do sleep 5; if systemctl is-active --quiet naslife && curl -fsS -m 5 http://127.0.0.1:3000/health >/dev/null 2>&1; then ok=1; break; fi; done
+    # منفذ التطبيق: من NASLIFE_PORT أو من بيئة وحدة systemd (PORT=...) ثم المنافذ الشائعة
+    unit_port=$(systemctl show naslife -p Environment --value 2>/dev/null | tr ' ' '\n' | grep '^PORT=' | head -1 | cut -d= -f2 || true)
+    for i in $(seq 1 12); do
+      sleep 5
+      systemctl is-active --quiet naslife || continue
+      for p in ${NASLIFE_PORT:-} ${unit_port:-} 4000 3000 8080; do
+        if curl -fsS -m 5 "http://127.0.0.1:$p/health" >/dev/null 2>&1; then ok=1; log "health ok on port $p"; break 2; fi
+      done
+    done
     if [[ $ok -eq 0 ]] && systemctl is-active --quiet naslife && [[ -z "$(command -v curl)" ]]; then ok=1; fi
     if [[ $ok -eq 0 ]]; then
       log "HEALTH CHECK FAILED after restart; rolling back server changes"

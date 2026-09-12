@@ -3,6 +3,7 @@
 //   await app.register((await import("./business.js")).default, { pool, auth });
 // المبالغ بالهللة. الشراء والحجز يخصمان من محفظة ناس لايف ويُستردان عند الإلغاء ضمن المهلة.
 import crypto from "node:crypto";
+import http from "node:http";
 import { SEED } from "./business_seed.js";
 
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
@@ -70,6 +71,33 @@ export default async function business(app, opts) {
   }
   let seedState = "pending";
   const seeding = seedAll().then(() => { seedState = "ok"; }).catch((e) => { seedState = "error: " + (e?.message || e); try { app.log.error({ err: e }, "business: seed failed"); } catch { console.error("business: seed failed", e); } });
+  // جسر صحة محلي: نسخة النشر التلقائي المثبّتة على الخادم تفحص http://127.0.0.1:3000/health بينما التطبيق
+  // يستمع على PORT (4000)، فيفشل الفحص ويتراجع عن كل نشر ويعيد التشغيل كل دقيقتين. نفتح مستمعاً على 3000
+  // (localhost فقط) يمرّر GET /health إلى المنفذ الحقيقي حتى يمرّ الفحص. يُعطَّل بـ NASLIFE_HEALTH_BRIDGE=0
+  // ويُهمَل تلقائياً إن كان 3000 مشغولاً أو هو منفذ التطبيق نفسه. (تم تصحيح autodeploy.sh أيضاً ليكتشف المنفذ.)
+  if (process.env.NASLIFE_HEALTH_BRIDGE !== "0") {
+    let tries = 0;
+    let bridge = null;
+    app.addHook("onClose", async () => { try { bridge?.close(); } catch { /* ignore */ } });
+    const arm = () => {
+      const addr = (() => { try { return app.server?.address?.(); } catch { return null; } })();
+      const real = addr && typeof addr === "object" ? addr.port : null;
+      if (!real) { if (++tries < 120) setTimeout(arm, 500).unref(); return; }
+      if (real === 3000) return;
+      bridge = http.createServer((req, res) => {
+        if (req.method !== "GET" || !/^\/(health|biz\/status)(\?|$)/.test(req.url ?? "")) { res.writeHead(404); return res.end(); }
+        const up = http.request({ host: "127.0.0.1", port: real, path: req.url, method: "GET", timeout: 4000 }, (r) => { res.writeHead(r.statusCode ?? 502, { "content-type": r.headers["content-type"] ?? "text/plain" }); r.pipe(res); });
+        up.on("error", () => { res.writeHead(502); res.end(); });
+        up.on("timeout", () => up.destroy(new Error("timeout")));
+        up.end();
+      });
+      bridge.on("error", () => {});
+      bridge.listen(3000, "127.0.0.1");
+      bridge.unref();
+    };
+    setTimeout(arm, 500).unref();
+  }
+
   // تشخيص عام خفيف: زمن تشغيل العملية ومنفذ الاستماع الفعلي (يساعد فحص صحة النشر التلقائي)
   app.get("/biz/status", async () => {
     let addr = null; try { addr = app.server?.address?.() ?? null; } catch { addr = null; }
