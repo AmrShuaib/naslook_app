@@ -143646,7 +143646,7 @@ g=i[1]
 f=i[2]
 e=[400*h/(h+27.13),400*g/(g+27.13),400*f/(f+27.13)]
 return new A.aNT(k,(40*e[0]+20*e[1]+e[2])/20*j,j,j,b,1,q,l,A.EV(l,0.25),1.48+p)})
-s($,"bK8","bpR",()=>A.bp("^https?://[^\\s]+/chat/media/[A-Za-z0-9-]+\\.([a-z0-9]{2,5})$",!1,!1,!1))
+s($,"bK8","bpR",()=>A.bp("^(?:https?://[^\\s/]+)?/(?:chat/media|files|media|uploads)/[^\\s?#]+\\.([a-z0-9]{2,5})(?:\\?[^\\s]*)?$",!1,!1,!1))
 s($,"bOt","F5",()=>A.bkM(new A.bab(),t.S))
 s($,"bNB","bs1",()=>A.bp("(https?://[^\\s<>]+|www\\.[^\\s<>]+)",!1,!1,!1))
 s($,"bOT","Un",()=>B.eJ.$2$1(new A.baU(),t.mU,t.N))
