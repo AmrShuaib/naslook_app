@@ -67,7 +67,7 @@ async function setup(app, opts) {
   const bad = (reply, code, error) => reply.code(code).send({ error });
 
   // حالة الإضافة (بلا مصادقة وبلا مسارات): يفيد التحقق من النشر
-  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), maxBytes: MAX_BYTES, tried: mediaErrors }));
+  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), maxBytes: MAX_BYTES }));
 
   // محلل محتوى ثنائي داخل نطاق هذه الإضافة فقط؛ نتخطى أي نوع سجّله الخادم الأساسي مسبقاً (وإلا رمى Fastify خطأ FST_ERR_CTP_ALREADY_PRESENT)
   for (const type of [...Object.keys(TYPES), "application/octet-stream"]) {
