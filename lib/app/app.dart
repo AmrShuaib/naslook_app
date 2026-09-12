@@ -135,16 +135,24 @@ class _HomeShellState extends ConsumerState<HomeShell> {
               ],
             ),
       body: IndexedStack(index: i, children: HomeShell.screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: i,
-        onDestinationSelected: (x) => ref.read(navIndexProvider.notifier).state = x,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home_rounded), label: 'الرئيسية'),
-          NavigationDestination(icon: Icon(Icons.map_outlined), selectedIcon: Icon(Icons.map_rounded), label: 'الخرائط'),
-          NavigationDestination(icon: Icon(Icons.groups_outlined), selectedIcon: Icon(Icons.groups_rounded), label: 'الدوائر'),
-          NavigationDestination(icon: Icon(Icons.chat_bubble_outline_rounded), selectedIcon: Icon(Icons.chat_bubble_rounded), label: 'المحادثات'),
-          NavigationDestination(icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded), label: 'ماي سبيس'),
-        ],
+      bottomNavigationBar: Container(
+        // شريط سفلي أبيض بخط فاصل رفيع وأيقونات ملوّنة عند التحديد (بلا مؤشر خلفي)
+        decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
+        child: NavigationBar(
+          selectedIndex: i,
+          onDestinationSelected: (x) => ref.read(navIndexProvider.notifier).state = x,
+          destinations: [
+            const NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home_rounded), label: 'الرئيسية'),
+            const NavigationDestination(icon: Icon(Icons.map_outlined), selectedIcon: Icon(Icons.map_rounded), label: 'الخرائط'),
+            const NavigationDestination(icon: Icon(Icons.groups_outlined), selectedIcon: Icon(Icons.groups_rounded), label: 'الدوائر'),
+            NavigationDestination(
+              icon: Badge(isLabelVisible: badge > 0, label: Text('$badge'), backgroundColor: Joy.accent, child: const Icon(Icons.chat_bubble_outline_rounded)),
+              selectedIcon: Badge(isLabelVisible: badge > 0, label: Text('$badge'), backgroundColor: Joy.accent, child: const Icon(Icons.chat_bubble_rounded)),
+              label: 'المحادثات',
+            ),
+            const NavigationDestination(icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded), label: 'ماي سبيس'),
+          ],
+        ),
       ),
     );
   }

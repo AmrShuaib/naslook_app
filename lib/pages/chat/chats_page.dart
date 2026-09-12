@@ -113,7 +113,7 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
       ),
       body: Column(children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
           child: TextField(
             controller: _search,
             onChanged: _onQuery,
@@ -125,7 +125,7 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
           child: Row(children: [
             for (final (i, l) in ['المحادثات', reqCount > 0 ? 'الطلبات · $reqCount' : 'الطلبات'].indexed)
               Padding(
@@ -149,14 +149,14 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
           return RefreshIndicator(
             onRefresh: () async => ref.invalidate(chatsProvider),
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 96),
+              padding: const EdgeInsets.only(bottom: 96),
               children: [
                 if (list.isEmpty && _hits.isEmpty && !_searchingServer) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('لا نتائج', style: TextStyle(color: Joy.textMuted)))),
-                for (final c in list) Padding(padding: const EdgeInsets.only(bottom: 8), child: _ChatRow(c)),
+                for (final (i, c) in list.indexed) _ChatRow(c, divider: i < list.length - 1 || _hits.isNotEmpty),
                 if (_q.length >= 2) ...[
                   if (_searchingServer) const Padding(padding: EdgeInsets.all(12), child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))),
-                  if (_hits.isNotEmpty) const SectionTitle('رسائل'),
-                  for (final h in _hits) Padding(padding: const EdgeInsets.only(bottom: 8), child: _HitRow(h, query: _q)),
+                  if (_hits.isNotEmpty) const Padding(padding: EdgeInsets.fromLTRB(16, 14, 16, 4), child: Text('رسائل', style: TextStyle(fontWeight: FontWeight.w700, color: Joy.textMuted, fontSize: 13))),
+                  for (final (i, h) in _hits.indexed) _HitRow(h, query: _q, divider: i < _hits.length - 1),
                 ],
               ],
             ),
@@ -171,11 +171,10 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
             ? const EmptyState(icon: Icons.mark_email_read_outlined, title: 'لا طلبات مراسلة', subtitle: 'رسائل من غير أصدقائك تظهر هنا أولاً حتى تقبلها أو تتجاهلها.')
             : RefreshIndicator(
                 onRefresh: () async => ref.invalidate(requestsProvider),
-                child: ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 96),
+                child: ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 96),
                   itemCount: list.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (_, i) => _RequestRow(list[i]),
+                  itemBuilder: (_, i) => _RequestRow(list[i], divider: i < list.length - 1),
                 ),
               ),
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -196,27 +195,25 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
 
 class _ChatRow extends StatelessWidget {
   final Chat c;
-  const _ChatRow(this.c);
+  final bool divider;
+  const _ChatRow(this.c, {this.divider = true});
   @override
   Widget build(BuildContext context) {
     final preview = c.lastContent == null ? 'ابدأ المحادثة' : Message.previewOf(c.lastType ?? 'text', c.lastContent!);
-    return JoyCard(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    final unread = c.unread > 0;
+    return ListRow(
+      divider: divider,
       onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: c.peer))),
-      child: Row(children: [
-        Avatar(name: c.peer.nickname, url: c.peer.avatarUrl, size: 50),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(child: Text(c.peer.nickname, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
-            Text(timeAgo(c.lastAt), style: TextStyle(fontSize: 11.5, color: c.unread > 0 ? Joy.primary : Joy.textMuted)),
-          ]),
-          const SizedBox(height: 3),
-          Row(children: [
-            Expanded(child: Text('${c.lastMine ? 'أنت: ' : ''}$preview', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 13))),
-            if (c.unread > 0) Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.primary, borderRadius: BorderRadius.circular(999)), child: Text('${c.unread}', style: const TextStyle(color: Joy.primaryOn, fontSize: 11, fontWeight: FontWeight.w700))),
-          ]),
-        ])),
+      leading: Avatar(name: c.peer.nickname, url: c.peer.avatarUrl, size: 52),
+      title: Text(c.peer.nickname, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text('${c.lastMine ? 'أنت: ' : ''}$preview', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: unread ? Joy.text : Joy.textMuted, fontWeight: unread ? FontWeight.w600 : FontWeight.w500)),
+      trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
+        Text(timeAgo(c.lastAt), style: TextStyle(fontSize: 11.5, color: unread ? Joy.primary : Joy.textMuted, fontWeight: unread ? FontWeight.w600 : FontWeight.w500)),
+        const SizedBox(height: 4),
+        if (unread)
+          Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.primary, borderRadius: BorderRadius.circular(999)), child: Text('${c.unread}', style: const TextStyle(color: Joy.primaryOn, fontSize: 11, fontWeight: FontWeight.w700)))
+        else
+          const SizedBox(height: 18),
       ]),
     );
   }
@@ -226,38 +223,33 @@ class _ChatRow extends StatelessWidget {
 class _HitRow extends StatelessWidget {
   final ChatSearchHit h;
   final String query;
-  const _HitRow(this.h, {required this.query});
+  final bool divider;
+  const _HitRow(this.h, {required this.query, this.divider = true});
   @override
-  Widget build(BuildContext context) => JoyCard(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+  Widget build(BuildContext context) => ListRow(
+        divider: divider,
         onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: h.peer, initialMessageId: h.id))),
-        child: Row(children: [
-          Avatar(name: h.peer.nickname, url: h.peer.avatarUrl, size: 40),
-          const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [Expanded(child: Text(h.peer.nickname, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14))), Text(timeAgo(h.at), style: const TextStyle(fontSize: 11, color: Joy.textMuted))]),
-            Text('${h.mine ? 'أنت: ' : ''}${Message.previewOf(h.type, h.content)}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
-          ])),
-        ]),
+        leading: Avatar(name: h.peer.nickname, url: h.peer.avatarUrl, size: 44),
+        title: Text(h.peer.nickname, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text('${h.mine ? 'أنت: ' : ''}${Message.previewOf(h.type, h.content)}', maxLines: 2, overflow: TextOverflow.ellipsis),
+        trailing: Text(timeAgo(h.at), style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
       );
 }
 
 class _RequestRow extends ConsumerWidget {
   final FriendRequest r;
-  const _RequestRow(this.r);
+  final bool divider;
+  const _RequestRow(this.r, {this.divider = true});
   @override
-  Widget build(BuildContext context, WidgetRef ref) => JoyCard(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+  Widget build(BuildContext context, WidgetRef ref) => ListRow(
+        divider: divider,
         onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: r.from))),
-        child: Row(children: [
-          Avatar(name: r.from.nickname, url: r.from.avatarUrl, size: 44),
-          const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(r.from.nickname, style: const TextStyle(fontWeight: FontWeight.w600)),
-            Text('${r.lastContent ?? 'يريد مراسلتك'} · ${timeAgo(r.createdAt)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
-          ])),
+        leading: Avatar(name: r.from.nickname, url: r.from.avatarUrl, size: 48),
+        title: Text(r.from.nickname),
+        subtitle: Text('${r.lastContent ?? 'يريد مراسلتك'} · ${timeAgo(r.createdAt)}', maxLines: 1, overflow: TextOverflow.ellipsis),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
           IconButton(tooltip: 'تجاهل', onPressed: () => _act(context, ref, accept: false), icon: const Icon(Icons.close_rounded, color: Joy.textMuted)),
-          FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(44, 44), padding: const EdgeInsets.symmetric(horizontal: 14)), onPressed: () => _act(context, ref, accept: true), child: const Text('قبول')),
+          FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(44, 40), padding: const EdgeInsets.symmetric(horizontal: 14)), onPressed: () => _act(context, ref, accept: true), child: const Text('قبول')),
         ]),
       );
 

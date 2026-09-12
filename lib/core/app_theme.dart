@@ -1,29 +1,31 @@
 import 'package:flutter/material.dart';
 
-/// نظام «فرح وبهجة»: كريمي مشمس، فيروزي للأفعال، مرجاني للأحداث، أصفر شمسي.
-/// كل الأزواج مقاسة بنِسَب تباين WCAG ≥ 4.5:1.
+/// نظام «أبيض ونظيف»: خلفية بيضاء وصفوف مسطّحة بخطوط فاصلة رفيعة (على طريقة واتساب وسناب شات)،
+/// والفيروزي لون العلامة للأفعال والعناصر النشطة، والمرجاني للأحداث والشارات.
 class Joy {
-  static const bg = Color(0xFFFFF6E8);
-  static const surface = Color(0xFFFFFDF9);
-  static const surface2 = Color(0xFFFFECD9);
-  static const text = Color(0xFF2B2420);
-  static const textMuted = Color(0xFF6A5B52);
-  static const line = Color(0xFFF0DCC6);
-  static const control = Color(0xFF98847A);
+  static const bg = Color(0xFFFFFFFF);
+  static const surface = Color(0xFFFFFFFF);
+  /// خلفيات خفيفة: الفقاعات الواردة، حبوب التاريخ، حقول البحث، الرقائق
+  static const surface2 = Color(0xFFF2F2F7);
+  static const text = Color(0xFF111111);
+  static const textMuted = Color(0xFF6B7280);
+  static const line = Color(0xFFE5E5EA);
+  static const control = Color(0xFFC7C7CC);
   static const primary = Color(0xFF0A6E78);
-  static const primaryOn = Color(0xFFF3FDFF);
-  static const primarySoft = Color(0xFFD6F3F4);
+  static const primaryOn = Color(0xFFFFFFFF);
+  static const primarySoft = Color(0xFFE0F3F4);
   static const accent = Color(0xFFBF3A1E);
-  static const accentOn = Color(0xFFFFF6F1);
-  static const accentSoft = Color(0xFFFFE8DF);
+  static const accentOn = Color(0xFFFFFFFF);
+  static const accentSoft = Color(0xFFFDEBE6);
   static const sun = Color(0xFFFFD66B);
-  static const sunSoft = Color(0xFFFFF0C2);
+  static const sunSoft = Color(0xFFFFF4D6);
   static const sunText = Color(0xFF5A4200);
-  static const success = Color(0xFF2C7A4B);
+  static const success = Color(0xFF1FA35A);
   static const warning = Color(0xFF875C0A);
-  static const danger = Color(0xFFB8323E);
-  static const bubbleOut = Color(0xFFFFE6A8);
-  static const bubbleOutText = Color(0xFF3B2E0C);
+  static const danger = Color(0xFFD23B3B);
+  /// الفقاعة الصادرة: صبغة فاتحة من لون العلامة (كما الأخضر الفاتح في واتساب)
+  static const bubbleOut = Color(0xFFDCF3EF);
+  static const bubbleOutText = Color(0xFF0F2D30);
   static const avatars = [
     Color(0xFFFFB09F), Color(0xFF9EE0CC), Color(0xFFA9D3FF),
     Color(0xFFD4BDFF), Color(0xFFFFDF7A), Color(0xFFFFB9D6),
@@ -76,29 +78,31 @@ class AppTheme {
         labelLarge: body.labelLarge?.copyWith(fontWeight: FontWeight.w600, fontSize: 15),
       ),
       appBarTheme: AppBarTheme(
-        backgroundColor: Joy.bg,
+        backgroundColor: Joy.surface,
+        surfaceTintColor: Colors.transparent,
         foregroundColor: Joy.text,
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: false,
-        titleTextStyle: display.copyWith(fontSize: 22),
+        shape: const Border(bottom: BorderSide(color: Joy.line)),
+        titleTextStyle: display.copyWith(fontSize: 21),
       ),
       cardTheme: CardThemeData(
         color: Joy.surface,
         elevation: 0,
         margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: Joy.line)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Joy.line)),
       ),
       dividerTheme: const DividerThemeData(color: Joy.line, thickness: 1, space: 1),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Joy.bg,
+        fillColor: Joy.surface2,
         hintStyle: const TextStyle(fontFamily: bodyFont, color: Joy.textMuted),
         labelStyle: const TextStyle(fontFamily: bodyFont, color: Joy.textMuted),
         helperStyle: const TextStyle(fontFamily: bodyFont, color: Joy.textMuted, fontSize: 12),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Joy.control)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Joy.control)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Joy.primary, width: 1.5)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Joy.primary, width: 1.5)),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
@@ -121,9 +125,9 @@ class AppTheme {
         style: TextButton.styleFrom(foregroundColor: Joy.primary, minimumSize: const Size(44, 44), textStyle: const TextStyle(fontFamily: bodyFont, fontWeight: FontWeight.w600)),
       ),
       chipTheme: ChipThemeData(
-        backgroundColor: Joy.surface,
+        backgroundColor: Joy.surface2,
         selectedColor: Joy.primary,
-        side: const BorderSide(color: Joy.control),
+        side: BorderSide.none,
         // ChipThemeData.labelStyle يحلّ محل نمط السمة كاملاً (لا يُدمج معه)، فلا بد من ذكر الخط صراحةً
         // وإلا سقط النص إلى Roboto الذي يُجلب من Google ويختفي حين تُحجب
         labelStyle: const TextStyle(fontFamily: bodyFont, color: Joy.text, fontSize: 13, fontWeight: FontWeight.w500),
@@ -133,8 +137,10 @@ class AppTheme {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: Joy.surface,
-        indicatorColor: Joy.primarySoft,
-        height: 72,
+        surfaceTintColor: Colors.transparent,
+        indicatorColor: Colors.transparent,
+        elevation: 0,
+        height: 66,
         labelTextStyle: WidgetStateProperty.resolveWith((s) => TextStyle(
               fontFamily: bodyFont,
               fontSize: 11,
@@ -144,8 +150,10 @@ class AppTheme {
         iconTheme: WidgetStateProperty.resolveWith((s) => IconThemeData(color: s.contains(WidgetState.selected) ? Joy.primary : Joy.textMuted)),
       ),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
-      dialogTheme: DialogThemeData(backgroundColor: Joy.surface, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24))),
-      bottomSheetTheme: const BottomSheetThemeData(backgroundColor: Joy.surface, shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24)))),
+      dialogTheme: DialogThemeData(backgroundColor: Joy.surface, surfaceTintColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
+      bottomSheetTheme: const BottomSheetThemeData(backgroundColor: Joy.surface, surfaceTintColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20)))),
+      listTileTheme: const ListTileThemeData(iconColor: Joy.text),
+      popupMenuTheme: PopupMenuThemeData(color: Joy.surface, surfaceTintColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
     );
   }
 }

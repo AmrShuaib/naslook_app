@@ -78,15 +78,14 @@ class JoyCard extends StatelessWidget {
     final card = Container(
       decoration: BoxDecoration(
         color: color ?? Joy.surface,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Joy.line),
-        boxShadow: const [BoxShadow(color: Color(0x0F784614), blurRadius: 24, offset: Offset(0, 10))],
       ),
       padding: padding,
       child: child,
     );
     if (onTap == null) return card;
-    return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(20), child: card);
+    return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(16), child: card);
   }
 }
 
@@ -159,4 +158,35 @@ Future<String?> askText(BuildContext context, {required String title, String? hi
       ],
     ),
   );
+}
+
+
+/// صف قائمة مسطّح على طراز واتساب: صورة، عنوان عريض، سطر ثانٍ رمادي، وعناصر في النهاية، وخط فاصل يبدأ بعد الصورة.
+class ListRow extends StatelessWidget {
+  final Widget leading;
+  final Widget title;
+  final Widget? subtitle;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+  final bool divider;
+  const ListRow({super.key, required this.leading, required this.title, this.subtitle, this.trailing, this.onTap, this.divider = true});
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(16, 10, 12, 10),
+            child: Row(children: [
+              leading,
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                DefaultTextStyle.merge(style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15.5, color: Joy.text), child: title),
+                if (subtitle != null) ...[const SizedBox(height: 2), DefaultTextStyle.merge(style: const TextStyle(color: Joy.textMuted, fontSize: 13), child: subtitle!)],
+              ])),
+              if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+            ]),
+          ),
+          if (divider) const Padding(padding: EdgeInsetsDirectional.only(start: 80), child: Divider(height: 1)),
+        ]),
+      );
 }

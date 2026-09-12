@@ -816,7 +816,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       );
 
   Widget _composer() {
-    final border = OutlineInputBorder(borderRadius: BorderRadius.circular(23), borderSide: const BorderSide(color: Joy.control));
+    final border = OutlineInputBorder(borderRadius: BorderRadius.circular(23), borderSide: BorderSide.none);
     return SafeArea(
       top: false,
       child: Container(
@@ -833,7 +833,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
             child: _recording ? _recordingRow() : Row(children: [
-              IconButton(tooltip: 'إرفاق', onPressed: _attach, icon: const Icon(Icons.add_circle_outline_rounded, color: Joy.primary, size: 28)),
+              IconButton(tooltip: 'إرفاق', onPressed: _attach, icon: const Icon(Icons.add_circle_outline_rounded, color: Joy.textMuted, size: 28)),
               Expanded(
                 child: TextField(
                   controller: _text,
@@ -841,7 +841,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _sendText(),
                   onChanged: (v) { if (v.isNotEmpty) ref.read(socketProvider)?.typing(_peerId); },
-                  decoration: InputDecoration(hintText: 'اكتب رسالة…', border: border, enabledBorder: border, focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(23), borderSide: const BorderSide(color: Joy.primary, width: 1.5)), isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
+                  decoration: InputDecoration(hintText: 'اكتب رسالة…', border: border, enabledBorder: border, focusedBorder: border, filled: true, fillColor: Joy.surface2, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1067,7 +1067,7 @@ class _BubbleState extends State<_Bubble> {
           if (m.readAt != null) tickColor = Joy.primary;
       }
     }
-    final baseColor = mine ? Joy.bubbleOut : Joy.surface;
+    final baseColor = mine ? Joy.bubbleOut : Joy.surface2;
     return Column(children: [
       if (widget.dateLabel != null)
         Padding(
@@ -1090,7 +1090,7 @@ class _BubbleState extends State<_Bubble> {
                 padding: EdgeInsets.fromLTRB(m.mediaKind == 'image' ? 6 : 14, m.mediaKind == 'image' ? 6 : 9, m.mediaKind == 'image' ? 6 : 14, 7),
                 decoration: BoxDecoration(
                   color: widget.highlighted ? Joy.sun.withValues(alpha: .7) : baseColor,
-                  border: failed ? Border.all(color: Joy.danger) : mine ? null : Border.all(color: Joy.line),
+                  border: failed ? Border.all(color: Joy.danger) : null,
                   borderRadius: BorderRadiusDirectional.only(
                     topStart: !mine && widget.joinedAbove ? joined : full,
                     topEnd: mine && widget.joinedAbove ? joined : full,
@@ -1178,7 +1178,7 @@ class _AudioBubbleState extends State<_AudioBubble> {
       width: 220,
       child: Row(children: [
         Material(
-          color: widget.mine ? Joy.text.withValues(alpha: .08) : Joy.primarySoft,
+          color: Joy.surface,
           shape: const CircleBorder(),
           child: InkWell(
             customBorder: const CircleBorder(),
