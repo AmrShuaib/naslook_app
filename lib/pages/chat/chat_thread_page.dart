@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:record/record.dart';
@@ -17,6 +17,7 @@ import '../../api/client.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/media/media.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
@@ -99,6 +100,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   int _matchIdx = 0;
   // التسجيل الصوتي
   final _recorder = AudioRecorder();
+  VoiceRecorder? _webRec;
   bool _recording = false;
   Duration _recElapsed = Duration.zero;
   Timer? _recTimer;
@@ -458,18 +460,25 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     );
     if (choice == null || !mounted) return;
     try {
-      final picker = ImagePicker();
-      XFile? x;
-      if (choice == 'video') {
-        x = await picker.pickVideo(source: ImageSource.gallery, maxDuration: const Duration(minutes: 3));
+      ({Uint8List bytes, String mime, String name}) picked;
+      if (kIsWeb && WebMedia.available) {
+        // الويب: قراءة مباشرة من المتصفح (روابط blob تفشل على iOS)
+        final m = await WebMedia.pick(choice);
+        if (m == null) return;
+        picked = (bytes: m.bytes, mime: m.mime, name: m.name);
       } else {
-        x = await picker.pickImage(source: choice == 'camera' ? ImageSource.camera : ImageSource.gallery, maxWidth: 1600, maxHeight: 1600, imageQuality: 82);
+        final picker = ImagePicker();
+        XFile? x;
+        if (choice == 'video') {
+          x = await picker.pickVideo(source: ImageSource.gallery, maxDuration: const Duration(minutes: 3));
+        } else {
+          x = await picker.pickImage(source: choice == 'camera' ? ImageSource.camera : ImageSource.gallery, maxWidth: 1600, maxHeight: 1600, imageQuality: 82);
+        }
+        if (x == null) return;
+        picked = (bytes: await x.readAsBytes(), mime: _mimeOf(x.name, x.mimeType), name: x.name);
       }
-      if (x == null) return;
-      final bytes = await x.readAsBytes();
-      if (bytes.length > maxMediaBytes) { if (mounted) toast(context, 'الملف أكبر من 30 ميغابايت', error: true); return; }
-      final mime = _mimeOf(x.name, x.mimeType);
-      await _send(type: _kindOf(mime), content: '', media: (bytes: bytes, mime: mime, name: x.name));
+      if (picked.bytes.length > maxMediaBytes) { if (mounted) toast(context, 'الملف أكبر من 30 ميغابايت', error: true); return; }
+      await _send(type: _kindOf(picked.mime), content: '', media: picked);
     } catch (e) {
       if (mounted) toast(context, errText(e), error: true);
     }
@@ -478,8 +487,13 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   // ---- التسجيل الصوتي (5 دقائق كحد أقصى)
   Future<void> _startRecording() async {
     try {
-      if (!await _recorder.hasPermission()) { if (mounted) toast(context, 'اسمح بالوصول إلى الميكروفون أولاً', error: true); return; }
-      await _recorder.start(const RecordConfig(encoder: AudioEncoder.opus, bitRate: 64000, sampleRate: 48000, numChannels: 1), path: '');
+      if (kIsWeb && WebMedia.available) {
+        _webRec = VoiceRecorder();
+        await _webRec!.start(); // يطلب إذن الميكروفون من المتصفح
+      } else {
+        if (!await _recorder.hasPermission()) { if (mounted) toast(context, 'اسمح بالوصول إلى الميكروفون أولاً', error: true); return; }
+        await _recorder.start(const RecordConfig(encoder: AudioEncoder.opus, bitRate: 64000, sampleRate: 48000, numChannels: 1), path: '');
+      }
       setState(() { _recording = true; _recElapsed = Duration.zero; });
       _recTimer?.cancel();
       _recTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -498,12 +512,24 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     if (!_recording) return;
     setState(() => _recording = false);
     try {
-      if (!send) { await _recorder.cancel(); return; }
-      final path = await _recorder.stop();
-      if (path == null || elapsed < const Duration(seconds: 1)) { if (mounted) toast(context, 'التسجيل قصير جداً'); return; }
-      final res = await http.get(Uri.parse(path));
-      final mime = _mimeOf('voice.weba', res.headers['content-type']);
-      await _send(type: 'audio', content: '', media: (bytes: res.bodyBytes, mime: mime, name: 'voice.${mime.split('/').last}'), extra: {'durationMs': elapsed.inMilliseconds});
+      ({Uint8List bytes, String mime, String name})? media;
+      if (kIsWeb && _webRec != null) {
+        final rec = _webRec!;
+        _webRec = null;
+        if (!send) { await rec.cancel(); return; }
+        final m = await rec.stop();
+        if (m != null) media = (bytes: m.bytes, mime: m.mime, name: m.name);
+      } else {
+        if (!send) { await _recorder.cancel(); return; }
+        final path = await _recorder.stop();
+        if (path != null) {
+          final bytes = await XFile(path).readAsBytes();
+          final mime = _mimeOf(path);
+          media = (bytes: bytes, mime: mime, name: 'voice.${path.split('.').last}');
+        }
+      }
+      if (media == null || elapsed < const Duration(seconds: 1)) { if (mounted) toast(context, 'التسجيل قصير جداً'); return; }
+      await _send(type: 'audio', content: '', media: media, extra: {'durationMs': elapsed.inMilliseconds});
     } catch (e) {
       if (mounted) toast(context, 'تعذر إرسال التسجيل: ${errText(e)}', error: true);
     }
@@ -1133,6 +1159,10 @@ class _AudioBubbleState extends State<_AudioBubble> {
       }
     } catch (e) {
       if (mounted) setState(() { _loading = false; _err = e; });
+      if (mounted) {
+        toast(context, 'تعذر تشغيل التسجيل على هذا الجهاز، سيُفتح في تبويب جديد', error: true);
+        launchUrl(Uri.parse(widget.url!), mode: LaunchMode.externalApplication);
+      }
     }
   }
 

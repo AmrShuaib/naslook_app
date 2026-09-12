@@ -9,6 +9,9 @@ import { createReadStream, constants as fsConstants } from "node:fs";
 import path from "node:path";
 
 import os from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const execFileP = promisify(execFile);
 
 // مجلد الوسائط: الأول القابل للكتابة. الخدمة قد تعمل بتقييد systemd (ProtectSystem/ProtectHome)، فنجرّب
 // المجلدات التي يستخدمها الخادم الأساسي (من متغيرات بيئته) ثم مسارات معتادة ثم مجلد الحالة/المؤقت.
@@ -61,13 +64,23 @@ async function setup(app, opts) {
     } catch (e) { mediaErrors.push(`${dir}: ${e?.code || e?.message || e}`); }
   }
   const logger = app.log?.info ? app.log.info.bind(app.log) : console.log;
+  // ffmpeg (إن وُجد) يحوّل التسجيلات الصوتية إلى AAC/m4a حتى تُشغَّل على iPhone وAndroid معاً
+  let ffmpeg = false;
+  try { await execFileP("ffmpeg", ["-version"], { timeout: 5000 }); ffmpeg = true; } catch {}
+  logger(`chat_tools: ffmpeg ${ffmpeg ? "available" : "not found (audio kept as recorded)"}`);
+  async function transcodeAudio(inFile) {
+    const out = inFile.replace(/\.[a-z0-9]+$/, ".m4a");
+    await execFileP("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-vn", "-ac", "1", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", out], { timeout: 120000 });
+    await fs.unlink(inFile).catch(() => {});
+    return out;
+  }
   logger(MEDIA_DIR ? `chat_tools: media dir ${MEDIA_DIR}` : `chat_tools: NO writable media dir (${mediaErrors.join("; ")})`);
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error) => reply.code(code).send({ error });
 
   // حالة الإضافة (بلا مصادقة وبلا مسارات): يفيد التحقق من النشر
-  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), maxBytes: MAX_BYTES }));
+  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, maxBytes: MAX_BYTES }));
 
   // محلل محتوى ثنائي داخل نطاق هذه الإضافة فقط؛ نتخطى أي نوع سجّله الخادم الأساسي مسبقاً (وإلا رمى Fastify خطأ FST_ERR_CTP_ALREADY_PRESENT)
   for (const type of [...Object.keys(TYPES), "application/octet-stream"]) {
@@ -91,9 +104,17 @@ async function setup(app, opts) {
     if (!MEDIA_DIR) return bad(reply, 503, "media-storage-unavailable");
     if (!ext) return bad(reply, 415, "unsupported-type");
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) return bad(reply, 400, "empty");
-    const name = `${Date.now().toString(36)}-${crypto.randomBytes(12).toString("hex")}.${ext}`;
-    await fs.writeFile(path.join(MEDIA_DIR, name), req.body);
-    return { url: `/chat/media/${name}`, type: ct, kind: kindOf(ct), size: req.body.length };
+    let name = `${Date.now().toString(36)}-${crypto.randomBytes(12).toString("hex")}.${ext}`;
+    let file = path.join(MEDIA_DIR, name);
+    await fs.writeFile(file, req.body);
+    let size = req.body.length;
+    if (ffmpeg && ct.startsWith("audio/") && ext !== "m4a" && ext !== "mp3") {
+      try {
+        file = await transcodeAudio(file);
+        name = path.basename(file); ct = "audio/mp4"; size = (await fs.stat(file)).size;
+      } catch (e) { logger(`chat_tools: transcode failed, keeping original: ${e?.message || e}`); }
+    }
+    return { url: `/chat/media/${name}`, type: ct, kind: kindOf(ct), size };
   });
 
   // ---- التقديم مع دعم Range للصوت والفيديو
