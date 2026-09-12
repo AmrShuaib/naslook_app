@@ -35,8 +35,14 @@
 <body>
   <script>
     // نسخ سابقة سجّلت Service Worker يخزّن ملفات قديمة؛ نلغيه كي يصل التحديث فوراً
+    // (نُبقي push_sw.js الخاص بالإشعارات الفورية لأنه لا يخزّن شيئاً)
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { r.unregister(); }); });
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        rs.forEach(function (r) {
+          var w = r.active || r.waiting || r.installing;
+          if (!w || !/push_sw\.js/.test(w.scriptURL)) r.unregister();
+        });
+      });
       if (window.caches) { caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); }); }
     }
   </script>
