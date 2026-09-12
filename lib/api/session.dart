@@ -97,16 +97,20 @@ class SessionStore {
   static const _key = 'naslife.session.v2';
 
   Future<Session?> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_key);
-    if (raw == null || raw.isEmpty) return null;
+    SharedPreferences? prefs;
     try {
+      prefs = await SharedPreferences.getInstance();
+      // أي تلف في القيمة المخزّنة (نوع غير نصي، JSON غير صالح) يعني جلسة غير موجودة لا تعليق التطبيق
+      final raw = prefs.getString(_key);
+      if (raw == null || raw.isEmpty) return null;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
       final session = Session.fromJson(Map<String, dynamic>.from(decoded));
       return session.isValid ? session : null;
     } catch (_) {
-      await prefs.remove(_key);
+      try {
+        await prefs?.remove(_key);
+      } catch (_) {}
       return null;
     }
   }

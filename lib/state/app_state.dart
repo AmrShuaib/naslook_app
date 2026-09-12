@@ -62,7 +62,12 @@ class AppStateNotifier extends StateNotifier<AppState> {
 
   /// استعادة الجلسة المحفوظة عند بدء التطبيق والتحقق منها مع الخادم.
   Future<void> bootstrap() async {
-    final saved = await _store.load();
+    Session? saved;
+    try {
+      saved = await _store.load();
+    } catch (_) {
+      saved = null; // تخزين محلي معطّل أو تالف: نبدأ من شاشة الدخول بدل البقاء على شاشة التحميل
+    }
     if (saved == null) {
       state = const AppState(status: AuthStatus.signedOut);
       return;

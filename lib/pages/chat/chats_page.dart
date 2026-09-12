@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,21 +18,29 @@ class ChatsPage extends ConsumerStatefulWidget {
 }
 
 class _ChatsPageState extends ConsumerState<ChatsPage> {
+  StreamSubscription? _sub;
+
   @override
   void initState() {
     super.initState();
-    // أي حدث رسالة يعيد تحميل القائمة
+    // أي حدث رسالة أو عودة اتصال يعيد تحميل القائمة
     Future.microtask(() {
-      final s = ref.read(socketProvider);
-      s?.events.listen((e) {
+      if (!mounted) return;
+      _sub = ref.read(socketProvider)?.events.listen((e) {
         final ev = e['event'];
-        final isMessage = ev == null && e['senderId'] != null && e['content'] != null;
-        if (isMessage || ev == 'read' || ev == 'delivered') {
+        final isMessage = (ev == null && e['senderId'] != null && e['content'] != null) || ev == 'message' || ev == 'new-message';
+        if (isMessage || ev == 'read' || ev == 'delivered' || ev == '_connected') {
           ref.invalidate(chatsProvider);
           if (isMessage && e['isRequest'] == true) ref.invalidate(requestsProvider);
         }
       });
     });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
   }
 
   @override

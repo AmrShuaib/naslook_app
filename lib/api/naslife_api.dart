@@ -27,7 +27,10 @@ extension NaslifeApi on ApiClient {
 
   // ---- المحادثات
   Future<List<Chat>> chats() async => asList(await getList('/chats')).map(Chat.fromJson).toList();
-  Future<List<Message>> messages(String peer) async => asList(await getList('/messages/$peer')).map(Message.fromJson).toList();
+  /// رسائل محادثة؛ `before` لجلب الأقدم من تاريخ معيّن (ترقيم صفحات).
+  Future<List<Message>> messages(String peer, {DateTime? before, int limit = 50}) async =>
+      asList(await getList('/messages/$peer', query: {if (before != null) 'before': before.toUtc().toIso8601String(), 'limit': '$limit'})).map(Message.fromJson).toList();
+  Future<void> deleteMessage(String id) => delete('/messages/$id');
   Future<Message> sendMessage(String peer, String text) async {
     final data = await post('/messages', {'to': peer, 'type': 'text', 'content': text});
     final m = data['message'] is Map ? asMap(data['message']) : data;
@@ -37,6 +40,12 @@ extension NaslifeApi on ApiClient {
     return Message.fromJson(m);
   }
   Future<void> markRead(String peer) => post('/messages/$peer/read', const {});
+
+  // ---- الأمان: حظر وإبلاغ (المسارات موجودة على الخادم: /blocks و/reports)
+  Future<void> blockUser(String id) => post('/blocks', {'userId': id, 'blockedId': id});
+  Future<void> unblockUser(String id) => delete('/blocks/$id');
+  Future<void> reportUser(String id, String reason, {String? messageId}) =>
+      post('/reports', {'userId': id, 'targetId': id, 'targetType': 'user', 'reason': reason, if (messageId != null) 'messageId': messageId});
 
   // ---- الخريطة والقصص
   Future<List<Story>> stories(BBox b) async => asList(await getList('/stories', query: {'bbox': b.query})).map(Story.fromJson).toList();

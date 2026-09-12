@@ -101,6 +101,8 @@ class Chat {
       );
 }
 
+enum MessageStatus { sending, failed, sent }
+
 class Message {
   final String id;
   final String senderId;
@@ -109,19 +111,26 @@ class Message {
   final DateTime? sentAt;
   final DateTime? deliveredAt;
   final DateTime? readAt;
-  const Message({required this.id, required this.senderId, required this.type, required this.content, this.sentAt, this.deliveredAt, this.readAt});
+  /// حالة الإرسال المحلية؛ الرسائل القادمة من الخادم دائماً sent.
+  final MessageStatus status;
+  /// معرّف محلي للرسالة المتفائلة حتى يرد الخادم بمعرّفها الحقيقي.
+  final String? localId;
+  const Message({required this.id, required this.senderId, required this.type, required this.content, this.sentAt, this.deliveredAt, this.readAt, this.status = MessageStatus.sent, this.localId});
   factory Message.fromJson(Map m) => Message(
         id: _s(m, ['id']),
         senderId: _s(m, ['sender_id', 'senderId', 'from']),
         type: _s(m, ['type'], 'text'),
         content: _s(m, ['content', 'text']),
-        sentAt: _t(m, ['sent_at', 'sentAt', 'at']),
+        sentAt: _t(m, ['sent_at', 'sentAt', 'at', 'created_at', 'createdAt']),
         deliveredAt: _t(m, ['delivered_at', 'deliveredAt']),
         readAt: _t(m, ['read_at', 'readAt']),
       );
-  Message copyWith({DateTime? deliveredAt, DateTime? readAt}) => Message(
-      id: id, senderId: senderId, type: type, content: content, sentAt: sentAt,
-      deliveredAt: deliveredAt ?? this.deliveredAt, readAt: readAt ?? this.readAt);
+  /// المفتاح الذي يميّز الرسالة في القوائم: معرّف الخادم إن وُجد وإلا المحلي.
+  String get key => id.isNotEmpty ? id : (localId ?? '');
+  bool get isPending => status != MessageStatus.sent;
+  Message copyWith({String? id, DateTime? sentAt, DateTime? deliveredAt, DateTime? readAt, MessageStatus? status, String? localId}) => Message(
+      id: id ?? this.id, senderId: senderId, type: type, content: content, sentAt: sentAt ?? this.sentAt,
+      deliveredAt: deliveredAt ?? this.deliveredAt, readAt: readAt ?? this.readAt, status: status ?? this.status, localId: localId ?? this.localId);
 }
 
 class Story {
