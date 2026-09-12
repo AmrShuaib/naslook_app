@@ -52,12 +52,16 @@ class Biz {
   final bool active;
   final int views;
   final DateTime? createdAt;
+  /// مفتوح الآن بتوقيت السعودية (null إن لم تُفهم ساعات العمل)، والمسافة بالكيلومتر من موقع المستخدم إن مُرِّر، والعنصر المطابق لكلمة البحث.
+  final bool? openNow;
+  final double? distanceKm;
+  final String? matchedItem;
 
   const Biz({
     required this.id, required this.name, this.nameAr = '', required this.category, this.sector = '', this.description = '', required this.lat, required this.lng,
     this.address = '', this.hours = '', this.phone, this.website, this.colorHex, this.highlights = const [], this.verified = false, this.official = false,
     this.following = false, this.followers = 0, this.rating, this.ratingCount = 0, this.minPrice, this.itemsCount = 0, this.items = const [], this.reviews = const [], this.myOrders = const [],
-    this.posts = const [], this.logoUrl, this.coverUrl, this.ownerId, this.myRole, this.active = true, this.views = 0, this.createdAt,
+    this.posts = const [], this.logoUrl, this.coverUrl, this.ownerId, this.myRole, this.active = true, this.views = 0, this.createdAt, this.openNow, this.distanceKm, this.matchedItem,
   });
 
   factory Biz.fromJson(Map m) => Biz(
@@ -69,7 +73,15 @@ class Biz {
         items: asList(m['items']).map(BizItem.fromJson).toList(), reviews: asList(m['reviews']).map(BizReview.fromJson).toList(), myOrders: asList(m['myOrders']).map(BizOrder.fromJson).toList(),
         posts: asList(m['posts']).map(BizPost.fromJson).toList(), logoUrl: m['logoUrl']?.toString(), coverUrl: m['coverUrl']?.toString(), ownerId: m['ownerId']?.toString(), myRole: m['myRole']?.toString(),
         active: m['active'] != false, views: _i(m['views']), createdAt: _t(m['createdAt']),
+        openNow: m['openNow'] is bool ? m['openNow'] as bool : null, distanceKm: _d(m['distanceKm']), matchedItem: m['matchedItem']?.toString(),
       );
+
+  /// نص المسافة: «850 م» أو «3.2 كم».
+  String? get distanceLabel {
+    final d = distanceKm;
+    if (d == null) return null;
+    return d < 1 ? '${(d * 1000).round()} م' : '${d.toStringAsFixed(d < 10 ? 1 : 0)} كم';
+  }
 
   bool get isOwner => myRole == 'owner' || myRole == 'admin';
   bool get canManage => isOwner || myRole == 'manager';

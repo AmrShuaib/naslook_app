@@ -33,6 +33,9 @@ class _MapPageState extends ConsumerState<MapPage> {
   final _map = MapController();
   final _sheet = DraggableScrollableController();
   bool showPeople = true, showPins = true, showStories = true, showBusinesses = true;
+  // فلاتر الأنشطة التجارية: مفتوح الآن، وفئات محددة (فارغة = الكل)
+  bool openOnly = false;
+  final Set<String> bizCats = {};
   Timer? _fetchDebounce, _frame;
   double _zoom = 13;
   LatLngBounds? _bounds;
@@ -112,10 +115,15 @@ class _MapPageState extends ConsumerState<MapPage> {
     }
     if (showBusinesses) {
       for (final c in circles) {
+        if (openOnly && c.openNow != true) continue;
+        if (bizCats.isNotEmpty && !bizCats.contains(c.category.key)) continue;
         add(MapItem.business(c.toBusiness()));
       }
-      for (final b in businesses) {
-        add(MapItem.business(b));
+      // متاجر النواة القديمة بلا ساعات عمل أو فئة معروفة: تظهر فقط دون فلاتر
+      if (!openOnly && bizCats.isEmpty) {
+        for (final b in businesses) {
+          add(MapItem.business(b));
+        }
       }
     }
     return out;
@@ -193,6 +201,11 @@ class _MapPageState extends ConsumerState<MapPage> {
                   _chip('لحظات', Icons.auto_awesome_rounded, showStories, () => setState(() => showStories = !showStories)),
                   _chip('دبابيس', Icons.push_pin_rounded, showPins, () => setState(() => showPins = !showPins)),
                   _chip('متاجر', Icons.storefront_rounded, showBusinesses, () => setState(() => showBusinesses = !showBusinesses)),
+                  if (showBusinesses) ...[
+                    _chip('مفتوح الآن', Icons.schedule_rounded, openOnly, () => setState(() => openOnly = !openOnly)),
+                    for (final c in BizCategory.values)
+                      _chip(c.plural, c.icon, bizCats.contains(c.key), () => setState(() => bizCats.contains(c.key) ? bizCats.remove(c.key) : bizCats.add(c.key))),
+                  ],
                 ]),
               ),
             ),

@@ -5,7 +5,11 @@ import 'package:latlong2/latlong.dart';
 class DeviceLocation {
   static LatLng? last;
 
-  static Future<LatLng?> current({bool precise = true}) async {
+  static Future<LatLng?> current({bool precise = true}) =>
+      // مهلة إجمالية: طلب الإذن أو تحديد الموقع قد لا يرد أبداً على بعض المتصفحات
+      _current(precise: precise).timeout(const Duration(seconds: 14), onTimeout: () => last);
+
+  static Future<LatLng?> _current({required bool precise}) async {
     try {
       var perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();

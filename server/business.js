@@ -23,6 +23,46 @@ const str = (v, max = 200) => String(v ?? "").trim().slice(0, max);
 const num = (v) => (v == null || v === "" ? null : Number(v));
 const isUrl = (v) => typeof v === "string" && (v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/"));
 
+// ---- تطبيع النص العربي للبحث: توحيد الهمزات والتاء المربوطة والألف المقصورة وإزالة التشكيل والتطويل (في SQL وفي JS بالقواعد نفسها)
+export const NORM = (expr) => `regexp_replace(translate(lower(${expr}), 'أإآةى', 'اااهي'), '[ً-ْـ]', '', 'g')`;
+export const normQ = (s) => String(s ?? "").toLowerCase().replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي").replace(/[ً-ْـ]/g, "").trim();
+export const likeOf = (s) => "%" + normQ(s).replace(/[%_\\]/g, "\\$&") + "%";
+/// مسافة الطائر بالكيلومتر بين ($lat,$lng) وأعمدة الجدول؛ NULL عندما لا يُمرَّر موقع. تُشير دائماً إلى المعاملين حتى يعرف pg نوعيهما.
+export const DIST = (latP, lngP, latCol, lngCol) => `CASE WHEN ${latP}::float8 IS NULL OR ${lngP}::float8 IS NULL THEN NULL::float8 ELSE 6371 * acos(least(1.0, cos(radians(${latP}::float8)) * cos(radians(${latCol})) * cos(radians(${lngCol}) - radians(${lngP}::float8)) + sin(radians(${latP}::float8)) * sin(radians(${latCol})))) END`;
+export const roundKm = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 10) / 10);
+
+// ---- ساعات العمل: "يومياً 10:00 ص – 12:00 م"، "24 ساعة"، "السبت – الخميس 8:00 ص – 10:00 م"
+const DAY_NAMES = { "الاحد": 0, "الأحد": 0, "الاثنين": 1, "الإثنين": 1, "الثلاثاء": 2, "الاربعاء": 3, "الأربعاء": 3, "الخميس": 4, "الجمعة": 5, "السبت": 6 };
+/// يعيد { always, days (null = كل الأيام), open, close } بالدقائق من منتصف الليل (close قد يتجاوز 1440 عند الإغلاق بعد منتصف الليل)، أو null إن لم يُفهم النص.
+export function parseHours(text) {
+  const s = String(text ?? "").replace(/[ً-ْـ]/g, "").trim();
+  if (!s) return null;
+  if (/24\s*(ساعة|ساعه|h)|24\s*\/\s*7|على مدار الساعة/i.test(s)) return { always: true, days: null, open: 0, close: 1440 };
+  const times = [...s.matchAll(/(\d{1,2})(?::(\d{2}))?\s*(ص|م|صباحا|مساء|am|pm)/gi)];
+  if (times.length < 2) return null;
+  // "12 م" تعني الظهر عند الافتتاح ومنتصف الليل عند الإغلاق (كما تُكتب في اللوحات)
+  const toMin = (m, closing) => { const raw = Number(m[1]); const pm = /^(م|مساء|pm)/i.test(m[3]); let h = raw % 12; if (pm) h += 12; if (closing && raw === 12 && pm) h = 24; return h * 60 + Number(m[2] ?? 0); };
+  const open = toMin(times[0], false); let close = toMin(times[1], true);
+  if (close <= open) close += 1440;
+  const names = [...s.matchAll(/(الاحد|الأحد|الاثنين|الإثنين|الثلاثاء|الاربعاء|الأربعاء|الخميس|الجمعة|السبت)/g)].map((m) => DAY_NAMES[m[1]]);
+  let days = null;
+  if (names.length >= 2) { days = new Set(); for (let d = names[0]; ; d = (d + 1) % 7) { days.add(d); if (d === names[1]) break; } }
+  else if (names.length === 1) days = new Set([names[0]]);
+  return { always: false, days, open, close };
+}
+/// هل النشاط مفتوح الآن بتوقيت السعودية؟ true/false، أو null إن لم تُفهم ساعاته.
+export function isOpenNow(text, now = new Date()) {
+  const h = parseHours(text);
+  if (!h) return null;
+  if (h.always) return true;
+  const local = new Date(now.getTime() + RIYADH_OFFSET_MIN * 60000);
+  const day = local.getUTCDay(), min = local.getUTCHours() * 60 + local.getUTCMinutes();
+  const openOn = (d) => !h.days || h.days.has(d);
+  if (openOn(day) && min >= h.open && min < h.close) return true;
+  // نافذة أمس الممتدة بعد منتصف الليل
+  return openOn((day + 6) % 7) && h.close > 1440 && min + 1440 >= h.open && min + 1440 < h.close;
+}
+
 export default async function business(app, opts) {
   const { pool, auth } = opts;
   if (!pool || !auth) throw new Error("business: pool and auth are required");
@@ -239,7 +279,8 @@ export default async function business(app, opts) {
     hours: b.hours, phone: b.phone, website: b.website, color: b.color, highlights: b.highlights ?? [], verified: b.verified, official: b.official, active: b.active !== false,
     logoUrl: b.logo_url ?? null, coverUrl: b.cover_url ?? null, ownerId: b.owner_id ?? null, views: Number(b.views ?? 0),
     followers: Number(b.followers ?? 0), rating: b.rating == null ? null : Number(b.rating), ratingCount: Number(b.rating_count ?? 0), minPrice: b.min_price == null ? null : Number(b.min_price),
-    itemsCount: Number(b.items_count ?? 0), following: b.following === true, myRole: b.my_role ?? null, createdAt: b.created_at, ...extra,
+    itemsCount: Number(b.items_count ?? 0), following: b.following === true, myRole: b.my_role ?? null, createdAt: b.created_at,
+    openNow: isOpenNow(b.hours), distanceKm: roundKm(b.distance_km), ...extra,
   });
   async function itemOut(it, now = new Date()) {
     const base = { id: it.id, bizId: it.biz_id, kind: it.kind, title: it.title, description: it.description, price: Number(it.price), unit: it.unit, stock: it.stock, meta: it.meta ?? {}, imageUrl: it.image_url, active: it.active, sort: it.sort };
@@ -285,14 +326,24 @@ export default async function business(app, opts) {
     const bb = bbox(req.query?.bbox);
     const q = str(req.query?.q, 60);
     const mine = req.query?.following === "1" && uid;
-    const r = await pool.query(`${LIST_SQL} AND b.active
+    // الفلاتر والترتيب: open=1 (مفتوح الآن)، minRating، sort=near|rating|popular|new مع lat/lng للمسافة
+    const lat = num(req.query?.lat), lng = num(req.query?.lng);
+    const geo = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    const sort = ["near", "rating", "popular", "new"].includes(req.query?.sort) ? req.query.sort : "default";
+    const minRating = Math.min(5, Math.max(0, Number(req.query?.minRating) || 0));
+    const openOnly = req.query?.open === "1";
+    const order = { near: "distance_km ASC NULLS LAST, x.followers DESC", rating: "x.rating DESC NULLS LAST, x.rating_count DESC, x.followers DESC", popular: "x.followers DESC, x.views DESC, x.rating DESC NULLS LAST", new: "x.created_at DESC", default: "x.category, x.sort, x.name" }[sort];
+    const r = await pool.query(`SELECT x.*, ${DIST("$9", "$10", "x.lat", "x.lng")} AS distance_km FROM (${LIST_SQL} AND b.active
       AND ($2::text IS NULL OR b.category=$2)
       AND ($3::float8 IS NULL OR (b.lat BETWEEN $4 AND $6 AND b.lng BETWEEN $3 AND $5))
-      AND ($7 = '' OR b.name ILIKE '%' || $7 || '%' OR b.name_ar ILIKE '%' || $7 || '%' OR b.sector ILIKE '%' || $7 || '%')
-      AND ($8::bool = false OR EXISTS (SELECT 1 FROM biz_follows f WHERE f.biz_id=b.id AND f.user_id=$1))
-      ORDER BY b.category, b.sort, b.name LIMIT 200`,
-      [uid, cat, bb?.minLng ?? null, bb?.minLat ?? null, bb?.maxLng ?? null, bb?.maxLat ?? null, q, !!mine]);
-    return r.rows.map((b) => bizOut(b));
+      AND ($7::text = '' OR ${NORM("b.name")} LIKE $7 OR ${NORM("b.name_ar")} LIKE $7 OR ${NORM("b.sector")} LIKE $7 OR ${NORM("b.address")} LIKE $7
+        OR EXISTS (SELECT 1 FROM biz_items i WHERE i.biz_id=b.id AND i.active AND ${NORM("i.title")} LIKE $7))
+      AND ($8::bool = false OR EXISTS (SELECT 1 FROM biz_follows f WHERE f.biz_id=b.id AND f.user_id=$1))) x
+      WHERE ($11::float8 <= 0 OR x.rating >= $11::float8)
+      ORDER BY ${order} LIMIT 200`,
+      [uid, cat, bb?.minLng ?? null, bb?.minLat ?? null, bb?.maxLng ?? null, bb?.maxLat ?? null, q ? likeOf(q) : "", !!mine, geo ? lat : null, geo ? lng : null, minRating]);
+    const list = r.rows.map((b) => bizOut(b));
+    return openOnly ? list.filter((b) => b.openNow === true) : list;
   });
 
   // ---- دوائري: ما أملكه أو أعمل فيه، وطلبات الملكية المعلّقة

@@ -6,7 +6,11 @@ import 'app_state.dart';
 import 'providers.dart';
 
 /// قائمة الدوائر التجارية بفئة معيّنة ('' = الكل).
-final bizListProvider = FutureProvider.family<List<Biz>, String>((ref, cat) => ref.watch(apiClientProvider).businessCircles(category: cat.isEmpty ? null : BizCategory.of(cat)));
+/// مفتاح قائمة الدوائر: الفئة، مفتوح الآن، الترتيب، وموقع المستخدم للترتيب بالقرب.
+typedef BizQuery = ({String cat, bool open, String sort, double? lat, double? lng});
+const BizQuery bizQueryAll = (cat: '', open: false, sort: '', lat: null, lng: null);
+final bizListProvider = FutureProvider.family<List<Biz>, BizQuery>((ref, k) =>
+    ref.watch(apiClientProvider).businessCircles(category: k.cat.isEmpty ? null : BizCategory.of(k.cat), openNow: k.open, sort: k.sort, lat: k.lat, lng: k.lng));
 final bizDetailProvider = FutureProvider.family<Biz, String>((ref, id) => ref.watch(apiClientProvider).businessCircle(id));
 final myBizOrdersProvider = FutureProvider<List<BizOrder>>((ref) => ref.watch(apiClientProvider).myBizOrders());
 

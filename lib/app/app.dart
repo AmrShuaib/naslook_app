@@ -19,6 +19,7 @@ import '../pages/map/map_page.dart';
 import '../pages/circles/circles_page.dart';
 import '../pages/myspace/myspace_page.dart';
 import '../pages/notifications/notifications_page.dart';
+import '../pages/search/search_page.dart';
 import '../pages/chat/chats_page.dart';
 
 class MainApp extends ConsumerWidget {
@@ -148,6 +149,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           : AppBar(
               title: Text(HomeShell.titles[i]),
               actions: [
+                IconButton(tooltip: 'بحث', icon: const Icon(Icons.search_rounded), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage()))),
                 IconButton(
                   tooltip: 'التنبيهات',
                   icon: Badge(isLabelVisible: bell > 0, label: Text('$bell'), backgroundColor: Joy.accent, child: const Icon(Icons.notifications_outlined)),

@@ -9,12 +9,15 @@ import '../../core/nav_provider.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../state/search_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../circles/circle_detail_page.dart';
 import '../events/events_page.dart';
 import '../business/business_list.dart';
+import '../business/business_page.dart';
 import '../market/market_page.dart';
+import '../search/search_page.dart';
 import '../wallet/wallet_page.dart';
 
 class HomePage extends ConsumerWidget {
@@ -50,7 +53,18 @@ class HomePage extends ConsumerWidget {
             loading: () => const Text('نبحث عمّن حولك…', style: TextStyle(color: Joy.textMuted, fontSize: 13)),
             error: (_, __) => const Text('جدة', style: TextStyle(color: Joy.textMuted, fontSize: 13)),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          // شريط البحث الموحّد
+          JoyCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage())),
+            child: const Row(children: [
+              Icon(Icons.search_rounded, color: Joy.textMuted),
+              SizedBox(width: 10),
+              Expanded(child: Text('ابحث عن أشخاص ودوائر وأنشطة ومنتجات', style: TextStyle(color: Joy.textMuted, fontSize: 13.5))),
+            ]),
+          ),
+          const SizedBox(height: 14),
           _StoriesRail(stories: stories, me: me?.nickname ?? ''),
           const SizedBox(height: 16),
           JoyCard(
@@ -110,6 +124,41 @@ class HomePage extends ConsumerWidget {
               const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
             ]),
           ),
+          // مفتوح الآن حولك: شريط أفقي من الأنشطة المفتوحة مرتبةً بالأقرب
+          Consumer(builder: (context, ref, _) {
+            final d = ref.watch(discoverProvider).valueOrNull;
+            if (d == null || d.openNow.isEmpty) return const SizedBox.shrink();
+            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const SizedBox(height: 18),
+              SectionTitle(d.located ? 'مفتوح الآن حولك' : 'مفتوح الآن', action: 'الكل', onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage()))),
+              SizedBox(
+                height: 76,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: d.openNow.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (_, i) {
+                    final b = d.openNow[i];
+                    return JoyCard(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      onTap: () => openBusiness(context, b.id, initial: b),
+                      child: Row(children: [
+                        BizLogo(biz: b, size: 40),
+                        const SizedBox(width: 10),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 150),
+                          child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(b.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                            Text(b.distanceLabel ?? (b.sector.isNotEmpty ? b.sector : b.category.label), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.success, fontSize: 12, fontWeight: FontWeight.w600)),
+                          ]),
+                        ),
+                      ]),
+                    );
+                  },
+                ),
+              ),
+            ]);
+          }),
           const SizedBox(height: 18),
           SectionTitle('دوائرك', action: 'الكل', onAction: () => ref.read(navIndexProvider.notifier).state = 2),
           vessels.when(

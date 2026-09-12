@@ -4,11 +4,17 @@ import 'models.dart';
 
 /// مسارات إضافة الدوائر التجارية (server/business.js).
 extension BizApi on ApiClient {
-  Future<List<Biz>> businessCircles({BizCategory? category, BBox? bbox, String q = '', bool following = false}) async => asList(await getList('/biz', query: {
+  /// قائمة الدوائر التجارية مع الفلاتر: الفئة، الحدود، البحث، المتابَعة، مفتوح الآن، الترتيب (near|rating|popular|new) مع موقع المستخدم، وحد أدنى للتقييم.
+  Future<List<Biz>> businessCircles({BizCategory? category, BBox? bbox, String q = '', bool following = false, bool openNow = false, String sort = '', double? lat, double? lng, double minRating = 0}) async =>
+      asList(await getList('/biz', query: {
         if (category != null) 'category': category.key,
         if (bbox != null) 'bbox': bbox.query,
         if (q.isNotEmpty) 'q': q,
         if (following) 'following': '1',
+        if (openNow) 'open': '1',
+        if (sort.isNotEmpty) 'sort': sort,
+        if (lat != null && lng != null) ...{'lat': lat.toStringAsFixed(5), 'lng': lng.toStringAsFixed(5)},
+        if (minRating > 0) 'minRating': minRating.toString(),
       })).map(Biz.fromJson).toList();
   Future<Biz> businessCircle(String id) async => Biz.fromJson(await get('/biz/$id'));
   Future<void> followBiz(String id) => post('/biz/$id/follow', const {});

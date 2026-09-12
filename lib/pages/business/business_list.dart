@@ -1,16 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../api/biz_models.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
+import '../../core/location.dart';
 import '../../state/biz_providers.dart';
+import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import 'business_page.dart';
 import 'my_bookings_page.dart';
 import 'owner/my_businesses_page.dart';
 
-/// قائمة الدوائر التجارية مع تصفية بالفئة (تُستخدم داخل تبويب الدوائر وفي صفحة مستقلة).
+/// مركز جدة: بديل الترتيب بالقرب حين يتعذّر تحديد الموقع.
+const LatLng kJeddahCenter = LatLng(21.5433, 39.1728);
+
+/// قائمة الدوائر التجارية مع تصفية بالفئة، ومفتوح الآن، وترتيب بالأقرب أو التقييم أو المتابعة (تُستخدم داخل تبويب الدوائر وفي صفحة مستقلة).
 class BizListView extends ConsumerStatefulWidget {
   final EdgeInsets padding;
   const BizListView({super.key, this.padding = const EdgeInsets.fromLTRB(20, 4, 20, 96)});
@@ -20,29 +26,70 @@ class BizListView extends ConsumerStatefulWidget {
 
 class _BizListViewState extends ConsumerState<BizListView> {
   String cat = '';
+  bool open = false;
+  String sort = '';
+  LatLng? loc;
+  bool locating = false;
+
+  BizQuery get key => (cat: cat, open: open, sort: sort, lat: sort == 'near' ? loc?.latitude : null, lng: sort == 'near' ? loc?.longitude : null);
+
+  /// «الأقرب»: موقع الجهاز، وإلا موقع المستخدم على الخريطة، وإلا مركز جدة مع تنبيه.
+  Future<void> _near() async {
+    if (sort == 'near') return setState(() => sort = '');
+    setState(() => locating = true);
+    var l = await DeviceLocation.current(precise: false);
+    l ??= () {
+      final p = ref.read(myPresenceProvider).valueOrNull;
+      return p?.lat != null && p?.lng != null ? LatLng(p!.lat!, p.lng!) : null;
+    }();
+    if (!mounted) return;
+    if (l == null) {
+      l = kJeddahCenter;
+      toast(context, 'تعذّر تحديد موقعك؛ رُتّبت حسب مركز جدة');
+    }
+    setState(() {
+      loc = l;
+      sort = 'near';
+      locating = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final list = ref.watch(bizListProvider(cat));
+    final list = ref.watch(bizListProvider(key));
     return Column(children: [
       SizedBox(
         height: 44,
-        child: ListView(
+        child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          children: [
-            _chip('الكل', Icons.apps_rounded, ''),
-            for (final c in BizCategory.values) _chip(c.plural, c.icon, c.key),
-          ],
+          child: Row(children: [
+            _chip('الكل', Icons.apps_rounded, cat == '', () => setState(() => cat = '')),
+            for (final c in BizCategory.values) _chip(c.plural, c.icon, cat == c.key, () => setState(() => cat = c.key)),
+          ]),
+        ),
+      ),
+      SizedBox(
+        height: 40,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(children: [
+            _chip('مفتوح الآن', Icons.schedule_rounded, open, () => setState(() => open = !open), color: Joy.success),
+            _chip('الأقرب', locating ? Icons.hourglass_top_rounded : Icons.near_me_rounded, sort == 'near', locating ? () {} : _near),
+            _chip('الأعلى تقييماً', Icons.star_rounded, sort == 'rating', () => setState(() => sort = sort == 'rating' ? '' : 'rating')),
+            _chip('الأكثر متابعة', Icons.favorite_rounded, sort == 'popular', () => setState(() => sort = sort == 'popular' ? '' : 'popular')),
+          ]),
         ),
       ),
       const SizedBox(height: 6),
       Expanded(
         child: list.when(
+          skipLoadingOnReload: true,
           data: (items) => items.isEmpty
-              ? const EmptyState(icon: Icons.storefront_outlined, title: 'لا دوائر تجارية بعد')
+              ? EmptyState(icon: open ? Icons.schedule_rounded : Icons.storefront_outlined, title: open ? 'لا شيء مفتوح الآن في هذه الفئة' : 'لا دوائر تجارية بعد', subtitle: open ? 'أزل فلتر «مفتوح الآن» أو جرّب فئة أخرى.' : null)
               : RefreshIndicator(
-                  onRefresh: () async => ref.invalidate(bizListProvider(cat)),
+                  onRefresh: () async => ref.invalidate(bizListProvider(key)),
                   child: ListView.separated(
                     padding: widget.padding,
                     itemCount: items.length,
@@ -51,24 +98,38 @@ class _BizListViewState extends ConsumerState<BizListView> {
                   ),
                 ),
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(bizListProvider(cat))),
+          error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(bizListProvider(key))),
         ),
       ),
     ]);
   }
 
-  Widget _chip(String label, IconData icon, String key) {
-    final on = cat == key;
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: ChoiceChip(
-        avatar: Icon(icon, size: 16, color: on ? Joy.primaryOn : Joy.textMuted),
-        label: Text(label, style: TextStyle(color: on ? Joy.primaryOn : Joy.text)),
-        selected: on,
-        showCheckmark: false,
-        selectedColor: Joy.primary,
-        onSelected: (_) => setState(() => cat = key),
-      ),
+  Widget _chip(String label, IconData icon, bool on, VoidCallback onTap, {Color color = Joy.primary}) => Padding(
+        padding: const EdgeInsets.only(left: 8),
+        child: ChoiceChip(
+          avatar: Icon(icon, size: 16, color: on ? Joy.primaryOn : Joy.textMuted),
+          label: Text(label, style: TextStyle(color: on ? Joy.primaryOn : Joy.text)),
+          selected: on,
+          showCheckmark: false,
+          selectedColor: color,
+          visualDensity: VisualDensity.compact,
+          onSelected: (_) => onTap(),
+        ),
+      );
+}
+
+/// شارة الحالة: مفتوح الآن / مغلق (تُخفى إن لم تُفهم ساعات العمل).
+class OpenBadge extends StatelessWidget {
+  final bool? openNow;
+  const OpenBadge(this.openNow, {super.key});
+  @override
+  Widget build(BuildContext context) {
+    final o = openNow;
+    if (o == null) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(color: o ? const Color(0xFFE3F5EA) : Joy.surface2, borderRadius: BorderRadius.circular(999)),
+      child: Text(o ? 'مفتوح الآن' : 'مغلق', style: TextStyle(fontSize: 10.5, color: o ? Joy.success : Joy.textMuted, fontWeight: FontWeight.w700)),
     );
   }
 }
@@ -89,13 +150,19 @@ class BizRow extends StatelessWidget {
                 if (b.following) Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)), child: const Text('متابَع', style: TextStyle(fontSize: 10.5, color: Joy.primary, fontWeight: FontWeight.w600))),
               ]),
               Text('${b.sector.isNotEmpty ? b.sector : b.category.label} · ${b.address.split('،').first}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+              if (b.matchedItem != null && b.matchedItem!.isNotEmpty)
+                Text('يوجد: ${b.matchedItem}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.primary, fontSize: 12)),
               const SizedBox(height: 3),
-              Row(children: [
-                Stars(rating: b.rating, count: b.ratingCount),
-                const SizedBox(width: 10),
-                Text('${b.followers} متابع', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
-                const Spacer(),
-                if (b.minPrice != null) Text('من ${money(b.minPrice!)}', style: const TextStyle(color: Joy.primary, fontWeight: FontWeight.w700, fontSize: 12.5)),
+              Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                // التقييم والحالة والمسافة تلتف على سطرين عند الضيق، والسعر يبقى في الطرف
+                Expanded(
+                  child: Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                    Stars(rating: b.rating, count: b.ratingCount),
+                    OpenBadge(b.openNow),
+                    if (b.distanceLabel != null) Text(b.distanceLabel!, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+                  ]),
+                ),
+                if (b.minPrice != null) Padding(padding: const EdgeInsetsDirectional.only(start: 6), child: Text('من ${money(b.minPrice!)}', style: const TextStyle(color: Joy.primary, fontWeight: FontWeight.w700, fontSize: 12.5))),
               ]),
             ]),
           ),
