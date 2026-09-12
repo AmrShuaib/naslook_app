@@ -3,12 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
+import '../../api/posts_api.dart';
 import '../../core/app_theme.dart';
-import '../../core/location.dart';
 import '../../core/nav_provider.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../state/posts_providers.dart';
 import '../../state/search_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
@@ -17,6 +18,8 @@ import '../events/events_page.dart';
 import '../business/business_list.dart';
 import '../business/business_page.dart';
 import '../market/market_page.dart';
+import '../posts/my_posts_page.dart';
+import '../posts/post_viewer.dart';
 import '../search/search_page.dart';
 import '../wallet/wallet_page.dart';
 
@@ -65,7 +68,7 @@ class HomePage extends ConsumerWidget {
             ]),
           ),
           const SizedBox(height: 14),
-          _StoriesRail(stories: stories, me: me?.nickname ?? ''),
+          _StoriesRail(stories: stories, posts: ref.watch(recentPostsProvider), me: me?.nickname ?? ''),
           const SizedBox(height: 16),
           JoyCard(
             padding: EdgeInsets.zero,
@@ -201,12 +204,14 @@ class HomePage extends ConsumerWidget {
 
 class _StoriesRail extends ConsumerWidget {
   final AsyncValue<List<Story>> stories;
+  final AsyncValue<List<MapPost>> posts;
   final String me;
-  const _StoriesRail({required this.stories, required this.me});
+  const _StoriesRail({required this.stories, required this.posts, required this.me});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final list = stories.value ?? const <Story>[];
+    final plist = posts.value ?? const <MapPost>[];
     // لحظة واحدة لكل شخص في الشريط
     final byUser = <String, Story>{};
     for (final s in list) {
@@ -229,6 +234,27 @@ class _StoriesRail extends ConsumerWidget {
               ),
             ),
           ),
+          // منشورات الخريطة الأحدث (صورة/فيديو/صوت/نص) ثم لحظات النواة القديمة
+          for (var i = 0; i < plist.length; i++)
+            _RailItem(
+              label: plist[i].user.nickname,
+              child: InkWell(
+                onTap: () => PostViewerPage.open(context, plist, index: i),
+                onLongPress: () => openProfile(context, plist[i].user),
+                borderRadius: BorderRadius.circular(34),
+                child: Stack(clipBehavior: Clip.none, children: [
+                  Avatar(name: plist[i].user.nickname, url: plist[i].user.avatarUrl, size: 52, ring: true),
+                  PositionedDirectional(
+                    end: -2, bottom: -2,
+                    child: Container(
+                      width: 20, height: 20,
+                      decoration: BoxDecoration(color: plist[i].tag == 'moment' ? Joy.sun : Joy.accent, shape: BoxShape.circle, border: Border.all(color: Joy.surface, width: 2)),
+                      child: Icon(switch (plist[i].kind) { 'image' => Icons.image_rounded, 'video' => Icons.videocam_rounded, 'audio' => Icons.mic_rounded, _ => Icons.text_fields_rounded }, size: 10, color: plist[i].tag == 'moment' ? Joy.sunText : Colors.white),
+                    ),
+                  ),
+                ]),
+              ),
+            ),
           for (final s in byUser.values)
             _RailItem(
               label: s.nickname,
@@ -239,33 +265,15 @@ class _StoriesRail extends ConsumerWidget {
                 child: Avatar(name: s.nickname, url: s.avatarUrl, size: 52, ring: true),
               ),
             ),
-          if (list.isEmpty && !stories.isLoading)
+          if (list.isEmpty && plist.isEmpty && !stories.isLoading)
             const Padding(padding: EdgeInsets.only(right: 8, top: 18), child: Text('لا لحظات حولك الآن\nكن أول من يشارك', style: TextStyle(color: Joy.textMuted, fontSize: 12.5))),
         ],
       ),
     );
   }
 
-  Future<void> _newStory(BuildContext context, WidgetRef ref) async {
-    final text = await askText(context, title: 'لحظة جديدة', hint: 'ماذا يحدث حولك الآن؟ تظهر 24 ساعة لمن حولك', confirm: 'نشر');
-    if (text == null || text.isEmpty) return;
-    // موقع اللحظة: GPS الجهاز أولاً، ثم مكانك المحدد على الخريطة، وإلا نطلب تحديده
-    final gps = await DeviceLocation.current();
-    final pres = ref.read(myPresenceProvider).value;
-    final lat = gps?.latitude ?? pres?.lat, lng = gps?.longitude ?? pres?.lng;
-    if (lat == null || lng == null) {
-      if (context.mounted) toast(context, 'فعّل الموقع أو اضغط مطوّلاً على الخريطة لتحديد مكان اللحظة');
-      if (context.mounted) ref.read(navIndexProvider.notifier).state = 1;
-      return;
-    }
-    try {
-      await ref.read(apiClientProvider).postStory(text: text, lat: lat, lng: lng);
-      ref.invalidate(storiesProvider);
-      if (context.mounted) toast(context, 'نُشرت لحظتك');
-    } catch (e) {
-      if (context.mounted) toast(context, e.toString(), error: true);
-    }
-  }
+  /// «لحظتك»: يفتح محرّر المنشور (صورة/فيديو/صوت/نص مع نصوص وملصقات) عند موقعك.
+  Future<void> _newStory(BuildContext context, WidgetRef ref) => composePostHere(context, ref);
 
   void _showStory(BuildContext context, Story s) {
     showModalBottomSheet(

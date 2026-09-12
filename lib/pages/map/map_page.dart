@@ -8,16 +8,20 @@ import 'package:latlong2/latlong.dart';
 
 import '../../api/biz_models.dart';
 import '../../api/models.dart';
+import '../../api/posts_api.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
+import '../../state/posts_providers.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../business/business_page.dart';
 import '../chat/chat_thread_page.dart';
+import '../posts/post_composer.dart';
+import '../posts/post_viewer.dart';
 import 'map_cluster.dart';
 
 /// مستوى التكبير الذي تبدأ عنده لوحة المنطقة بعرض المشاركات تفصيلياً.
@@ -92,6 +96,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     final stories = ref.watch(storiesProvider).value ?? const <Story>[];
     final businesses = ref.watch(businessesProvider).value ?? const <Business>[];
     final circles = ref.watch(mapBizProvider).value ?? const <Biz>[];
+    final posts = ref.watch(mapPostsProvider).value ?? const <MapPost>[];
     final seen = <String>{};
     final out = <MapItem>[];
     void add(MapItem? i) {
@@ -104,6 +109,9 @@ class _MapPageState extends ConsumerState<MapPage> {
       }
     }
     if (showStories) {
+      for (final p in posts) {
+        add(MapItem.post(p));
+      }
       for (final s in stories) {
         add(MapItem.story(s));
       }
@@ -139,7 +147,7 @@ class _MapPageState extends ConsumerState<MapPage> {
       } catch (_) {}
     });
     final mine = ref.watch(myPresenceProvider).value;
-    final loading = ref.watch(presenceProvider).isLoading || ref.watch(storiesProvider).isLoading || ref.watch(pinsProvider).isLoading || ref.watch(businessesProvider).isLoading;
+    final loading = ref.watch(presenceProvider).isLoading || ref.watch(storiesProvider).isLoading || ref.watch(pinsProvider).isLoading || ref.watch(businessesProvider).isLoading || ref.watch(mapPostsProvider).isLoading;
     final items = _collect();
     final clusters = clusterItems(items, zoom: _zoom);
     final b = _bounds;
@@ -223,6 +231,8 @@ class _MapPageState extends ConsumerState<MapPage> {
               duration: const Duration(milliseconds: 150),
               opacity: controlsHidden ? 0 : 1,
               child: Column(children: [
+                _fab(Icons.add_a_photo_rounded, _newPostHere, filled: true, tip: 'منشور جديد'),
+                const SizedBox(height: 8),
                 _fab(Icons.my_location_rounded, _goToMe, tip: 'موقعي'),
                 const SizedBox(height: 8),
                 _fab(Icons.refresh_rounded, _refresh, tip: 'تحديث'),
@@ -280,13 +290,14 @@ class _MapPageState extends ConsumerState<MapPage> {
     });
   }
 
-  static double _markerBox(MapItemKind k) => k == MapItemKind.person ? 40 : 30;
+  static double _markerBox(MapItemKind k) => k == MapItemKind.person ? 40 : k == MapItemKind.post ? 36 : 30;
 
   void _refresh() {
     ref.invalidate(presenceProvider);
     ref.invalidate(pinsProvider);
     ref.invalidate(storiesProvider);
     ref.invalidate(businessesProvider);
+    ref.invalidate(mapPostsProvider);
   }
 
   /// يقرّب الخريطة إلى العنصر ويفتح تفاصيله.
@@ -376,6 +387,7 @@ class _MapPageState extends ConsumerState<MapPage> {
       builder: (_) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           const Padding(padding: EdgeInsets.fromLTRB(20, 16, 20, 6), child: Align(alignment: AlignmentDirectional.centerStart, child: Text('عند هذه النقطة', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17)))),
+          ListTile(leading: const Icon(Icons.add_a_photo_rounded, color: Joy.accent), title: const Text('منشور'), subtitle: const Text('صورة أو فيديو قصير أو تسجيل صوتي أو نص، مع نصوص وملصقات وزر إجراء'), onTap: () => Navigator.pop(context, 'post')),
           ListTile(leading: const Icon(Icons.person_pin_circle_rounded, color: Joy.primary), title: const Text('أنا هنا الآن'), subtitle: const Text('اظهر لأصدقائك على الخريطة'), onTap: () => Navigator.pop(context, 'me')),
           ListTile(leading: const Icon(Icons.auto_awesome_rounded, color: Joy.sunText), title: const Text('لحظة'), subtitle: const Text('تظهر 24 ساعة لمن حولك'), onTap: () => Navigator.pop(context, 'story')),
           ListTile(leading: const Icon(Icons.push_pin_rounded, color: Joy.accent), title: const Text('دبوس'), subtitle: const Text('ملاحظة أو تقييم لمكان'), onTap: () => Navigator.pop(context, 'pin')),
@@ -384,6 +396,11 @@ class _MapPageState extends ConsumerState<MapPage> {
       ),
     );
     if (choice == null || !mounted) return;
+    if (choice == 'post') {
+      final p = await PostComposerPage.open(context, lat: at.latitude, lng: at.longitude);
+      if (p != null && mounted) toast(context, 'نُشر منشورك على الخريطة');
+      return;
+    }
     final api = ref.read(apiClientProvider);
     try {
       if (choice == 'me') {
@@ -455,7 +472,23 @@ class _MapPageState extends ConsumerState<MapPage> {
         _showPin(item.data as Pin);
       case MapItemKind.business:
         _showBusiness(item.data as Business);
+      case MapItemKind.post:
+        _showPost(item.data as MapPost);
     }
+  }
+
+  /// يفتح العارض على المنشور مع بقية منشورات المنطقة للتمرير بينها.
+  void _showPost(MapPost p) {
+    final all = ref.read(mapPostsProvider).value ?? const <MapPost>[];
+    final list = all.any((x) => x.id == p.id) ? all : [p, ...all];
+    PostViewerPage.open(context, list, index: list.indexWhere((x) => x.id == p.id));
+  }
+
+  /// منشور جديد عند مركز الخريطة الحالي.
+  Future<void> _newPostHere() async {
+    final c = _map.camera.center;
+    final p = await PostComposerPage.open(context, lat: c.latitude, lng: c.longitude);
+    if (p != null && mounted) toast(context, 'نُشر منشورك على الخريطة');
   }
 
   void _showPerson(Presence p) {
@@ -640,6 +673,7 @@ Color _kindColor(MapItemKind k) => switch (k) {
       MapItemKind.story => Joy.sun,
       MapItemKind.pin => Joy.accent,
       MapItemKind.business => Joy.primary,
+      MapItemKind.post => Joy.accent,
     };
 
 Color _kindOn(MapItemKind k) => switch (k) {
@@ -652,6 +686,7 @@ IconData _kindIcon(MapItemKind k) => switch (k) {
       MapItemKind.story => Icons.auto_awesome_rounded,
       MapItemKind.pin => Icons.push_pin_rounded,
       MapItemKind.business => Icons.storefront_rounded,
+      MapItemKind.post => Icons.auto_awesome_motion_rounded,
     };
 
 String _kindLabel(MapItemKind k) => switch (k) {
@@ -659,6 +694,7 @@ String _kindLabel(MapItemKind k) => switch (k) {
       MapItemKind.story => 'لحظة',
       MapItemKind.pin => 'دبوس',
       MapItemKind.business => 'متجر',
+      MapItemKind.post => 'منشور',
     };
 
 const _markerShadow = [BoxShadow(color: Color(0x33000000), blurRadius: 4, offset: Offset(0, 1.5))];
@@ -692,6 +728,16 @@ class _ItemMarker extends StatelessWidget {
       case MapItemKind.business:
         final b = item.data as Business;
         child = _dot(_bizIcon(b.kind), Joy.primary, Joy.primaryOn);
+      case MapItemKind.post:
+        final p = item.data as MapPost;
+        final inner = p.kind == 'image' && p.mediaUrl != null
+            ? ClipOval(child: Image.network(p.mediaUrl!, width: 30, height: 30, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Avatar(name: p.user.nickname, url: p.user.avatarUrl, size: 30)))
+            : Avatar(name: p.user.nickname, url: p.user.avatarUrl, size: 30);
+        child = Container(
+          decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.surface, boxShadow: _markerShadow, border: Border.all(color: p.tag == 'moment' ? Joy.sun : Joy.accent, width: 2)),
+          padding: const EdgeInsets.all(1),
+          child: inner,
+        );
     }
     return Semantics(
       button: true,

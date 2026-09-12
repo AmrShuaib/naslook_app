@@ -1,9 +1,10 @@
 import 'dart:math' as math;
 
 import '../../api/models.dart';
+import '../../api/posts_api.dart';
 
 /// نوع العنصر المعروض على الخريطة.
-enum MapItemKind { person, story, pin, business }
+enum MapItemKind { person, story, pin, business, post }
 
 /// عنصر موحّد على الخريطة (شخص/لحظة/دبوس/متجر) مع موقعه وصاحبه ووقته.
 class MapItem {
@@ -40,6 +41,19 @@ class MapItem {
         subtitle: p.title.isNotEmpty ? p.title : (p.online ? 'متصل الآن' : 'كان هنا'),
         at: p.updatedAt,
         author: Person(id: p.id, nickname: p.nickname, avatarUrl: p.avatarUrl, online: p.online),
+        data: p,
+      );
+
+  /// منشور خريطة (server/posts.js): العنوان أو اسم الناشر، والتعليق أو نوعه.
+  factory MapItem.post(MapPost p) => MapItem(
+        kind: MapItemKind.post,
+        id: p.id,
+        lat: p.lat,
+        lng: p.lng,
+        title: p.title.isNotEmpty ? p.title : p.user.nickname,
+        subtitle: p.caption.isNotEmpty ? p.caption : '${p.tagLabel} · ${p.kindLabel}',
+        at: p.createdAt,
+        author: p.user,
         data: p,
       );
 
