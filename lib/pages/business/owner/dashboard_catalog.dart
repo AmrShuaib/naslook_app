@@ -152,7 +152,7 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
     final base = ref.read(apiClientProvider).baseUrl;
     final isNew = it == null;
     final priceLabel = switch (kind) { 'showtime' => 'سعر التذكرة (ر.س)', 'room' => 'سعر الليلة (ر.س)', 'car' => 'سعر اليوم (ر.س)', _ => 'السعر (ر.س)' };
-    final stockLabel = switch (kind) { 'showtime' => 'عدد المقاعد لكل عرض', 'room' => 'عدد الغرف من هذا النوع', 'car' => 'عدد السيارات المتاحة', _ => 'الكمية المتاحة (اتركه فارغاً لكمية مفتوحة)' };
+    final stockLabel = switch (kind) { 'showtime' => 'مقاعد كل عرض', 'room' => 'عدد الغرف', 'car' => 'عدد السيارات', _ => 'الكمية (فارغ = مفتوحة)' };
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 0, 20, 24 + MediaQuery.viewInsetsOf(context).bottom),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
