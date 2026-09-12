@@ -37,6 +37,8 @@ if [[ -n "$code_sha" && "$code_key" != "$last_code" ]]; then
       [[ -e "$f" ]] || continue
       name=$(basename "$f")
       if ! cmp -s "$f" "$ROOT/src/$name"; then
+        # لا نلمس أبداً ملفاً موجوداً في النواة لم ننشره نحن (علامة ".absent" تُكتب عند أول نشر لملف لم يكن موجوداً)
+        if [[ -f "$ROOT/src/$name" && ! -f "$ROOT/ops/rollback/$name.absent" ]]; then log "WARNING: $name exists in the core and is not managed by autodeploy; skipping (rename the plugin)"; continue; fi
         # نحتفظ بالنسخة السابقة (أو علامة "كان غير موجود") للتراجع إن فشل التشغيل
         if [[ -f "$ROOT/src/$name" ]]; then cp "$ROOT/src/$name" "$ROOT/ops/rollback/$name"; else : > "$ROOT/ops/rollback/$name.absent"; fi
         cp "$f" "$ROOT/src/$name"; restart=1; log "server plugin $name updated ($CODE_BRANCH)"

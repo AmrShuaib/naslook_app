@@ -1,8 +1,8 @@
 // إضافة Fastify لمنشورات الخريطة في Naslife: منشور بصورة أو فيديو قصير أو تسجيل صوتي أو نص، مع طبقات (نصوص وملصقات) تُرسم
 // فوق الوسائط عند العرض، وحقول احترافية للمسوّقين والمستثمرين (نوع المنشور، عنوان، سعر، زر إجراء)، ومدة ظهور (يوم/3 أيام/أسبوع)،
 // وإعجابات ومشاهدات. الوسائط تُرفع عبر /chat/upload ثم يُمرَّر رابطها هنا.
-// التسجيل في src/index.js:
-//   await app.register((await import("./posts.js")).default, { pool, auth });
+// التسجيل في src/index.js (الاسم map_posts.js لأن النواة تملك ملفاً باسم posts.js):
+//   await app.register((await import("./map_posts.js")).default, { pool, auth });
 import crypto from "node:crypto";
 
 const UUID_RE = /^[0-9a-f-]{36}$/i;
