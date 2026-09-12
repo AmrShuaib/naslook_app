@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
@@ -145,8 +146,13 @@ class ApiClient {
         () => _http.put(_uri(path), headers: _headers(), body: jsonEncode(body)),
       );
 
-  Future<Map<String, dynamic>> delete(String path) =>
-      _send(() => _http.delete(_uri(path), headers: _headers(json: false)));
+  Future<Map<String, dynamic>> delete(String path, {Object? body}) => _send(
+        () => _http.delete(_uri(path), headers: _headers(json: body != null), body: body == null ? null : jsonEncode(body)),
+      );
+
+  /// رفع جسم ثنائي كما هو (الملف نفسه هو الجسم) مع نوع المحتوى وترويسات إضافية.
+  Future<Map<String, dynamic>> postBytes(String path, Uint8List bytes, {required String contentType, Map<String, String>? headers, Duration? timeout}) =>
+      _send(() => _http.post(_uri(path), headers: {..._headers(json: false), 'Content-Type': contentType, ...?headers}, body: bytes), timeout: timeout);
 
   Future<Map<String, dynamic>> patch_(String path, Object body) => _send(
         () => _http.patch(_uri(path), headers: _headers(), body: jsonEncode(body)),
@@ -160,13 +166,16 @@ class ApiClient {
     return const [];
   }
 
+  /// يحوّل مساراً نسبياً من الخادم (مثل /chat/media/x.jpg) إلى رابط مطلق.
+  String absolute(String url) => url.startsWith('http') ? url : '$baseUrl${url.startsWith('/') ? '' : '/'}$url';
+
   /// أصل WebSocket المطابق لعنوان الخادم.
   String get wsUrl => '${baseUrl.replaceFirst(RegExp(r'^http'), 'ws')}/ws';
 
-  Future<Map<String, dynamic>> _send(Future<http.Response> Function() request) async {
+  Future<Map<String, dynamic>> _send(Future<http.Response> Function() request, {Duration? timeout}) async {
     http.Response res;
     try {
-      res = await request().timeout(timeout);
+      res = await request().timeout(timeout ?? this.timeout);
     } on TimeoutException {
       throw const ApiException(0, 'انتهت مهلة الاتصال بالخادم');
     } on http.ClientException catch (e) {

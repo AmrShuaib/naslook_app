@@ -31,15 +31,35 @@ extension NaslifeApi on ApiClient {
   Future<List<Message>> messages(String peer, {DateTime? before, int limit = 50}) async =>
       asList(await getList('/messages/$peer', query: {if (before != null) 'before': before.toUtc().toIso8601String(), 'limit': '$limit'})).map(Message.fromJson).toList();
   Future<void> deleteMessage(String id) => delete('/messages/$id');
-  Future<Message> sendMessage(String peer, String text) async {
-    final data = await post('/messages', {'to': peer, 'type': 'text', 'content': text});
+  /// إرسال رسالة نصية أو وسائط (content = رابط الوسائط). بيانات الرد/التوجيه تُرسل للخادم أيضاً
+  /// إن كان يدعمها، وتُحفظ على أي حال عبر /chat/meta بعد معرفة معرّف الرسالة.
+  Future<Message> sendMessage(String peer, String content, {String type = 'text', String? replyTo, MessageQuote? quote, String? forwardedFrom, Map<String, dynamic>? extra}) async {
+    final data = await post('/messages', {
+      'to': peer, 'type': type, 'content': content,
+      if (replyTo != null) 'replyTo': replyTo,
+      if (quote != null) 'quote': quote.toJson(),
+      if (forwardedFrom != null) 'forwardedFrom': forwardedFrom,
+      if (extra != null && extra.isNotEmpty) 'extra': extra,
+    });
     final m = data['message'] is Map ? asMap(data['message']) : data;
     if (m['id'] == null) {
-      return Message(id: DateTime.now().microsecondsSinceEpoch.toString(), senderId: 'me', type: 'text', content: text, sentAt: DateTime.now());
+      return Message(id: DateTime.now().microsecondsSinceEpoch.toString(), senderId: 'me', type: type, content: content, sentAt: DateTime.now());
     }
     return Message.fromJson(m);
   }
+  /// بحث الخادم في الرسائل؛ يرجع الصفوف كما هي (الشكل يختلف بين الخوادم فيُفسَّر في الواجهة).
+  Future<List<Map<String, dynamic>>> searchMessages(String q, {int limit = 50}) async =>
+      asList(await getList('/messages/search', query: {'q': q, 'limit': '$limit'}));
   Future<void> markRead(String peer) => post('/messages/$peer/read', const {});
+
+  // ---- الإشعارات الفورية (Web Push): المفتاح العام والاشتراك
+  Future<String> pushKey() async {
+    final d = await get('/push/key');
+    return (d['key'] ?? d['publicKey'] ?? d['vapidPublicKey'] ?? '').toString();
+  }
+  Future<void> pushSubscribe(Map<String, dynamic> subscription) =>
+      post('/push/subscribe', {...subscription, 'subscription': subscription, 'platform': 'web'});
+  Future<void> pushUnsubscribe(String endpoint) => delete('/push/subscribe', body: {'endpoint': endpoint});
 
   // ---- الأمان: حظر وإبلاغ (المسارات موجودة على الخادم: /blocks و/reports)
   Future<void> blockUser(String id) => post('/blocks', {'userId': id, 'blockedId': id});

@@ -1,2 +1,3 @@
 await app.register((await import("./tiles.js")).default);
 await app.register((await import("./commerce.js")).default, { pool, auth });
+await app.register((await import("./chat_tools.js")).default, { pool, auth });

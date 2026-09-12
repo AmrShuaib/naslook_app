@@ -103,10 +103,24 @@ class Chat {
 
 enum MessageStatus { sending, failed, sent }
 
+/// اقتباس رسالة (للرد عليها): يُحفظ في بيانات الرسالة الإضافية حتى يظهر عند الطرفين.
+class MessageQuote {
+  final String id, senderId, senderName, type, content;
+  const MessageQuote({required this.id, required this.senderId, required this.senderName, this.type = 'text', required this.content});
+  factory MessageQuote.fromJson(Map m) => MessageQuote(
+        id: _s(m, ['id']), senderId: _s(m, ['senderId', 'sender_id']), senderName: _s(m, ['senderName', 'sender_name', 'nickname']),
+        type: _s(m, ['type'], 'text'), content: _s(m, ['content', 'text']),
+      );
+  Map<String, dynamic> toJson() => {'id': id, 'senderId': senderId, 'senderName': senderName, 'type': type, 'content': content};
+  String get preview => Message.previewOf(type, content);
+}
+
 class Message {
   final String id;
   final String senderId;
+  /// text | image | video | audio | file
   final String type;
+  /// النص، أو رابط الوسائط لغير النص.
   final String content;
   final DateTime? sentAt;
   final DateTime? deliveredAt;
@@ -115,22 +129,47 @@ class Message {
   final MessageStatus status;
   /// معرّف محلي للرسالة المتفائلة حتى يرد الخادم بمعرّفها الحقيقي.
   final String? localId;
-  const Message({required this.id, required this.senderId, required this.type, required this.content, this.sentAt, this.deliveredAt, this.readAt, this.status = MessageStatus.sent, this.localId});
+  final String? replyTo;
+  final MessageQuote? quote;
+  final String? forwardedFrom;
+  /// بيانات إضافية (مثل durationMs للصوت، وwidth/height للصور).
+  final Map<String, dynamic> extra;
+  const Message({required this.id, required this.senderId, required this.type, required this.content, this.sentAt, this.deliveredAt, this.readAt,
+      this.status = MessageStatus.sent, this.localId, this.replyTo, this.quote, this.forwardedFrom, this.extra = const {}});
   factory Message.fromJson(Map m) => Message(
         id: _s(m, ['id']),
         senderId: _s(m, ['sender_id', 'senderId', 'from']),
         type: _s(m, ['type'], 'text'),
-        content: _s(m, ['content', 'text']),
+        content: _s(m, ['content', 'text', 'url']),
         sentAt: _t(m, ['sent_at', 'sentAt', 'at', 'created_at', 'createdAt']),
         deliveredAt: _t(m, ['delivered_at', 'deliveredAt']),
         readAt: _t(m, ['read_at', 'readAt']),
+        replyTo: _sn(m, ['reply_to', 'replyTo']),
+        quote: m['quote'] is Map ? MessageQuote.fromJson(asMap(m['quote'])) : null,
+        forwardedFrom: _sn(m, ['forwarded_from', 'forwardedFrom']),
+        extra: asMap(m['extra']),
       );
   /// المفتاح الذي يميّز الرسالة في القوائم: معرّف الخادم إن وُجد وإلا المحلي.
   String get key => id.isNotEmpty ? id : (localId ?? '');
   bool get isPending => status != MessageStatus.sent;
-  Message copyWith({String? id, DateTime? sentAt, DateTime? deliveredAt, DateTime? readAt, MessageStatus? status, String? localId}) => Message(
-      id: id ?? this.id, senderId: senderId, type: type, content: content, sentAt: sentAt ?? this.sentAt,
-      deliveredAt: deliveredAt ?? this.deliveredAt, readAt: readAt ?? this.readAt, status: status ?? this.status, localId: localId ?? this.localId);
+  bool get isMedia => type != 'text';
+  int? get durationMs => extra['durationMs'] is num ? (extra['durationMs'] as num).toInt() : null;
+  String get preview => previewOf(type, content);
+  static String previewOf(String type, String content) => switch (type) {
+        'text' => content, 'image' => '📷 صورة', 'video' => '🎬 فيديو', 'audio' => '🎤 رسالة صوتية', _ => '📎 ملف',
+      };
+  Message copyWith({String? id, DateTime? sentAt, DateTime? deliveredAt, DateTime? readAt, MessageStatus? status, String? localId, String? replyTo,
+      MessageQuote? quote, String? forwardedFrom, Map<String, dynamic>? extra, String? content}) => Message(
+      id: id ?? this.id, senderId: senderId, type: type, content: content ?? this.content, sentAt: sentAt ?? this.sentAt,
+      deliveredAt: deliveredAt ?? this.deliveredAt, readAt: readAt ?? this.readAt, status: status ?? this.status, localId: localId ?? this.localId,
+      replyTo: replyTo ?? this.replyTo, quote: quote ?? this.quote, forwardedFrom: forwardedFrom ?? this.forwardedFrom, extra: extra ?? this.extra);
+  /// دمج بيانات إضافية قادمة من /chat/meta.
+  Message withMeta(Map meta) => copyWith(
+        replyTo: _sn(meta, ['replyTo', 'reply_to']),
+        quote: meta['quote'] is Map ? MessageQuote.fromJson(asMap(meta['quote'])) : null,
+        forwardedFrom: _sn(meta, ['forwardedFrom', 'forwarded_from']),
+        extra: meta['extra'] is Map ? {...extra, ...asMap(meta['extra'])} : null,
+      );
 }
 
 class Story {

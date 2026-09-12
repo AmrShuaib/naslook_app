@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'i18n/l10n.dart';
 import '../core/app_theme.dart';
 import '../core/nav_provider.dart';
+import '../core/push/push_service.dart';
 import '../state/app_state.dart';
 import '../state/providers.dart';
 import '../screens/login_page.dart';
@@ -75,8 +76,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowRecovery());
-    // يفتح اتصال WebSocket مبكراً
-    Future.microtask(() => ref.read(socketProvider));
+    // يفتح اتصال WebSocket مبكراً، ويجدّد اشتراك الإشعارات الفورية إن كان الإذن ممنوحاً
+    Future.microtask(() {
+      ref.read(socketProvider);
+      PushService.resubscribeIfGranted(ref.read(apiClientProvider));
+    });
   }
 
   Future<void> _maybeShowRecovery() async {

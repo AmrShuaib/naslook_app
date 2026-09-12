@@ -93,9 +93,9 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: Joy.bg,
-        hintStyle: const TextStyle(color: Joy.textMuted),
-        labelStyle: const TextStyle(color: Joy.textMuted),
-        helperStyle: const TextStyle(color: Joy.textMuted, fontSize: 12),
+        hintStyle: const TextStyle(fontFamily: bodyFont, color: Joy.textMuted),
+        labelStyle: const TextStyle(fontFamily: bodyFont, color: Joy.textMuted),
+        helperStyle: const TextStyle(fontFamily: bodyFont, color: Joy.textMuted, fontSize: 12),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Joy.control)),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Joy.control)),
         focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Joy.primary, width: 1.5)),
@@ -118,14 +118,16 @@ class AppTheme {
         ),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(foregroundColor: Joy.primary, minimumSize: const Size(44, 44), textStyle: const TextStyle(fontWeight: FontWeight.w600)),
+        style: TextButton.styleFrom(foregroundColor: Joy.primary, minimumSize: const Size(44, 44), textStyle: const TextStyle(fontFamily: bodyFont, fontWeight: FontWeight.w600)),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: Joy.surface,
         selectedColor: Joy.primary,
         side: const BorderSide(color: Joy.control),
-        labelStyle: const TextStyle(color: Joy.text, fontSize: 13),
-        secondaryLabelStyle: const TextStyle(color: Joy.primaryOn, fontSize: 13, fontWeight: FontWeight.w600),
+        // ChipThemeData.labelStyle يحلّ محل نمط السمة كاملاً (لا يُدمج معه)، فلا بد من ذكر الخط صراحةً
+        // وإلا سقط النص إلى Roboto الذي يُجلب من Google ويختفي حين تُحجب
+        labelStyle: const TextStyle(fontFamily: bodyFont, color: Joy.text, fontSize: 13, fontWeight: FontWeight.w500),
+        secondaryLabelStyle: const TextStyle(fontFamily: bodyFont, color: Joy.primaryOn, fontSize: 13, fontWeight: FontWeight.w600),
         shape: const StadiumBorder(),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       ),
@@ -134,6 +136,7 @@ class AppTheme {
         indicatorColor: Joy.primarySoft,
         height: 72,
         labelTextStyle: WidgetStateProperty.resolveWith((s) => TextStyle(
+              fontFamily: bodyFont,
               fontSize: 11,
               fontWeight: s.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w500,
               color: s.contains(WidgetState.selected) ? Joy.primary : Joy.textMuted,

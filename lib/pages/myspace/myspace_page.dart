@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/push/push_service.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
@@ -80,6 +81,9 @@ class MySpacePage extends ConsumerWidget {
             ])),
             const SizedBox(height: 14),
           ],
+          const SectionTitle('الإشعارات'),
+          const JoyCard(padding: EdgeInsets.zero, child: _PushTile()),
+          const SizedBox(height: 14),
           const SectionTitle('الخصوصية والموقع'),
           JoyCard(
             padding: EdgeInsets.zero,
@@ -219,5 +223,62 @@ class MySpacePage extends ConsumerWidget {
     List<String> split(String s) => s.split(RegExp(r'[،,]')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
     await _save(context, ref, {'bio': bio.text.trim(), 'skills': split(skills.text), 'hobbies': split(hobbies.text), 'lookingFor': split(looking.text)});
     if (context.mounted) toast(context, 'حُفظ ملفك');
+  }
+}
+
+
+/// تفعيل/إيقاف الإشعارات الفورية (Web Push) في هذا المتصفح.
+class _PushTile extends ConsumerStatefulWidget {
+  const _PushTile();
+  @override
+  ConsumerState<_PushTile> createState() => _PushTileState();
+}
+
+class _PushTileState extends ConsumerState<_PushTile> {
+  bool _on = false;
+  bool _busy = true;
+
+  @override
+  void initState() {
+    super.initState();
+    PushService.isSubscribed().then((v) { if (mounted) setState(() { _on = v; _busy = false; }); });
+  }
+
+  Future<void> _toggle(bool v) async {
+    setState(() => _busy = true);
+    final api = ref.read(apiClientProvider);
+    try {
+      if (v) {
+        final ok = await PushService.subscribe(api);
+        if (!ok && mounted) toast(context, 'لم يُمنح إذن الإشعارات. فعّله من إعدادات المتصفح ثم أعد المحاولة', error: true);
+        if (mounted) setState(() => _on = ok);
+      } else {
+        await PushService.unsubscribe(api);
+        if (mounted) setState(() => _on = false);
+      }
+    } catch (e) {
+      if (mounted) toast(context, e.toString().replaceFirst(RegExp(r'^ApiException\(\d+\): '), ''), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final supported = PushService.supported;
+    final denied = PushService.permission == 'denied';
+    return SwitchListTile(
+      value: _on,
+      onChanged: !supported || denied || _busy ? null : _toggle,
+      title: const Text('الإشعارات الفورية'),
+      subtitle: Text(!supported
+          ? 'غير مدعومة في هذا المتصفح'
+          : denied
+              ? 'مرفوضة من المتصفح؛ اسمح بها من إعدادات الموقع'
+              : _on
+                  ? 'تصلك رسائل جديدة حتى والتطبيق مغلق'
+                  : 'فعّلها لتصلك الرسائل الجديدة على هذا الجهاز'),
+      secondary: Icon(Icons.notifications_active_outlined, color: _on ? Joy.primary : Joy.text),
+    );
   }
 }

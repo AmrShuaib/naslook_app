@@ -11,6 +11,7 @@ import 'package:naslook/api/client.dart';
 import 'package:naslook/api/models.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/pages/chat/chat_thread_page.dart';
+import 'package:naslook/pages/chat/chats_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/providers.dart';
 
@@ -29,6 +30,8 @@ class _FakeServer {
   Completer<void>? gate;
   int counter = 0;
   final calls = <String>[];
+  final meta = <Map>[];
+  final accepted = <String>[];
 
   http.Response _json(Object body, [int code = 200]) =>
       http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
@@ -50,6 +53,19 @@ class _FakeServer {
       return _json({'message': m});
     }
     if (req.method == 'POST' && path.endsWith('/read')) return _json({'ok': true});
+    if (req.method == 'POST' && path == '/chat/meta') { meta.add(jsonDecode(req.body) as Map); return _json({'ok': true}); }
+    if (req.method == 'GET' && path == '/chat/meta') {
+      final ids = (req.url.queryParameters['ids'] ?? '').split(',');
+      return _json({for (final m in meta) if (ids.contains(m['messageId'])) m['messageId'] as String: {'quote': m['quote'], 'replyTo': m['replyTo'], 'forwardedFrom': m['forwardedFrom'], 'extra': m['extra']}});
+    }
+    if (req.method == 'GET' && path == '/messages/search') {
+      final q = req.url.queryParameters['q'] ?? '';
+      return _json([for (final m in messages) if ((m['content'] as String).contains(q)) {...m, 'peerId': m['sender_id'] == 'SA0000001' ? 'SA0000002' : m['sender_id']}]);
+    }
+    if (req.method == 'GET' && path == '/chats') return _json([{'id': 'SA0000002', 'nickname': 'sara', 'lastType': 'text', 'lastContent': 'آخر رسالة', 'unread': 1}]);
+    if (req.method == 'GET' && path == '/requests') return _json([{'from': {'id': 'SA0000009', 'nickname': 'newguy'}, 'lastContent': 'هلا، ممكن نتعرف؟'}]);
+    if (req.method == 'GET' && path == '/contacts') return _json([]);
+    if (req.method == 'POST' && path == '/contacts') { accepted.add((jsonDecode(req.body) as Map)['contactId'] as String); return _json({'ok': true}); }
     if (path.startsWith('/presence/')) return _json({'online': true});
     return _json({'error': 'not-found'}, 404);
   }
@@ -59,7 +75,7 @@ Map<String, dynamic> _msg(String id, String from, String text, Duration ago) => 
       'id': id, 'sender_id': from, 'type': 'text', 'content': text, 'sent_at': DateTime.now().subtract(ago).toUtc().toIso8601String(),
     };
 
-Future<void> _pumpThread(WidgetTester tester, _FakeServer srv) async {
+Future<void> _pumpThread(WidgetTester tester, _FakeServer srv, {Widget? home}) async {
   final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle));
   await tester.pumpWidget(ProviderScope(
     overrides: [
@@ -67,7 +83,7 @@ Future<void> _pumpThread(WidgetTester tester, _FakeServer srv) async {
       socketProvider.overrideWithValue(null),
       appStateProvider.overrideWith((ref) => _SignedIn(api, SessionStore())),
     ],
-    child: const MaterialApp(home: ChatThreadPage(peer: Person(id: 'SA0000002', nickname: 'sara'))),
+    child: MaterialApp(home: home ?? const ChatThreadPage(peer: Person(id: 'SA0000002', nickname: 'sara'))),
   ));
   await tester.pumpAndSettle();
 }
@@ -98,6 +114,7 @@ void main() {
     final srv = _FakeServer()..gate = Completer<void>();
     await _pumpThread(tester, srv);
     await tester.enterText(find.byType(TextField), 'hello there');
+    await tester.pump();
     await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pump();
     // تظهر فوراً بحالة "جارٍ الإرسال" وحقل الكتابة فارغ
@@ -115,6 +132,7 @@ void main() {
     final srv = _FakeServer()..failSend = true;
     await _pumpThread(tester, srv);
     await tester.enterText(find.byType(TextField), 'FAIL');
+    await tester.pump();
     await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pumpAndSettle();
     expect(find.text('FAIL'), findsOneWidget);
@@ -146,5 +164,60 @@ void main() {
     expect(srv.calls.where((c) => c == 'GET /messages/SA0000002').length, loads + 1);
     expect(find.text('مرحبا'), findsOneWidget);
     expect(find.text('وصلتك وأنت بعيد'), findsOneWidget);
+  });
+
+  testWidgets('reply: long-press → رد → send shows the quote and stores meta', (tester) async {
+    final srv = _FakeServer()..messages.add(_msg('m1', 'SA0000002', 'متى نتقابل؟', const Duration(minutes: 3)));
+    await _pumpThread(tester, srv);
+    await tester.longPress(find.text('متى نتقابل؟'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('رد'));
+    await tester.pumpAndSettle();
+    // شريط الرد فوق حقل الكتابة
+    expect(find.text('إلغاء الرد'), findsNothing); // tooltip لا يُعرض كنص
+    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'الساعة 7');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('الساعة 7'), findsOneWidget);
+    // الاقتباس يظهر داخل الفقاعة (باسم المرسل ونص الرسالة الأصلية)
+    expect(find.text('متى نتقابل؟'), findsNWidgets(2));
+    expect(srv.meta.single['quote']['content'], 'متى نتقابل؟');
+    expect(srv.meta.single['messageId'], 'srv-1');
+  });
+
+  testWidgets('in-thread search counts and highlights matches', (tester) async {
+    final srv = _FakeServer()
+      ..messages.addAll([
+        _msg('m1', 'SA0000002', 'قهوة الصباح', const Duration(minutes: 5)),
+        _msg('m2', 'SA0000001', 'قهوة المساء أفضل', const Duration(minutes: 4)),
+        _msg('m3', 'SA0000002', 'شاي؟', const Duration(minutes: 3)),
+      ]);
+    await _pumpThread(tester, srv);
+    await tester.tap(find.byIcon(Icons.search_rounded));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byWidgetPredicate((w) => w is TextField && w.decoration?.hintText == 'ابحث في المحادثة…'), 'قهوة');
+    await tester.pumpAndSettle();
+    expect(find.text('1/2'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.keyboard_arrow_up_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('2/2'), findsOneWidget);
+  });
+
+  testWidgets('chats page: local search filters, requests tab lists and accepts', (tester) async {
+    final srv = _FakeServer();
+    await _pumpThread(tester, srv, home: const Scaffold(body: ChatsPage()));
+    expect(find.text('sara'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'zzz');
+    await tester.pumpAndSettle();
+    expect(find.text('sara'), findsNothing);
+    expect(find.text('لا نتائج'), findsOneWidget);
+    await tester.tap(find.text('الطلبات · 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('newguy'), findsOneWidget);
+    await tester.tap(find.text('قبول'));
+    await tester.pumpAndSettle();
+    expect(srv.accepted, ['SA0000009']);
   });
 }
