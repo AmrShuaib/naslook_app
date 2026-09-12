@@ -47,11 +47,17 @@ class Biz {
   final List<BizItem> items;
   final List<BizReview> reviews;
   final List<BizOrder> myOrders;
+  final List<BizPost> posts;
+  final String? logoUrl, coverUrl, ownerId, myRole;
+  final bool active;
+  final int views;
+  final DateTime? createdAt;
 
   const Biz({
     required this.id, required this.name, this.nameAr = '', required this.category, this.sector = '', this.description = '', required this.lat, required this.lng,
     this.address = '', this.hours = '', this.phone, this.website, this.colorHex, this.highlights = const [], this.verified = false, this.official = false,
     this.following = false, this.followers = 0, this.rating, this.ratingCount = 0, this.minPrice, this.itemsCount = 0, this.items = const [], this.reviews = const [], this.myOrders = const [],
+    this.posts = const [], this.logoUrl, this.coverUrl, this.ownerId, this.myRole, this.active = true, this.views = 0, this.createdAt,
   });
 
   factory Biz.fromJson(Map m) => Biz(
@@ -61,7 +67,14 @@ class Biz {
         highlights: _strings(m['highlights']), verified: m['verified'] == true, official: m['official'] == true, following: m['following'] == true,
         followers: _i(m['followers']), rating: _d(m['rating']), ratingCount: _i(m['ratingCount']), minPrice: m['minPrice'] == null ? null : _i(m['minPrice']), itemsCount: _i(m['itemsCount']),
         items: asList(m['items']).map(BizItem.fromJson).toList(), reviews: asList(m['reviews']).map(BizReview.fromJson).toList(), myOrders: asList(m['myOrders']).map(BizOrder.fromJson).toList(),
+        posts: asList(m['posts']).map(BizPost.fromJson).toList(), logoUrl: m['logoUrl']?.toString(), coverUrl: m['coverUrl']?.toString(), ownerId: m['ownerId']?.toString(), myRole: m['myRole']?.toString(),
+        active: m['active'] != false, views: _i(m['views']), createdAt: _t(m['createdAt']),
       );
+
+  bool get isOwner => myRole == 'owner' || myRole == 'admin';
+  bool get canManage => isOwner || myRole == 'manager';
+  bool get canOperate => canManage || myRole == 'staff';
+  String get roleLabel => switch (myRole) { 'owner' => 'مالك', 'admin' => 'مدير النظام', 'manager' => 'مدير', 'staff' => 'موظف', _ => '' };
 
   /// الاسم المعروض: العربي إن وُجد.
   String get title => nameAr.isNotEmpty ? nameAr : name;
@@ -86,11 +99,13 @@ class BizItem {
   final Map<String, dynamic> meta;
   final String? imageUrl;
   final List<Showtime> slots;
-  const BizItem({required this.id, required this.bizId, required this.kind, required this.title, this.description = '', required this.price, this.unit = 'item', this.stock, this.meta = const {}, this.imageUrl, this.slots = const []});
+  final bool active;
+  final int sort;
+  const BizItem({required this.id, required this.bizId, required this.kind, required this.title, this.description = '', required this.price, this.unit = 'item', this.stock, this.meta = const {}, this.imageUrl, this.slots = const [], this.active = true, this.sort = 0});
   factory BizItem.fromJson(Map m) => BizItem(
         id: m['id'].toString(), bizId: m['bizId']?.toString() ?? '', kind: m['kind']?.toString() ?? 'product', title: m['title']?.toString() ?? '', description: m['description']?.toString() ?? '',
         price: _i(m['price']), unit: m['unit']?.toString() ?? 'item', stock: m['stock'] == null ? null : _i(m['stock']), meta: _m(m['meta']), imageUrl: m['imageUrl']?.toString(),
-        slots: asList(m['slots']).map(Showtime.fromJson).toList(),
+        slots: asList(m['slots']).map(Showtime.fromJson).toList(), active: m['active'] != false, sort: _i(m['sort']),
       );
   int? get oldPrice => meta['oldPrice'] == null ? null : _i(meta['oldPrice']);
   bool get isOffer => oldPrice != null && oldPrice! > price;
@@ -109,10 +124,82 @@ class BizReview {
   final Person user;
   final int rating;
   final String text;
-  final DateTime? createdAt;
+  final DateTime? createdAt, replyAt;
   final bool mine;
-  const BizReview({required this.user, required this.rating, this.text = '', this.createdAt, this.mine = false});
-  factory BizReview.fromJson(Map m) => BizReview(user: Person.fromJson(_m(m['user'])), rating: _i(m['rating']), text: m['text']?.toString() ?? '', createdAt: _t(m['createdAt']), mine: m['mine'] == true);
+  final String? reply;
+  const BizReview({required this.user, required this.rating, this.text = '', this.createdAt, this.mine = false, this.reply, this.replyAt});
+  factory BizReview.fromJson(Map m) => BizReview(user: Person.fromJson(_m(m['user'])), rating: _i(m['rating']), text: m['text']?.toString() ?? '', createdAt: _t(m['createdAt']), mine: m['mine'] == true, reply: (m['reply']?.toString().isNotEmpty == true) ? m['reply'].toString() : null, replyAt: _t(m['replyAt']));
+}
+
+/// خبر أو عرض تنشره الدائرة.
+class BizPost {
+  final String id, bizId, kind, title, body;
+  final String? imageUrl;
+  final DateTime? startsAt, endsAt, createdAt;
+  final bool active;
+  const BizPost({required this.id, required this.bizId, required this.kind, required this.title, this.body = '', this.imageUrl, this.startsAt, this.endsAt, this.createdAt, this.active = true});
+  factory BizPost.fromJson(Map m) => BizPost(id: m['id'].toString(), bizId: m['bizId']?.toString() ?? '', kind: m['kind']?.toString() ?? 'news', title: m['title']?.toString() ?? '', body: m['body']?.toString() ?? '', imageUrl: m['imageUrl']?.toString(), startsAt: _t(m['startsAt']), endsAt: _t(m['endsAt']), createdAt: _t(m['createdAt']), active: m['active'] != false);
+  bool get isOffer => kind == 'offer';
+  bool get expired => endsAt != null && endsAt!.isBefore(DateTime.now());
+}
+
+/// إحصاءات الدائرة لصاحبها.
+class BizStats {
+  final int ordersTotal, confirmed, used, cancelled, ordersLast7, next24h, customers, followers, reviews, unanswered, views;
+  final int revenueTotal, revenueLast7, revenueLast30;
+  final double? rating;
+  final List<({String kind, int count, int total})> byKind;
+  final List<({DateTime day, int orders, int revenue})> daily;
+  final List<({String itemId, String title, int count, int total})> topItems;
+  const BizStats({
+    this.ordersTotal = 0, this.confirmed = 0, this.used = 0, this.cancelled = 0, this.ordersLast7 = 0, this.next24h = 0, this.customers = 0, this.followers = 0, this.reviews = 0, this.unanswered = 0, this.views = 0,
+    this.revenueTotal = 0, this.revenueLast7 = 0, this.revenueLast30 = 0, this.rating, this.byKind = const [], this.daily = const [], this.topItems = const [],
+  });
+  factory BizStats.fromJson(Map m) {
+    final o = _m(m['orders']), r = _m(m['revenue']);
+    return BizStats(
+      ordersTotal: _i(o['total']), confirmed: _i(o['confirmed']), used: _i(o['used']), cancelled: _i(o['cancelled']), ordersLast7: _i(o['last7']), next24h: _i(o['next24h']), customers: _i(o['customers']),
+      revenueTotal: _i(r['total']), revenueLast7: _i(r['last7']), revenueLast30: _i(r['last30']), rating: _d(m['rating']),
+      followers: _i(m['followers']), reviews: _i(m['reviews']), unanswered: _i(m['unanswered']), views: _i(m['views']),
+      byKind: [for (final k in asList(m['byKind'])) (kind: k['kind']?.toString() ?? '', count: _i(k['count']), total: _i(k['total']))],
+      daily: [for (final d in asList(m['daily'])) (day: DateTime.tryParse(d['day']?.toString() ?? '') ?? DateTime.now(), orders: _i(d['orders']), revenue: _i(d['revenue']))],
+      topItems: [for (final t in asList(m['topItems'])) (itemId: t['itemId']?.toString() ?? '', title: t['title']?.toString() ?? '', count: _i(t['count']), total: _i(t['total']))],
+    );
+  }
+}
+
+class BizStaff {
+  final Person user;
+  final String role;
+  final DateTime? since;
+  const BizStaff({required this.user, required this.role, this.since});
+  factory BizStaff.fromJson(Map m) => BizStaff(user: Person.fromJson(_m(m['user'])), role: m['role']?.toString() ?? 'staff', since: _t(m['since']));
+  String get roleLabel => role == 'manager' ? 'مدير' : 'موظف';
+}
+
+class BizTeam {
+  final Person? owner;
+  final List<BizStaff> staff;
+  const BizTeam({this.owner, this.staff = const []});
+  factory BizTeam.fromJson(Map m) => BizTeam(owner: m['owner'] is Map ? Person.fromJson(_m(m['owner'])) : null, staff: asList(m['staff']).map(BizStaff.fromJson).toList());
+}
+
+class BizClaim {
+  final String bizId, name, status, note;
+  final Person? user;
+  final DateTime? createdAt;
+  const BizClaim({required this.bizId, required this.name, this.status = 'pending', this.note = '', this.user, this.createdAt});
+  factory BizClaim.fromJson(Map m) => BizClaim(bizId: m['bizId']?.toString() ?? '', name: m['name']?.toString() ?? '', status: m['status']?.toString() ?? 'pending', note: m['note']?.toString() ?? '', user: m['user'] is Map ? Person.fromJson(_m(m['user'])) : null, createdAt: _t(m['createdAt']));
+  String get statusLabel => switch (status) { 'approved' => 'مقبول', 'rejected' => 'مرفوض', _ => 'قيد المراجعة' };
+}
+
+/// دوائري: ما أملكه أو أعمل فيه، وطلبات الملكية.
+class MyBusinesses {
+  final List<Biz> circles;
+  final List<BizClaim> claims;
+  final bool admin;
+  const MyBusinesses({this.circles = const [], this.claims = const [], this.admin = false});
+  factory MyBusinesses.fromJson(Map m) => MyBusinesses(circles: asList(m['circles']).map(Biz.fromJson).toList(), claims: asList(m['claims']).map(BizClaim.fromJson).toList(), admin: m['admin'] == true);
 }
 
 /// طلب شراء أو حجز لدى دائرة تجارية.
@@ -123,15 +210,16 @@ class BizOrder {
   final DateTime? startAt, endAt, createdAt;
   final Map<String, dynamic> meta;
   final bool cancellable;
+  final Person? customer;
   const BizOrder({
     required this.id, required this.bizId, required this.itemId, required this.kind, required this.status, required this.code, this.note = '', this.title = '', this.bizName = '',
-    this.category = BizCategory.brand, this.qty = 1, this.units = 1, required this.total, this.startAt, this.endAt, this.createdAt, this.meta = const {}, this.cancellable = false,
+    this.category = BizCategory.brand, this.qty = 1, this.units = 1, required this.total, this.startAt, this.endAt, this.createdAt, this.meta = const {}, this.cancellable = false, this.customer,
   });
   factory BizOrder.fromJson(Map m) => BizOrder(
         id: m['id'].toString(), bizId: m['bizId']?.toString() ?? '', itemId: m['itemId']?.toString() ?? '', kind: m['kind']?.toString() ?? 'product', status: m['status']?.toString() ?? 'confirmed',
         code: m['code']?.toString() ?? '', note: m['note']?.toString() ?? '', title: m['title']?.toString() ?? '', bizName: (m['bizNameAr']?.toString().isNotEmpty == true ? m['bizNameAr'] : m['bizName'])?.toString() ?? '',
         category: BizCategory.of(m['category']?.toString()), qty: _i(m['qty']), units: _i(m['units']), total: _i(m['total']), startAt: _t(m['startAt']), endAt: _t(m['endAt']), createdAt: _t(m['createdAt']),
-        meta: _m(m['meta']), cancellable: m['cancellable'] == true,
+        meta: _m(m['meta']), cancellable: m['cancellable'] == true, customer: m['customer'] is Map ? Person.fromJson(_m(m['customer'])) : null,
       );
 
   String get statusLabel => switch (status) { 'confirmed' => 'مؤكد', 'used' => 'مستخدم', 'cancelled' => 'ملغى', _ => status };

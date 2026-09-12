@@ -21,3 +21,20 @@ void invalidateBiz(WidgetRef ref, String id) {
   ref.invalidate(myBizOrdersProvider);
   ref.invalidate(bizListProvider);
 }
+
+// ---- لوحة صاحب النشاط
+final myBusinessesProvider = FutureProvider<MyBusinesses>((ref) => ref.watch(apiClientProvider).myBusinesses());
+final bizStatsProvider = FutureProvider.family<BizStats, String>((ref, id) => ref.watch(apiClientProvider).bizStats(id));
+final bizOrdersProvider = FutureProvider.family<List<BizOrder>, ({String id, String status})>((ref, k) => ref.watch(apiClientProvider).bizOrders(k.id, status: k.status));
+final bizTeamProvider = FutureProvider.family<BizTeam, String>((ref, id) => ref.watch(apiClientProvider).bizTeam(id));
+final bizClaimsProvider = FutureProvider<List<BizClaim>>((ref) => ref.watch(apiClientProvider).bizClaims());
+
+/// يحدّث كل ما يخص الدائرة بعد تعديل من لوحة التحكم.
+void invalidateBizAll(WidgetRef ref, String id) {
+  invalidateBiz(ref, id);
+  ref.invalidate(bizStatsProvider(id));
+  ref.invalidate(bizOrdersProvider);
+  ref.invalidate(bizTeamProvider(id));
+  ref.invalidate(myBusinessesProvider);
+  ref.invalidate(mapBizProvider);
+}

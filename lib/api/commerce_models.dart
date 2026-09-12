@@ -67,7 +67,7 @@ class WalletTx {
   String get label => switch (kind) {
         'topup' => 'شحن', 'credit' => 'إضافة رصيد', 'debit' => 'خصم', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر',
         'ticket' => 'تذاكر', 'ticket_sale' => 'بيع تذاكر', 'market' => 'شراء من السوق', 'market_sale' => 'بيع في السوق',
-        'refund' => 'استرداد', 'refund_out' => 'إعادة مبلغ', 'biz' => 'شراء أو حجز', 'biz_refund' => 'استرداد حجز', _ => kind };
+        'refund' => 'استرداد', 'refund_out' => 'إعادة مبلغ', 'biz' => 'شراء أو حجز', 'biz_refund' => 'استرداد حجز', 'biz_sale' => 'مبيعات دائرتك', 'biz_refund_out' => 'استرداد لعميل', _ => kind };
 }
 
 class TicketTier {

@@ -195,7 +195,7 @@ class TxRow extends StatelessWidget {
           Text('${t.positive ? '+' : '−'}${money(t.amount.abs())}', style: TextStyle(fontWeight: FontWeight.w700, color: t.positive ? Joy.success : Joy.text)),
         ]),
       );
-  IconData _icon(String k) => switch (k) { 'ticket' || 'ticket_sale' => Icons.confirmation_number_outlined, 'market' || 'market_sale' => Icons.shopping_bag_outlined, 'topup' || 'credit' => Icons.add_rounded, 'refund' || 'biz_refund' => Icons.replay_rounded, 'biz' => Icons.storefront_outlined, _ => Icons.swap_horiz_rounded };
+  IconData _icon(String k) => switch (k) { 'ticket' || 'ticket_sale' => Icons.confirmation_number_outlined, 'market' || 'market_sale' => Icons.shopping_bag_outlined, 'topup' || 'credit' => Icons.add_rounded, 'refund' || 'biz_refund' || 'biz_refund_out' => Icons.replay_rounded, 'biz' || 'biz_sale' => Icons.storefront_outlined, _ => Icons.swap_horiz_rounded };
 }
 
 class StatementPage extends ConsumerWidget {

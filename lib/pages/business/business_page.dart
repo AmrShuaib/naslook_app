@@ -15,6 +15,8 @@ import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../wallet/wallet_page.dart';
 import 'my_bookings_page.dart';
+import 'owner/business_dashboard_page.dart';
+import 'owner/dashboard_posts.dart';
 
 const _days = ['الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد'];
 const _months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
@@ -41,6 +43,7 @@ String bizErrText(Object e) {
   if (s.contains('bad-range') || s.contains('bad-date')) return 'اختر تاريخ بداية ونهاية صحيحين';
   if (s.contains('in-past')) return 'لا يمكن الحجز في تاريخ مضى';
   if (s.contains('not-cancellable')) return 'انتهت مهلة الإلغاء لهذا الحجز';
+  if (s.contains('already-owned')) return 'لهذه الدائرة مالك بالفعل';
   if (e is ApiException) return e.message;
   return s;
 }
@@ -68,6 +71,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
       appBar: AppBar(
         title: Text(b?.title ?? 'الدائرة'),
         actions: [
+          if (b != null && b.canOperate) IconButton(tooltip: 'لوحة التحكم', icon: const Icon(Icons.dashboard_customize_outlined, color: Joy.primary), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BusinessDashboardPage(id: b.id, initial: b)))),
           if (b != null) IconButton(tooltip: 'على الخريطة', icon: const Icon(Icons.map_outlined), onPressed: () => _onMap(b)),
           IconButton(tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
         ],
@@ -84,6 +88,13 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
               if (biz.highlights.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Wrap(spacing: 6, runSpacing: 6, children: [for (final h in biz.highlights) Chip(avatar: const Icon(Icons.check_rounded, size: 14, color: Joy.success), label: Text(h, style: const TextStyle(fontFamily: AppTheme.bodyFont, fontSize: 12.5, color: Joy.text)), visualDensity: VisualDensity.compact, backgroundColor: Joy.surface2, side: BorderSide.none)]),
+              ],
+              if (!biz.active)
+                Container(margin: const EdgeInsets.only(top: 10), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(14)), child: const Row(children: [Icon(Icons.pause_circle_outline_rounded, color: Joy.accent), SizedBox(width: 8), Expanded(child: Text('الدائرة موقوفة مؤقتاً ولا تظهر للعامة', style: TextStyle(color: Joy.accent, fontWeight: FontWeight.w600, fontSize: 13)))])),
+              if (biz.posts.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const SectionTitle('الأخبار والعروض'),
+                for (final p in biz.posts) Padding(padding: const EdgeInsets.only(bottom: 10), child: PostCard(post: p, biz: biz)),
               ],
               const SizedBox(height: 16),
               SectionTitle(biz.category.catalogTitle),
@@ -106,11 +117,14 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
               SectionTitle('التقييمات', action: 'قيّم', onAction: () => _review(biz)),
               _Reviews(biz: biz),
               const SizedBox(height: 12),
-              if (!biz.official)
+              if (biz.ownerId == null) ...[
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 4),
                   child: Text('دائرة تعريفية أنشأها Naslife للعلامة؛ الشراء والحجز يتمّان عبر محفظة ناس لايف وليست الدائرة قناة رسمية للعلامة.', style: TextStyle(color: Joy.textMuted, fontSize: 11.5, height: 1.5)),
                 ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(onPressed: () => _claim(biz), icon: const Icon(Icons.verified_user_outlined, size: 18), label: const Text('هل تمثّل هذا النشاط؟ اطلب ملكية الدائرة')),
+              ],
             ],
           ),
         ),
@@ -118,6 +132,18 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(bizDetailProvider(widget.id))),
       ),
     );
+  }
+
+  Future<void> _claim(Biz b) async {
+    final note = await askText(context, title: 'طلب ملكية ${b.title}', hint: 'عرّف بنفسك وصلتك بالنشاط (مثلاً: مدير الفرع، رقم السجل التجاري…)', confirm: 'إرسال الطلب');
+    if (note == null) return;
+    try {
+      final status = await ref.read(apiClientProvider).claimBiz(b.id, note: note.trim());
+      invalidateBiz(ref, b.id);
+      if (mounted) toast(context, status == 'approved' ? 'أصبحت مالك الدائرة؛ افتح لوحة التحكم من أعلى الصفحة' : 'أُرسل طلبك وسيراجعه فريق Naslife');
+    } catch (e) {
+      if (mounted) toast(context, bizErrText(e), error: true);
+    }
   }
 
   void _onMap(Biz b) {
@@ -359,7 +385,10 @@ class _Header extends StatelessWidget {
         decoration: BoxDecoration(color: Joy.surface, borderRadius: BorderRadius.circular(20), border: Border.all(color: Joy.line)),
         clipBehavior: Clip.antiAlias,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(height: 64, color: biz.color),
+          Consumer(builder: (context, ref, _) {
+            final base = ref.read(apiClientProvider).baseUrl;
+            return Container(height: biz.coverUrl != null ? 140 : 64, decoration: BoxDecoration(color: biz.color, image: biz.coverUrl != null ? DecorationImage(image: NetworkImage(biz.coverUrl!.startsWith('http') ? biz.coverUrl! : '$base${biz.coverUrl}'), fit: BoxFit.cover) : null));
+          }),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -410,6 +439,18 @@ class BizLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final letters = biz.name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).map((w) => w[0].toUpperCase()).take(2).join();
+    if (biz.logoUrl != null) {
+      return Consumer(builder: (context, ref, _) {
+        final base = ref.read(apiClientProvider).baseUrl;
+        return Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(color: biz.color, borderRadius: BorderRadius.circular(size * .28), border: Border.all(color: Joy.surface, width: 3), boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 6, offset: Offset(0, 2))]),
+          clipBehavior: Clip.antiAlias,
+          child: Image.network(biz.logoUrl!.startsWith('http') ? biz.logoUrl! : '$base${biz.logoUrl}', fit: BoxFit.cover, errorBuilder: (_, __, ___) => Center(child: Text(letters, style: TextStyle(color: biz.onColor, fontWeight: FontWeight.w800, fontSize: size * .36, fontFamily: 'Rubik')))),
+        );
+      });
+    }
     return Container(
       width: size,
       height: size,
@@ -688,7 +729,11 @@ class _Reviews extends StatelessWidget {
           ListRow(
             leading: ProfileAvatar(person: r.user, size: 42),
             title: Row(children: [Expanded(child: Text(r.user.nickname.isEmpty ? 'مستخدم' : r.user.nickname)), Row(children: [for (var s = 1; s <= 5; s++) Icon(s <= r.rating ? Icons.star_rounded : Icons.star_outline_rounded, size: 14, color: Joy.warning)])]),
-            subtitle: Text(r.text.isEmpty ? timeAgo(r.createdAt) : '${r.text} · ${timeAgo(r.createdAt)}', maxLines: 3),
+            subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(r.text.isEmpty ? timeAgo(r.createdAt) : '${r.text} · ${timeAgo(r.createdAt)}', maxLines: 3),
+              if (r.reply != null)
+                Container(margin: const EdgeInsets.only(top: 6), padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(10)), child: Text('رد ${biz.title}: ${r.reply}', style: const TextStyle(color: Joy.text, fontSize: 12.5))),
+            ]),
             divider: i < biz.reviews.length - 1,
           ),
       ]),

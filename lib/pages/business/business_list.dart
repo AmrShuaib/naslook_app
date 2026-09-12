@@ -8,6 +8,7 @@ import '../../state/biz_providers.dart';
 import '../../ui/widgets.dart';
 import 'business_page.dart';
 import 'my_bookings_page.dart';
+import 'owner/my_businesses_page.dart';
 
 /// قائمة الدوائر التجارية مع تصفية بالفئة (تُستخدم داخل تبويب الدوائر وفي صفحة مستقلة).
 class BizListView extends ConsumerStatefulWidget {
@@ -112,7 +113,10 @@ class BusinessesPage extends StatelessWidget {
         backgroundColor: Joy.bg,
         appBar: AppBar(
           title: const Text('الدوائر التجارية'),
-          actions: [IconButton(tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage())))],
+          actions: [
+            IconButton(tooltip: 'نشاطي التجاري', icon: const Icon(Icons.storefront_rounded), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBusinessesPage()))),
+            IconButton(tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
+          ],
         ),
         body: const BizListView(padding: EdgeInsets.fromLTRB(20, 4, 20, 24)),
       );
