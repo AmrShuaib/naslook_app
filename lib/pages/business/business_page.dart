@@ -457,8 +457,7 @@ class _Header extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Consumer(builder: (context, ref, _) {
-            final base = ref.read(apiClientProvider).baseUrl;
-            return Container(height: biz.coverUrl != null ? 140 : 64, decoration: BoxDecoration(color: biz.color, image: biz.coverUrl != null ? DecorationImage(image: NetworkImage(biz.coverUrl!.startsWith('http') ? biz.coverUrl! : '$base${biz.coverUrl}'), fit: BoxFit.cover) : null));
+            return Container(height: biz.coverUrl != null ? 140 : 64, decoration: BoxDecoration(color: biz.color, image: biz.coverUrl != null ? DecorationImage(image: NetworkImage(mediaUrl(biz.coverUrl!)), fit: BoxFit.cover) : null));
           }),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
@@ -512,13 +511,12 @@ class BizLogo extends StatelessWidget {
     final letters = biz.name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).map((w) => w[0].toUpperCase()).take(2).join();
     if (biz.logoUrl != null) {
       return Consumer(builder: (context, ref, _) {
-        final base = ref.read(apiClientProvider).baseUrl;
         return Container(
           width: size,
           height: size,
           decoration: BoxDecoration(color: biz.color, borderRadius: BorderRadius.circular(size * .28), border: Border.all(color: Joy.surface, width: 3), boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 6, offset: Offset(0, 2))]),
           clipBehavior: Clip.antiAlias,
-          child: Image.network(biz.logoUrl!.startsWith('http') ? biz.logoUrl! : '$base${biz.logoUrl}', fit: BoxFit.cover, errorBuilder: (_, __, ___) => Center(child: Text(letters, style: TextStyle(color: biz.onColor, fontWeight: FontWeight.w800, fontSize: size * .36, fontFamily: 'Rubik')))),
+          child: Image.network(mediaUrl(biz.logoUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Center(child: Text(letters, style: TextStyle(color: biz.onColor, fontWeight: FontWeight.w800, fontSize: size * .36, fontFamily: 'Rubik')))),
         );
       });
     }

@@ -11,6 +11,7 @@ import '../../../state/biz_providers.dart';
 import '../../../ui/widgets.dart';
 import '../business_page.dart' show dayLabel, shortDate;
 import 'business_editor.dart';
+import '../../../api/client.dart';
 
 /// الأخبار والعروض التي تنشرها الدائرة في صفحتها.
 class PostsTab extends ConsumerWidget {
@@ -42,7 +43,6 @@ class PostCard extends ConsumerWidget {
   const PostCard({super.key, required this.post, required this.biz, this.editable = false});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final base = ref.read(apiClientProvider).baseUrl;
     final off = !post.active || post.expired;
     return Opacity(
       opacity: off && editable ? .6 : 1,
@@ -51,7 +51,7 @@ class PostCard extends ConsumerWidget {
         onTap: editable ? () => openPostEditor(context, biz, post: post) : null,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (post.imageUrl != null)
-            ClipRRect(borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), child: Image.network(post.imageUrl!.startsWith('http') ? post.imageUrl! : '$base${post.imageUrl}', height: 150, width: double.infinity, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox.shrink())),
+            ClipRRect(borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), child: Image.network(mediaUrl(post.imageUrl!), height: 150, width: double.infinity, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox.shrink())),
           Padding(
             padding: const EdgeInsets.all(14),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -117,7 +117,6 @@ class _PostEditorState extends ConsumerState<_PostEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final base = ref.read(apiClientProvider).baseUrl;
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 0, 20, 24 + MediaQuery.viewInsetsOf(context).bottom),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -147,7 +146,7 @@ class _PostEditorState extends ConsumerState<_PostEditor> {
           const SizedBox(width: 8),
           OutlinedButton.icon(onPressed: uploading ? null : _upload, icon: uploading ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.image_outlined, size: 18), label: Text(imageUrl == null ? 'صورة' : 'تغيير')),
         ]),
-        if (imageUrl != null) Padding(padding: const EdgeInsets.only(top: 10), child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.network(imageUrl!.startsWith('http') ? imageUrl! : '$base$imageUrl', height: 120, width: double.infinity, fit: BoxFit.cover))),
+        if (imageUrl != null) Padding(padding: const EdgeInsets.only(top: 10), child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.network(mediaUrl(imageUrl!), height: 120, width: double.infinity, fit: BoxFit.cover))),
         if (p != null) SwitchListTile(contentPadding: EdgeInsets.zero, value: active, onChanged: (v) => setState(() => active = v), title: const Text('ظاهر في الصفحة')),
         const SizedBox(height: 12),
         Row(children: [

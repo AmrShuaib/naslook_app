@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:record/record.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -18,6 +17,7 @@ import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/media/media.dart';
+import '../../core/media/voice_player.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/pattern_background.dart';
@@ -628,7 +628,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         await Clipboard.setData(ClipboardData(text: m.content));
         if (mounted) toast(context, 'نُسخ النص');
       case 'open':
-        await launchUrl(Uri.parse(_api.absolute(m.content)), mode: LaunchMode.externalApplication);
+        await launchUrl(Uri.parse(_api.media(m.content)), mode: LaunchMode.externalApplication);
       case 'retry':
         await _send(type: m.type, content: m.content, retry: m);
       case 'discard':
@@ -790,7 +790,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           highlighted: _highlightKey == m.key,
           searchQuery: q,
           localBytes: _localBytes[m.key]?.bytes,
-          mediaUrl: m.content.isEmpty ? null : _api.absolute(m.content),
+          mediaUrl: m.content.isEmpty ? null : _api.media(m.content),
           onLongPress: () => _actions(m),
           onRetry: () => _send(type: m.type, content: m.content, retry: m),
           onQuoteTap: m.quote == null ? null : () { if (!_jumpToKey(m.quote!.id)) _revealMessage(m.quote!.id); },
@@ -1128,7 +1128,7 @@ class _BubbleState extends State<_Bubble> {
   }
 }
 
-/// مشغّل رسالة صوتية: تشغيل/إيقاف، شريط تقدّم، والمدة.
+/// مشغّل رسالة صوتية: تشغيل/إيقاف، شريط تقدّم، والمدة. يعمل عبر [VoicePlayer] (عنصر <audio> أصلي على الويب).
 class _AudioBubble extends StatefulWidget {
   final String? url;
   final int? durationMs;
@@ -1139,39 +1139,47 @@ class _AudioBubble extends StatefulWidget {
 }
 
 class _AudioBubbleState extends State<_AudioBubble> {
-  AudioPlayer? _player;
-  bool _loading = false;
+  VoicePlayer? _player;
+  StreamSubscription<VoiceState>? _sub;
   Object? _err;
 
   @override
   void dispose() {
+    _sub?.cancel();
     _player?.dispose();
     super.dispose();
   }
 
-  Future<void> _toggle() async {
-    if (widget.url == null) return;
-    try {
-      if (_player == null) {
-        setState(() => _loading = true);
-        final p = AudioPlayer();
-        await p.setUrl(widget.url!);
-        p.playerStateStream.listen((s) { if (s.processingState == ProcessingState.completed) { p.seek(Duration.zero); p.pause(); } });
-        setState(() { _player = p; _loading = false; });
-      }
-      final p = _player!;
-      if (p.playing) {
-        await p.pause();
-      } else {
-        await p.play();
-      }
-    } catch (e) {
-      if (mounted) setState(() { _loading = false; _err = e; });
-      if (mounted) {
-        toast(context, 'تعذر تشغيل التسجيل على هذا الجهاز، سيُفتح في تبويب جديد', error: true);
-        launchUrl(Uri.parse(widget.url!), mode: LaunchMode.externalApplication);
-      }
+  void _toggle() {
+    final url = widget.url;
+    if (url == null) return;
+    if (_err != null) {
+      // فشل التشغيل داخل الصفحة: نفتح الملف في المتصفح (ضمن حدث اللمس حتى لا يُحجب)
+      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      return;
     }
+    var p = _player;
+    if (p == null) {
+      p = VoicePlayer()..setSource(url: url);
+      // اشتراك يدوي بدل StreamBuilder: التغيير الأول (بدء التشغيل) يصدر قبل أن يشترك StreamBuilder فيضيع
+      _sub = p.changes.listen((s) {
+        if (s.error != null) _fail(s.error!);
+        if (mounted) setState(() {});
+      });
+      setState(() => _player = p);
+    }
+    if (p.state.playing) {
+      p.pause();
+    } else {
+      // play() قبل أي await: iOS لا يقبل بدء التشغيل إلا داخل حدث المستخدم
+      p.play().catchError(_fail);
+    }
+  }
+
+  void _fail(Object e) {
+    if (!mounted || _err != null) return;
+    setState(() => _err = e);
+    toast(context, 'تعذر تشغيل التسجيل على هذا الجهاز، اضغط عليه مجدداً لفتحه في المتصفح', error: true);
   }
 
   @override
@@ -1181,43 +1189,39 @@ class _AudioBubbleState extends State<_AudioBubble> {
     final p = _player;
     return SizedBox(
       width: 220,
-      child: Row(children: [
-        Material(
-          color: Joy.surface,
-          shape: const CircleBorder(),
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: widget.pending || widget.url == null ? null : _toggle,
-            child: SizedBox(
-              width: 40, height: 40,
-              child: _loading || widget.pending
-                  ? const Padding(padding: EdgeInsets.all(11), child: CircularProgressIndicator(strokeWidth: 2))
-                  : StreamBuilder<PlayerState>(
-                      stream: p?.playerStateStream,
-                      builder: (_, s) => Icon(_err != null ? Icons.error_outline_rounded : (s.data?.playing ?? false) ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Joy.primary, size: 26),
-                    ),
+      child: Builder(
+        builder: (_) {
+          final s = p?.state ?? const VoiceState();
+          final dur = s.duration ?? total ?? Duration.zero;
+          final frac = dur.inMilliseconds == 0 ? 0.0 : (s.position.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0);
+          return Row(children: [
+            Material(
+              color: Joy.surface,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: widget.pending || widget.url == null ? null : _toggle,
+                child: SizedBox(
+                  width: 40, height: 40,
+                  child: (s.loading && !s.playing && _err == null) || widget.pending
+                      ? const Padding(padding: EdgeInsets.all(11), child: CircularProgressIndicator(strokeWidth: 2))
+                      : Icon(_err != null ? Icons.error_outline_rounded : s.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Joy.primary, size: 26),
+                ),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: StreamBuilder<Duration>(
-            stream: p?.positionStream,
-            builder: (_, snap) {
-              final pos = snap.data ?? Duration.zero;
-              final dur = p?.duration ?? total ?? Duration.zero;
-              final frac = dur.inMilliseconds == 0 ? 0.0 : (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0);
-              return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                 SliderTheme(
                   data: SliderThemeData(trackHeight: 3, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5), overlayShape: SliderComponentShape.noOverlay, activeTrackColor: Joy.primary, inactiveTrackColor: color.withValues(alpha: .2), thumbColor: Joy.primary),
                   child: Slider(value: frac, onChanged: p == null ? null : (v) => p.seek(Duration(milliseconds: (v * dur.inMilliseconds).round()))),
                 ),
-                Padding(padding: const EdgeInsetsDirectional.only(start: 4), child: Text('${fmtDuration(pos)} / ${fmtDuration(dur)}', textDirection: TextDirection.ltr, style: TextStyle(fontSize: 11, color: color.withValues(alpha: .75)))),
-              ]);
-            },
-          ),
-        ),
-      ]),
+                Padding(padding: const EdgeInsetsDirectional.only(start: 4), child: Text('${fmtDuration(s.position)} / ${fmtDuration(dur)}', textDirection: TextDirection.ltr, style: TextStyle(fontSize: 11, color: color.withValues(alpha: .75)))),
+              ]),
+            ),
+          ]);
+        },
+      ),
     );
   }
 }

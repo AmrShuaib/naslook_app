@@ -13,6 +13,7 @@ import '../../../state/app_state.dart';
 import '../../../state/biz_providers.dart';
 import '../../../ui/widgets.dart';
 import 'business_dashboard_page.dart';
+import '../../../api/client.dart';
 
 /// يفتح محرّر الدائرة: إنشاء جديدة أو تعديل ملف دائرة قائمة.
 Future<void> openBusinessEditor(BuildContext context, {Biz? biz}) =>
@@ -92,7 +93,7 @@ class _BusinessEditorPageState extends ConsumerState<BusinessEditorPage> {
               onTap: uploading ? null : () => _upload(cover: true),
               child: Container(
                 height: 120,
-                decoration: BoxDecoration(color: _hex(color).withValues(alpha: .85), borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), image: coverUrl != null ? DecorationImage(image: NetworkImage(_abs(base, coverUrl!)), fit: BoxFit.cover) : null),
+                decoration: BoxDecoration(color: _hex(color).withValues(alpha: .85), borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), image: coverUrl != null ? DecorationImage(image: NetworkImage(mediaUrl(coverUrl!)), fit: BoxFit.cover) : null),
                 alignment: Alignment.center,
                 child: uploading ? const CircularProgressIndicator(color: Colors.white) : Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.add_photo_alternate_outlined, color: Colors.white), const SizedBox(width: 6), Text(coverUrl == null ? 'صورة الغلاف' : 'تغيير الغلاف', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))]),
               ),
@@ -104,7 +105,7 @@ class _BusinessEditorPageState extends ConsumerState<BusinessEditorPage> {
                   onTap: uploading ? null : () => _upload(cover: false),
                   child: Container(
                     width: 72, height: 72,
-                    decoration: BoxDecoration(color: _hex(color), borderRadius: BorderRadius.circular(20), image: logoUrl != null ? DecorationImage(image: NetworkImage(_abs(base, logoUrl!)), fit: BoxFit.cover) : null),
+                    decoration: BoxDecoration(color: _hex(color), borderRadius: BorderRadius.circular(20), image: logoUrl != null ? DecorationImage(image: NetworkImage(mediaUrl(logoUrl!)), fit: BoxFit.cover) : null),
                     alignment: Alignment.center,
                     child: logoUrl == null ? const Icon(Icons.add_a_photo_outlined, color: Colors.white) : null,
                   ),
@@ -273,7 +274,6 @@ Color _hex(String h) {
   return s.length == 6 ? Color(int.parse('FF$s', radix: 16)) : Joy.primary;
 }
 
-String _abs(String base, String url) => url.startsWith('http') ? url : '$base${url.startsWith('/') ? '' : '/'}$url';
 
 /// رسالة خطأ مفهومة لعمليات لوحة التحكم.
 String ownerErrText(Object e) {

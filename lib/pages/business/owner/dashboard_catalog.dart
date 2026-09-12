@@ -11,6 +11,7 @@ import '../../../state/app_state.dart';
 import '../../../state/biz_providers.dart';
 import '../../../ui/widgets.dart';
 import 'business_editor.dart';
+import '../../../api/client.dart';
 
 /// كتالوج الدائرة لصاحبها: تفعيل/إيقاف، تعديل، إضافة، حسب التخصص.
 class CatalogTab extends ConsumerWidget {
@@ -46,7 +47,6 @@ class _ItemRow extends ConsumerWidget {
   const _ItemRow({required this.biz, required this.item});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final base = ref.read(apiClientProvider).baseUrl;
     final stockLabel = switch (item.kind) { 'showtime' => '${item.stock ?? 0} مقعد/عرض', 'room' => '${item.stock ?? 0} غرف', 'car' => '${item.stock ?? 0} سيارات', _ => item.stock == null ? 'كمية مفتوحة' : '${item.stock} متبقٍ' };
     return Opacity(
       opacity: item.active ? 1 : .55,
@@ -55,7 +55,7 @@ class _ItemRow extends ConsumerWidget {
         child: Row(children: [
           Container(
             width: 54, height: 54,
-            decoration: BoxDecoration(color: biz.color.withValues(alpha: .12), borderRadius: BorderRadius.circular(14), image: item.imageUrl != null ? DecorationImage(image: NetworkImage(item.imageUrl!.startsWith('http') ? item.imageUrl! : '$base${item.imageUrl}'), fit: BoxFit.cover) : null),
+            decoration: BoxDecoration(color: biz.color.withValues(alpha: .12), borderRadius: BorderRadius.circular(14), image: item.imageUrl != null ? DecorationImage(image: NetworkImage(mediaUrl(item.imageUrl!)), fit: BoxFit.cover) : null),
             child: item.imageUrl == null ? Icon(switch (item.kind) { 'showtime' => Icons.movie_outlined, 'room' => Icons.king_bed_outlined, 'car' => Icons.directions_car_outlined, _ => Icons.shopping_bag_outlined }, color: biz.color.computeLuminance() > .6 ? Joy.text : biz.color) : null,
           ),
           const SizedBox(width: 12),
@@ -149,7 +149,6 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final base = ref.read(apiClientProvider).baseUrl;
     final isNew = it == null;
     final priceLabel = switch (kind) { 'showtime' => 'سعر التذكرة (ر.س)', 'room' => 'سعر الليلة (ر.س)', 'car' => 'سعر اليوم (ر.س)', _ => 'السعر (ر.س)' };
     final stockLabel = switch (kind) { 'showtime' => 'مقاعد كل عرض', 'room' => 'عدد الغرف', 'car' => 'عدد السيارات', _ => 'الكمية (فارغ = مفتوحة)' };
@@ -164,7 +163,7 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
             borderRadius: BorderRadius.circular(16),
             child: Container(
               width: 84, height: 84,
-              decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(16), image: imageUrl != null ? DecorationImage(image: NetworkImage(imageUrl!.startsWith('http') ? imageUrl! : '$base$imageUrl'), fit: BoxFit.cover) : null),
+              decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(16), image: imageUrl != null ? DecorationImage(image: NetworkImage(mediaUrl(imageUrl!)), fit: BoxFit.cover) : null),
               alignment: Alignment.center,
               child: uploading ? const CircularProgressIndicator() : imageUrl == null ? const Icon(Icons.add_photo_alternate_outlined, color: Joy.textMuted) : null,
             ),

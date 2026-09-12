@@ -11,12 +11,18 @@ export default async function profile(app, opts) {
   const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
-  /// رابط مطلق على مضيف الطلب نفسه (خلف Caddy: x-forwarded-proto/host)
+  // رابط مطلق على الأصل العام: PUBLIC_BASE_URL إن ضُبط، وإلا مضيف الطلب بلا "www." (سياسة CSP تقبل الصور من الأصل ذاته فقط،
+  // فرابط بمضيف www. لا يُعرض لمن يفتح naslife.app والعكس)
   const absolute = (req, path) => {
+    const env = String(process.env.PUBLIC_BASE_URL ?? process.env.NASLIFE_PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
+    if (/^https?:\/\//i.test(env)) return `${env}${path}`;
     const proto = String(req.headers["x-forwarded-proto"] ?? "https").split(",")[0].trim() || "https";
-    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim();
+    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim().replace(/^www\./i, "");
     return `${proto}://${host}${path}`;
   };
+  if (col) {
+    try { await pool.query(String.raw`UPDATE users SET ${q(col)} = regexp_replace(${q(col)}, '^(https?://)www\.', '\1', 'i') WHERE ${q(col)} ~* '^https?://www\.'`); } catch { /* ignore */ }
+  }
 
   app.get("/profile/status", async () => ({ ok: true, avatarColumn: col }));
 

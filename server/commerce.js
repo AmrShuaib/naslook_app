@@ -40,6 +40,7 @@ export default async function commerce(app, opts) {
       id UUID PRIMARY KEY, listing_id UUID NOT NULL, buyer_id TEXT NOT NULL, seller_id TEXT NOT NULL, qty INT NOT NULL, total BIGINT NOT NULL,
       note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'paid', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
   `);
+  try { await pool.query(String.raw`UPDATE market_listings SET image_url = regexp_replace(image_url, '^(https?://)www\.', '\1', 'i') WHERE image_url ~* '^https?://www\.'`); } catch { /* عمود غير موجود أو جدول قديم */ }
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
@@ -289,13 +290,22 @@ export default async function commerce(app, opts) {
     return Promise.all(r.rows.map((l) => listingOut(l, uid)));
   });
   // رابط مطلق لصورة مرفوعة على الخادم نفسه (يبقى صالحاً في تطبيقات الجوال لاحقاً)
-  const absUrl = (req, url) => {
-    const s = String(url ?? "").trim(); if (!s) return null;
-    if (/^https?:\/\//.test(s)) return s.slice(0, 500);
-    if (!s.startsWith("/")) return null;
+  // الأصل العام للروابط المطلقة: PUBLIC_BASE_URL إن ضُبط، وإلا مضيف الطلب بلا "www." — الموقع يُقدَّم على naslife.app
+  // وwww.naslife.app معاً، وسياسة CSP تقبل الوسائط من الأصل ذاته فقط، فرابط بمضيف يخالف صفحة المستخدم لا يُعرض.
+  const publicOrigin = (req) => {
+    const env = String(process.env.PUBLIC_BASE_URL ?? process.env.NASLIFE_PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
+    if (/^https?:\/\//i.test(env)) return env;
     const proto = String(req.headers["x-forwarded-proto"] ?? "https").split(",")[0].trim() || "https";
-    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim();
-    return `${proto}://${host}${s}`.slice(0, 500);
+    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim().replace(/^www\./i, "");
+    return `${proto}://${host}`;
+  };
+  const OWN_MEDIA = /^https?:\/\/[^/]+(\/(?:chat\/media|files|media|uploads)\/.*)$/i;
+  const absUrl = (req, url) => {
+    const s = String(url ?? "").trim().slice(0, 500); if (!s) return null;
+    const own = OWN_MEDIA.exec(s); if (own) return `${publicOrigin(req)}${own[1]}`;
+    if (/^https?:\/\//i.test(s)) return s;
+    if (!s.startsWith("/")) return null;
+    return `${publicOrigin(req)}${s}`;
   };
   // تعديل عرضي: النص والسعر والصورة، وإخفاؤه أو إظهاره (ما لم تكن الإدارة قد أخفته)
   app.patch("/market/:id", async (req, reply) => {

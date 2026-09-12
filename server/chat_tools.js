@@ -28,7 +28,7 @@ function mediaCandidates() {
 const MAX_BYTES = Number(process.env.CHAT_MEDIA_MAX_BYTES) || 30 * 1024 * 1024;
 const TYPES = {
   "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
-  "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
+  "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov", "video/3gpp": "3gp", "video/x-m4v": "m4v",
   "audio/webm": "weba", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/aac": "aac",
   "application/pdf": "pdf",
 };
@@ -64,10 +64,33 @@ async function setup(app, opts) {
     } catch (e) { mediaErrors.push(`${dir}: ${e?.code || e?.message || e}`); }
   }
   const logger = app.log?.info ? app.log.info.bind(app.log) : console.log;
-  // ffmpeg (إن وُجد) يحوّل التسجيلات الصوتية إلى AAC/m4a حتى تُشغَّل على iPhone وAndroid معاً
+  // ffmpeg (إن وُجد) يحوّل التسجيلات الصوتية إلى AAC/m4a والفيديو إلى MP4 حتى تُشغَّل على iPhone وAndroid معاً
   let ffmpeg = false;
   try { await execFileP("ffmpeg", ["-version"], { timeout: 5000 }); ffmpeg = true; } catch {}
   logger(`chat_tools: ffmpeg ${ffmpeg ? "available" : "not found (audio kept as recorded)"}`);
+  // ffprobe: ترميزا الفيديو والصوت في الملف
+  async function probeStreams(file) {
+    const { stdout } = await execFileP("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "json", file], { timeout: 20000 });
+    const streams = JSON.parse(stdout || "{}").streams ?? [];
+    return { video: streams.find((x) => x.codec_type === "video"), audio: streams.find((x) => x.codec_type === "audio") };
+  }
+  // الفيديو يُوحَّد إلى MP4 (H.264/AAC وmoov في المقدمة): iPhone يرسل .mov وAndroid يرسل .webm ولا يشغّل أيٌّ منهما ملفات الآخر.
+  // H.264/AAC يُعاد تغليفه فقط (سريع، مع إسقاط مسارات البيانات الوصفية)، وغيره (HEVC/VP8/VP9…) يُعاد ترميزه بحد أقصى 720 بكسل.
+  async function normalizeVideo(inFile, ext) {
+    const { video, audio } = await probeStreams(inFile);
+    if (!video) throw new Error("no video stream");
+    const copyOk = video.codec_name === "h264" && (!audio || audio.codec_name === "aac");
+    if (copyOk && ext === "mp4") return inFile;
+    const out = path.join(path.dirname(inFile), `${Date.now().toString(36)}-${crypto.randomBytes(12).toString("hex")}.mp4`);
+    const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn"];
+    if (copyOk) args.push("-c", "copy");
+    else args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-vf", "scale=min(720\\,iw):-2,scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:a", "aac", "-b:a", "96k");
+    args.push("-movflags", "+faststart", out);
+    try { await execFileP("ffmpeg", args, { timeout: 150000 }); }
+    catch (e) { await fs.unlink(out).catch(() => {}); throw e; }
+    await fs.unlink(inFile).catch(() => {});
+    return out;
+  }
   async function transcodeAudio(inFile) {
     const out = inFile.replace(/\.[a-z0-9]+$/, ".m4a");
     await execFileP("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-vn", "-ac", "1", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", out], { timeout: 120000 });
@@ -113,6 +136,11 @@ async function setup(app, opts) {
         file = await transcodeAudio(file);
         name = path.basename(file); ct = "audio/mp4"; size = (await fs.stat(file)).size;
       } catch (e) { logger(`chat_tools: transcode failed, keeping original: ${e?.message || e}`); }
+    } else if (ffmpeg && ct.startsWith("video/")) {
+      try {
+        file = await normalizeVideo(file, ext);
+        name = path.basename(file); ct = "video/mp4"; size = (await fs.stat(file)).size;
+      } catch (e) { logger(`chat_tools: video normalize failed, keeping original: ${e?.message || e}`); }
     }
     return { url: `/chat/media/${name}`, type: ct, kind: kindOf(ct), size };
   });

@@ -68,6 +68,8 @@ export default async function posts(app, opts) {
     CREATE TABLE IF NOT EXISTS map_post_likes (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
     CREATE TABLE IF NOT EXISTS map_post_views (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
   `);
+  // روابط حُفظت سابقاً بمضيف www. تُعاد إلى المضيف الأساسي (انظر publicOrigin)
+  try { await pool.query(String.raw`UPDATE map_posts SET media_url = regexp_replace(media_url, '^(https?://)www\.', '\1', 'i') WHERE media_url ~* '^https?://www\.'`); } catch { /* ignore */ }
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
@@ -77,13 +79,22 @@ export default async function posts(app, opts) {
   const isSuspended = async (uid) => { try { return (await pool.query("SELECT 1 FROM user_flags WHERE user_id=$1 AND suspended", [uid])).rowCount > 0; } catch { return false; } };
   const isAdmin = async (uid) => { try { return !!(await globalThis.naslifeIsAdmin?.(uid)); } catch { return false; } };
   const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch { /* ignore */ } };
+  // الأصل العام للروابط المطلقة: PUBLIC_BASE_URL إن ضُبط، وإلا مضيف الطلب بلا "www." — الموقع يُقدَّم على naslife.app
+  // وwww.naslife.app معاً، وسياسة CSP تقبل الوسائط من الأصل ذاته فقط، فرابط بمضيف يخالف صفحة المستخدم لا يُعرض.
+  const publicOrigin = (req) => {
+    const env = String(process.env.PUBLIC_BASE_URL ?? process.env.NASLIFE_PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
+    if (/^https?:\/\//i.test(env)) return env;
+    const proto = String(req.headers["x-forwarded-proto"] ?? "https").split(",")[0].trim() || "https";
+    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim().replace(/^www\./i, "");
+    return `${proto}://${host}`;
+  };
+  const OWN_MEDIA = /^https?:\/\/[^/]+(\/(?:chat\/media|files|media|uploads)\/.*)$/i;
   const absUrl = (req, url) => {
     const s = str(url, 500); if (!s) return null;
+    const own = OWN_MEDIA.exec(s); if (own) return `${publicOrigin(req)}${own[1]}`;
     if (/^https?:\/\//i.test(s)) return s;
     if (!s.startsWith("/")) return null;
-    const proto = String(req.headers["x-forwarded-proto"] ?? "https").split(",")[0].trim() || "https";
-    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim();
-    return `${proto}://${host}${s}`;
+    return `${publicOrigin(req)}${s}`;
   };
   const bbox = (s) => { const p = String(s ?? "").split(",").map(Number); return p.length === 4 && p.every(Number.isFinite) ? { minLng: p[0], minLat: p[1], maxLng: p[2], maxLat: p[3] } : null; };
 

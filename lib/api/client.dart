@@ -44,7 +44,13 @@ class ApiClient {
 
   ApiClient({String? baseUrl, http.Client? httpClient, this.timeout = const Duration(seconds: 20)})
       : baseUrl = _normalize(baseUrl ?? resolveBaseUrl()),
-        _http = httpClient ?? http.Client();
+        _http = httpClient ?? http.Client() {
+    _currentBase = this.baseUrl;
+  }
+
+  static String? _currentBase;
+  /// أصل الخادم الذي تُطلب منه الوسائط (آخر عميل أُنشئ، وإلا الأصل المستنتج)
+  static String get mediaBase => _currentBase ?? _normalize(resolveBaseUrl());
 
   static String resolveBaseUrl() {
     if (_envBase.isNotEmpty) return _envBase;
@@ -169,6 +175,9 @@ class ApiClient {
   /// يحوّل مساراً نسبياً من الخادم (مثل /chat/media/x.jpg) إلى رابط مطلق.
   String absolute(String url) => url.startsWith('http') ? url : '$baseUrl${url.startsWith('/') ? '' : '/'}$url';
 
+  /// رابط وسائط على أصل هذا العميل (انظر [mediaUrl]).
+  String media(String url) => mediaUrl(url, base: baseUrl);
+
   /// أصل WebSocket المطابق لعنوان الخادم.
   String get wsUrl => '${baseUrl.replaceFirst(RegExp(r'^http'), 'ws')}/ws';
 
@@ -246,4 +255,21 @@ class ApiClient {
   }
 
   void close() => _http.close();
+}
+
+final _ownMediaPath = RegExp(r'^/(?:chat/media|files|media|uploads)/', caseSensitive: false);
+
+/// يعيد رابط وسائط من خادمنا على أصل التطبيق نفسه.
+///
+/// سياسة CSP للموقع تسمح بالصور والوسائط من الأصل ذاته فقط ('self')، فرابط حُفظ عبر www.naslife.app
+/// لا يعمل لمن يفتح naslife.app والعكس. أي رابط (نسبي أو مطلق على أي مضيف) يشير إلى مسارات وسائطنا
+/// (/chat/media و/files و/media و/uploads) يُعاد بناؤه على [ApiClient.mediaBase]؛ وروابط المواقع الأخرى تبقى كما هي.
+String mediaUrl(String url, {String? base}) {
+  final s = url.trim();
+  if (s.isEmpty) return s;
+  final b = base ?? ApiClient.mediaBase;
+  if (!s.startsWith('http://') && !s.startsWith('https://')) return '$b${s.startsWith('/') ? '' : '/'}$s';
+  final u = Uri.tryParse(s);
+  if (u == null || !_ownMediaPath.hasMatch(u.path)) return s;
+  return '$b${u.path}${u.hasQuery ? '?${u.query}' : ''}';
 }

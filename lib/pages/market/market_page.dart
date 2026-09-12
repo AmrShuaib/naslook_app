@@ -13,6 +13,7 @@ import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../chat/chat_thread_page.dart';
 import '../wallet/wallet_page.dart';
+import '../../api/client.dart';
 
 final marketProvider = FutureProvider.family<List<Listing>, (String, String?)>((ref, a) => ref.watch(apiClientProvider).market(q: a.$1, category: a.$2));
 final myListingsProvider = FutureProvider<List<Listing>>((ref) => ref.watch(apiClientProvider).myListings());
@@ -111,7 +112,7 @@ Future<ListingDraft?> showListingForm(BuildContext context, {Listing? initial}) 
               child: pic != null
                   ? Image.memory(pic.bytes, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined, color: Joy.textMuted))
                   : showsExisting
-                      ? Image.network(existingUrl, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, color: Joy.textMuted))
+                      ? Image.network(mediaUrl(existingUrl), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, color: Joy.textMuted))
                       : const Icon(Icons.add_photo_alternate_outlined, color: Joy.textMuted, size: 28),
             ),
             const SizedBox(width: 8),
@@ -160,7 +161,7 @@ class ListingCard extends StatelessWidget {
           Expanded(child: ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             child: l.imageUrl != null && l.imageUrl!.isNotEmpty
-                ? Image.network(l.imageUrl!, fit: BoxFit.cover, width: double.infinity, errorBuilder: (_, __, ___) => _ph())
+                ? Image.network(mediaUrl(l.imageUrl!), fit: BoxFit.cover, width: double.infinity, errorBuilder: (_, __, ___) => _ph())
                 : _ph(),
           )),
           Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -194,7 +195,7 @@ class _ListingPageState extends ConsumerState<ListingPage> {
       appBar: AppBar(title: const Text('العرض')),
       body: l.when(
         data: (x) => ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
-          if (x.imageUrl != null && x.imageUrl!.isNotEmpty) ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.network(x.imageUrl!, height: 220, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())),
+          if (x.imageUrl != null && x.imageUrl!.isNotEmpty) ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.network(mediaUrl(x.imageUrl!), height: 220, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())),
           const SizedBox(height: 12),
           Row(children: [Expanded(child: Text(x.title, style: Theme.of(context).textTheme.headlineSmall)), Text(x.price == 0 ? 'مجاناً' : money(x.price), style: const TextStyle(fontWeight: FontWeight.w700, color: Joy.primary, fontSize: 20))]),
           Text('${x.kind == 'service' ? 'خدمة' : 'منتج'} · ${marketCategories[x.category] ?? x.category}${x.placeName != null && x.placeName!.isNotEmpty ? ' · ${x.placeName}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
@@ -338,7 +339,7 @@ class MyListingRow extends ConsumerWidget {
           Container(
             width: 48, height: 48, clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
-            child: l.imageUrl != null && l.imageUrl!.isNotEmpty ? Image.network(l.imageUrl!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, color: Joy.textMuted)) : const Icon(Icons.storefront_outlined, color: Joy.textMuted),
+            child: l.imageUrl != null && l.imageUrl!.isNotEmpty ? Image.network(mediaUrl(l.imageUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, color: Joy.textMuted)) : const Icon(Icons.storefront_outlined, color: Joy.textMuted),
           ),
           const SizedBox(width: 10),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
