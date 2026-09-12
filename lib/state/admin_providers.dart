@@ -16,7 +16,11 @@ bool detectAdminMode([Uri? uri]) {
   return host.startsWith('admin.') || path == '/admin' || path.startsWith('/admin/') || frag == '/admin' || frag.startsWith('/admin/') || frag == 'admin' || u.queryParameters['admin'] == '1';
 }
 
-final adminModeProvider = StateProvider<bool>((_) => detectAdminMode());
+/// يُلتقط عند الإقلاع في main() قبل أن يعيد محرك Flutter كتابة الجزء (#/) من الرابط.
+bool adminModeAtBoot = false;
+void captureAdminMode() { adminModeAtBoot = detectAdminMode(); }
+
+final adminModeProvider = StateProvider<bool>((_) => adminModeAtBoot || detectAdminMode());
 final adminStatusProvider = FutureProvider<AdminStatus>((ref) => ref.watch(apiClientProvider).adminStatus());
 final adminOverviewProvider = FutureProvider<AdminOverview>((ref) => ref.watch(apiClientProvider).adminOverview());
 final adminUsersProvider = FutureProvider.family<List<AdminUser>, ({String q, String? filter})>((ref, k) => ref.watch(apiClientProvider).adminUsers(q: k.q, filter: k.filter));

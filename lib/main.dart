@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import 'state/admin_providers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
@@ -7,5 +9,6 @@ import 'app/app.dart';
 /// لا يوجد اعتماد على Firebase في هذه النسخة.
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  captureAdminMode();
   runApp(const ProviderScope(child: MainApp()));
 }
