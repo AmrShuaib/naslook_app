@@ -20,6 +20,7 @@ import '../../core/app_theme.dart';
 import '../../core/media/media.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../ui/pattern_background.dart';
 import '../../ui/widgets.dart';
 
 /// تسمية فاصل اليوم: اليوم، أمس، اسم اليوم خلال الأسبوع، وإلا اليوم والشهر (والسنة إن اختلفت).
@@ -749,7 +750,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             child: const Text('انقطع الاتصال المباشر ونعيد المحاولة… قد تتأخر الرسائل الواردة', style: TextStyle(color: Joy.sunText, fontSize: 12)),
           ),
-        Expanded(child: Stack(children: [_list(), if (_unseen > 0) _newMessagesChip()])),
+        Expanded(child: NaslifePattern(child: Stack(children: [_list(), if (_unseen > 0) _newMessagesChip()]))),
         _composer(),
       ]),
     );
