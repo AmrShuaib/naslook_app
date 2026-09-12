@@ -96,6 +96,9 @@ void main() {
       expect(Message.kindOf('text', 'https://naslife.app/chat/media/k9x1-ab12cd34ef56ab12cd34ef56.mp4'), 'video');
       expect(Message.kindOf('text', 'شوف https://naslife.app/chat/media/x.jpg'), 'text');
       expect(Message.kindOf('text', 'https://example.com/a.jpg'), 'text');
+      // مسار وسائط الخادم الأساسي من النسخ القديمة
+      expect(Message.kindOf('text', 'https://naslife.app/files/5320f951-254d-4498-8ec2-c25e02bffecf.jpg'), 'image');
+      expect(Message.kindOf('text', '/files/abc.webm'), 'video');
       expect(Message.kindOf('image', '/chat/media/x.jpg'), 'image');
       expect(Message.previewOf('text', 'https://naslife.app/chat/media/k9x1-ab12cd34ef56ab12cd34ef56.m4a'), '🎤 رسالة صوتية');
     });

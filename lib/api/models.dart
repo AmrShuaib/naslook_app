@@ -158,7 +158,8 @@ class Message {
   bool get isMedia => mediaKind != 'text';
   int? get durationMs => extra['durationMs'] is num ? (extra['durationMs'] as num).toInt() : null;
   String get preview => previewOf(type, content);
-  static final _mediaUrl = RegExp(r'^https?://[^\s]+/chat/media/[A-Za-z0-9-]+\.([a-z0-9]{2,5})$', caseSensitive: false);
+  /// روابط وسائط الخادم نفسه فقط (لا نعرض صور مواقع خارجية تلقائياً): /chat/media/ و/files/ (النسخ القديمة) و/media/ و/uploads/
+  static final _mediaUrl = RegExp(r'^(?:https?://[^\s/]+)?/(?:chat/media|files|media|uploads)/[^\s?#]+\.([a-z0-9]{2,5})(?:\?[^\s]*)?$', caseSensitive: false);
   static String kindOf(String type, String content) {
     if (type != 'text') return type;
     final m = _mediaUrl.firstMatch(content.trim());
