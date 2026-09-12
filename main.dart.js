@@ -37591,7 +37591,7 @@ aO_(a,b){var s=0,r=A.m(t.QM),q,p
 var $async$aO_=A.i(function(c,d){if(c===1)return A.j(d,r)
 for(;;)switch(s){case 0:p=A
 s=3
-return A.e(a.cI("/posts",b),$async$aO_)
+return A.e(a.cI("/mapposts",b),$async$aO_)
 case 3:q=p.bwP(d)
 s=1
 break
@@ -37605,7 +37605,7 @@ if(b!=null)o.p(0,"bbox",b.glu())
 o.p(0,"limit",""+c)
 n=A
 s=3
-return A.e(a.iw("/posts",o),$async$a7b)
+return A.e(a.iw("/mapposts",o),$async$a7b)
 case 3:o=n.bR(e)
 p=A.X(o).h("Q<1,hJ>")
 o=A.a1(new A.Q(o,A.bJN(),p),p.h("af.E"))
@@ -37618,7 +37618,7 @@ aO1(a){var s=0,r=A.m(t.Jq),q,p,o,n
 var $async$aO1=A.i(function(b,c){if(b===1)return A.j(c,r)
 for(;;)switch(s){case 0:n=A
 s=3
-return A.e(a.jG("/posts/mine"),$async$aO1)
+return A.e(a.jG("/mapposts/mine"),$async$aO1)
 case 3:p=n.bR(c)
 o=A.X(p).h("Q<1,hJ>")
 p=A.a1(new A.Q(p,A.bJN(),o),o.h("af.E"))
@@ -37631,7 +37631,7 @@ a7c(a,b,c){var s=0,r=A.m(t.QM),q,p
 var $async$a7c=A.i(function(d,e){if(d===1)return A.j(e,r)
 for(;;)switch(s){case 0:p=A
 s=3
-return A.e(a.FQ("/posts/"+b,c),$async$a7c)
+return A.e(a.FQ("/mapposts/"+b,c),$async$a7c)
 case 3:q=p.bwP(e)
 s=1
 break
@@ -37642,7 +37642,7 @@ var $async$aO2=A.i(function(c,d){if(c===1)return A.j(d,r)
 for(;;)switch(s){case 0:p=A
 o=J
 s=3
-return A.e(a.cI("/posts/"+b+"/view",B.bh),$async$aO2)
+return A.e(a.cI("/mapposts/"+b+"/view",B.bh),$async$aO2)
 case 3:q=p.Xy(o.d2(d,"views"))
 s=1
 break
@@ -37651,7 +37651,7 @@ return A.l($async$aO2,r)},
 aO0(a,b){var s=0,r=A.m(t.Hu),q,p
 var $async$aO0=A.i(function(c,d){if(c===1)return A.j(d,r)
 for(;;)switch(s){case 0:s=3
-return A.e(a.cI("/posts/"+b+"/like",B.bh),$async$aO0)
+return A.e(a.cI("/mapposts/"+b+"/like",B.bh),$async$aO0)
 case 3:p=d
 q=new A.ajL(J.d(p.i(0,"liked"),!0),A.Xy(p.i(0,"likes")))
 s=1
@@ -146360,7 +146360,7 @@ return A.e(A.f8(null,null,!0,null,new A.bid(),f,null,!0,!0,t.y),$async$rD)
 case 18:i=a1
 if(!J.d(i,!0)||n.c==null){s=1
 break}s=19
-return A.e(l.z4("/posts/"+c.a),$async$rD)
+return A.e(l.z4("/mapposts/"+c.a),$async$rD)
 case 19:A.bzd(g)
 if(n.c==null){s=1
 break}if(n.gis().length===1){g=n.c
