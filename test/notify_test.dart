@@ -14,6 +14,7 @@ import 'package:naslook/pages/admin/admin_shell.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/my_bookings_page.dart';
 import 'package:naslook/pages/business/owner/business_dashboard_page.dart';
+import 'package:naslook/pages/myspace/myspace_page.dart';
 import 'package:naslook/pages/notifications/notifications_page.dart';
 import 'package:naslook/pages/wallet/wallet_page.dart';
 import 'package:naslook/state/app_state.dart';
@@ -56,11 +57,20 @@ class _Srv {
         return _json({'ok': true, 'unread': unread});
       case 'GET /notify/$_n1':
         return _json(items[0]);
+      case 'POST /notify/test':
+        return _json({'ok': true, 'id': _n2, 'pushed': 0, 'push': false, 'reason': 'private-key-not-found', 'subscriptions': 0});
       case 'GET /requests':
       case 'GET /chats':
       case 'GET /vessels/feed':
+      case 'GET /vessels/mine':
       case 'GET /contacts':
         return _json([]);
+      case 'GET /me/profile':
+        return _json({'id': 'SA0000001', 'nickname': 'amr', 'bio': '', 'avatarUrl': null});
+      case 'GET /me/map-presence':
+        return _json({'lat': null, 'lng': null, 'visible': false, 'title': ''});
+      case 'GET /adminapi/status':
+        return _json({'hasAdmin': true, 'setupRequired': false, 'isAdmin': false, 'admins': 1});
       case 'GET /biz/biz-ikea':
         return _json({'id': 'biz-ikea', 'name': 'IKEA', 'nameAr': 'إيكيا', 'category': 'brand', 'lat': 21.5, 'lng': 39.2, 'items': [], 'reviews': [], 'posts': [], 'myOrders': [], 'myRole': 'owner'});
       case 'GET /biz/biz-ikea/stats':
@@ -135,6 +145,18 @@ void main() {
     expect(srv.bodies['POST /notify/read']!['ids'], [_n1]);
     expect(find.byType(BusinessDashboardPage), findsOneWidget);
     expect((tester.widget(find.byType(BusinessDashboardPage)) as BusinessDashboardPage).initialTab, 1);
+  });
+
+  testWidgets('MySpace shows the test-notification button and posts to /notify/test', (tester) async {
+    final srv = _Srv();
+    await _pump(tester, srv, const Scaffold(body: MySpacePage()));
+    await tester.ensureVisible(find.text('إرسال إشعار تجريبي'));
+    await tester.pump();
+    await tester.tap(find.text('إرسال إشعار تجريبي'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(srv.calls, contains('POST /notify/test'));
+    expect(find.textContaining('غير مهيأ على الخادم'), findsOneWidget);
   });
 
   testWidgets('unread provider polls once without a timer in tests', (tester) async {
