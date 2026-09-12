@@ -123,7 +123,7 @@ class WalletPage extends ConsumerWidget {
       ),
     );
     if (ok != true || !context.mounted) return;
-    final halalas = ((double.tryParse(amount.text.replaceAll('،', '.')) ?? 0) * 100).round();
+    final halalas = parseSar(amount.text);
     if (halalas <= 0) { toast(context, 'أدخل مبلغاً صحيحاً', error: true); return; }
     try {
       final api = ref.read(apiClientProvider);
@@ -145,9 +145,17 @@ class WalletPage extends ConsumerWidget {
   }
 
   Future<void> _topup(BuildContext context, WidgetRef ref) async {
-    final v = await askText(context, title: 'شحن تجريبي', hint: 'المبلغ بالريال', confirm: 'شحن', maxLines: 1);
-    final halalas = ((double.tryParse(v ?? '') ?? 0) * 100).round();
-    if (halalas <= 0) return;
+    final v = await askText(context, title: 'شحن تجريبي', hint: 'المبلغ بالريال (حتى ${money(maxTopupHalalas)})', confirm: 'شحن', maxLines: 1, keyboardType: const TextInputType.numberWithOptions(decimal: true));
+    if (v == null) return;
+    final halalas = parseSar(v);
+    if (halalas <= 0) {
+      if (context.mounted) toast(context, 'اكتب مبلغاً صحيحاً بالريال، مثل 500', error: true);
+      return;
+    }
+    if (halalas > maxTopupHalalas) {
+      if (context.mounted) toast(context, 'أقصى شحن في المرة الواحدة ${money(maxTopupHalalas)}؛ كرّر الشحن إن احتجت أكثر', error: true);
+      return;
+    }
     try {
       await ref.read(apiClientProvider).walletTopup(halalas);
       ref.invalidate(walletProvider);
@@ -162,6 +170,8 @@ String _err(Object e) {
   if (s.contains('insufficient-funds')) return 'الرصيد غير كافٍ';
   if (s.contains('topup-disabled')) return 'الشحن غير مفعّل';
   if (s.contains('not-found')) return 'المستلم غير موجود';
+  if (s.contains('bad-amount')) return 'المبلغ غير مقبول: يجب أن يكون أكبر من صفر وحتى ${money(maxTopupHalalas)}';
+  if (s.contains('bad-recipient')) return 'حدّد مستلماً صحيحاً غير نفسك';
   return s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
 }
 

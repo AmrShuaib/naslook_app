@@ -6,6 +6,33 @@ String money(int halalas) {
   return '$s ر.س';
 }
 
+/// يحوّل نص مبلغ بالريال (بأرقام عربية أو هندية، بفاصلة أو نقطة) إلى هللات؛ 0 إن كان غير صالح أو سالباً.
+int parseSar(String? text) {
+  if (text == null) return 0;
+  const east = '٠١٢٣٤٥٦٧٨٩', persian = '۰۱۲۳۴۵۶۷۸۹';
+  final b = StringBuffer();
+  for (final r in text.trim().runes) {
+    final ch = String.fromCharCode(r);
+    final i = east.indexOf(ch), j = persian.indexOf(ch);
+    if (i >= 0) {
+      b.write(i);
+    } else if (j >= 0) {
+      b.write(j);
+    } else if (ch == '٫' || ch == '،' || ch == ',') {
+      b.write('.');
+    } else if (ch == '٬' || ch.trim().isEmpty) {
+      continue; // فاصل آلاف أو مسافة
+    } else {
+      b.write(ch);
+    }
+  }
+  final v = double.tryParse(b.toString().replaceAll(RegExp(r'[^0-9.\-]'), '')) ?? 0;
+  return v.isFinite && v > 0 ? (v * 100).round() : 0;
+}
+
+/// أقصى شحن تجريبي في المرة الواحدة (بالهللة) كما في الخادم.
+const int maxTopupHalalas = 10000000;
+
 Map<String, dynamic> _m(dynamic v) => asMap(v);
 DateTime? _t(dynamic v) => v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
 int _i(dynamic v) => v is num ? v.toInt() : int.tryParse(v?.toString() ?? '') ?? 0;

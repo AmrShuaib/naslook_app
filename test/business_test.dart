@@ -8,6 +8,7 @@ import 'package:http/testing.dart';
 
 import 'package:naslook/api/biz_models.dart';
 import 'package:naslook/api/client.dart';
+import 'package:naslook/api/commerce_models.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/pages/business/business_list.dart';
 import 'package:naslook/pages/business/business_page.dart';
@@ -81,6 +82,18 @@ Future<void> _pump(WidgetTester tester, _Srv srv, Widget home) async {
 }
 
 void main() {
+  test('parseSar accepts Arabic, Persian and Latin digits and rejects junk', () {
+    expect(parseSar('500'), 50000);
+    expect(parseSar('٥٠٠'), 50000);
+    expect(parseSar('۱۲٫۵'), 1250);
+    expect(parseSar('1,5'), 150);
+    expect(parseSar('1 000'), 100000);
+    expect(parseSar('abc'), 0);
+    expect(parseSar(''), 0);
+    expect(parseSar(null), 0);
+    expect(parseSar('-3'), 0);
+  });
+
   test('Biz model parses category, color and orders', () {
     final b = Biz.fromJson(_biz('biz-hilton', 'hotel'));
     expect(b.category, BizCategory.hotel);

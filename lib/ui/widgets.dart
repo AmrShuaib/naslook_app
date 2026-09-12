@@ -145,13 +145,13 @@ void toast(BuildContext context, String msg, {bool error = false}) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: error ? Joy.danger : null));
 }
 
-Future<String?> askText(BuildContext context, {required String title, String? hint, String confirm = 'إرسال', int maxLines = 3, String? initial}) {
+Future<String?> askText(BuildContext context, {required String title, String? hint, String confirm = 'إرسال', int maxLines = 3, String? initial, TextInputType? keyboardType}) {
   final c = TextEditingController(text: initial);
   return showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
       title: Text(title),
-      content: TextField(controller: c, maxLines: maxLines, autofocus: true, decoration: InputDecoration(hintText: hint)),
+      content: TextField(controller: c, maxLines: maxLines, autofocus: true, keyboardType: keyboardType, decoration: InputDecoration(hintText: hint)),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
         FilledButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: Text(confirm)),

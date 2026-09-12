@@ -42,7 +42,7 @@ export default async function commerce(app, opts) {
   `);
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
-  const bad = (reply, code, error) => reply.code(code).send({ error });
+  const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
   const userRow = async (id) => { try { return (await pool.query("SELECT * FROM users WHERE id=$1", [id])).rows[0] ?? null; } catch { return null; } };
   const isAdmin = async (uid) => { const u = await userRow(uid); return u?.is_admin === true || u?.role === "admin"; };
   const person = async (id) => {
@@ -91,7 +91,8 @@ export default async function commerce(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (process.env.WALLET_TEST_TOPUP !== "1" && !(await isAdmin(uid))) return bad(reply, 403, "topup-disabled");
     const amount = SAR(req.body?.amount);
-    if (amount <= 0 || amount > 500000) return bad(reply, 400, "bad-amount");
+    // حتى 100,000 ر.س للشحن التجريبي الواحد (أسعار الفنادق والسيارات تتجاوز السقف القديم 5,000)
+    if (amount <= 0 || amount > 10000000) return bad(reply, 400, "bad-amount", { max: 10000000 });
     await tx((c) => ledger(c, uid, "topup", amount, { note: "شحن" }));
     return { ok: true };
   });
