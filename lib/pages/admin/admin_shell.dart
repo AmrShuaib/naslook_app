@@ -45,13 +45,15 @@ String adminErrText(Object e) {
 /// غلاف لوحة الإدارة: شريط جانبي على الشاشات العريضة وقائمة جانبية على الجوال، مع شاشات الإعداد الأول ورفض الوصول.
 class AdminShell extends ConsumerStatefulWidget {
   final bool standalone;
-  const AdminShell({super.key, this.standalone = true});
+  /// القسم الذي تُفتح عليه اللوحة (ترتيب [adminSections])؛ تستخدمه الإشعارات لفتح البلاغات أو الدوائر مباشرة.
+  final int initialSection;
+  const AdminShell({super.key, this.standalone = true, this.initialSection = 0});
   @override
   ConsumerState<AdminShell> createState() => _AdminShellState();
 }
 
 class _AdminShellState extends ConsumerState<AdminShell> {
-  int index = 0;
+  late int index = widget.initialSection.clamp(0, adminSections.length - 1);
 
   @override
   Widget build(BuildContext context) {

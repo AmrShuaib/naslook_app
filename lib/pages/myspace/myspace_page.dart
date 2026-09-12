@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
+import '../../api/notify_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/push/push_service.dart';
 import '../../state/admin_providers.dart';
+import '../../state/notify_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
@@ -275,22 +277,52 @@ class _PushTileState extends ConsumerState<_PushTile> {
     }
   }
 
+  /// يرسل إشعاراً تجريبياً لهذا الحساب: داخل التطبيق دائماً، وللمتصفح إن كان الدفع مهيأً على الخادم.
+  Future<void> _test() async {
+    setState(() => _busy = true);
+    try {
+      final r = await ref.read(apiClientProvider).notifyTest();
+      ref.invalidate(notifyUnreadProvider);
+      if (!mounted) return;
+      if (r.pushed > 0) {
+        toast(context, 'أُرسل إشعار تجريبي إلى هذا المتصفح');
+      } else if (!r.pushReady) {
+        toast(context, 'أُضيف الإشعار داخل التطبيق، لكن الدفع للمتصفح غير مهيأ على الخادم (${r.reason})', error: true);
+      } else {
+        toast(context, 'أُضيف الإشعار داخل التطبيق ولم يُعثر على اشتراك دفع لهذا الحساب', error: true);
+      }
+    } catch (e) {
+      if (mounted) toast(context, e.toString(), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final supported = PushService.supported;
     final denied = PushService.permission == 'denied';
-    return SwitchListTile(
-      value: _on,
-      onChanged: !supported || denied || _busy ? null : _toggle,
-      title: const Text('الإشعارات الفورية'),
-      subtitle: Text(!supported
-          ? 'غير مدعومة في هذا المتصفح'
-          : denied
-              ? 'مرفوضة من المتصفح؛ اسمح بها من إعدادات الموقع'
-              : _on
-                  ? 'تصلك رسائل جديدة حتى والتطبيق مغلق'
-                  : 'فعّلها لتصلك الرسائل الجديدة على هذا الجهاز'),
-      secondary: Icon(Icons.notifications_active_outlined, color: _on ? Joy.primary : Joy.text),
-    );
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      SwitchListTile(
+        value: _on,
+        onChanged: !supported || denied || _busy ? null : _toggle,
+        title: const Text('الإشعارات الفورية'),
+        subtitle: Text(!supported
+            ? 'غير مدعومة في هذا المتصفح'
+            : denied
+                ? 'مرفوضة من المتصفح؛ اسمح بها من إعدادات الموقع'
+                : _on
+                    ? 'تصلك الرسائل والطلبات والحجوزات حتى والتطبيق مغلق'
+                    : 'فعّلها لتصلك الرسائل والطلبات على هذا الجهاز'),
+        secondary: Icon(Icons.notifications_active_outlined, color: _on ? Joy.primary : Joy.text),
+      ),
+      Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Padding(
+          padding: const EdgeInsetsDirectional.only(start: 12, bottom: 4),
+          child: TextButton.icon(onPressed: _busy ? null : _test, icon: const Icon(Icons.send_outlined, size: 18), label: const Text('إرسال إشعار تجريبي')),
+        ),
+      ),
+    ]);
   }
 }

@@ -7,8 +7,11 @@ import '../state/admin_providers.dart';
 import 'i18n/l10n.dart';
 import '../core/app_theme.dart';
 import '../core/nav_provider.dart';
+import '../api/notify_api.dart';
+import '../core/notify_open.dart';
 import '../core/push/push_service.dart';
 import '../state/app_state.dart';
+import '../state/notify_providers.dart';
 import '../state/providers.dart';
 import '../screens/login_page.dart';
 import '../pages/home/home_page.dart';
@@ -78,11 +81,26 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowRecovery());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingNotification());
     // يفتح اتصال WebSocket مبكراً، ويجدّد اشتراك الإشعارات الفورية إن كان الإذن ممنوحاً
     Future.microtask(() {
       ref.read(socketProvider);
       PushService.resubscribeIfGranted(ref.read(apiClientProvider));
     });
+  }
+
+  /// إشعار دفع نُقر عليه والتطبيق مغلق: وصل الرابط `#/n/<id>` عند الإقلاع، نفتح وجهته بعد الدخول.
+  Future<void> _openPendingNotification() async {
+    final id = pendingNotificationId;
+    if (id == null) return;
+    pendingNotificationId = null;
+    try {
+      final n = await ref.read(apiClientProvider).notification(id);
+      if (!mounted) return;
+      await openNotification(context, ref, n);
+    } catch (_) {
+      // إشعار محذوف أو لمستخدم آخر: نتجاهله
+    }
   }
 
   Future<void> _maybeShowRecovery() async {
@@ -122,6 +140,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   Widget build(BuildContext context) {
     final i = ref.watch(navIndexProvider);
     final badge = ref.watch(unreadCountProvider);
+    // جرس التنبيهات يجمع الرسائل غير المقروءة وإشعارات التجارة والإدارة
+    final bell = badge + (ref.watch(notifyUnreadProvider).valueOrNull ?? 0);
     return Scaffold(
       appBar: i == 1
           ? null
@@ -130,7 +150,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
               actions: [
                 IconButton(
                   tooltip: 'التنبيهات',
-                  icon: Badge(isLabelVisible: badge > 0, label: Text('$badge'), backgroundColor: Joy.accent, child: const Icon(Icons.notifications_outlined)),
+                  icon: Badge(isLabelVisible: bell > 0, label: Text('$bell'), backgroundColor: Joy.accent, child: const Icon(Icons.notifications_outlined)),
                   onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsPage())),
                 ),
                 const SizedBox(width: 8),

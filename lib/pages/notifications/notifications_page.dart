@@ -3,29 +3,36 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
+import '../../api/notify_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/notify_open.dart';
 import '../../state/app_state.dart';
+import '../../state/notify_providers.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../chat/chat_thread_page.dart';
 
-/// التنبيهات: طلبات الصداقة والرسائل غير المقروءة والمنشورات الجديدة في دوائري.
+/// التنبيهات: إشعارات الطلبات والحجوزات والمحفظة والإدارة، ثم طلبات الصداقة والرسائل غير المقروءة والمنشورات الجديدة في دوائري.
 class NotificationsPage extends ConsumerWidget {
   const NotificationsPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final notif = ref.watch(notificationsProvider);
     final reqs = ref.watch(requestsProvider);
     final chats = ref.watch(chatsProvider).value?.where((c) => c.unread > 0).toList() ?? const <Chat>[];
     final feed = ref.watch(feedProvider).value?.where((p) => p.unread).toList() ?? const <Post>[];
     final contacts = ref.watch(contactsProvider);
+    final unread = notif.valueOrNull?.unread ?? 0;
 
     return Scaffold(
       backgroundColor: Joy.bg,
       appBar: AppBar(title: const Text('التنبيهات')),
       body: RefreshIndicator(
         onRefresh: () async {
+          ref.invalidate(notificationsProvider);
+          ref.invalidate(notifyUnreadProvider);
           ref.invalidate(requestsProvider);
           ref.invalidate(chatsProvider);
           ref.invalidate(feedProvider);
@@ -34,6 +41,15 @@ class NotificationsPage extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
           children: [
+            SectionTitle('الإشعارات', action: unread > 0 ? 'تعليم الكل كمقروء' : null, onAction: unread > 0 ? () => _readAll(context, ref) : null),
+            notif.when(
+              data: (p) => p.items.isEmpty
+                  ? const _Hint('تصلك هنا الطلبات والحجوزات والتحويلات والتقييمات وإجراءات الإدارة')
+                  : Column(children: [for (final n in p.items.take(40)) Padding(padding: const EdgeInsets.only(bottom: 8), child: NotificationCard(n))]),
+              loading: () => const LinearProgressIndicator(),
+              error: (e, _) => _Hint(e.toString()),
+            ),
+            const SizedBox(height: 14),
             const SectionTitle('طلبات مراسلة'),
             reqs.when(
               data: (list) => list.isEmpty
@@ -100,6 +116,16 @@ class NotificationsPage extends ConsumerWidget {
     );
   }
 
+  Future<void> _readAll(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref.read(apiClientProvider).notifyRead(all: true);
+      ref.invalidate(notificationsProvider);
+      ref.invalidate(notifyUnreadProvider);
+    } catch (e) {
+      if (context.mounted) toast(context, e.toString(), error: true);
+    }
+  }
+
   Future<void> _add(BuildContext context, WidgetRef ref) async {
     final h = await askText(context, title: 'إضافة صديق', hint: 'النك نيم', confirm: 'إرسال الطلب', maxLines: 1);
     if (h == null || h.isEmpty) return;
@@ -112,6 +138,37 @@ class NotificationsPage extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) toast(context, e.toString(), error: true);
     }
+  }
+}
+
+/// بطاقة إشعار: أيقونة النوع، العنوان والنص، الوقت، ونقطة لغير المقروء. النقر يفتح الوجهة ويعلّمه مقروءاً.
+class NotificationCard extends ConsumerWidget {
+  final AppNotification n;
+  const NotificationCard(this.n, {super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = notificationStyle(n.kind);
+    return JoyCard(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      onTap: () => openNotification(context, ref, n),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          width: 40, height: 40,
+          decoration: BoxDecoration(color: s.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+          child: Icon(s.icon, color: s.color, size: 22),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(child: Text(n.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: n.unread ? FontWeight.w700 : FontWeight.w600, fontSize: 13.5))),
+            if (n.unread) Container(width: 8, height: 8, margin: const EdgeInsetsDirectional.only(start: 6), decoration: const BoxDecoration(color: Joy.accent, shape: BoxShape.circle)),
+          ]),
+          if (n.body.isNotEmpty) Text(n.body, maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+          Text(timeAgo(n.createdAt), style: const TextStyle(color: Joy.textMuted, fontSize: 11)),
+        ])),
+      ]),
+    );
   }
 }
 

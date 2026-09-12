@@ -194,6 +194,16 @@ export default async function business(app, opts) {
   }
   const fail = (code, extra = {}) => Object.assign(new Error(code), { code, ...extra });
 
+  // ---- الإشعارات (server/notify.js إن كانت مسجّلة): لا تُفشل الطلب أبداً
+  const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch (e) { try { app.log.warn({ err: e?.message }, "business: notify failed"); } catch { /* ignore */ } } };
+  const notifyAdmins = async (payload) => { try { await globalThis.naslifeNotifyAdmins?.(payload); } catch { /* ignore */ } };
+  const sar = (h) => { const v = Number(h) / 100; return (Number.isInteger(v) ? String(v) : v.toFixed(2)) + " ر.س"; };
+  const nickOf = async (id) => (await person(id)).nickname || id;
+  const bizName = (b) => b?.name_ar || b?.name || b?.id || "";
+  const bizTeam = async (b) => [b.owner_id, ...(await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1", [b.id])).rows.map((r) => r.user_id)].filter(Boolean);
+  const bizManagers = async (b) => [b.owner_id, ...(await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1 AND role='manager'", [b.id])).rows.map((r) => r.user_id)].filter(Boolean);
+  const orderNoun = (kind) => (kind === "product" ? "طلب" : "حجز");
+
   // ---- مواعيد السينما: تُولَّد من أوقات العرض اليومية للأيام القادمة (بتوقيت السعودية)
   function showtimeSlots(item, now = new Date()) {
     const times = Array.isArray(item.meta?.times) ? item.meta.times : [];
@@ -370,6 +380,7 @@ export default async function business(app, opts) {
       return { ok: true, status: "approved" };
     }
     await pool.query("INSERT INTO biz_claims(biz_id,user_id,note) VALUES($1,$2,$3) ON CONFLICT (biz_id,user_id) DO UPDATE SET note=EXCLUDED.note, status='pending', created_at=now()", [b.id, uid, str(req.body?.note, 300)]);
+    await notifyAdmins({ kind: "biz_claim", title: "طلب ملكية جديد", body: `${await nickOf(uid)} يطلب ملكية ${bizName(b)}`, data: { bizId: b.id, userId: uid } });
     return { ok: true, status: "pending" };
   });
   app.post("/biz/:id/claims/:userId/:decision", async (req, reply) => {
@@ -386,7 +397,10 @@ export default async function business(app, opts) {
         await c.query("UPDATE biz_claims SET status='rejected' WHERE biz_id=$1 AND user_id<>$2 AND status='pending'", [req.params.id, req.params.userId]);
       }
     }).catch((e) => { if (e.code === "not-found") return bad(reply, 404, "not-found"); throw e; });
-    return reply.sent ? undefined : { ok: true };
+    if (reply.sent) return;
+    const nm = bizName(await loadBiz(req.params.id, { includeInactive: true })) || req.params.id;
+    await notify(req.params.userId, { kind: "claim_decided", title: approve ? "قُبل طلب الملكية" : "رُفض طلب الملكية", body: approve ? `أصبحت مالك ${nm}؛ افتح لوحة النشاط لإدارتها` : `لم يُقبل طلبك لملكية ${nm}`, data: { bizId: req.params.id, approved: approve } });
+    return { ok: true };
   });
   app.post("/biz/:id/verify", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -437,6 +451,7 @@ export default async function business(app, opts) {
     const b = await loadBiz(req.params.id);
     if (!b) return bad(reply, 404, "not-found");
     await pool.query("INSERT INTO biz_reviews(biz_id,user_id,rating,text) VALUES($1,$2,$3,$4) ON CONFLICT (biz_id,user_id) DO UPDATE SET rating=EXCLUDED.rating, text=EXCLUDED.text, created_at=now(), reply=NULL, reply_at=NULL", [b.id, uid, rating, text]);
+    await notify(await bizManagers(b), { kind: "biz_review", title: `تقييم جديد ★${rating} · ${bizName(b)}`, body: `${await nickOf(uid)}${text ? ": " + text.slice(0, 100) : " قيّم نشاطك"}`, data: { bizId: b.id, userId: uid }, exclude: uid });
     return { ok: true };
   });
   // رد صاحب النشاط على تقييم
@@ -446,6 +461,7 @@ export default async function business(app, opts) {
     const text = str(req.body?.text, 500);
     const r = await pool.query("UPDATE biz_reviews SET reply=$3, reply_at=CASE WHEN $3='' THEN NULL ELSE now() END WHERE biz_id=$1 AND user_id=$2 RETURNING 1", [g.b.id, req.params.userId, text || ""]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
+    if (text) await notify(req.params.userId, { kind: "review_reply", title: "ردّ على تقييمك", body: `${bizName(g.b)}: ${text.slice(0, 120)}`, data: { bizId: g.b.id }, exclude: g.uid });
     return { ok: true };
   });
 
@@ -590,6 +606,7 @@ export default async function business(app, opts) {
       await c.query("DELETE FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [g.b.id, userId]);
       if (g.b.owner_id && g.b.owner_id !== userId) await c.query("INSERT INTO biz_staff(biz_id,user_id,role) VALUES($1,$2,'manager') ON CONFLICT DO NOTHING", [g.b.id, g.b.owner_id]);
     });
+    await notify(userId, { kind: "biz_owner", title: "أصبحت مالك دائرة", body: `نُقلت إليك ملكية ${bizName(g.b)}؛ افتح لوحة النشاط لإدارتها`, data: { bizId: g.b.id }, exclude: g.uid });
     return { ok: true };
   });
 
@@ -646,7 +663,7 @@ export default async function business(app, opts) {
         }
         await c.query("INSERT INTO biz_orders(id,biz_id,item_id,user_id,kind,qty,start_at,end_at,units,total,code,note,meta) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
           [id, b.id, it.id, uid, it.kind, finalQty, s, e, units, total, code, note, JSON.stringify(meta)]);
-        return { id, code, total };
+        return { id, code, total, b, it, qty: finalQty };
       });
     } catch (err) {
       if (err.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds");
@@ -655,6 +672,8 @@ export default async function business(app, opts) {
       if (["bad-slot", "bad-date", "bad-range", "in-past", "too-many"].includes(err.code)) return bad(reply, 400, err.code);
       throw err;
     }
+    await notify(await bizTeam(out.b), { kind: "biz_order", title: `${orderNoun(out.it.kind)} جديد · ${bizName(out.b)}`,
+      body: `${await nickOf(uid)}: ${out.it.title}${out.qty > 1 ? " × " + out.qty : ""} بقيمة ${sar(out.total)} · الرمز ${out.code}`, data: { bizId: out.b.id, orderId: out.id }, exclude: uid });
     const r = await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [out.id]);
     return orderOut(r.rows[0]);
   });
@@ -667,7 +686,7 @@ export default async function business(app, opts) {
 
   // إلغاء من العميل (ضمن المهلة) أو من صاحب النشاط (في أي وقت ما دام الطلب مؤكداً): استرداد كامل
   async function cancelOrder(orderId, { byUser = null, force = false } = {}) {
-    await tx(async (c) => {
+    return tx(async (c) => {
       const o = (await c.query("SELECT o.*, i.title AS item_title, i.stock, b.name_ar, b.name, b.owner_id FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id WHERE o.id=$1 FOR UPDATE OF o", [orderId])).rows[0];
       if (!o || (byUser && o.user_id !== byUser)) throw fail("not-found");
       if (force ? o.status !== "confirmed" : !cancellable(o)) throw fail("not-cancellable");
@@ -678,17 +697,21 @@ export default async function business(app, opts) {
         await ledger(c, o.user_id, "biz_refund", Number(o.total), { ref: o.id, note: label, peerId: o.owner_id ?? null });
         if (o.owner_id && o.owner_id !== o.user_id) await ledger(c, o.owner_id, "biz_refund_out", -Number(o.total), { peerId: o.user_id, ref: o.id, note: label, allowNegative: true });
       }
+      return o;
     });
   }
   app.post("/biz/orders/:id/cancel", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    try { await cancelOrder(req.params.id, { byUser: uid }); }
+    let o;
+    try { o = await cancelOrder(req.params.id, { byUser: uid }); }
     catch (err) {
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       if (err.code === "not-cancellable") return bad(reply, 409, "not-cancellable");
       throw err;
     }
+    await notify(await bizTeam({ id: o.biz_id, owner_id: o.owner_id }), { kind: "order_cancelled", title: `إلغاء ${orderNoun(o.kind)} · ${bizName(o)}`,
+      body: `${await nickOf(uid)} ألغى ${o.item_title} (${o.code})${Number(o.total) > 0 ? " واستُرد " + sar(o.total) : ""}`, data: { bizId: o.biz_id, orderId: o.id }, exclude: uid });
     return { ok: true };
   });
 
@@ -717,6 +740,7 @@ export default async function business(app, opts) {
       return bad(reply, exists ? 409 : 404, exists ? `already-${exists.status}` : "code-invalid");
     }
     const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [r.rows[0].id])).rows[0];
+    await notify(o.user_id, { kind: "order_status", title: o.kind === "product" ? "تم استلام طلبك" : "تم تأكيد حجزك", body: `${o.biz_name_ar || o.biz_name}: ${o.item_title} (${o.code})`, data: { bizId: o.biz_id, orderId: o.id, status: "used" }, exclude: g.uid });
     return orderOut(o, { customer: await person(o.user_id) });
   });
   app.post("/biz/:id/orders/:orderId/cancel", async (req, reply) => {
@@ -724,12 +748,15 @@ export default async function business(app, opts) {
     if (!UUID_RE.test(req.params.orderId)) return bad(reply, 400, "bad-id");
     const o = (await pool.query("SELECT biz_id FROM biz_orders WHERE id=$1", [req.params.orderId])).rows[0];
     if (!o || o.biz_id !== g.b.id) return bad(reply, 404, "not-found");
-    try { await cancelOrder(req.params.orderId, { force: true }); }
+    let o2;
+    try { o2 = await cancelOrder(req.params.orderId, { force: true }); }
     catch (err) {
       if (err.code === "not-cancellable") return bad(reply, 409, "not-cancellable");
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       throw err;
     }
+    await notify(o2.user_id, { kind: "order_status", title: `أُلغي ${orderNoun(o2.kind)}ك`, body: `${bizName(o2)}: ${o2.item_title} (${o2.code})${Number(o2.total) > 0 ? " · استُرد " + sar(o2.total) + " إلى محفظتك" : ""}`,
+      data: { bizId: o2.biz_id, orderId: o2.id, status: "cancelled" }, exclude: g.uid });
     return { ok: true };
   });
 

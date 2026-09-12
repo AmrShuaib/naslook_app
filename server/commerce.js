@@ -59,6 +59,10 @@ export default async function commerce(app, opts) {
     const p = String(s ?? "").split(",").map(Number);
     return p.length === 4 && p.every(Number.isFinite) ? { minLng: p[0], minLat: p[1], maxLng: p[2], maxLat: p[3] } : null;
   };
+  // الإشعارات (server/notify.js إن كانت مسجّلة): لا تُفشل الطلب أبداً
+  const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch { /* ignore */ } };
+  const sar = (h) => { const v = Number(h) / 100; return (Number.isInteger(v) ? String(v) : v.toFixed(2)) + " ر.س"; };
+  const nickOf = async (id) => (await person(id)).nickname || id;
 
   // ---- دفتر المحفظة: كل حركة داخل معاملة واحدة مع قفل الصفوف
   async function ledger(client, userId, kind, amount, { peerId = null, ref = null, note = null, points = 0 } = {}) {
@@ -125,6 +129,7 @@ export default async function commerce(app, opts) {
         await ledger(c, to, "transfer_in", amount, { peerId: uid, note });
       });
     } catch (e) { if (e.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds"); throw e; }
+    await notify(to, { kind: "transfer_in", title: "وصلك تحويل", body: `${await nickOf(uid)} حوّل لك ${sar(amount)}${note ? " · " + note : ""}`, data: { from: uid, amount } });
     return { ok: true };
   });
 
@@ -181,9 +186,9 @@ export default async function commerce(app, opts) {
     if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     const { tierId } = req.body ?? {}; const qty = Math.max(1, Math.min(10, Number(req.body?.qty) || 1));
     if (!UUID_RE.test(req.params.id) || !UUID_RE.test(tierId ?? "")) return bad(reply, 400, "bad-id");
-    let made = [];
+    let made = [], sale = null;
     try {
-      made = await tx(async (c) => {
+      sale = await tx(async (c) => {
         const ev = (await c.query("SELECT * FROM events WHERE id=$1", [req.params.id])).rows[0];
         if (!ev || ev.cancelled) throw Object.assign(new Error(), { code: "not-found" });
         const tier = (await c.query("SELECT * FROM ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE", [tierId, ev.id])).rows[0];
@@ -201,14 +206,16 @@ export default async function commerce(app, opts) {
           await c.query("INSERT INTO tickets(id,event_id,tier_id,user_id,code,paid) VALUES($1,$2,$3,$4,$5,$6)", [id, ev.id, tier.id, uid, code, Number(tier.price)]);
           out.push(id);
         }
-        return out;
+        return { out, ev, total };
       });
+      made = sale.out;
     } catch (e) {
       if (e.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds");
       if (e.code === "sold-out") return bad(reply, 409, "sold-out");
       if (e.code === "not-found") return bad(reply, 404, "not-found");
       throw e;
     }
+    await notify(sale.ev.host_id, { kind: "ticket_sale", title: "تذاكر جديدة", body: `${await nickOf(uid)} اشترى ${qty > 1 ? qty + " تذاكر" : "تذكرة"} لفعالية ${sale.ev.title}${sale.total > 0 ? " بقيمة " + sar(sale.total) : ""}`, data: { eventId: sale.ev.id }, exclude: uid });
     const r = await pool.query("SELECT t.*, e.title, e.starts_at, e.place_name, tt.name AS tier_name FROM tickets t JOIN events e ON e.id=t.event_id JOIN ticket_tiers tt ON tt.id=t.tier_id WHERE t.id = ANY($1)", [made]);
     return r.rows.map(ticketOut);
   });
@@ -236,14 +243,18 @@ export default async function commerce(app, opts) {
     const ev = (await pool.query("SELECT * FROM events WHERE id=$1", [req.params.id])).rows[0];
     if (!ev) return bad(reply, 404, "not-found");
     if (ev.host_id !== uid) return bad(reply, 403, "host-only");
-    await tx(async (c) => {
+    const holders = await tx(async (c) => {
       await c.query("UPDATE events SET cancelled=true WHERE id=$1", [ev.id]);
       const ts = (await c.query("UPDATE tickets SET status='refunded' WHERE event_id=$1 AND status='valid' RETURNING user_id, paid", [ev.id])).rows;
       for (const t of ts) if (Number(t.paid) > 0) {
         await ledger(c, t.user_id, "refund", Number(t.paid), { peerId: uid, ref: ev.id, note: ev.title });
         await ledger(c, uid, "refund_out", -Number(t.paid), { peerId: t.user_id, ref: ev.id, note: ev.title });
       }
+      return ts;
     });
+    const refunded = new Map();
+    for (const t of holders) refunded.set(t.user_id, (refunded.get(t.user_id) ?? 0) + Number(t.paid));
+    for (const [u, paid] of refunded) await notify(u, { kind: "event_cancelled", title: "أُلغيت الفعالية", body: `${ev.title}${paid > 0 ? " · استُرد " + sar(paid) + " إلى محفظتك" : ""}`, data: { eventId: ev.id }, exclude: uid });
     return { ok: true };
   });
 
@@ -311,6 +322,7 @@ export default async function commerce(app, opts) {
         await c.query("INSERT INTO market_orders(id,listing_id,buyer_id,seller_id,qty,total,note) VALUES($1,$2,$3,$4,$5,$6,$7)", [id, l.id, uid, l.seller_id, qty, total, note]);
       });
     } catch (e) { if (e.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds"); throw e; }
+    await notify(l.seller_id, { kind: "market_order", title: "طلب جديد في السوق", body: `${await nickOf(uid)} طلب ${l.title}${qty > 1 ? " × " + qty : ""} بقيمة ${sar(total)}${note ? " · " + note.slice(0, 80) : ""}`, data: { orderId: id, listingId: l.id } });
     return { ok: true, id, total };
   });
   app.post("/market/orders/:id/deliver", async (req, reply) => {
@@ -324,6 +336,7 @@ export default async function commerce(app, opts) {
       await c.query("UPDATE market_orders SET status='delivered', updated_at=now() WHERE id=$1", [o.id]);
       if (Number(o.total) > 0) await ledger(c, uid, "market_sale", Number(o.total), { peerId: o.buyer_id, ref: o.id, note: o.title });
     });
+    await notify(o.buyer_id, { kind: "market_status", title: "تم تسليم طلبك", body: `${o.title}: أكد البائع التسليم`, data: { orderId: o.id, status: "delivered" } });
     return { ok: true };
   });
   app.post("/market/orders/:id/cancel", async (req, reply) => {
@@ -337,6 +350,9 @@ export default async function commerce(app, opts) {
       await c.query("UPDATE market_orders SET status='cancelled', updated_at=now() WHERE id=$1", [o.id]);
       if (Number(o.total) > 0) await ledger(c, o.buyer_id, "refund", Number(o.total), { peerId: o.seller_id, ref: o.id, note: o.title });
     });
+    const byBuyer = o.buyer_id === uid;
+    await notify(byBuyer ? o.seller_id : o.buyer_id, { kind: "market_status", title: byBuyer ? "أُلغي طلب" : "أُلغي طلبك",
+      body: byBuyer ? `${await nickOf(uid)} ألغى طلب ${o.title}` : `${o.title}: ألغى البائع الطلب${Number(o.total) > 0 ? " واستُرد " + sar(o.total) + " إلى محفظتك" : ""}`, data: { orderId: o.id, status: "cancelled" } });
     return { ok: true };
   });
 }

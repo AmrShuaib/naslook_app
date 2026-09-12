@@ -54,6 +54,9 @@ export default async function admin(app, opts) {
   const userRow = async (id) => { try { return (await pool.query("SELECT * FROM users WHERE id=$1", [id])).rows[0] ?? null; } catch { return null; } };
   const personOf = (u, id) => ({ id: u?.id ?? id, nickname: u ? (U.nick ? u[U.nick] ?? "" : "") : "", avatarUrl: u && U.avatar ? u[U.avatar] ?? null : null });
   const person = async (id) => personOf(await userRow(id), id);
+  // الإشعارات (server/notify.js إن كانت مسجّلة): لا تُفشل الطلب أبداً
+  const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch { /* ignore */ } };
+  const sar = (h) => { const v = Number(h) / 100; return (Number.isInteger(v) ? String(v) : v.toFixed(2)) + " ر.س"; };
 
   // ---- المديرون: عمود في جدول المستخدمين إن وُجد، أو جدول admins الخاص بنا
   const isAdmin = async (uid) => {
@@ -262,6 +265,7 @@ export default async function admin(app, opts) {
     try { await tx((c) => ledger(c, id, amount > 0 ? "credit" : "debit", amount, { note: note || (amount > 0 ? "إضافة رصيد من الإدارة" : "خصم من الإدارة"), peerId: uid, allowNegative: false })); }
     catch (e) { if (e.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds"); throw e; }
     await audit(uid, amount > 0 ? "wallet.credit" : "wallet.debit", id, { amount, note });
+    await notify(id, { kind: "wallet_credit", title: amount > 0 ? "أُضيف رصيد إلى محفظتك" : "خُصم من محفظتك", body: `${sar(Math.abs(amount))}${note ? " · " + note : ""}`, data: { amount } });
     const w = (await pool.query("SELECT balance FROM wallet_accounts WHERE user_id=$1", [id])).rows[0];
     return { ok: true, balance: Number(w?.balance ?? 0) };
   });
@@ -273,6 +277,7 @@ export default async function admin(app, opts) {
     const suspended = req.body?.suspended !== false; const note = str(req.body?.note, 200);
     await pool.query("INSERT INTO user_flags(user_id,suspended,note,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT (user_id) DO UPDATE SET suspended=EXCLUDED.suspended, note=EXCLUDED.note, updated_at=now()", [id, suspended, note]);
     await audit(uid, suspended ? "user.suspend" : "user.unsuspend", id, { note });
+    await notify(id, { kind: suspended ? "account_suspended" : "account_restored", title: suspended ? "أُوقف حسابك" : "أُعيد تفعيل حسابك", body: suspended ? (note || "تواصل مع الدعم للمراجعة") : "يمكنك الشراء والحجز والتحويل من جديد", data: {} });
     return { ok: true, suspended };
   });
   app.post("/adminapi/users/:id/admin", async (req, reply) => {
@@ -288,6 +293,7 @@ export default async function admin(app, opts) {
       await pool.query("DELETE FROM admins WHERE user_id=$1", [id]);
     }
     await audit(uid, grant ? "admin.grant" : "admin.revoke", id, {});
+    if (grant) await notify(id, { kind: "admin_granted", title: "أصبحت مديراً في ناس لايف", body: "تجد لوحة الإدارة في ماي سبيس وعلى naslife.app/admin", data: {}, exclude: uid });
     return { ok: true };
   });
 
@@ -315,6 +321,8 @@ export default async function admin(app, opts) {
     await pool.query("INSERT INTO report_actions(report_id,action,note,admin_id) VALUES($1,$2,$3,$4) ON CONFLICT (report_id) DO UPDATE SET action=EXCLUDED.action, note=EXCLUDED.note, admin_id=EXCLUDED.admin_id, created_at=now()", [id, action, note, uid]);
     if (action === "suspend" && targetId && targetId !== uid) await pool.query("INSERT INTO user_flags(user_id,suspended,note,updated_at) VALUES($1,true,$2,now()) ON CONFLICT (user_id) DO UPDATE SET suspended=true, note=EXCLUDED.note, updated_at=now()", [targetId, note || "بلاغ"]);
     await audit(uid, `report.${action}`, targetId ?? id, { reportId: id, note });
+    if (targetId && targetId !== uid && action !== "ignore") await notify(targetId, { kind: action === "warn" ? "account_warning" : "account_suspended", title: action === "warn" ? "تنبيه من الإدارة" : "أُوقف حسابك",
+      body: note || (action === "warn" ? "وردنا بلاغ عن حسابك؛ يرجى الالتزام بقواعد المجتمع" : "تواصل مع الدعم للمراجعة"), data: { reportId: id } });
     return { ok: true };
   });
 
@@ -362,6 +370,8 @@ export default async function admin(app, opts) {
     });
     if (!ok) return bad(reply, 404, "not-found");
     await audit(uid, `claim.${decision}`, bizId, { userId });
+    const bz = (await pool.query("SELECT name_ar, name FROM biz WHERE id=$1", [bizId])).rows[0]; const nm = bz?.name_ar || bz?.name || bizId;
+    await notify(userId, { kind: "claim_decided", title: decision === "approve" ? "قُبل طلب الملكية" : "رُفض طلب الملكية", body: decision === "approve" ? `أصبحت مالك ${nm}؛ افتح لوحة النشاط لإدارتها` : `لم يُقبل طلبك لملكية ${nm}`, data: { bizId, approved: decision === "approve" } });
     return { ok: true };
   });
 
@@ -419,23 +429,29 @@ export default async function admin(app, opts) {
     const ev = (await pool.query("SELECT * FROM events WHERE id=$1", [req.params.id])).rows[0];
     if (!ev) return bad(reply, 404, "not-found");
     if (ev.cancelled) return bad(reply, 409, "already-cancelled");
-    await tx(async (c) => {
+    const holders = await tx(async (c) => {
       await c.query("UPDATE events SET cancelled=true WHERE id=$1", [ev.id]);
       const ts = (await c.query("UPDATE tickets SET status='refunded' WHERE event_id=$1 AND status='valid' RETURNING user_id, paid", [ev.id])).rows;
       for (const t of ts) if (Number(t.paid) > 0) {
         await ledger(c, t.user_id, "refund", Number(t.paid), { peerId: ev.host_id, ref: ev.id, note: ev.title });
         await ledger(c, ev.host_id, "refund_out", -Number(t.paid), { peerId: t.user_id, ref: ev.id, note: ev.title, allowNegative: true });
       }
+      return ts;
     });
     await audit(uid, "event.cancel", ev.id, { title: ev.title });
+    const refunded = new Map();
+    for (const t of holders) refunded.set(t.user_id, (refunded.get(t.user_id) ?? 0) + Number(t.paid));
+    for (const [u, paid] of refunded) await notify(u, { kind: "event_cancelled", title: "أُلغيت الفعالية", body: `${ev.title} · ألغتها الإدارة${paid > 0 ? " واستُرد " + sar(paid) + " إلى محفظتك" : ""}`, data: { eventId: ev.id } });
+    await notify(ev.host_id, { kind: "event_cancelled", title: "ألغت الإدارة فعاليتك", body: `${ev.title}: أُعيدت مبالغ التذاكر إلى المشترين`, data: { eventId: ev.id }, exclude: uid });
     return { ok: true };
   });
   app.post("/adminapi/market/:id/hide", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;
     if (!marketOk || !UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const r = await pool.query("UPDATE market_listings SET status='hidden' WHERE id=$1 RETURNING title", [req.params.id]);
+    const r = await pool.query("UPDATE market_listings SET status='hidden' WHERE id=$1 RETURNING title, seller_id", [req.params.id]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
     await audit(uid, "market.hide", req.params.id, { title: r.rows[0].title });
+    await notify(r.rows[0].seller_id, { kind: "listing_hidden", title: "أُخفي إعلانك", body: `${r.rows[0].title}: أخفته الإدارة من السوق`, data: { listingId: req.params.id }, exclude: uid });
     return { ok: true };
   });
 
