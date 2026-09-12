@@ -51,6 +51,10 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
   late String bg = widget.edit?.bg ?? '#0A6E78';
   late List<PostOverlay> overlays = List.of(widget.edit?.overlays ?? const <PostOverlay>[]);
   int? selected;
+  /// الطبقة النصية قيد الكتابة المباشرة على اللوحة (بلا نافذة منفصلة)
+  int? editing;
+  final _inlineCtl = TextEditingController();
+  final _inlineFocus = FocusNode();
   late final caption = TextEditingController(text: widget.edit?.caption ?? '');
   late final title = TextEditingController(text: widget.edit?.title ?? '');
   late final price = TextEditingController(text: widget.edit?.price == null ? '' : _priceText(widget.edit!.price!));
@@ -82,6 +86,8 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
     ctaValue.dispose();
     ctaLabel.dispose();
     place.dispose();
+    _inlineCtl.dispose();
+    _inlineFocus.dispose();
     super.dispose();
   }
 
@@ -210,59 +216,135 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
         selected = overlays.length - 1;
       });
 
-  Future<void> _textDialog({int? index}) async {
-    final initial = index == null ? null : overlays[index];
-    final ctl = TextEditingController(text: initial?.text ?? '');
-    var color = initial?.color ?? '#FFFFFF';
-    String? bgc = initial?.bg;
-    var scale = initial?.scale ?? 1.0;
-    var align = initial?.align ?? 'center';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          backgroundColor: const Color(0xFF1C1F24),
-          title: Text(index == null ? 'نص جديد' : 'تعديل النص', style: const TextStyle(color: Colors.white)),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              TextField(controller: ctl, autofocus: true, maxLines: 3, maxLength: 140, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: 'اكتب هنا…', hintStyle: TextStyle(color: Colors.white38), filled: true, fillColor: Color(0xFF2A2E35), counterStyle: TextStyle(color: Colors.white38))),
-              const SizedBox(height: 8),
-              const Text('لون النص', style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 6),
-              Wrap(spacing: 8, runSpacing: 8, children: [for (final c in _textColors) _swatch(c, color == c, () => setS(() => color = c))]),
-              const SizedBox(height: 10),
-              const Text('خلفية النص', style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 6),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                _swatch(null, bgc == null, () => setS(() => bgc = null)),
-                for (final c in ['#000000AA', '#FFFFFFDD', ..._bgColors.take(5)]) _swatch(c, bgc == c, () => setS(() => bgc = c)),
-              ]),
-              const SizedBox(height: 10),
-              Row(children: [
-                const Text('الحجم', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                Expanded(child: Slider(value: scale, min: .6, max: 3, onChanged: (v) => setS(() => scale = v))),
-              ]),
-              Row(children: [
-                for (final (a, icon) in [('start', Icons.format_align_right_rounded), ('center', Icons.format_align_center_rounded), ('end', Icons.format_align_left_rounded)])
-                  IconButton(onPressed: () => setS(() => align = a), icon: Icon(icon, color: align == a ? Joy.sun : Colors.white54)),
-              ]),
-            ]),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(index == null ? 'إضافة' : 'حفظ')),
-          ],
+  /// يبدأ كتابة نص مباشرة على اللوحة: طبقة جديدة في الوسط أو تعديل طبقة قائمة.
+  void _startText({int? index}) {
+    if (editing != null) _commitText();
+    setState(() {
+      var i = index;
+      if (i == null) {
+        overlays = [
+          ...overlays,
+          PostOverlay(type: 'text', text: '', x: .5, y: overlays.isEmpty ? .5 : (.35 + overlays.length * .08).clamp(.2, .85), scale: kind == 'text' && overlays.isEmpty ? 1.5 : 1.0),
+        ];
+        i = overlays.length - 1;
+      }
+      editing = i;
+      selected = i;
+      _inlineCtl.text = overlays[i].text;
+      _inlineCtl.selection = TextSelection.collapsed(offset: _inlineCtl.text.length);
+    });
+    _inlineFocus.requestFocus();
+  }
+
+  /// ينهي الكتابة المباشرة: يحفظ النص أو يزيل الطبقة إن بقيت فارغة.
+  void _commitText() {
+    final i = editing;
+    if (i == null) return;
+    final text = _inlineCtl.text.trim();
+    setState(() {
+      if (text.isEmpty) {
+        overlays = [...overlays]..removeAt(i);
+        selected = null;
+      } else {
+        overlays[i] = overlays[i].copyWith(text: text);
+        selected = i;
+      }
+      editing = null;
+    });
+    _inlineFocus.unfocus();
+  }
+
+  void _setEditing({String? color, String? bg, bool clearBg = false, double? scale, String? align}) {
+    final i = editing;
+    if (i == null) return;
+    setState(() => overlays[i] = overlays[i].copyWith(color: color, bg: bg, clearBg: clearBg, scale: scale, align: align));
+  }
+
+  /// حقل الكتابة فوق اللوحة بنفس مظهر الطبقة النهائية (الحجم واللون والخلفية الاختيارية).
+  Widget _inlineEditor(double w, double h) {
+    final i = editing!;
+    final o = overlays[i];
+    final size = w * 0.065 * o.scale;
+    final color = colorFromHex(o.color);
+    final bgc = o.bg == null ? null : colorFromHex(o.bg);
+    final style = TextStyle(
+      color: color, fontSize: size, height: 1.25, fontWeight: FontWeight.w800,
+      shadows: bgc == null ? [const Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 1))] : null,
+    );
+    Widget field = ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: w * .85, minWidth: size * 3),
+      child: IntrinsicWidth(
+        child: TextField(
+          key: const ValueKey('inline-text'),
+          controller: _inlineCtl,
+          focusNode: _inlineFocus,
+          autofocus: true,
+          maxLines: null,
+          maxLength: 140,
+          buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
+          textInputAction: TextInputAction.done,
+          textAlign: switch (o.align) { 'start' => TextAlign.start, 'end' => TextAlign.end, _ => TextAlign.center },
+          style: style,
+          cursorColor: color,
+          decoration: InputDecoration.collapsed(hintText: 'اكتب هنا…', hintStyle: style.copyWith(color: color.withValues(alpha: .45))),
+          onChanged: (v) => setState(() => overlays[i] = overlays[i].copyWith(text: v)),
+          onSubmitted: (_) => _commitText(),
         ),
       ),
     );
-    final text = ctl.text.trim();
-    if (ok != true || text.isEmpty || !mounted) return;
-    if (index == null) {
-      _addOverlay(PostOverlay(type: 'text', text: text, x: .5, y: overlays.isEmpty ? .5 : (.35 + overlays.length * .08).clamp(.2, .85), scale: scale, color: color, bg: bgc, align: align));
-    } else {
-      setState(() => overlays[index] = overlays[index].copyWith(text: text, scale: scale, color: color, bg: bgc, clearBg: bgc == null, align: align));
+    if (bgc != null) {
+      field = Container(padding: EdgeInsets.symmetric(horizontal: size * .5, vertical: size * .25), decoration: BoxDecoration(color: bgc, borderRadius: BorderRadius.circular(size * .5)), child: field);
     }
+    return Positioned(
+      left: o.x * w, top: o.y * h,
+      child: FractionalTranslation(translation: const Offset(-0.5, -0.5), child: Transform.rotate(angle: o.rot, child: field)),
+    );
   }
+
+  /// شريط أدوات النص أثناء الكتابة: اللون، خلفية اختيارية، الحجم، المحاذاة، وإنهاء.
+  Widget _inlineToolbar() {
+    final o = overlays[editing!];
+    final light = colorFromHex(o.color).computeLuminance() > .5;
+    final nextAlign = switch (o.align) { 'center' => 'start', 'start' => 'end', _ => 'center' };
+    final alignIcon = switch (o.align) { 'start' => Icons.format_align_right_rounded, 'end' => Icons.format_align_left_rounded, _ => Icons.format_align_center_rounded };
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(color: Colors.black.withValues(alpha: .62), borderRadius: BorderRadius.circular(16)),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [for (final c in _textColors) Padding(padding: const EdgeInsets.symmetric(horizontal: 3), child: _swatch(c, o.color == c, () => _setEditing(color: c)))]),
+        ),
+        const SizedBox(height: 6),
+        Row(children: [
+          _mini(o.bg == null ? Icons.format_color_fill_outlined : Icons.format_color_reset_outlined, o.bg == null ? 'خلفية' : 'بلا خلفية',
+              () => o.bg == null ? _setEditing(bg: light ? '#000000AA' : '#FFFFFFDD') : _setEditing(clearBg: true)),
+          _mini(Icons.text_decrease_rounded, 'أصغر', () => _setEditing(scale: (o.scale - .2).clamp(.5, 4.0))),
+          _mini(Icons.text_increase_rounded, 'أكبر', () => _setEditing(scale: (o.scale + .2).clamp(.5, 4.0))),
+          _mini(alignIcon, 'محاذاة', () => _setEditing(align: nextAlign)),
+          const Spacer(),
+          FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(56, 36), padding: const EdgeInsets.symmetric(horizontal: 14)), onPressed: _commitText, child: const Text('تم')),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _mini(IconData icon, String label, VoidCallback onTap) => Tooltip(
+        message: label,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Icon(icon, color: Colors.white, size: 22)),
+        ),
+      );
+
+  /// منتقي لون الخلفية العامة للمنشور النصي: ألوان جاهزة أو درجة وتشبّع وإضاءة.
+  Future<void> _bgPicker() => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: const Color(0xFF1C1F24),
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+        builder: (_) => _ColorPickerSheet(initial: bg, onPick: (hex) => setState(() => bg = hex)),
+      );
 
   Widget _swatch(String? hex, bool on, VoidCallback onTap) => InkWell(
         onTap: onTap,
@@ -379,7 +461,7 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
             _kindTile(Icons.photo_library_rounded, 'صورة من المعرض', 'ثم أضف نصوصاً وملصقات', _pickImage),
             _kindTile(Icons.videocam_rounded, 'فيديو قصير', 'حتى 30 ثانية أو 25 م.ب', _pickVideo),
             _kindTile(Icons.mic_rounded, 'تسجيل صوتي', 'حتى دقيقة واحدة', _startRecording),
-            _kindTile(Icons.text_fields_rounded, 'نص على خلفية ملونة', 'رسالة أو إعلان سريع', () => setState(() => kind = 'text')),
+            _kindTile(Icons.text_fields_rounded, 'نص على خلفية ملونة', 'اكتب مباشرة على اللوحة', () { setState(() => kind = 'text'); _startText(); }),
             const SizedBox(height: 12),
             const Text('بعد الاختيار تستطيع إضافة نصوص وملصقات، وتحديد نوع المنشور (لحظة، عرض، إعلان، فرصة استثمار…) وزر إجراء مثل واتساب أو رابط، ومدة ظهوره على الخريطة.', style: TextStyle(color: Colors.white54, fontSize: 12.5, height: 1.5)),
           ]),
@@ -429,13 +511,15 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
                     borderRadius: BorderRadius.circular(20),
                     child: Stack(fit: StackFit.expand, children: [
                       PostMedia(kind: kind!, bytes: bytes, mime: mime, url: mediaUrl, bg: bg, durationSec: durationSec),
-                      GestureDetector(behavior: HitTestBehavior.translucent, onTap: () => setState(() => selected = null)),
+                      GestureDetector(behavior: HitTestBehavior.translucent, onTap: () => editing != null ? _commitText() : setState(() => selected = null)),
                       OverlayCanvas(
                         overlays: overlays, editable: true, selected: selected,
                         onSelect: (i) => setState(() => selected = i),
                         onChanged: (i, o) => setState(() => overlays[i] = o),
-                        onEdit: (i) => overlays[i].isSticker ? null : _textDialog(index: i),
+                        onEdit: (i) => overlays[i].isSticker ? null : _startText(index: i),
+                        hiddenIndex: editing,
                       ),
+                      if (editing != null) _inlineEditor(w, box.maxHeight),
                     ]),
                   ),
                 ),
@@ -444,13 +528,14 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
               PositionedDirectional(
                 start: 8, top: 8,
                 child: Column(children: [
-                  _tool(Icons.title_rounded, 'نص', () => _textDialog()),
+                  _tool(Icons.title_rounded, 'نص', () => _startText()),
                   _tool(Icons.emoji_emotions_outlined, 'ملصق', _stickerSheet),
-                  if (kind == 'text') _tool(Icons.palette_outlined, 'الخلفية', () => setState(() => bg = _bgColors[(_bgColors.indexOf(bg) + 1) % _bgColors.length])),
+                  if (kind == 'text') _tool(Icons.palette_outlined, 'الخلفية', _bgPicker),
                   if (selected != null) _tool(Icons.delete_outline_rounded, 'حذف', () => setState(() { overlays.removeAt(selected!); selected = null; })),
-                  if (selected != null && !overlays[selected!].isSticker) _tool(Icons.edit_outlined, 'تعديل', () => _textDialog(index: selected)),
+                  if (selected != null && !overlays[selected!].isSticker && editing == null) _tool(Icons.edit_outlined, 'تعديل', () => _startText(index: selected)),
                 ]),
               ),
+              if (editing != null) Positioned(left: 8, right: 8, bottom: 8, child: _inlineToolbar()),
             ]);
           }),
         ),
@@ -535,4 +620,63 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
           ),
         ),
       );
+}
+
+/// ورقة اختيار لون: ألوان جاهزة + درجة اللون والتشبّع والإضاءة مع معاينة حية.
+class _ColorPickerSheet extends StatefulWidget {
+  final String initial;
+  final ValueChanged<String> onPick;
+  const _ColorPickerSheet({required this.initial, required this.onPick});
+  @override
+  State<_ColorPickerSheet> createState() => _ColorPickerSheetState();
+}
+
+class _ColorPickerSheetState extends State<_ColorPickerSheet> {
+  static const _presets = [..._bgColors, '#C62828', '#EF6C00', '#F9A825', '#00897B', '#1565C0', '#4527A0', '#AD1457', '#212121'];
+  late HSVColor hsv = HSVColor.fromColor(colorFromHex(widget.initial, Joy.primary));
+
+  void _set(HSVColor c) {
+    setState(() => hsv = c);
+    widget.onPick(hexFromColor(c.toColor()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = hsv.toColor();
+    const label = TextStyle(color: Colors.white70, fontSize: 12);
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(20, 16, 20, 16 + MediaQuery.viewInsetsOf(context).bottom),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('لون الخلفية', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+          const SizedBox(height: 12),
+          Container(
+            height: 56,
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), gradient: LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [c, Color.lerp(c, Colors.black, .45)!])),
+            alignment: Alignment.center,
+            child: const Text('معاينة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18, shadows: [Shadow(color: Colors.black54, blurRadius: 6)])),
+          ),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final hex in _presets)
+              InkWell(
+                key: ValueKey('bg-$hex'),
+                onTap: () => _set(HSVColor.fromColor(colorFromHex(hex))),
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  width: 34, height: 34,
+                  decoration: BoxDecoration(color: colorFromHex(hex), shape: BoxShape.circle, border: Border.all(color: hexFromColor(c) == hex ? Joy.sun : Colors.white24, width: hexFromColor(c) == hex ? 3 : 1.5)),
+                ),
+              ),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [const SizedBox(width: 64, child: Text('الدرجة', style: label)), Expanded(child: Slider(value: hsv.hue, min: 0, max: 360, activeColor: c, onChanged: (v) => _set(hsv.withHue(v))))]),
+          Row(children: [const SizedBox(width: 64, child: Text('التشبّع', style: label)), Expanded(child: Slider(value: hsv.saturation, min: 0, max: 1, activeColor: c, onChanged: (v) => _set(hsv.withSaturation(v))))]),
+          Row(children: [const SizedBox(width: 64, child: Text('الإضاءة', style: label)), Expanded(child: Slider(value: hsv.value.clamp(.12, 1.0), min: .12, max: 1, activeColor: c, onChanged: (v) => _set(hsv.withValue(v))))]),
+          const SizedBox(height: 4),
+          SizedBox(width: double.infinity, child: FilledButton(onPressed: () => Navigator.pop(context), child: const Text('تم'))),
+        ]),
+      ),
+    );
+  }
 }

@@ -131,13 +131,22 @@ void main() {
     expect(find.text('منشور جديد على الخريطة'), findsOneWidget);
     await tester.tap(find.text('نص على خلفية ملونة'));
     await _settle(tester);
-    await tester.tap(find.byIcon(Icons.title_rounded));
+    // الكتابة مباشرة على اللوحة بلا نافذة منفصلة، والنص بلا خلفية افتراضياً
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byKey(const ValueKey('inline-text')), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('inline-text')), 'خصم 30٪');
+    await tester.tap(find.text('تم'));
     await _settle(tester);
-    expect(find.text('نص جديد'), findsOneWidget);
-    await tester.enterText(find.descendant(of: find.byType(AlertDialog), matching: find.byType(TextField)), 'خصم 30٪');
-    await tester.tap(find.text('إضافة'));
-    await _settle(tester);
+    expect(find.byKey(const ValueKey('inline-text')), findsNothing);
     expect(find.text('خصم 30٪'), findsOneWidget);
+    // لون الخلفية العامة من منتقي الألوان
+    await tester.tap(find.byIcon(Icons.palette_outlined));
+    await _settle(tester);
+    expect(find.text('لون الخلفية'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('bg-#BF3A1E')));
+    await tester.pump();
+    await tester.tap(find.text('تم'));
+    await _settle(tester);
     await tester.tap(find.text('خيارات احترافية'));
     await _settle(tester);
     await tester.ensureVisible(find.text('عرض'));
@@ -154,6 +163,8 @@ void main() {
     expect(body['kind'], 'text');
     expect(body['lat'], 21.5);
     expect((body['overlays'] as List).first['text'], 'خصم 30٪');
+    expect((body['overlays'] as List).first['bg'], isNull, reason: 'النص بلا خلفية إلزامية');
+    expect(body['bg'], '#BF3A1E');
     expect(body['tag'], 'offer');
     expect(body['cta']['type'], 'whatsapp');
     expect(body['cta']['value'], '0501234567');

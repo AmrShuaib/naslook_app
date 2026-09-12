@@ -13,6 +13,7 @@ import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
 import 'my_bookings_page.dart';
 import 'owner/business_dashboard_page.dart';
@@ -598,6 +599,7 @@ class _ProductCard extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
                 Expanded(child: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
+                WishButton(kind: 'item', refId: item.id, compact: true),
                 if (item.isOffer) Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(999)), child: const Text('عرض', style: TextStyle(color: Joy.accent, fontSize: 10.5, fontWeight: FontWeight.w700))),
               ]),
               if (item.description.isNotEmpty) Text(item.description, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5), maxLines: 2, overflow: TextOverflow.ellipsis),
@@ -634,6 +636,7 @@ class _BookableCard extends StatelessWidget {
             const SizedBox(height: 2),
             _Price(item),
           ])),
+          WishButton(kind: 'item', refId: item.id, compact: true),
           FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(44, 40), padding: const EdgeInsets.symmetric(horizontal: 14)), onPressed: onBook, child: Text(biz.category.actionLabel)),
         ]),
         if (facts.isNotEmpty)
@@ -682,6 +685,7 @@ class _ShowtimeCardState extends State<_ShowtimeCard> {
             const SizedBox(height: 2),
             _Price(it),
           ])),
+          WishButton(kind: 'item', refId: it.id, compact: true),
         ]),
         if (it.slots.isEmpty)
           const Padding(padding: EdgeInsets.only(top: 8), child: Text('لا مواعيد متاحة حالياً', style: TextStyle(color: Joy.textMuted)))

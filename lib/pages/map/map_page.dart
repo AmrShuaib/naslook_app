@@ -150,27 +150,20 @@ class _MapPageState extends ConsumerState<MapPage> {
     final mine = ref.watch(myPresenceProvider).value;
     final loading = ref.watch(presenceProvider).isLoading || ref.watch(storiesProvider).isLoading || ref.watch(pinsProvider).isLoading || ref.watch(businessesProvider).isLoading || ref.watch(mapPostsProvider).isLoading;
     final items = _collect();
-    final clusters = clusterItems(items, zoom: _zoom);
     final b = _bounds;
     final visible = b == null ? items : itemsInBounds(items, minLat: b.south, minLng: b.west, maxLat: b.north, maxLng: b.east);
     final panelItems = sortForPanel(visible);
 
+    // بلا تجميع: كل عنصر نقطة صغيرة بلونها ورمزها حسب نوع المحتوى، وحجمها يتبع مستوى التكبير
+    final dot = dotSizeFor(_zoom);
     final markers = <Marker>[
-      for (final c in clusters)
-        if (c.isSingle)
-          Marker(
-            point: LatLng(c.first.lat, c.first.lng),
-            width: _markerBox(c.first.kind),
-            height: _markerBox(c.first.kind),
-            child: _ItemMarker(item: c.first, onTap: () => _showItem(c.first)),
-          )
-        else
-          Marker(
-            point: LatLng(c.lat, c.lng),
-            width: 56,
-            height: 56,
-            child: _ClusterBubble(cluster: c, onTap: () => _openCluster(c)),
-          ),
+      for (final it in items)
+        Marker(
+          point: LatLng(it.lat, it.lng),
+          width: _markerBox(it.kind, dot),
+          height: _markerBox(it.kind, dot),
+          child: _ItemMarker(item: it, dot: dot, onTap: () => _tapDot(it, items, dot)),
+        ),
     ];
 
     return LayoutBuilder(builder: (context, box) {
@@ -291,7 +284,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     });
   }
 
-  static double _markerBox(MapItemKind k) => k == MapItemKind.person ? 40 : k == MapItemKind.post ? 36 : 30;
+  static double _markerBox(MapItemKind k, double dot) => k == MapItemKind.person ? dot + 12 : dot + 8;
 
   void _refresh() {
     ref.invalidate(presenceProvider);
@@ -302,27 +295,18 @@ class _MapPageState extends ConsumerState<MapPage> {
   }
 
   /// يقرّب الخريطة إلى العنصر ويفتح تفاصيله.
+  /// نقرة على نقطة: إن تراكبت مع نقاط أخرى في الموضع نفسه نعرض قائمتها، وإلا نفتح العنصر مباشرة.
+  void _tapDot(MapItem item, List<MapItem> all, double dot) {
+    final p = projectToPixels(item.lat, item.lng, _zoom);
+    final near = [for (final o in all) if (projectToPixels(o.lat, o.lng, _zoom).distanceTo(p) <= dot * .8) o];
+    if (near.length <= 1) return _showItem(item);
+    _listSheet(sortForPanel(near), title: 'عند هذه النقطة · ${near.length}');
+  }
+
   void _focus(MapItem item) {
     _sheet.animateTo(_sheetInitial, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
     _map.move(LatLng(item.lat, item.lng), math.max(_zoom, 16));
     _showItem(item);
-  }
-
-  void _openCluster(MapCluster c) {
-    final bb = c.bounds;
-    final tiny = (bb.maxLat - bb.minLat) < 0.0004 && (bb.maxLng - bb.minLng) < 0.0004;
-    if (tiny || _zoom >= 17.5) {
-      _sheet.animateTo(_sheetInitial, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-      _map.move(LatLng(c.lat, c.lng), math.max(_zoom, 16));
-      _listSheet(c.items, title: 'عند هذه النقطة · ${c.count}');
-      return;
-    }
-    final sheetPx = _sheet.isAttached ? _sheet.pixels : 0.0;
-    _map.fitCamera(CameraFit.bounds(
-      bounds: LatLngBounds(LatLng(bb.minLat, bb.minLng), LatLng(bb.maxLat, bb.maxLng)),
-      padding: EdgeInsets.fromLTRB(48, 88, 48, sheetPx + 48),
-      maxZoom: 17.5,
-    ));
   }
 
   Widget _chip(String label, IconData icon, bool on, VoidCallback onTap) => Padding(
@@ -700,45 +684,66 @@ String _kindLabel(MapItemKind k) => switch (k) {
 
 const _markerShadow = [BoxShadow(color: Color(0x33000000), blurRadius: 4, offset: Offset(0, 1.5))];
 
-/// علامة مصغّرة لعنصر واحد.
+/// حجم النقطة بالبكسل حسب التكبير: نقاط دقيقة عند التصغير ونقاط برمز عند التقريب.
+double dotSizeFor(double zoom) => zoom >= 15 ? 22 : zoom >= 13 ? 17 : zoom >= 11 ? 12 : 9;
+
+/// لون النقطة حسب نوع المحتوى؛ منشورات الخريطة تأخذ لون تصنيفها (عرض، إعلان، استثمار، فعالية، وظيفة، لحظة).
+Color _itemColor(MapItem item) {
+  if (item.kind == MapItemKind.post) {
+    return switch ((item.data as MapPost).tag) {
+      'offer' => Joy.accent,
+      'ad' => const Color(0xFFF9A825),
+      'invest' => const Color(0xFF2E7D32),
+      'event' => const Color(0xFF6A1B9A),
+      'job' => const Color(0xFF1565C0),
+      _ => Joy.sun,
+    };
+  }
+  if (item.kind == MapItemKind.pin && (item.data as Pin).type == 'review') return const Color(0xFFF9A825);
+  return _kindColor(item.kind);
+}
+
+/// رمز النقطة: نوع الوسيط للمنشور (صورة/فيديو/صوت/نص)، وتخصص المتجر، ونجمة للتقييم.
+IconData _itemIcon(MapItem item) => switch (item.kind) {
+      MapItemKind.post => switch ((item.data as MapPost).kind) {
+          'image' => Icons.photo_camera_rounded,
+          'video' => Icons.videocam_rounded,
+          'audio' => Icons.mic_rounded,
+          _ => Icons.notes_rounded,
+        },
+      MapItemKind.business => _ItemMarker._bizIcon((item.data as Business).kind),
+      MapItemKind.pin => (item.data as Pin).type == 'review' ? Icons.star_rounded : Icons.push_pin_rounded,
+      MapItemKind.story => Icons.auto_awesome_rounded,
+      MapItemKind.person => Icons.person_rounded,
+    };
+
+/// نقطة صغيرة احترافية لعنصر واحد: دائرة ملونة بحدّ أبيض وظل خفيف ورمز يعبّر عن نوع المحتوى؛
+/// الأشخاص يظهرون بصورتهم المصغّرة.
 class _ItemMarker extends StatelessWidget {
   final MapItem item;
+  final double dot;
   final VoidCallback onTap;
-  const _ItemMarker({required this.item, required this.onTap});
+  const _ItemMarker({required this.item, required this.dot, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     Widget child;
-    switch (item.kind) {
-      case MapItemKind.person:
-        final p = item.data as Presence;
-        child = Container(
-          decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.surface, boxShadow: _markerShadow, border: Border.all(color: p.me ? Joy.primary : Joy.surface, width: 2)),
-          padding: const EdgeInsets.all(1),
-          child: Avatar(name: p.nickname, url: p.avatarUrl, size: 32, online: p.online),
-        );
-      case MapItemKind.story:
-        final s = item.data as Story;
-        child = Container(
-          decoration: const BoxDecoration(shape: BoxShape.circle, color: Joy.surface, boxShadow: _markerShadow),
-          child: Avatar(name: s.nickname, url: s.avatarUrl, size: 20, ring: true),
-        );
-      case MapItemKind.pin:
-        final p = item.data as Pin;
-        child = _dot(p.type == 'review' ? Icons.star_rounded : Icons.push_pin_rounded, Joy.accent, Joy.accentOn);
-      case MapItemKind.business:
-        final b = item.data as Business;
-        child = _dot(_bizIcon(b.kind), Joy.primary, Joy.primaryOn);
-      case MapItemKind.post:
-        final p = item.data as MapPost;
-        final inner = p.kind == 'image' && p.mediaUrl != null
-            ? ClipOval(child: Image.network(mediaUrl(p.mediaUrl!), width: 30, height: 30, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Avatar(name: p.user.nickname, url: p.user.avatarUrl, size: 30)))
-            : Avatar(name: p.user.nickname, url: p.user.avatarUrl, size: 30);
-        child = Container(
-          decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.surface, boxShadow: _markerShadow, border: Border.all(color: p.tag == 'moment' ? Joy.sun : Joy.accent, width: 2)),
-          padding: const EdgeInsets.all(1),
-          child: inner,
-        );
+    if (item.kind == MapItemKind.person) {
+      final p = item.data as Presence;
+      child = Container(
+        decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.surface, boxShadow: _markerShadow, border: Border.all(color: p.me ? Joy.primary : Joy.surface, width: 2)),
+        padding: const EdgeInsets.all(1),
+        child: Avatar(name: p.nickname, url: p.avatarUrl, size: dot + 4, online: p.online && dot >= 17),
+      );
+    } else {
+      final color = _itemColor(item);
+      final on = color.computeLuminance() > .5 ? Joy.sunText : Colors.white;
+      child = Container(
+        width: dot,
+        height: dot,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: color, border: Border.all(color: Colors.white, width: dot >= 17 ? 2 : 1.5), boxShadow: _markerShadow),
+        child: dot >= 12 ? Icon(_itemIcon(item), size: dot * .55, color: on) : null,
+      );
     }
     return Semantics(
       button: true,
@@ -754,51 +759,6 @@ class _ItemMarker extends StatelessWidget {
         'brand' => Icons.local_mall_rounded,
         _ => Icons.storefront_rounded,
       };
-
-  static Widget _dot(IconData icon, Color bg, Color fg) => Container(
-        width: 26,
-        height: 26,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: bg, border: Border.all(color: Joy.surface, width: 2), boxShadow: _markerShadow),
-        child: Icon(icon, size: 13, color: fg),
-      );
-}
-
-/// فقاعة تجميع تعرض عدد العناصر المتقاربة.
-class _ClusterBubble extends StatelessWidget {
-  final MapCluster cluster;
-  final VoidCallback onTap;
-  const _ClusterBubble({required this.cluster, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final n = cluster.count;
-    final size = n >= 100 ? 48.0 : (n >= 10 ? 42.0 : 36.0);
-    final color = _kindColor(cluster.dominant);
-    final textColor = cluster.dominant == MapItemKind.story ? Joy.sunText : color;
-    return Semantics(
-      button: true,
-      label: '$n عناصر متقاربة',
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Center(
-          child: Container(
-            width: size + 10,
-            height: size + 10,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: color.withValues(alpha: .18)),
-            alignment: Alignment.center,
-            child: Container(
-              width: size,
-              height: size,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.surface, border: Border.all(color: color, width: 2.5), boxShadow: _markerShadow),
-              child: Text('$n', style: TextStyle(fontWeight: FontWeight.w800, fontSize: n >= 100 ? 13 : 14, color: textColor, height: 1)),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 // ------------------------------------------------------------ لوحة المنطقة

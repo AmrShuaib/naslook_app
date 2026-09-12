@@ -10,6 +10,7 @@ import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
 
 final eventsProvider = FutureProvider<List<Event>>((ref) => ref.watch(apiClientProvider).events());
@@ -135,6 +136,7 @@ class EventCard extends StatelessWidget {
             if (e.myTickets > 0) ...[const SizedBox(width: 8), const Icon(Icons.check_circle_rounded, size: 14, color: Joy.success), const Text(' لديك تذكرة', style: TextStyle(color: Joy.success, fontSize: 11.5))],
           ]),
         ])),
+        WishButton(kind: 'event', refId: e.id, compact: true),
       ]),
     );
   }

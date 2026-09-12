@@ -842,6 +842,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
               Expanded(
                 child: TextField(
                   controller: _text,
+                  style: const TextStyle(fontSize: 16),
                   minLines: 1, maxLines: 4,
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _sendText(),
@@ -1053,7 +1054,8 @@ class _BubbleState extends State<_Bubble> {
   Widget build(BuildContext context) {
     final m = widget.m;
     final mine = widget.mine;
-    final style = TextStyle(fontSize: 14.5, height: 1.55, color: mine ? Joy.bubbleOutText : Joy.text);
+    // حجم رسائل واتساب الافتراضي (16 نقطة تقريباً)
+    final style = TextStyle(fontSize: 16, height: 1.5, color: mine ? Joy.bubbleOutText : Joy.text);
     final failed = m.status == MessageStatus.failed;
     final tail = Radius.circular(widget.joinedBelow ? 6 : 4);
     const joined = Radius.circular(6);

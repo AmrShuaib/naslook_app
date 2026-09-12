@@ -6,4 +6,5 @@ await app.register((await import("./business.js")).default, { pool, auth });
 await app.register((await import("./search.js")).default, { pool, auth });
 await app.register((await import("./profile.js")).default, { pool, auth });
 await app.register((await import("./map_posts.js")).default, { pool, auth });
+await app.register((await import("./wishlist.js")).default, { pool, auth });
 await app.register((await import("./admin.js")).default, { pool, auth });

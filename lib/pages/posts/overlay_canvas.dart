@@ -21,13 +21,16 @@ class OverlayCanvas extends StatelessWidget {
   final ValueChanged<int>? onSelect;
   final void Function(int index, PostOverlay updated)? onChanged;
   final ValueChanged<int>? onEdit;
-  const OverlayCanvas({super.key, required this.overlays, this.editable = false, this.selected, this.onSelect, this.onChanged, this.onEdit});
+  /// طبقة تُخفى مؤقتاً (أثناء كتابتها مباشرة على اللوحة في المحرّر)
+  final int? hiddenIndex;
+  const OverlayCanvas({super.key, required this.overlays, this.editable = false, this.selected, this.onSelect, this.onChanged, this.onEdit, this.hiddenIndex});
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
         final w = box.maxWidth, h = box.maxHeight;
         return Stack(clipBehavior: Clip.none, children: [
           for (var i = 0; i < overlays.length; i++)
+            if (i != hiddenIndex)
             Positioned(
               left: overlays[i].x * w,
               top: overlays[i].y * h,

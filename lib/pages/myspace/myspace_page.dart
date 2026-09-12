@@ -20,6 +20,7 @@ import '../business/owner/my_businesses_page.dart';
 import '../events/events_page.dart';
 import '../market/market_page.dart';
 import '../posts/my_posts_page.dart';
+import 'wishlist_page.dart';
 import '../wallet/wallet_page.dart';
 
 class MySpacePage extends ConsumerWidget {
@@ -88,6 +89,8 @@ class MySpacePage extends ConsumerWidget {
             ],
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.auto_awesome_motion_outlined, color: Joy.accent), title: const Text('منشوراتي على الخريطة'), subtitle: const Text('صور وفيديو وصوت ونص · تعديل وإخفاء وحذف'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyPostsPage()))),
+            const Divider(indent: 16, endIndent: 16),
+            ListTile(leading: const Icon(Icons.bookmark_added_outlined, color: Joy.accent), title: const Text('قائمة أمنياتي'), subtitle: const Text('منتجات وخدمات وفعاليات ومنشورات أتمناها'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WishlistPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.storefront_outlined, color: Joy.sunText), title: const Text('عروضي وطلباتي في السوق'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 0)))),
           ])),

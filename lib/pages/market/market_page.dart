@@ -11,6 +11,7 @@ import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../../ui/wish_button.dart';
 import '../chat/chat_thread_page.dart';
 import '../wallet/wallet_page.dart';
 import '../../api/client.dart';
@@ -192,7 +193,7 @@ class _ListingPageState extends ConsumerState<ListingPage> {
     final l = ref.watch(listingProvider(widget.id));
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('العرض')),
+      appBar: AppBar(title: const Text('العرض'), actions: [WishButton(kind: 'market', refId: widget.id)]),
       body: l.when(
         data: (x) => ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
           if (x.imageUrl != null && x.imageUrl!.isNotEmpty) ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.network(mediaUrl(x.imageUrl!), height: 220, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())),

@@ -11,6 +11,7 @@ import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../../ui/wish_button.dart';
 import '../business/business_page.dart';
 import '../chat/chat_thread_page.dart';
 import '../market/market_page.dart';
@@ -315,6 +316,8 @@ class PostView extends ConsumerWidget {
               if (!p.mine && me != null) ...[
                 const SizedBox(width: 6),
                 _action(Icons.chat_bubble_outline_rounded, 'مراسلة', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user)))),
+                const SizedBox(width: 2),
+                WishButton(kind: 'post', refId: p.id, dark: true, compact: true),
               ],
               const Spacer(),
               if (onMenu != null) IconButton(tooltip: 'خيارات', onPressed: onMenu, icon: const Icon(Icons.more_horiz_rounded, color: Colors.white)),
