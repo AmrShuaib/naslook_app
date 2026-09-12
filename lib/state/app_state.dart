@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
@@ -141,6 +142,16 @@ class AppStateNotifier extends StateNotifier<AppState> {
   }
 
   /// بعد أن يرى المستخدم عبارة الاسترداد نزيلها من الذاكرة.
+  /// يحدّث بيانات المستخدم في الجلسة (مثل صورة الحساب) ويحفظها محلياً.
+  Future<void> updateUser(SessionUser user) async {
+    final s = state.session;
+    if (s == null) return;
+    final next = s.copyWith(user: user);
+    state = state.copyWith(session: next);
+    // الحفظ المحلي لا يوقف الواجهة: إن تعذّر تبقى الجلسة المحدّثة في الذاكرة
+    unawaited(_store.save(next).catchError((_) {}));
+  }
+
   void dismissRecoveryPhrase() {
     final s = state.session;
     if (s?.recoveryPhrase != null) {

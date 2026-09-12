@@ -549,11 +549,46 @@ class _MapPageState extends ConsumerState<MapPage> {
       else
         Text(s.content, style: const TextStyle(fontSize: 17, height: 1.6)),
       if (s.caption.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(s.caption, style: const TextStyle(color: Joy.textMuted))),
+      if (isMe) _deleteRow('حذف اللحظة', () => ref.read(apiClientProvider).deleteStory(s.id), storiesProvider),
     ]));
   }
 
+  /// زر حذف لعنصر يملكه المستخدم على الخريطة (لحظة أو دبوس) مع تأكيد.
+  Widget _deleteRow(String label, Future<void> Function() call, ProviderOrFamily provider) => Padding(
+        padding: const EdgeInsets.only(top: 14),
+        child: Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(foregroundColor: Joy.danger),
+            onPressed: () async {
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: Text(label),
+                  content: const Text('سيُزال من الخريطة نهائياً ولن يراه أحد.'),
+                  actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Joy.danger), onPressed: () => Navigator.pop(ctx, true), child: const Text('حذف'))],
+                ),
+              );
+              if (ok != true || !mounted) return;
+              try {
+                await call();
+                ref.invalidate(provider);
+                if (!mounted) return;
+                Navigator.pop(context);
+                toast(context, 'تم الحذف');
+              } catch (e) {
+                if (mounted) toast(context, e.toString(), error: true);
+              }
+            },
+            icon: const Icon(Icons.delete_outline_rounded, size: 18),
+            label: Text(label),
+          ),
+        ),
+      );
+
   void _showPin(Pin p) {
     final person = Person(id: p.ownerId, nickname: p.ownerNickname, avatarUrl: p.ownerAvatar);
+    final isMe = ref.read(appStateProvider).user?.id == p.ownerId;
     _sheetOf(Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         ProfileAvatar(person: person, size: 40),
@@ -568,6 +603,7 @@ class _MapPageState extends ConsumerState<MapPage> {
       ]),
       const SizedBox(height: 10),
       Text(p.content, style: const TextStyle(fontSize: 15, height: 1.6)),
+      if (isMe) _deleteRow('حذف الدبوس', () => ref.read(apiClientProvider).deletePin(p.id), pinsProvider),
     ]));
   }
 

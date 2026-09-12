@@ -270,7 +270,7 @@ export default async function commerce(app, opts) {
     const price = SAR(b.price); if (price < 0) return bad(reply, 400, "bad-price");
     const id = crypto.randomUUID();
     await pool.query("INSERT INTO market_listings(id,seller_id,kind,category,title,description,price,image_url,place_name,lat,lng) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-      [id, uid, kind, category, title, String(b.description ?? "").slice(0, 2000), price, b.imageUrl ? String(b.imageUrl) : null, b.placeName ? String(b.placeName).slice(0, 80) : null,
+      [id, uid, kind, category, title, String(b.description ?? "").slice(0, 2000), price, absUrl(req, b.imageUrl), b.placeName ? String(b.placeName).slice(0, 80) : null,
        b.lat == null ? null : Number(b.lat), b.lng == null ? null : Number(b.lng)]);
     return listingOut((await pool.query("SELECT * FROM market_listings WHERE id=$1", [id])).rows[0], uid);
   });
@@ -282,10 +282,46 @@ export default async function commerce(app, opts) {
       [q, cat, bb?.minLng ?? null, bb?.minLat ?? null, bb?.maxLng ?? null, bb?.maxLat ?? null]);
     return Promise.all(r.rows.map((l) => listingOut(l, uid)));
   });
+  // عروضي كلها بما فيها المخفية (hidden) والتي أخفتها الإدارة (blocked) حتى يمكن إظهارها أو تعديلها
   app.get("/market/mine", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
-    const r = await pool.query("SELECT * FROM market_listings WHERE seller_id=$1 AND status<>'hidden' ORDER BY created_at DESC", [uid]);
+    const r = await pool.query("SELECT * FROM market_listings WHERE seller_id=$1 ORDER BY (status='active') DESC, created_at DESC", [uid]);
     return Promise.all(r.rows.map((l) => listingOut(l, uid)));
+  });
+  // رابط مطلق لصورة مرفوعة على الخادم نفسه (يبقى صالحاً في تطبيقات الجوال لاحقاً)
+  const absUrl = (req, url) => {
+    const s = String(url ?? "").trim(); if (!s) return null;
+    if (/^https?:\/\//.test(s)) return s.slice(0, 500);
+    if (!s.startsWith("/")) return null;
+    const proto = String(req.headers["x-forwarded-proto"] ?? "https").split(",")[0].trim() || "https";
+    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim();
+    return `${proto}://${host}${s}`.slice(0, 500);
+  };
+  // تعديل عرضي: النص والسعر والصورة، وإخفاؤه أو إظهاره (ما لم تكن الإدارة قد أخفته)
+  app.patch("/market/:id", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const l = (await pool.query("SELECT * FROM market_listings WHERE id=$1", [req.params.id])).rows[0];
+    if (!l) return bad(reply, 404, "not-found");
+    if (l.seller_id !== uid) return bad(reply, 403, "forbidden");
+    const b = req.body ?? {}; const sets = []; const vals = [];
+    const set = (c, v) => { vals.push(v); sets.push(`${c}=$${vals.length}`); };
+    if (b.title !== undefined) { const t = String(b.title).trim(); if (!t || t.length > 100) return bad(reply, 400, "bad-title"); set("title", t); }
+    if (b.description !== undefined) set("description", String(b.description).slice(0, 2000));
+    if (b.price !== undefined) { const p = SAR(b.price); if (p < 0) return bad(reply, 400, "bad-price"); set("price", p); }
+    if (b.category !== undefined) set("category", CATEGORIES.has(b.category) ? b.category : "other");
+    if (b.kind !== undefined) set("kind", b.kind === "service" ? "service" : "product");
+    if (b.imageUrl !== undefined) set("image_url", absUrl(req, b.imageUrl));
+    if (b.placeName !== undefined) set("place_name", b.placeName ? String(b.placeName).slice(0, 80) : null);
+    if (b.status !== undefined) {
+      if (!["active", "hidden"].includes(b.status)) return bad(reply, 400, "bad-status");
+      if (l.status === "blocked") return bad(reply, 403, "blocked");
+      set("status", b.status);
+    }
+    if (!sets.length) return bad(reply, 400, "empty");
+    vals.push(l.id);
+    await pool.query(`UPDATE market_listings SET ${sets.join(", ")} WHERE id=$${vals.length}`, vals);
+    return listingOut((await pool.query("SELECT * FROM market_listings WHERE id=$1", [l.id])).rows[0], uid);
   });
   app.get("/market/orders", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);

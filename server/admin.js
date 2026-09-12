@@ -448,11 +448,13 @@ export default async function admin(app, opts) {
   app.post("/adminapi/market/:id/hide", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;
     if (!marketOk || !UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const r = await pool.query("UPDATE market_listings SET status='hidden' WHERE id=$1 RETURNING title, seller_id", [req.params.id]);
+    // blocked: أخفته الإدارة ولا يستطيع صاحبه إظهاره (بخلاف hidden الذي يخفيه صاحبه بنفسه)
+    const hidden = req.body?.hidden !== false;
+    const r = await pool.query("UPDATE market_listings SET status=$2 WHERE id=$1 RETURNING title, seller_id", [req.params.id, hidden ? "blocked" : "active"]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
-    await audit(uid, "market.hide", req.params.id, { title: r.rows[0].title });
-    await notify(r.rows[0].seller_id, { kind: "listing_hidden", title: "أُخفي إعلانك", body: `${r.rows[0].title}: أخفته الإدارة من السوق`, data: { listingId: req.params.id }, exclude: uid });
-    return { ok: true };
+    await audit(uid, hidden ? "market.hide" : "market.unhide", req.params.id, { title: r.rows[0].title });
+    if (hidden) await notify(r.rows[0].seller_id, { kind: "listing_hidden", title: "أُخفي إعلانك", body: `${r.rows[0].title}: أخفته الإدارة من السوق`, data: { listingId: req.params.id }, exclude: uid });
+    return { ok: true, status: hidden ? "blocked" : "active" };
   });
 
   // ---- الإعدادات وسجل الإجراءات

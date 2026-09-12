@@ -28,6 +28,8 @@ extension CommerceApi on ApiClient {
   Future<Listing> listing(String id) async => Listing.fromJson(await get('/market/$id'));
   Future<Listing> createListing(Map<String, dynamic> body) async => Listing.fromJson(await post('/market', body));
   Future<void> hideListing(String id) => delete('/market/$id');
+  /// تعديل عرضي: النص والسعر والصورة، أو status: active|hidden للإظهار والإخفاء.
+  Future<Listing> updateListing(String id, Map<String, dynamic> patch) async => Listing.fromJson(await patch_('/market/$id', patch));
   Future<Map<String, dynamic>> order(String listingId, int qty, {String note = ''}) => post('/market/$listingId/order', {'qty': qty, 'note': note});
   Future<List<Order>> orders() async => asList(await getList('/market/orders')).map(Order.fromJson).toList();
   Future<void> deliverOrder(String id) => post('/market/orders/$id/deliver', const {});

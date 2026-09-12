@@ -6,6 +6,12 @@ extension NaslifeApi on ApiClient {
   // ---- الحساب والملف
   Future<Profile> myProfile() async => Profile.fromJson(await get('/me/profile'));
   Future<Profile> updateProfile(Map<String, dynamic> patch) async => Profile.fromJson(await put('/me/profile', patch));
+  /// صورة الحساب (server/profile.js): يثبّت رابط صورة مرفوعة عبر /chat/upload ويعيد الرابط المطلق.
+  Future<String> setAvatar(String url) async => (await post('/profile/avatar', {'url': url}))['avatarUrl'].toString();
+  Future<void> clearAvatar() => delete('/profile/avatar');
+  /// حذف لحظة أو دبوس من الخريطة (مسارات الخادم الأساسي، لصاحبها فقط).
+  Future<void> deleteStory(String id) => delete('/stories/$id');
+  Future<void> deletePin(String id) => delete('/map/pins/$id');
   Future<Profile> profileOf(String id) async => Profile.fromJson(await get('/profiles/$id'));
   Future<Person> userByHandle(String handle) async => Person.fromJson(await get('/users/$handle'));
   Future<Map<String, dynamic>> presenceOf(String id) => get('/presence/$id');

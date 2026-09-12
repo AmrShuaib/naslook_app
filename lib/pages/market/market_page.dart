@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../api/chat_tools_api.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
+import '../../core/media/pick_image.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
@@ -30,7 +32,7 @@ class _MarketPageState extends ConsumerState<MarketPage> {
     final list = ref.watch(marketProvider((q, cat)));
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('السوق'), actions: [IconButton(icon: const Icon(Icons.receipt_long_outlined), tooltip: 'طلباتي', onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage())))]),
+      appBar: AppBar(title: const Text('السوق'), actions: [IconButton(icon: const Icon(Icons.receipt_long_outlined), tooltip: 'عروضي وطلباتي', onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 1))))]),
       floatingActionButton: FloatingActionButton.extended(onPressed: _create, backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: const Text('اعرض للبيع')),
       body: Column(children: [
         Padding(padding: const EdgeInsets.fromLTRB(20, 4, 20, 8), child: TextField(onChanged: (v) => setState(() => q = v.trim()), decoration: const InputDecoration(hintText: 'ابحث عن خدمة أو منتج', prefixIcon: Icon(Icons.search_rounded, color: Joy.textMuted)))),
@@ -60,16 +62,73 @@ class _MarketPageState extends ConsumerState<MarketPage> {
   }
 
   Future<void> _create() async {
-    final title = TextEditingController(), desc = TextEditingController(), price = TextEditingController(), place = TextEditingController();
-    String kind = 'product', category = 'other';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setS) => AlertDialog(
-        title: const Text('عرض جديد'),
+    final d = await showListingForm(context);
+    if (d == null || !mounted) return;
+    final gps = await DeviceLocation.current(precise: false);
+    final pres = ref.read(myPresenceProvider).value;
+    try {
+      final api = ref.read(apiClientProvider);
+      final imageUrl = d.image == null ? null : (await api.uploadMedia(d.image!.bytes, contentType: d.image!.mime, fileName: d.image!.name)).url;
+      await api.createListing({
+        'title': d.title, 'description': d.description, 'kind': d.kind, 'category': d.category, 'price': d.price, 'placeName': d.placeName,
+        if (imageUrl != null) 'imageUrl': imageUrl,
+        'lat': gps?.latitude ?? pres?.lat, 'lng': gps?.longitude ?? pres?.lng,
+      });
+      ref.invalidate(marketProvider); ref.invalidate(myListingsProvider);
+      if (mounted) toast(context, 'نُشر عرضك');
+    } catch (e) {
+      if (mounted) toast(context, e.toString(), error: true);
+    }
+  }
+}
+
+/// مسودة عرض من نموذج الإنشاء أو التعديل.
+typedef ListingDraft = ({String title, String description, int price, String kind, String category, String placeName, PickedImage? image, bool removeImage});
+
+String _priceText(int halalas) => halalas % 100 == 0 ? '${halalas ~/ 100}' : (halalas / 100).toStringAsFixed(2);
+
+/// نموذج العرض (إنشاء أو تعديل) مع اختيار صورة من الجهاز. يعيد null عند الإلغاء.
+Future<ListingDraft?> showListingForm(BuildContext context, {Listing? initial}) async {
+  final title = TextEditingController(text: initial?.title ?? ''), desc = TextEditingController(text: initial?.description ?? '');
+  final price = TextEditingController(text: initial == null ? '' : _priceText(initial.price)), place = TextEditingController(text: initial?.placeName ?? '');
+  String kind = initial?.kind ?? 'product', category = marketCategories.containsKey(initial?.category) ? initial!.category : 'other';
+  PickedImage? img;
+  var removeImage = false;
+  final existingUrl = initial?.imageUrl;
+  final hasExisting = existingUrl != null && existingUrl.isNotEmpty;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(builder: (ctx, setS) {
+      final pic = img; // نسخة محلية حتى يتعرف المحلل على عدم فراغها داخل الشجرة
+      final showsExisting = hasExisting && !removeImage && pic == null;
+      return AlertDialog(
+        title: Text(initial == null ? 'عرض جديد' : 'تعديل العرض'),
         content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Row(children: [
+            Container(
+              width: 72, height: 72, clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)),
+              child: pic != null
+                  ? Image.memory(pic.bytes, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined, color: Joy.textMuted))
+                  : showsExisting
+                      ? Image.network(existingUrl, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, color: Joy.textMuted))
+                      : const Icon(Icons.add_photo_alternate_outlined, color: Joy.textMuted, size: 28),
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              TextButton.icon(
+                onPressed: () async { final p = await pickImage(); if (p != null) setS(() { img = p; removeImage = false; }); },
+                icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                label: Text(pic == null && !showsExisting ? 'إضافة صورة' : 'تغيير الصورة'),
+              ),
+              if (pic != null || showsExisting)
+                TextButton.icon(onPressed: () => setS(() { img = null; removeImage = true; }), style: TextButton.styleFrom(foregroundColor: Joy.danger), icon: const Icon(Icons.close_rounded, size: 18), label: const Text('بلا صورة')),
+            ])),
+          ]),
+          const SizedBox(height: 10),
           Row(children: [for (final (k, l) in [('product', 'منتج'), ('service', 'خدمة')]) Padding(padding: const EdgeInsets.only(left: 8), child: ChoiceChip(label: Text(l, style: TextStyle(color: kind == k ? Joy.primaryOn : Joy.text)), selected: kind == k, onSelected: (_) => setS(() => kind = k), showCheckmark: false, selectedColor: Joy.primary))]),
           const SizedBox(height: 10),
-          TextField(controller: title, decoration: const InputDecoration(labelText: 'العنوان'), autofocus: true),
+          TextField(controller: title, decoration: const InputDecoration(labelText: 'العنوان'), autofocus: initial == null),
           const SizedBox(height: 10),
           TextField(controller: desc, maxLines: 3, decoration: const InputDecoration(labelText: 'الوصف')),
           const SizedBox(height: 10),
@@ -79,24 +138,15 @@ class _MarketPageState extends ConsumerState<MarketPage> {
           const SizedBox(height: 10),
           TextField(controller: place, decoration: const InputDecoration(labelText: 'مكان الاستلام (اختياري)')),
         ])),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('نشر'))],
-      )),
-    );
-    if (ok != true || title.text.trim().isEmpty || !mounted) return;
-    final gps = await DeviceLocation.current(precise: false);
-    final pres = ref.read(myPresenceProvider).value;
-    try {
-      await ref.read(apiClientProvider).createListing({
-        'title': title.text.trim(), 'description': desc.text.trim(), 'kind': kind, 'category': category,
-        'price': ((double.tryParse(price.text.replaceAll('،', '.')) ?? 0) * 100).round(), 'placeName': place.text.trim(),
-        'lat': gps?.latitude ?? pres?.lat, 'lng': gps?.longitude ?? pres?.lng,
-      });
-      ref.invalidate(marketProvider); ref.invalidate(myListingsProvider);
-      if (mounted) toast(context, 'نُشر عرضك');
-    } catch (e) {
-      if (mounted) toast(context, e.toString(), error: true);
-    }
-  }
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(initial == null ? 'نشر' : 'حفظ'))],
+      );
+    }),
+  );
+  if (ok != true || title.text.trim().isEmpty) return null;
+  return (
+    title: title.text.trim(), description: desc.text.trim(), price: ((double.tryParse(price.text.replaceAll('،', '.')) ?? 0) * 100).round(),
+    kind: kind, category: category, placeName: place.text.trim(), image: img, removeImage: removeImage,
+  );
 }
 
 class ListingCard extends StatelessWidget {
@@ -158,8 +208,10 @@ class _ListingPageState extends ConsumerState<ListingPage> {
           if (x.description.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text(x.description, style: const TextStyle(height: 1.65))),
           const SizedBox(height: 8),
           if (x.mine)
-            OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Joy.danger), onPressed: () async { await ref.read(apiClientProvider).hideListing(x.id); ref.invalidate(marketProvider); ref.invalidate(myListingsProvider); if (context.mounted) Navigator.pop(context); }, child: const Text('إخفاء العرض'))
-          else if (x.status == 'active')
+            OwnerListingActions(x)
+          else if (x.status != 'active')
+            const Text('هذا العرض غير متاح حالياً.', style: TextStyle(color: Joy.textMuted))
+          else
             Row(children: [
               IconButton(onPressed: qty > 1 ? () => setState(() => qty--) : null, icon: const Icon(Icons.remove_rounded)),
               Text('$qty', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
@@ -190,22 +242,149 @@ class _ListingPageState extends ConsumerState<ListingPage> {
 }
 
 class OrdersPage extends ConsumerWidget {
-  const OrdersPage({super.key});
+  /// 0 = عروضي، 1 = الطلبات
+  final int initialTab;
+  const OrdersPage({super.key, this.initialTab = 1});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => DefaultTabController(
+        length: 2,
+        initialIndex: initialTab.clamp(0, 1),
+        child: Scaffold(
+          backgroundColor: Joy.bg,
+          appBar: AppBar(title: const Text('عروضي وطلباتي'), bottom: const TabBar(tabs: [Tab(text: 'عروضي'), Tab(text: 'الطلبات')])),
+          body: const TabBarView(children: [_MyListings(), _MyOrders()]),
+        ),
+      );
+}
+
+class _MyOrders extends ConsumerWidget {
+  const _MyOrders();
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final o = ref.watch(ordersProvider);
-    return Scaffold(
-      backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('الطلبات')),
-      body: o.when(
-        data: (list) => list.isEmpty
-            ? const EmptyState(icon: Icons.receipt_long_outlined, title: 'لا طلبات بعد')
-            : ListView.separated(padding: const EdgeInsets.all(20), itemCount: list.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => _OrderCard(list[i])),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(ordersProvider)),
-      ),
+    return o.when(
+      data: (list) => list.isEmpty
+          ? const EmptyState(icon: Icons.receipt_long_outlined, title: 'لا طلبات بعد')
+          : RefreshIndicator(
+              onRefresh: () async => ref.invalidate(ordersProvider),
+              child: ListView.separated(padding: const EdgeInsets.all(20), itemCount: list.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => _OrderCard(list[i])),
+            ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(ordersProvider)),
     );
   }
+}
+
+/// عروضي كلها: الظاهرة والمخفية وما أخفته الإدارة، مع إظهار/إخفاء سريع.
+class _MyListings extends ConsumerWidget {
+  const _MyListings();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l = ref.watch(myListingsProvider);
+    return l.when(
+      data: (list) => list.isEmpty
+          ? const EmptyState(icon: Icons.storefront_outlined, title: 'لم تعرض شيئاً للبيع بعد', subtitle: 'من صفحة السوق اضغط «اعرض للبيع» وأضف صورة ووصفاً وسعراً.')
+          : RefreshIndicator(
+              onRefresh: () async => ref.invalidate(myListingsProvider),
+              child: ListView.separated(padding: const EdgeInsets.all(20), itemCount: list.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => MyListingRow(list[i])),
+            ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(myListingsProvider)),
+    );
+  }
+}
+
+String listingStatusLabel(String status) => switch (status) { 'active' => 'ظاهر في السوق', 'hidden' => 'مخفي', 'blocked' => 'أخفته الإدارة', _ => status };
+Color listingStatusColor(String status) => switch (status) { 'active' => Joy.success, 'blocked' => Joy.danger, _ => Joy.textMuted };
+
+/// يبدّل ظهور عرضي بين ظاهر ومخفي (ما لم تكن الإدارة قد أخفته).
+Future<void> toggleListingVisibility(BuildContext context, WidgetRef ref, Listing x) async {
+  try {
+    final next = x.status == 'active' ? 'hidden' : 'active';
+    await ref.read(apiClientProvider).updateListing(x.id, {'status': next});
+    ref.invalidate(marketProvider); ref.invalidate(myListingsProvider); ref.invalidate(listingProvider(x.id));
+    if (context.mounted) toast(context, next == 'active' ? 'صار العرض ظاهراً في السوق' : 'أُخفي العرض ولا يراه غيرك');
+  } catch (e) {
+    if (context.mounted) toast(context, e.toString().contains('blocked') ? 'أخفته الإدارة؛ تواصل مع الدعم' : e.toString(), error: true);
+  }
+}
+
+/// يفتح نموذج التعديل ويرفع الصورة الجديدة إن اختيرت ثم يحفظ.
+Future<void> editListing(BuildContext context, WidgetRef ref, Listing x) async {
+  final d = await showListingForm(context, initial: x);
+  if (d == null || !context.mounted) return;
+  try {
+    final api = ref.read(apiClientProvider);
+    final imageUrl = d.image == null ? null : (await api.uploadMedia(d.image!.bytes, contentType: d.image!.mime, fileName: d.image!.name)).url;
+    await api.updateListing(x.id, {
+      'title': d.title, 'description': d.description, 'price': d.price, 'kind': d.kind, 'category': d.category, 'placeName': d.placeName,
+      if (imageUrl != null) 'imageUrl': imageUrl else if (d.removeImage) 'imageUrl': null,
+    });
+    ref.invalidate(marketProvider); ref.invalidate(myListingsProvider); ref.invalidate(listingProvider(x.id));
+    if (context.mounted) toast(context, 'حُفظت التعديلات');
+  } catch (e) {
+    if (context.mounted) toast(context, e.toString(), error: true);
+  }
+}
+
+class MyListingRow extends ConsumerWidget {
+  final Listing l;
+  const MyListingRow(this.l, {super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => JoyCard(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(l.id))),
+        child: Row(children: [
+          Container(
+            width: 48, height: 48, clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
+            child: l.imageUrl != null && l.imageUrl!.isNotEmpty ? Image.network(l.imageUrl!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, color: Joy.textMuted)) : const Icon(Icons.storefront_outlined, color: Joy.textMuted),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+            Text('${l.price == 0 ? 'مجاناً' : money(l.price)} · ${listingStatusLabel(l.status)}', style: TextStyle(color: listingStatusColor(l.status), fontSize: 12.5, fontWeight: FontWeight.w600)),
+          ])),
+          if (l.status == 'blocked')
+            const Icon(Icons.block_rounded, color: Joy.danger)
+          else
+            IconButton(
+              tooltip: l.status == 'active' ? 'إخفاء' : 'إظهار',
+              onPressed: () => toggleListingVisibility(context, ref, l),
+              icon: Icon(l.status == 'active' ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: l.status == 'active' ? Joy.textMuted : Joy.primary),
+            ),
+        ]),
+      );
+}
+
+/// إجراءات صاحب العرض داخل صفحته: حالة العرض، تعديل، إخفاء/إظهار.
+class OwnerListingActions extends ConsumerWidget {
+  final Listing x;
+  const OwnerListingActions(this.x, {super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (x.status != 'active')
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: x.status == 'blocked' ? Joy.accentSoft : Joy.surface2, borderRadius: BorderRadius.circular(14)),
+            child: Row(children: [
+              Icon(x.status == 'blocked' ? Icons.block_rounded : Icons.visibility_off_outlined, color: x.status == 'blocked' ? Joy.accent : Joy.textMuted),
+              const SizedBox(width: 8),
+              Expanded(child: Text(x.status == 'blocked' ? 'أخفته الإدارة من السوق؛ تواصل مع الدعم إن كان ذلك خطأً.' : 'العرض مخفي ولا يراه أحد غيرك.', style: TextStyle(color: x.status == 'blocked' ? Joy.accent : Joy.textMuted, fontWeight: FontWeight.w600, fontSize: 13))),
+            ]),
+          ),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          OutlinedButton.icon(onPressed: () => editListing(context, ref, x), icon: const Icon(Icons.edit_outlined, size: 18), label: const Text('تعديل')),
+          if (x.status != 'blocked')
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(foregroundColor: x.status == 'active' ? Joy.danger : Joy.primary),
+              onPressed: () => toggleListingVisibility(context, ref, x),
+              icon: Icon(x.status == 'active' ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 18),
+              label: Text(x.status == 'active' ? 'إخفاء العرض' : 'إظهار العرض'),
+            ),
+        ]),
+      ]);
 }
 
 class _OrderCard extends ConsumerWidget {

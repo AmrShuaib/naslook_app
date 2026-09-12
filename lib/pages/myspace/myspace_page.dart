@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../api/chat_tools_api.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/notify_api.dart';
+import '../../api/session.dart';
 import '../../core/app_theme.dart';
+import '../../core/media/pick_image.dart';
 import '../../core/push/push_service.dart';
 import '../../state/admin_providers.dart';
 import '../../state/notify_providers.dart';
@@ -83,7 +86,7 @@ class MySpacePage extends ConsumerWidget {
               ListTile(leading: const Icon(Icons.admin_panel_settings_outlined, color: Joy.accent), title: const Text('لوحة الإدارة'), subtitle: const Text('المستخدمون والبلاغات والمالية والإعدادات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminShell(standalone: false)))),
             ],
             const Divider(indent: 16, endIndent: 16),
-            ListTile(leading: const Icon(Icons.storefront_outlined, color: Joy.sunText), title: const Text('عروضي وطلباتي في السوق'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage()))),
+            ListTile(leading: const Icon(Icons.storefront_outlined, color: Joy.sunText), title: const Text('عروضي وطلباتي في السوق'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 0)))),
           ])),
           const SizedBox(height: 14),
           if (p != null && (p.skills.isNotEmpty || p.hobbies.isNotEmpty || p.lookingFor.isNotEmpty)) ...[
@@ -207,30 +210,105 @@ class MySpacePage extends ConsumerWidget {
     }
   }
 
+  /// يرفع صورة من الجهاز ويثبّتها صورةً للحساب، ويحدّث الجلسة والملف. يعيد الرابط أو null عند الإلغاء/الفشل.
+  Future<String?> _changeAvatar(BuildContext context, WidgetRef ref) async {
+    try {
+      final img = await pickImage();
+      if (img == null) return null;
+      final api = ref.read(apiClientProvider);
+      final up = await api.uploadMedia(img.bytes, contentType: img.mime, fileName: img.name);
+      final url = await api.setAvatar(up.url);
+      await _applyAvatar(ref, url);
+      if (context.mounted) toast(context, 'حُدّثت صورتك');
+      return url;
+    } catch (e) {
+      if (context.mounted) toast(context, e.toString().contains('unsupported') ? 'الخادم لا يدعم صور الحساب بعد' : e.toString().replaceFirst(RegExp(r'^ApiException\(\d+\): '), ''), error: true);
+      return null;
+    }
+  }
+
+  Future<bool> _removeAvatar(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref.read(apiClientProvider).clearAvatar();
+      await _applyAvatar(ref, null);
+      if (context.mounted) toast(context, 'أُزيلت صورتك');
+      return true;
+    } catch (e) {
+      if (context.mounted) toast(context, e.toString(), error: true);
+      return false;
+    }
+  }
+
+  Future<void> _applyAvatar(WidgetRef ref, String? url) async {
+    final u = ref.read(appStateProvider).user;
+    if (u != null) await ref.read(appStateProvider.notifier).updateUser(SessionUser(id: u.id, nickname: u.nickname, displayName: u.displayName, avatarUrl: url));
+    ref.invalidate(profileProvider);
+  }
+
   Future<void> _edit(BuildContext context, WidgetRef ref, Profile? p) async {
     final bio = TextEditingController(text: p?.bio ?? '');
     final skills = TextEditingController(text: p?.skills.join('، ') ?? '');
     final hobbies = TextEditingController(text: p?.hobbies.join('، ') ?? '');
     final looking = TextEditingController(text: p?.lookingFor.join('، ') ?? '');
+    final me = ref.read(appStateProvider).user;
+    String? avatar = p?.avatarUrl ?? me?.avatarUrl;
+    var busy = false;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تعديل الملف'),
-        content: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(controller: bio, maxLines: 3, decoration: const InputDecoration(labelText: 'نبذة عني')),
-            const SizedBox(height: 10),
-            TextField(controller: skills, decoration: const InputDecoration(labelText: 'مهاراتي', helperText: 'افصل بينها بفاصلة')),
-            const SizedBox(height: 10),
-            TextField(controller: hobbies, decoration: const InputDecoration(labelText: 'هواياتي', helperText: 'افصل بينها بفاصلة')),
-            const SizedBox(height: 10),
-            TextField(controller: looking, decoration: const InputDecoration(labelText: 'أبحث عن', helperText: 'أصدقاء، شريك ركض، عمل…')),
-          ]),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: const Text('تعديل الملف'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              // صورة الحساب: تُرفع وتُثبَّت فوراً، بمعزل عن زر الحفظ
+              Row(children: [
+                Avatar(name: me?.nickname ?? '', url: avatar, size: 64, ring: true),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    TextButton.icon(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              setS(() => busy = true);
+                              final url = await _changeAvatar(ctx, ref);
+                              if (url != null) avatar = url;
+                              if (ctx.mounted) setS(() => busy = false);
+                            },
+                      icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                      label: Text(busy ? 'جارٍ الرفع…' : (avatar == null || avatar!.isEmpty ? 'إضافة صورة' : 'تغيير الصورة')),
+                    ),
+                    if (avatar != null && avatar!.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: busy
+                            ? null
+                            : () async {
+                                setS(() => busy = true);
+                                if (await _removeAvatar(ctx, ref)) avatar = null;
+                                if (ctx.mounted) setS(() => busy = false);
+                              },
+                        style: TextButton.styleFrom(foregroundColor: Joy.danger),
+                        icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                        label: const Text('إزالة الصورة'),
+                      ),
+                  ]),
+                ),
+              ]),
+              const SizedBox(height: 10),
+              TextField(controller: bio, maxLines: 3, decoration: const InputDecoration(labelText: 'نبذة عني')),
+              const SizedBox(height: 10),
+              TextField(controller: skills, decoration: const InputDecoration(labelText: 'مهاراتي', helperText: 'افصل بينها بفاصلة')),
+              const SizedBox(height: 10),
+              TextField(controller: hobbies, decoration: const InputDecoration(labelText: 'هواياتي', helperText: 'افصل بينها بفاصلة')),
+              const SizedBox(height: 10),
+              TextField(controller: looking, decoration: const InputDecoration(labelText: 'أبحث عن', helperText: 'أصدقاء، شريك ركض، عمل…')),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('حفظ')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('حفظ')),
-        ],
       ),
     );
     if (ok != true || !context.mounted) return;

@@ -7,8 +7,12 @@ import 'media.dart';
 /// صورة مختارة من الجهاز (المعرض أو الكاميرا) على كل المنصات.
 typedef PickedImage = ({Uint8List bytes, String mime, String name});
 
+/// بديل للاختبارات: يُستدعى بدل منتقي الصور الحقيقي إن عُيّن.
+Future<PickedImage?> Function({bool camera})? pickImageOverride;
+
 /// يختار صورة: على الويب مباشرة من المتصفح (روابط blob تفشل على iOS)، وعلى المنصات الأخرى عبر image_picker.
 Future<PickedImage?> pickImage({bool camera = false}) async {
+  if (pickImageOverride != null) return pickImageOverride!(camera: camera);
   if (kIsWeb && WebMedia.available) {
     final m = await WebMedia.pick(camera ? 'camera' : 'image');
     if (m == null) return null;

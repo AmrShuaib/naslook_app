@@ -51,7 +51,7 @@ Widget? notificationTarget(AppNotification n) {
     case 'market_status':
       return const OrdersPage();
     case 'listing_hidden':
-      return const MarketPage();
+      return const OrdersPage(initialTab: 0);
     case 'transfer_in':
     case 'wallet_credit':
       return const WalletPage();
