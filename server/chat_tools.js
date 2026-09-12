@@ -21,7 +21,16 @@ const kindOf = (type) => type.startsWith("image/") ? "image" : type.startsWith("
 const NAME_RE = /^[a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5}$/;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
+// أي خطأ أثناء التهيئة يُسجَّل ولا يُسقط الخادم: تبقى المحادثات النصية تعمل ولو تعطلت أدوات الوسائط
 export default async function chatTools(app, opts) {
+  try {
+    await setup(app, opts);
+  } catch (e) {
+    (app.log?.error ? app.log.error.bind(app.log) : console.error)(`chat_tools disabled: ${e?.stack || e}`);
+  }
+}
+
+async function setup(app, opts) {
   const { pool, auth } = opts;
   if (!pool || !auth) throw new Error("chat_tools: pool and auth are required");
   await pool.query(`
@@ -34,9 +43,15 @@ export default async function chatTools(app, opts) {
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error) => reply.code(code).send({ error });
 
-  // محلل محتوى ثنائي داخل نطاق هذه الإضافة فقط
-  app.addContentTypeParser([...Object.keys(TYPES), "application/octet-stream"], { parseAs: "buffer", bodyLimit: MAX_BYTES },
-    (req, body, done) => done(null, body));
+  // محلل محتوى ثنائي داخل نطاق هذه الإضافة فقط؛ نتخطى أي نوع سجّله الخادم الأساسي مسبقاً (وإلا رمى Fastify خطأ FST_ERR_CTP_ALREADY_PRESENT)
+  for (const type of [...Object.keys(TYPES), "application/octet-stream"]) {
+    try {
+      if (typeof app.hasContentTypeParser === "function" && app.hasContentTypeParser(type)) continue;
+      app.addContentTypeParser(type, { parseAs: "buffer", bodyLimit: MAX_BYTES }, (req, body, done) => done(null, body));
+    } catch (e) {
+      (app.log?.warn ? app.log.warn.bind(app.log) : console.warn)(`chat_tools: parser for ${type} skipped: ${e?.message || e}`);
+    }
+  }
 
   // ---- الرفع: الجسم هو الملف نفسه، ونوعه من content-type (أو من امتداد x-file-name عند octet-stream)
   app.post("/chat/upload", { bodyLimit: MAX_BYTES, config: { rateLimit: false } }, async (req, reply) => {
