@@ -162,7 +162,7 @@ class BizRow extends StatelessWidget {
                     if (b.distanceLabel != null) Text(b.distanceLabel!, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
                   ]),
                 ),
-                if (b.minPrice != null) Padding(padding: const EdgeInsetsDirectional.only(start: 6), child: Text('من ${money(b.minPrice!)}', style: const TextStyle(color: Joy.primary, fontWeight: FontWeight.w700, fontSize: 12.5))),
+                if (b.minPrice != null) Padding(padding: const EdgeInsetsDirectional.only(start: 6), child: Text(b.minPrice == 0 ? 'خدمات مجانية' : 'من ${money(b.minPrice!)}', style: const TextStyle(color: Joy.primary, fontWeight: FontWeight.w700, fontSize: 12.5))),
               ]),
             ]),
           ),
