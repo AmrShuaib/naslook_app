@@ -9,6 +9,7 @@ import '../../api/client.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/nav_provider.dart';
+import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
 import '../../ui/profile_avatar.dart';
@@ -108,6 +109,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
         title: Text(b?.title ?? 'الدائرة'),
         actions: [
           if (b != null && b.canOperate) IconButton(tooltip: 'لوحة التحكم', icon: const Icon(Icons.dashboard_customize_outlined, color: Joy.primary), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BusinessDashboardPage(id: b.id, initial: b)))),
+          if (b != null) IconButton(key: const Key('share-circle'), tooltip: 'مشاركة الدائرة', icon: const Icon(Icons.ios_share_rounded), onPressed: () => shareLink(context, title: b.title, url: circleLink(b.id), subtitle: 'دائرة ${b.category.label} على ناس لايف')),
           if (b != null) IconButton(tooltip: 'على الخريطة', icon: const Icon(Icons.map_outlined), onPressed: () => _onMap(b)),
           IconButton(tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
         ],

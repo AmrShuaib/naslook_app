@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
+import 'core/share/share_links.dart';
 import 'state/admin_providers.dart';
 import 'state/notify_providers.dart';
 
@@ -12,5 +13,6 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   captureAdminMode();
   capturePendingNotification();
+  capturePendingLink();
   runApp(const ProviderScope(child: MainApp()));
 }

@@ -42,6 +42,9 @@ class ApiClient {
 
   String? _token;
 
+  /// يُستدعى عند رفض الخادم طلباً لزائر بلا جلسة (401)؛ تعيّنه واجهة الزائر لعرض الدخول.
+  static void Function()? onUnauthorized;
+
   ApiClient({String? baseUrl, http.Client? httpClient, this.timeout = const Duration(seconds: 20)})
       : baseUrl = _normalize(baseUrl ?? resolveBaseUrl()),
         _http = httpClient ?? http.Client() {
@@ -142,7 +145,7 @@ class ApiClient {
   // ---------------------------------------------------------------------------
 
   Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) =>
-      _send(() => _http.get(_uri(path, query), headers: _headers(json: false)));
+      _send(() => _http.get(_uri(path, query), headers: _headers(json: false)), prompt: false);
 
   Future<Map<String, dynamic>> post(String path, Object body) => _send(
         () => _http.post(_uri(path), headers: _headers(), body: jsonEncode(body)),
@@ -181,7 +184,7 @@ class ApiClient {
   /// أصل WebSocket المطابق لعنوان الخادم.
   String get wsUrl => '${baseUrl.replaceFirst(RegExp(r'^http'), 'ws')}/ws';
 
-  Future<Map<String, dynamic>> _send(Future<http.Response> Function() request, {Duration? timeout}) async {
+  Future<Map<String, dynamic>> _send(Future<http.Response> Function() request, {Duration? timeout, bool prompt = true}) async {
     http.Response res;
     try {
       res = await request().timeout(timeout ?? this.timeout);
@@ -195,6 +198,11 @@ class ApiClient {
 
     final decoded = _decode(res);
     if (res.statusCode >= 200 && res.statusCode < 300) return decoded;
+    // زائر بلا جلسة يحاول فعلاً يتطلب حساباً: نُعلم الواجهة لتعرض الدخول بدل خطأ غامض
+    if (res.statusCode == 401 && _token == null) {
+      if (prompt) onUnauthorized?.call(); // القراءات الخلفية لا تزعج الزائر؛ الأفعال فقط
+      throw const ApiException(401, 'سجّل الدخول أولاً');
+    }
 
     throw ApiException(res.statusCode, _errorMessage(res.statusCode, decoded), body: decoded);
   }

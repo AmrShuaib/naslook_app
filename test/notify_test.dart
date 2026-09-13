@@ -83,7 +83,7 @@ class _Srv {
 }
 
 Future<void> _pump(WidgetTester tester, _Srv srv, Widget home) async {
-  tester.view.physicalSize = const Size(420, 1200);
+  tester.view.physicalSize = const Size(420, 1800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle));

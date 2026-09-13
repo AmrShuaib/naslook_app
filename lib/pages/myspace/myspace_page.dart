@@ -7,6 +7,7 @@ import '../../api/naslife_api.dart';
 import '../../api/notify_api.dart';
 import '../../api/session.dart';
 import '../../core/app_theme.dart';
+import '../../core/share/share_links.dart';
 import '../../core/media/pick_image.dart';
 import '../../core/push/push_service.dart';
 import '../../state/admin_providers.dart';
@@ -91,6 +92,8 @@ class MySpacePage extends ConsumerWidget {
             ],
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.auto_awesome_motion_outlined, color: Joy.accent), title: const Text('منشوراتي على الخريطة'), subtitle: const Text('صور وفيديو وصوت ونص · تعديل وإخفاء وحذف'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyPostsPage()))),
+            const Divider(indent: 16, endIndent: 16),
+            ListTile(key: const Key('share-me'), leading: const Icon(Icons.ios_share_rounded, color: Joy.primary), title: const Text('مشاركة حسابي'), subtitle: Text(me == null ? '' : profileLink(me.nickname).replaceFirst(RegExp(r'^https?://'), ''), textDirection: TextDirection.ltr, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: me == null ? null : () => shareLink(context, title: me.nickname, url: profileLink(me.nickname), subtitle: (p?.isPublic ?? true) ? 'حسابك العام على ناس لايف' : 'حسابك خاص: الرابط يعرض اسمك فقط')),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.shield_outlined, color: Joy.primary), title: const Text('الخصوصية والأمان'), subtitle: const Text('المحظورون والمحادثات المكتومة'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SafetyPage()))),
             const Divider(indent: 16, endIndent: 16),

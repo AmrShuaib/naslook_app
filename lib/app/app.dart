@@ -9,6 +9,10 @@ import '../core/app_theme.dart';
 import '../core/nav_provider.dart';
 import '../api/notify_api.dart';
 import '../core/notify_open.dart';
+import '../core/share/share_links.dart';
+import '../pages/business/business_page.dart';
+import '../pages/profile/public_profile_page.dart';
+import '../api/client.dart';
 import '../core/push/push_service.dart';
 import '../state/app_state.dart';
 import '../state/notify_providers.dart';
@@ -58,6 +62,8 @@ class AuthGate extends ConsumerWidget {
       case AuthStatus.loading:
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       case AuthStatus.signedOut:
+        // رابط عام (دائرة أو حساب) بلا جلسة: نعرض الوجهة كزائر مع شريط للدخول، إلا إن طلب الزائر الدخول
+        if (pendingLink != null && !ref.watch(guestWantsLoginProvider)) return GuestShell(link: pendingLink!);
         return const LoginPage();
       case AuthStatus.signedIn:
         return ref.watch(adminModeProvider) ? const AdminShell() : const HomeShell();
@@ -83,11 +89,20 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowRecovery());
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingNotification());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingLink());
     // يفتح اتصال WebSocket مبكراً، ويجدّد اشتراك الإشعارات الفورية إن كان الإذن ممنوحاً
     Future.microtask(() {
       ref.read(socketProvider);
       PushService.resubscribeIfGranted(ref.read(apiClientProvider));
     });
+  }
+
+  /// رابط عام (`/c/<دائرة>` أو `/u/<نك نيم>`) وصل عند الإقلاع: نفتح وجهته بعد الدخول.
+  void _openPendingLink() {
+    final l = pendingLink;
+    if (l == null || !mounted) return;
+    pendingLink = null;
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => pendingLinkPage(l)));
   }
 
   /// إشعار دفع نُقر عليه والتطبيق مغلق: وصل الرابط `#/n/<id>` عند الإقلاع، نفتح وجهته بعد الدخول.
@@ -180,4 +195,85 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       ),
     );
   }
+}
+
+
+/// وجهة رابط عام: صفحة الدائرة أو الملف العام بالنك نيم.
+Widget pendingLinkPage(PendingLink l) => l.isCircle ? BusinessPage(id: l.value) : PublicProfilePage(handle: l.value);
+
+/// الزائر ضغط «سجّل الدخول» من شريط الزائر.
+final guestWantsLoginProvider = StateProvider<bool>((ref) => false);
+
+/// تصفّح كزائر: الوجهة المشتركة مع شريط سفلي للدخول، وأي فعل يتطلب حساباً (401) يعرض دعوة للدخول.
+class GuestShell extends ConsumerStatefulWidget {
+  final PendingLink link;
+  const GuestShell({super.key, required this.link});
+  @override
+  ConsumerState<GuestShell> createState() => _GuestShellState();
+}
+
+class _GuestShellState extends ConsumerState<GuestShell> {
+  bool _prompting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    ApiClient.onUnauthorized = _promptSignIn;
+  }
+
+  @override
+  void dispose() {
+    if (ApiClient.onUnauthorized == _promptSignIn) ApiClient.onUnauthorized = null;
+    super.dispose();
+  }
+
+  void _login() => ref.read(guestWantsLoginProvider.notifier).state = true;
+
+  void _promptSignIn() {
+    if (_prompting || !mounted) return;
+    _prompting = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (ctx) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('هذا يحتاج حساباً', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            const Text('سجّل الدخول أو أنشئ حساباً في ثوانٍ لتشارك وتطلب وتتابع.', style: TextStyle(color: Joy.textMuted, height: 1.5)),
+            const SizedBox(height: 14),
+            FilledButton(key: const Key('guest-login-sheet'), onPressed: () { Navigator.pop(ctx); _login(); }, child: const Text('سجّل الدخول')),
+          ]),
+        ),
+      );
+      _prompting = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: Joy.bg,
+        body: Column(children: [
+          Expanded(child: pendingLinkPage(widget.link)),
+          Material(
+            color: Joy.surface,
+            child: SafeArea(
+              top: false,
+              child: Container(
+                key: const Key('guest-bar'),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                decoration: const BoxDecoration(border: Border(top: BorderSide(color: Joy.line))),
+                child: Row(children: [
+                  const Icon(Icons.visibility_outlined, size: 18, color: Joy.textMuted),
+                  const SizedBox(width: 8),
+                  const Expanded(child: Text('تتصفح كزائر · للمشاركة والطلب سجّل الدخول', style: TextStyle(fontSize: 13, color: Joy.textMuted, fontWeight: FontWeight.w600), maxLines: 2)),
+                  FilledButton(key: const Key('guest-login'), onPressed: _login, style: FilledButton.styleFrom(minimumSize: const Size(44, 40), padding: const EdgeInsets.symmetric(horizontal: 14)), child: const Text('سجّل الدخول')),
+                ]),
+              ),
+            ),
+          ),
+        ]),
+      );
 }
