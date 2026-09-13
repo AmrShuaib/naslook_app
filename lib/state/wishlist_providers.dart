@@ -14,7 +14,7 @@ final wishKeysProvider = Provider<Set<String>>((ref) => ref.watch(wishlistProvid
 /// يضيف المرجع إلى الأمنيات أو يزيله إن كان محفوظاً، مع رسالة قصيرة.
 Future<void> toggleWish(BuildContext context, WidgetRef ref, {required String kind, required String refId}) async {
   final api = ref.read(apiClientProvider);
-  final current = ref.read(wishlistProvider).value ?? const <WishItem>[];
+  final current = ref.read(wishlistProvider).valueOrNull ?? const <WishItem>[];
   WishItem? existing;
   for (final w in current) {
     if (w.kind == kind && w.refId == refId) existing = w;

@@ -94,7 +94,7 @@ void main() {
     final srv = await _pump(tester, const SearchPage());
     await tester.enterText(find.byType(TextField), 'ايكيا');
     await _settle(tester);
-    expect(srv.queries.last['q'], 'ايكيا');
+    expect(srv.queries.lastWhere((m) => m.containsKey('q'))['q'], 'ايكيا');
     expect(find.text('أنشطة تجارية'), findsOneWidget);
     expect(find.text('منتجات وعروض'), findsOneWidget);
     expect(find.text('يوجد: مكتبة BILLY'), findsOneWidget);

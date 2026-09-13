@@ -327,7 +327,7 @@ class _SaveSearchBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final saved = ref.watch(savedSearchesProvider).value ?? const <SavedSearch>[];
+    final saved = ref.watch(savedSearchesProvider).valueOrNull ?? const <SavedSearch>[];
     final nq = normalizeArabic(q);
     SavedSearch? existing;
     for (final s in saved) {

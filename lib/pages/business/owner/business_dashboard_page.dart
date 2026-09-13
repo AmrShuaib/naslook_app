@@ -187,7 +187,7 @@ class _BizPostsCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final stats = ref.watch(postStatsProvider((postId: null, bizId: bizId, days: 30)));
-    final s = stats.value;
+    final s = stats.valueOrNull;
     if (s == null || s.posts == 0) return const SizedBox.shrink();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const SizedBox(height: 8),

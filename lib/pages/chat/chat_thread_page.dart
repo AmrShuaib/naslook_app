@@ -394,7 +394,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     final t = _text.text.trim();
     if (t.isEmpty) return;
     // تحقق مسبق من الكلمات المحظورة (رسائل النواة لا تمر بفلتر الخادم)
-    final banned = bannedWordIn(t, ref.read(bannedWordsProvider).value ?? const []);
+    final banned = bannedWordIn(t, ref.read(bannedWordsProvider).valueOrNull ?? const []);
     if (banned != null) {
       toast(context, 'الرسالة تحتوي كلمة غير مسموحة: «$banned»', error: true);
       return;
