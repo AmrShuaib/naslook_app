@@ -23,6 +23,7 @@ import '../chat/chat_thread_page.dart';
 import '../posts/post_composer.dart';
 import '../posts/post_viewer.dart';
 import 'map_cluster.dart';
+import 'map_labels.dart';
 import '../../api/client.dart';
 
 /// مستوى التكبير الذي تبدأ عنده لوحة المنطقة بعرض المشاركات تفصيلياً.
@@ -186,6 +187,8 @@ class _MapPageState extends ConsumerState<MapPage> {
             // البلاطات تُمرَّر عبر خادم Naslife نفسه (server/tiles.js) فلا تحتاج مصادر خارجية
             TileLayer(urlTemplate: '${ref.read(apiClientProvider).baseUrl}/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
             MarkerLayer(markers: markers),
+            // أسماء الدوائر بلا تداخل (تُعاد حساباتها مع كل حركة للكاميرا)
+            MapLabelLayer(items: items, dot: dot, onTap: (it) => _tapDot(it, items, dot)),
             const SimpleAttributionWidget(source: Text('© OpenStreetMap contributors', style: TextStyle(fontSize: 10))),
           ],
         ),
