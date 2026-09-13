@@ -23,7 +23,9 @@ class OverlayCanvas extends StatelessWidget {
   final ValueChanged<int>? onEdit;
   /// طبقة تُخفى مؤقتاً (أثناء كتابتها مباشرة على اللوحة في المحرّر)
   final int? hiddenIndex;
-  const OverlayCanvas({super.key, required this.overlays, this.editable = false, this.selected, this.onSelect, this.onChanged, this.onEdit, this.hiddenIndex});
+  /// ظل خلف النص ليُقرأ فوق الصور والفيديو؛ يُعطَّل على لوحة المنشور النصي المسطّحة
+  final bool shadow;
+  const OverlayCanvas({super.key, required this.overlays, this.editable = false, this.selected, this.onSelect, this.onChanged, this.onEdit, this.hiddenIndex, this.shadow = true});
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
@@ -46,7 +48,7 @@ class OverlayCanvas extends StatelessWidget {
                   onSelect: () => onSelect?.call(i),
                   onChanged: (o) => onChanged?.call(i, o),
                   onEdit: () => onEdit?.call(i),
-                  child: OverlayContent(overlay: overlays[i], canvasWidth: w),
+                  child: OverlayContent(overlay: overlays[i], canvasWidth: w, shadow: shadow),
                 ),
               ),
             ),
@@ -58,7 +60,8 @@ class OverlayCanvas extends StatelessWidget {
 class OverlayContent extends StatelessWidget {
   final PostOverlay overlay;
   final double canvasWidth;
-  const OverlayContent({super.key, required this.overlay, required this.canvasWidth});
+  final bool shadow;
+  const OverlayContent({super.key, required this.overlay, required this.canvasWidth, this.shadow = true});
 
   @override
   Widget build(BuildContext context) {
@@ -73,7 +76,7 @@ class OverlayContent extends StatelessWidget {
       fontWeight: o.font == 'plain' ? FontWeight.w600 : FontWeight.w800,
       fontStyle: o.font == 'hand' ? FontStyle.italic : FontStyle.normal,
       fontFamily: o.font == 'serif' ? 'serif' : null,
-      shadows: bg == null ? [const Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 1))] : null,
+      shadows: bg == null && shadow ? [const Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 1))] : null,
     );
     final text = ConstrainedBox(
       constraints: BoxConstraints(maxWidth: canvasWidth * 0.85),

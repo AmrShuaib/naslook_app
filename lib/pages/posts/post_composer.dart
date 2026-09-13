@@ -22,9 +22,14 @@ import 'post_media.dart';
 const int kPostVideoMaxBytes = 25 * 1024 * 1024;
 const Duration kPostVoiceMax = Duration(seconds: 60);
 
-/// ألوان النص والخلفيات المتاحة في المحرّر.
-const _textColors = ['#FFFFFF', '#111111', '#FFD54F', '#FF5252', '#69F0AE', '#40C4FF', '#FF80AB', '#0A6E78'];
-const _bgColors = ['#0A6E78', '#BF3A1E', '#5A4200', '#1F1F2B', '#2E7D32', '#6A1B9A', '#0D47A1', '#37474F'];
+/// ألوان النص (خمسة) ولوحة المنشور النصي (ستة): اللوحة بيضاء والنص أسود افتراضياً، والاختيار بنقرة واحدة على دائرة.
+const _textColors = ['#111111', '#FFFFFF', '#0A6E78', '#BF3A1E', '#FFD54F'];
+const _boardColors = ['#FFFFFF', '#FFF4D6', '#0A6E78', '#BF3A1E', '#2E7D32', '#1F1F2B'];
+const kTextBoardDefault = '#FFFFFF';
+
+/// لون نص مقروء على لوحة بلون معيّن: أسود على الفاتح وأبيض على الداكن.
+String contrastTextColor(String? boardHex) => colorFromHex(boardHex, Colors.white).computeLuminance() > .5 ? '#111111' : '#FFFFFF';
+bool _isAutoTextColor(String c) => c == '#111111' || c == '#FFFFFF';
 const _stickers = ['🔥', '❤️', '😍', '😂', '👏', '🎉', '✨', '⭐', '💯', '📍', '🛒', '🏷️', '💰', '🎁', '☕', '🍔', '🍕', '🍰', '🚗', '🏨', '🎬', '🎵', '📸', '🏖️', '🕌', '🌙', '☀️', '🌴', '⚡', '🚀', '💼', '📈', '🤝', '📞', '💬', '✅', '🆕', '🆓', '🔖', '👀'];
 
 /// محرّر منشور الخريطة على طريقة سناب شات: اختر صورة أو فيديو قصير أو تسجيل صوتي أو نص، ثم أضف نصوصاً وملصقات
@@ -48,7 +53,7 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
   String? mime, fileName;
   late String? mediaUrl = widget.edit?.mediaUrl;
   late int? durationSec = widget.edit?.durationSec;
-  late String bg = widget.edit?.bg ?? '#0A6E78';
+  late String bg = widget.edit?.bg ?? kTextBoardDefault;
   late List<PostOverlay> overlays = List.of(widget.edit?.overlays ?? const <PostOverlay>[]);
   int? selected;
   /// الطبقة النصية قيد الكتابة المباشرة على اللوحة (بلا نافذة منفصلة)
@@ -224,7 +229,8 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
       if (i == null) {
         overlays = [
           ...overlays,
-          PostOverlay(type: 'text', text: '', x: .5, y: overlays.isEmpty ? .5 : (.35 + overlays.length * .08).clamp(.2, .85), scale: kind == 'text' && overlays.isEmpty ? 1.5 : 1.0),
+          PostOverlay(type: 'text', text: '', x: .5, y: overlays.isEmpty ? .5 : (.35 + overlays.length * .08).clamp(.2, .85), scale: kind == 'text' && overlays.isEmpty ? 1.5 : 1.0,
+              color: kind == 'text' ? contrastTextColor(bg) : '#FFFFFF'),
         ];
         i = overlays.length - 1;
       }
@@ -254,6 +260,13 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
     _inlineFocus.unfocus();
   }
 
+  /// يغيّر لون اللوحة، ويقلب النصوص ذات اللون الافتراضي (أسود/أبيض) إلى اللون المقروء على اللوحة الجديدة.
+  void _setBoard(String hex) => setState(() {
+        bg = hex;
+        final auto = contrastTextColor(hex);
+        overlays = [for (final o in overlays) if (!o.isSticker && _isAutoTextColor(o.color)) o.copyWith(color: auto) else o];
+      });
+
   void _setEditing({String? color, String? bg, bool clearBg = false, double? scale, String? align}) {
     final i = editing;
     if (i == null) return;
@@ -269,7 +282,7 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
     final bgc = o.bg == null ? null : colorFromHex(o.bg);
     final style = TextStyle(
       color: color, fontSize: size, height: 1.25, fontWeight: FontWeight.w800,
-      shadows: bgc == null ? [const Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 1))] : null,
+      shadows: bgc == null && kind != 'text' ? [const Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 1))] : null,
     );
     Widget field = ConstrainedBox(
       constraints: BoxConstraints(maxWidth: w * .85, minWidth: size * 3),
@@ -301,58 +314,74 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
     );
   }
 
-  /// شريط أدوات النص أثناء الكتابة: اللون، خلفية اختيارية، الحجم، المحاذاة، وإنهاء.
+  /// شريط الكتابة المختصر تحت اللوحة (فوق لوحة المفاتيح مباشرة): «تم»، خمسة ألوان للنص، وحجم يتبدّل بنقرة.
   Widget _inlineToolbar() {
     final o = overlays[editing!];
-    final light = colorFromHex(o.color).computeLuminance() > .5;
-    final nextAlign = switch (o.align) { 'center' => 'start', 'start' => 'end', _ => 'center' };
-    final alignIcon = switch (o.align) { 'start' => Icons.format_align_right_rounded, 'end' => Icons.format_align_left_rounded, _ => Icons.format_align_center_rounded };
+    final sizes = [1.0, 1.5, 2.2];
+    final next = sizes[(sizes.indexWhere((v) => (v - o.scale).abs() < .05) + 1) % sizes.length];
     return Container(
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      decoration: BoxDecoration(color: Colors.black.withValues(alpha: .62), borderRadius: BorderRadius.circular(16)),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(children: [for (final c in _textColors) Padding(padding: const EdgeInsets.symmetric(horizontal: 3), child: _swatch(c, o.color == c, () => _setEditing(color: c)))]),
+      key: const ValueKey('inline-toolbar'),
+      color: const Color(0xFF15181D),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      child: Row(children: [
+        FilledButton(key: const ValueKey('inline-done'), style: FilledButton.styleFrom(minimumSize: const Size(64, 40), padding: const EdgeInsets.symmetric(horizontal: 18)), onPressed: _commitText, child: const Text('تم', style: TextStyle(fontWeight: FontWeight.w700))),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            for (final c in _textColors) Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: _swatch(c, o.color == c, () => _setEditing(color: c), key: ValueKey('text-$c'))),
+          ]),
         ),
-        const SizedBox(height: 6),
-        Row(children: [
-          _mini(o.bg == null ? Icons.format_color_fill_outlined : Icons.format_color_reset_outlined, o.bg == null ? 'خلفية' : 'بلا خلفية',
-              () => o.bg == null ? _setEditing(bg: light ? '#000000AA' : '#FFFFFFDD') : _setEditing(clearBg: true)),
-          _mini(Icons.text_decrease_rounded, 'أصغر', () => _setEditing(scale: (o.scale - .2).clamp(.5, 4.0))),
-          _mini(Icons.text_increase_rounded, 'أكبر', () => _setEditing(scale: (o.scale + .2).clamp(.5, 4.0))),
-          _mini(alignIcon, 'محاذاة', () => _setEditing(align: nextAlign)),
-          const Spacer(),
-          FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(56, 36), padding: const EdgeInsets.symmetric(horizontal: 14)), onPressed: _commitText, child: const Text('تم')),
-        ]),
+        Tooltip(
+          message: 'حجم النص',
+          child: InkWell(
+            key: const ValueKey('inline-size'),
+            onTap: () => _setEditing(scale: next),
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: 44, height: 40, alignment: Alignment.center,
+              decoration: BoxDecoration(color: const Color(0xFF22262C), borderRadius: BorderRadius.circular(10)),
+              child: Text('Aa', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: o.scale < 1.2 ? 13 : o.scale < 1.9 ? 16 : 20)),
+            ),
+          ),
+        ),
       ]),
     );
   }
 
-  Widget _mini(IconData icon, String label, VoidCallback onTap) => Tooltip(
-        message: label,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Icon(icon, color: Colors.white, size: 22)),
-        ),
-      );
-
-  /// منتقي لون الخلفية العامة للمنشور النصي: ألوان جاهزة أو درجة وتشبّع وإضاءة.
-  Future<void> _bgPicker() => showModalBottomSheet<void>(
+  /// لون اللوحة للمنشور النصي: ستة ألوان جاهزة في ورقة صغيرة، بلا منزلقات.
+  Future<void> _boardPicker() => showModalBottomSheet<void>(
         context: context,
         backgroundColor: const Color(0xFF1C1F24),
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-        builder: (_) => _ColorPickerSheet(initial: bg, onPick: (hex) => setState(() => bg = hex)),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('لون اللوحة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+              const SizedBox(height: 4),
+              const Text('الافتراضي أبيض بنص أسود، ويتبدّل لون النص تلقائياً ليبقى مقروءاً', style: TextStyle(color: Colors.white54, fontSize: 12.5)),
+              const SizedBox(height: 14),
+              StatefulBuilder(
+                builder: (_, setSheet) => Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  for (final hex in _boardColors)
+                    _swatch(hex, bg == hex, () { _setBoard(hex); setSheet(() {}); }, key: ValueKey('bg-$hex'), size: 40),
+                ]),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(width: double.infinity, child: FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('تم'))),
+            ]),
+          ),
+        ),
       );
 
-  Widget _swatch(String? hex, bool on, VoidCallback onTap) => InkWell(
+  Widget _swatch(String hex, bool on, VoidCallback onTap, {Key? key, double size = 30}) => InkWell(
+        key: key,
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: Container(
-          width: 30, height: 30,
-          decoration: BoxDecoration(color: hex == null ? Colors.transparent : colorFromHex(hex), shape: BoxShape.circle, border: Border.all(color: on ? Joy.sun : Colors.white30, width: on ? 3 : 1.5)),
-          child: hex == null ? const Icon(Icons.block_rounded, size: 16, color: Colors.white54) : null,
+          width: size, height: size,
+          decoration: BoxDecoration(color: colorFromHex(hex), shape: BoxShape.circle, border: Border.all(color: on ? Joy.sun : Colors.white38, width: on ? 3 : 1.5)),
+          child: on ? Icon(Icons.check_rounded, size: size * .5, color: colorFromHex(hex).computeLuminance() > .5 ? Colors.black : Colors.white) : null,
         ),
       );
 
@@ -495,13 +524,15 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
 
   Widget _editStage() => Column(children: [
         Row(children: [
-          IconButton(tooltip: 'رجوع', onPressed: () => widget.edit != null ? Navigator.pop(context) : setState(() { kind = null; bytes = null; overlays = []; selected = null; }), icon: const Icon(Icons.arrow_back_rounded, color: Colors.white)),
+          IconButton(tooltip: 'رجوع', onPressed: () => widget.edit != null ? Navigator.pop(context) : setState(() { kind = null; bytes = null; overlays = []; selected = null; editing = null; }), icon: const Icon(Icons.arrow_back_rounded, color: Colors.white)),
           Expanded(child: Text(switch (kind) { 'image' => 'صورة', 'video' => 'فيديو قصير', 'audio' => 'تسجيل صوتي', _ => 'نص' }, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16))),
-          TextButton.icon(onPressed: () => setState(() => pro = !pro), icon: Icon(pro ? Icons.workspace_premium_rounded : Icons.workspace_premium_outlined, color: Joy.sun, size: 18), label: Text(pro ? 'احترافي ✓' : 'خيارات احترافية', style: const TextStyle(color: Colors.white))),
+          if (editing == null)
+            TextButton.icon(onPressed: () => setState(() => pro = !pro), icon: Icon(pro ? Icons.workspace_premium_rounded : Icons.workspace_premium_outlined, color: Joy.sun, size: 18), label: Text(pro ? 'احترافي ✓' : 'خيارات احترافية', style: const TextStyle(color: Colors.white))),
         ]),
         Expanded(
           child: LayoutBuilder(builder: (context, box) {
-            final w = (box.maxHeight * 9 / 16).clamp(200.0, box.maxWidth - 72);
+            // أثناء الكتابة تأخذ اللوحة كل المساحة المتبقية فوق لوحة المفاتيح؛ وإلا تُترك حافة للأدوات الجانبية
+            final w = (box.maxHeight * 9 / 16).clamp(200.0, box.maxWidth - (editing != null ? 16 : 72));
             return Stack(children: [
               Center(
                 child: SizedBox(
@@ -518,28 +549,30 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
                         onChanged: (i, o) => setState(() => overlays[i] = o),
                         onEdit: (i) => overlays[i].isSticker ? null : _startText(index: i),
                         hiddenIndex: editing,
+                        shadow: kind != 'text',
                       ),
                       if (editing != null) _inlineEditor(w, box.maxHeight),
                     ]),
                   ),
                 ),
               ),
-              // أدوات التحرير على جانب البداية
-              PositionedDirectional(
-                start: 8, top: 8,
-                child: Column(children: [
-                  _tool(Icons.title_rounded, 'نص', () => _startText()),
-                  _tool(Icons.emoji_emotions_outlined, 'ملصق', _stickerSheet),
-                  if (kind == 'text') _tool(Icons.palette_outlined, 'الخلفية', _bgPicker),
-                  if (selected != null) _tool(Icons.delete_outline_rounded, 'حذف', () => setState(() { overlays.removeAt(selected!); selected = null; })),
-                  if (selected != null && !overlays[selected!].isSticker && editing == null) _tool(Icons.edit_outlined, 'تعديل', () => _startText(index: selected)),
-                ]),
-              ),
-              if (editing != null) Positioned(left: 8, right: 8, bottom: 8, child: _inlineToolbar()),
+              // أدوات التحرير على جانب البداية (تختفي أثناء الكتابة حتى لا تزاحم النص)
+              if (editing == null)
+                PositionedDirectional(
+                  start: 8, top: 8,
+                  child: Column(children: [
+                    _tool(Icons.title_rounded, 'نص', () => _startText()),
+                    _tool(Icons.emoji_emotions_outlined, 'ملصق', _stickerSheet),
+                    if (kind == 'text') _tool(Icons.palette_outlined, 'اللوحة', _boardPicker),
+                    if (selected != null) _tool(Icons.delete_outline_rounded, 'حذف', () => setState(() { overlays.removeAt(selected!); selected = null; })),
+                    if (selected != null && !overlays[selected!].isSticker) _tool(Icons.edit_outlined, 'تعديل', () => _startText(index: selected)),
+                  ]),
+                ),
             ]);
           }),
         ),
-        _bottomPanel(),
+        // أثناء الكتابة: شريط مختصر تحت اللوحة بدل الحقول، فتبقى الكتابة مرئية فوق لوحة المفاتيح
+        if (editing != null) _inlineToolbar() else _bottomPanel(),
       ]);
 
   Widget _tool(IconData icon, String label, VoidCallback onTap) => Padding(
@@ -558,7 +591,7 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
         decoration: const BoxDecoration(color: Color(0xFF15181D), borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * (pro ? .5 : .3)),
+          constraints: BoxConstraints(maxHeight: (MediaQuery.sizeOf(context).height - MediaQuery.viewInsetsOf(context).bottom) * (pro ? .55 : .32)),
           child: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
               TextField(controller: caption, maxLines: 2, maxLength: 500, style: const TextStyle(color: Colors.white, fontSize: 14), decoration: const InputDecoration(hintText: 'تعليق (اختياري)…', hintStyle: TextStyle(color: Colors.white38), counterText: '', filled: true, fillColor: Color(0xFF22262C), isDense: true)),
@@ -620,63 +653,4 @@ class _PostComposerPageState extends ConsumerState<PostComposerPage> {
           ),
         ),
       );
-}
-
-/// ورقة اختيار لون: ألوان جاهزة + درجة اللون والتشبّع والإضاءة مع معاينة حية.
-class _ColorPickerSheet extends StatefulWidget {
-  final String initial;
-  final ValueChanged<String> onPick;
-  const _ColorPickerSheet({required this.initial, required this.onPick});
-  @override
-  State<_ColorPickerSheet> createState() => _ColorPickerSheetState();
-}
-
-class _ColorPickerSheetState extends State<_ColorPickerSheet> {
-  static const _presets = [..._bgColors, '#C62828', '#EF6C00', '#F9A825', '#00897B', '#1565C0', '#4527A0', '#AD1457', '#212121'];
-  late HSVColor hsv = HSVColor.fromColor(colorFromHex(widget.initial, Joy.primary));
-
-  void _set(HSVColor c) {
-    setState(() => hsv = c);
-    widget.onPick(hexFromColor(c.toColor()));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = hsv.toColor();
-    const label = TextStyle(color: Colors.white70, fontSize: 12);
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(20, 16, 20, 16 + MediaQuery.viewInsetsOf(context).bottom),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('لون الخلفية', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
-          const SizedBox(height: 12),
-          Container(
-            height: 56,
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), gradient: LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [c, Color.lerp(c, Colors.black, .45)!])),
-            alignment: Alignment.center,
-            child: const Text('معاينة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18, shadows: [Shadow(color: Colors.black54, blurRadius: 6)])),
-          ),
-          const SizedBox(height: 12),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final hex in _presets)
-              InkWell(
-                key: ValueKey('bg-$hex'),
-                onTap: () => _set(HSVColor.fromColor(colorFromHex(hex))),
-                borderRadius: BorderRadius.circular(999),
-                child: Container(
-                  width: 34, height: 34,
-                  decoration: BoxDecoration(color: colorFromHex(hex), shape: BoxShape.circle, border: Border.all(color: hexFromColor(c) == hex ? Joy.sun : Colors.white24, width: hexFromColor(c) == hex ? 3 : 1.5)),
-                ),
-              ),
-          ]),
-          const SizedBox(height: 8),
-          Row(children: [const SizedBox(width: 64, child: Text('الدرجة', style: label)), Expanded(child: Slider(value: hsv.hue, min: 0, max: 360, activeColor: c, onChanged: (v) => _set(hsv.withHue(v))))]),
-          Row(children: [const SizedBox(width: 64, child: Text('التشبّع', style: label)), Expanded(child: Slider(value: hsv.saturation, min: 0, max: 1, activeColor: c, onChanged: (v) => _set(hsv.withSaturation(v))))]),
-          Row(children: [const SizedBox(width: 64, child: Text('الإضاءة', style: label)), Expanded(child: Slider(value: hsv.value.clamp(.12, 1.0), min: .12, max: 1, activeColor: c, onChanged: (v) => _set(hsv.withValue(v))))]),
-          const SizedBox(height: 4),
-          SizedBox(width: double.infinity, child: FilledButton(onPressed: () => Navigator.pop(context), child: const Text('تم'))),
-        ]),
-      ),
-    );
-  }
 }

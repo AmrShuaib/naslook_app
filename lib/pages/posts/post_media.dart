@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../api/client.dart';
-import '../../core/app_theme.dart';
 import '../../core/media/video_view.dart';
 import '../../core/media/voice_player.dart';
 import 'overlay_canvas.dart';
@@ -42,8 +41,8 @@ class PostMedia extends StatelessWidget {
       case 'audio':
         return _AudioCard(url: url, bytes: bytes, mime: mime, durationSec: durationSec, play: play);
       default:
-        final c = colorFromHex(bg, Joy.primary);
-        return Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [c, Color.lerp(c, Colors.black, .45)!])));
+        // لوحة المنشور النصي: لون مسطّح (الافتراضي أبيض) حتى يبقى النص الأسود واضحاً بلا تدرّج يعكّر الخلفية
+        return Container(color: colorFromHex(bg, Colors.white));
     }
   }
 

@@ -296,7 +296,7 @@ class PostView extends ConsumerWidget {
               borderRadius: BorderRadius.circular(box.maxWidth > w + 8 ? 20 : 0),
               child: Stack(fit: StackFit.expand, children: [
                 PostMedia(kind: p.kind, url: p.mediaUrl, bg: p.bg, durationSec: p.durationSec, play: active),
-                IgnorePointer(child: OverlayCanvas(overlays: p.overlays)),
+                IgnorePointer(child: OverlayCanvas(overlays: p.overlays, shadow: p.kind != 'text')),
                 // مناطق النقر للتنقل (النصف الأعلى فقط حتى تبقى أدوات الفيديو والأزرار متاحة)
                 if (p.kind != 'video')
                   Positioned(
