@@ -46,5 +46,6 @@ _flutter.buildConfig = {"engineRevision":"06a2e2a110089dff50fe635cffd2a61e1b24fb
 // على الخادم تسمح بالسكربتات من الأصل نفسه فقط، فتبقى الصفحة بيضاء.
 // لا Service Worker: نريد وصول كل تحديث فوراً دون ملفات مخزّنة قديمة.
 _flutter.loader.load({
-  config: { canvasKitBaseUrl: "canvaskit/" },
+  // useColorEmoji: الإيموجي الملوّنة (تفاعلات القلب والوجوه) بدل الأحادية؛ يُحمَّل خط Noto Color Emoji مرة واحدة عند أول ظهور
+  config: { canvasKitBaseUrl: "canvaskit/", useColorEmoji: true },
 });
