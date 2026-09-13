@@ -10,6 +10,7 @@ import '../pages/events/events_page.dart';
 import '../pages/market/market_page.dart';
 import '../pages/myspace/wishlist_page.dart';
 import '../pages/posts/my_posts_page.dart';
+import '../pages/search/search_page.dart';
 import '../pages/wallet/wallet_page.dart';
 import '../state/notify_providers.dart';
 import '../state/app_state.dart';
@@ -69,6 +70,8 @@ Widget? notificationTarget(AppNotification n) {
     case 'wish_available':
     case 'wish_event_reminder':
       return const WishlistPage();
+    case 'saved_search_match':
+      return SearchPage(initialQuery: n.str('q') ?? '');
     case 'content_autohidden':
       return const AdminShell(standalone: false, initialSection: 5);
   }
@@ -111,6 +114,8 @@ Widget? notificationTarget(AppNotification n) {
     case 'wish_available':
     case 'wish_event_reminder':
       return (icon: Icons.bookmark_added_outlined, color: Joy.accent);
+    case 'saved_search_match':
+      return (icon: Icons.saved_search_rounded, color: Joy.primary);
   }
   return (icon: Icons.notifications_outlined, color: Joy.textMuted);
 }

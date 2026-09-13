@@ -21,6 +21,7 @@ import '../events/events_page.dart';
 import '../market/market_page.dart';
 import '../posts/my_posts_page.dart';
 import 'safety_page.dart';
+import 'saved_searches_page.dart';
 import 'wishlist_page.dart';
 import '../wallet/wallet_page.dart';
 
@@ -92,6 +93,8 @@ class MySpacePage extends ConsumerWidget {
             ListTile(leading: const Icon(Icons.auto_awesome_motion_outlined, color: Joy.accent), title: const Text('منشوراتي على الخريطة'), subtitle: const Text('صور وفيديو وصوت ونص · تعديل وإخفاء وحذف'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyPostsPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.shield_outlined, color: Joy.primary), title: const Text('الخصوصية والأمان'), subtitle: const Text('المحظورون والمحادثات المكتومة'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SafetyPage()))),
+            const Divider(indent: 16, endIndent: 16),
+            ListTile(leading: const Icon(Icons.saved_search_rounded, color: Joy.primary), title: const Text('بحوثي المحفوظة'), subtitle: const Text('تنبيه عند ظهور جديد يطابق ما تبحث عنه'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SavedSearchesPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.bookmark_added_outlined, color: Joy.accent), title: const Text('قائمة أمنياتي'), subtitle: const Text('منتجات وخدمات وفعاليات ومنشورات أتمناها'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WishlistPage()))),
             const Divider(indent: 16, endIndent: 16),

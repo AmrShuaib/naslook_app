@@ -7,7 +7,12 @@ import '../../api/commerce_models.dart';
 import '../../api/models.dart';
 import '../../api/search_api.dart';
 import '../../core/app_theme.dart';
+import '../../state/app_state.dart';
 import '../../state/search_providers.dart';
+import '../myspace/saved_searches_page.dart';
+import '../../state/saved_search_providers.dart';
+import '../../api/safety_api.dart';
+import '../../api/saved_search_api.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../business/business_list.dart';
@@ -86,6 +91,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             child: Row(children: [_typeChip('الكل', null), for (final (k, label) in searchTypes) _typeChip(label, k)]),
           ),
         ),
+        if (q.isNotEmpty) _SaveSearchBar(q: q, type: type),
         const SizedBox(height: 4),
         Expanded(
           child: q.isEmpty
@@ -312,3 +318,72 @@ class EventResultRow extends StatelessWidget {
 
 String _km(double d) => d < 1 ? '${(d * 1000).round()} م' : '${d.toStringAsFixed(d < 10 ? 1 : 0)} كم';
 String _month(int m) => const ['ينا', 'فبر', 'مار', 'أبر', 'ماي', 'يون', 'يول', 'أغس', 'سبت', 'أكت', 'نوف', 'ديس'][m - 1];
+
+/// شريط «نبّهني عند ظهور جديد»: يحفظ البحث الحالي (مع نطاق اختياري حول موقع المستخدم) أو يبيّن أنه محفوظ.
+class _SaveSearchBar extends ConsumerWidget {
+  final String q;
+  final String? type;
+  const _SaveSearchBar({required this.q, this.type});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final saved = ref.watch(savedSearchesProvider).value ?? const <SavedSearch>[];
+    final nq = normalizeArabic(q);
+    SavedSearch? existing;
+    for (final s in saved) {
+      if (normalizeArabic(s.q) == nq) existing = s;
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 2, 20, 0),
+      child: existing != null
+          ? Row(children: [
+              const Icon(Icons.notifications_active_outlined, size: 18, color: Joy.primary),
+              const SizedBox(width: 6),
+              Expanded(child: Text(existing.active ? 'ستصلك تنبيهات عند ظهور جديد يطابق «${existing.q}»' : 'التنبيه لهذا البحث متوقف', style: const TextStyle(fontSize: 12.5, color: Joy.textMuted))),
+              TextButton(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SavedSearchesPage())), child: const Text('إدارة')),
+            ])
+          : Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: OutlinedButton.icon(
+                key: const ValueKey('save-search'),
+                onPressed: () => _save(context, ref),
+                icon: const Icon(Icons.notification_add_outlined, size: 18),
+                label: Text('نبّهني عند ظهور جديد يطابق «$q»', maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+            ),
+    );
+  }
+
+  Future<void> _save(BuildContext context, WidgetRef ref) async {
+    final radius = await showModalBottomSheet<int>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(title: Text('نبّهني عند ظهور جديد يطابق «$q»', style: const TextStyle(fontWeight: FontWeight.w700)), subtitle: const Text('يُفحص كل 10 دقائق ويصلك إشعار واحد بكل جديد')),
+          ListTile(leading: const Icon(Icons.public_rounded), title: const Text('في أي مكان'), onTap: () => Navigator.pop(ctx, 0)),
+          ListTile(leading: const Icon(Icons.near_me_outlined), title: const Text('ضمن 5 كم من موقعي'), onTap: () => Navigator.pop(ctx, 5)),
+          ListTile(leading: const Icon(Icons.location_city_rounded), title: const Text('ضمن 15 كم من موقعي'), onTap: () => Navigator.pop(ctx, 15)),
+          ListTile(leading: const Icon(Icons.map_outlined), title: const Text('ضمن 50 كم من موقعي'), onTap: () => Navigator.pop(ctx, 50)),
+        ]),
+      ),
+    );
+    if (radius == null || !context.mounted) return;
+    try {
+      double? lat, lng;
+      if (radius > 0) {
+        final loc = await ref.read(userLocationProvider.future);
+        if (loc == null) {
+          if (context.mounted) toast(context, 'فعّل الموقع أو حدّد موقعك على الخريطة لاستخدام النطاق', error: true);
+          return;
+        }
+        lat = loc.latitude;
+        lng = loc.longitude;
+      }
+      await ref.read(apiClientProvider).saveSearch(q, types: savedTypesFor(type), lat: lat, lng: lng, radiusKm: radius > 0 ? radius : null);
+      ref.invalidate(savedSearchesProvider);
+      if (context.mounted) toast(context, 'سننبّهك عند ظهور جديد يطابق «$q»');
+    } catch (e) {
+      if (context.mounted) toast(context, e.toString().contains('too-many') ? 'بلغت الحد الأقصى (20 بحثاً محفوظاً)' : 'تعذر حفظ البحث', error: true);
+    }
+  }
+}
