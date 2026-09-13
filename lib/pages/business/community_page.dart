@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/client.dart';
 import '../../api/community_api.dart';
@@ -11,14 +12,21 @@ import '../../api/naslife_api.dart';
 import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/media/pick_image.dart';
+import '../../core/media/voice_player.dart';
+import '../../core/media/voice_record.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
 import '../../state/community_providers.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/widgets.dart';
 
-/// مساحة مجتمع الدائرة: خيط عام يشبه المحادثة ينشر فيه المستخدمون رسائل وصوراً مصنّفة بمواضيع،
-/// مع ردود وإعجابات، وتثبيت أو إخفاء من إدارة الدائرة، وبلاغات. يُحدَّث تلقائياً كل 15 ثانية.
+/// محتوى مشاركة أو رد جاهز للإرسال: نص و/أو صور مرفوعة و/أو تسجيل صوتي مرفوع.
+typedef CommunityDraft = ({String topic, String text, List<String> images, String? audio, int? audioMs});
+
+String _fmt(Duration d) => '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+
+/// مساحة مجتمع الدائرة: خيط عام يشبه المحادثة ينشر فيه المستخدمون نصاً أو تسجيلاً صوتياً أو صوراً (حتى 10)
+/// مصنّفة بمواضيع، مع ردود بالطرق نفسها وإعجابات، وتثبيت أو إخفاء من إدارة الدائرة، وبلاغات. يُحدَّث تلقائياً كل 15 ثانية.
 class CommunityPage extends ConsumerStatefulWidget {
   final String bizId;
   final String title;
@@ -94,16 +102,16 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
     }
   }
 
-  Future<void> _send(String topic, String text, List<String> images) async {
+  Future<void> _send(CommunityDraft d) async {
     final api = ref.read(apiClientProvider);
-    final banned = bannedWordIn(text, ref.read(bannedWordsProvider).valueOrNull ?? const []);
+    final banned = bannedWordIn(d.text, ref.read(bannedWordsProvider).valueOrNull ?? const []);
     if (banned != null) {
       toast(context, 'النص يحتوي كلمة غير مسموحة: «$banned»', error: true);
       throw StateError('banned');
     }
-    await api.communityPost(widget.bizId, topic: topic, text: text, images: images);
+    await api.communityPost(widget.bizId, topic: d.topic, text: d.text, images: d.images, audio: d.audio, audioMs: d.audioMs);
     if (!mounted) return;
-    if (_topic != null && _topic != topic) _setTopic(null);
+    if (_topic != null && _topic != d.topic) _setTopic(null);
     ref.invalidate(communityFeedProvider(_arg));
   }
 
@@ -210,7 +218,7 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
                       EmptyState(
                         icon: Icons.forum_outlined,
                         title: _topic == null ? 'المساحة هادئة الآن' : 'لا مشاركات في هذا الموضوع',
-                        subtitle: 'كن أول من يشارك تجربته أو صورة أو سؤالاً هنا.',
+                        subtitle: 'كن أول من يشارك تجربته أو صورة أو تسجيلاً صوتياً هنا.',
                       ),
                     ])
                   : ListView.builder(
@@ -260,10 +268,10 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
             const Text('مساحة عامة لزوار الدائرة ومرتاديها: شاركوا تجاربكم وصوركم، اسألوا، وانصحوا بعضكم. المشاركات المصنّفة «سؤال» أو «تنبيه» تصل إلى فريق الدائرة للرد.',
                 style: TextStyle(height: 1.6, color: Joy.text)),
             const SizedBox(height: 12),
+            const _Rule(icon: Icons.mic_none_rounded, text: 'شارك بنص أو تسجيل صوتي أو صور (حتى 10 صور)، والردود بالطرق نفسها'),
             const _Rule(icon: Icons.verified_user_outlined, text: 'تظهر شارة «فريق الدائرة» على مشاركات الإدارة والموظفين'),
             const _Rule(icon: Icons.push_pin_outlined, text: 'تثبّت الإدارة المشاركات المهمة في أعلى المساحة'),
             const _Rule(icon: Icons.flag_outlined, text: 'أبلغ عن أي مشاركة مسيئة؛ تُخفى تلقائياً بعد عدة بلاغات'),
-            const _Rule(icon: Icons.photo_library_outlined, text: 'حتى 4 صور في المشاركة، و1000 حرف'),
           ]),
         ),
       );
@@ -326,7 +334,7 @@ IconData topicIcon(String key) => switch (key) {
     };
 Color topicColor(String key) => switch (key) { 'photo' => Joy.primary, 'question' => const Color(0xFF6D4CC9), 'tip' => Joy.success, 'alert' => Joy.accent, _ => Joy.textMuted };
 
-/// بطاقة مشاركة: الكاتب وشاراته والوقت والموضوع، النص، شبكة الصور، ثم الإعجاب والردود.
+/// بطاقة مشاركة: الكاتب وشاراته والوقت والموضوع، النص، التسجيل الصوتي، شبكة الصور، ثم الإعجاب والردود.
 class CommunityPostCard extends StatelessWidget {
   final CommunityPost post;
   final bool canModerate, expanded;
@@ -370,6 +378,7 @@ class CommunityPostCard extends StatelessWidget {
               padding: const EdgeInsets.only(top: 8),
               child: Text(p.text, style: const TextStyle(fontSize: 15, height: 1.55), maxLines: expanded ? null : 6, overflow: expanded ? null : TextOverflow.ellipsis),
             ),
+          if (p.audio != null) Padding(padding: const EdgeInsets.only(top: 8), child: CommunityVoice(url: p.audio, ms: p.audioMs)),
           if (p.images.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: CommunityImages(images: p.images)),
           const SizedBox(height: 6),
           Row(children: [
@@ -415,23 +424,126 @@ class _Action extends StatelessWidget {
       );
 }
 
-/// شبكة صور المشاركة (1 إلى 4) مع عرض ملء الشاشة عند اللمس.
+/// مشغّل تسجيل صوتي داخل مشاركة أو رد: تشغيل/إيقاف وشريط تقدّم ومدة. يعمل عبر [VoicePlayer] (play() داخل حدث اللمس لأجل iOS).
+/// يقبل رابطاً مرفوعاً أو بايتات محلية (معاينة قبل الإرسال).
+class CommunityVoice extends StatefulWidget {
+  final String? url;
+  final Uint8List? bytes;
+  final String? mime;
+  final int? ms;
+  final bool compact;
+  const CommunityVoice({super.key, this.url, this.bytes, this.mime, this.ms, this.compact = false});
+  @override
+  State<CommunityVoice> createState() => _CommunityVoiceState();
+}
+
+class _CommunityVoiceState extends State<CommunityVoice> {
+  VoicePlayer? _player;
+  StreamSubscription<VoiceState>? _sub;
+  Object? _err;
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    _player?.dispose();
+    super.dispose();
+  }
+
+  void _toggle() {
+    if (_err != null && widget.url != null) {
+      launchUrl(Uri.parse(mediaUrl(widget.url!)), mode: LaunchMode.externalApplication);
+      return;
+    }
+    var p = _player;
+    if (p == null) {
+      p = VoicePlayer()..setSource(url: widget.url == null ? null : mediaUrl(widget.url!), bytes: widget.bytes, mime: widget.mime);
+      _sub = p.changes.listen((s) {
+        if (s.error != null) _fail(s.error!);
+        if (mounted) setState(() {});
+      });
+      setState(() => _player = p);
+    }
+    if (p.state.playing) {
+      p.pause();
+    } else {
+      p.play().catchError(_fail); // قبل أي await: iOS لا يقبل بدء التشغيل إلا داخل حدث المستخدم
+    }
+  }
+
+  void _fail(Object e) {
+    if (!mounted || _err != null) return;
+    setState(() => _err = e);
+    toast(context, 'تعذر تشغيل التسجيل على هذا الجهاز، اضغط عليه مجدداً لفتحه في المتصفح', error: true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = _player;
+    final s = p?.state ?? const VoiceState();
+    final total = s.duration ?? (widget.ms != null ? Duration(milliseconds: widget.ms!) : Duration.zero);
+    final frac = total.inMilliseconds == 0 ? 0.0 : (s.position.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0);
+    final size = widget.compact ? 32.0 : 40.0;
+    return Container(
+      padding: EdgeInsets.fromLTRB(6, widget.compact ? 4 : 6, 12, widget.compact ? 4 : 6),
+      decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)),
+      child: Row(children: [
+        Material(
+          color: Joy.primary,
+          shape: const CircleBorder(),
+          child: InkWell(
+            key: const Key('community-voice-play'),
+            customBorder: const CircleBorder(),
+            onTap: _toggle,
+            child: SizedBox(
+              width: size,
+              height: size,
+              child: s.loading && !s.playing && _err == null
+                  ? const Padding(padding: EdgeInsets.all(10), child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : Icon(_err != null ? Icons.open_in_new_rounded : s.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Joy.primaryOn, size: widget.compact ? 20 : 24),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: SliderTheme(
+            data: SliderThemeData(trackHeight: 3, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5), overlayShape: SliderComponentShape.noOverlay, activeTrackColor: Joy.primary, inactiveTrackColor: Joy.control, thumbColor: Joy.primary),
+            child: Slider(value: frac, onChanged: p == null ? null : (v) => p.seek(Duration(milliseconds: (v * total.inMilliseconds).round()))),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Icon(Icons.mic_rounded, size: 14, color: Joy.textMuted),
+        const SizedBox(width: 2),
+        Text(s.playing || s.position > Duration.zero ? _fmt(s.position) : _fmt(total), textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 12, color: Joy.textMuted, fontWeight: FontWeight.w600)),
+      ]),
+    );
+  }
+}
+
+/// شبكة صور المشاركة (حتى 10): صورة واحدة عريضة، أو شبكة، والرابعة تحمل «+N» عند وجود أكثر من أربع. اللمس يفتح المعرض.
 class CommunityImages extends StatelessWidget {
   final List<String> images;
   const CommunityImages({super.key, required this.images});
   @override
   Widget build(BuildContext context) {
     final n = images.length;
-    Widget tile(int i, {double aspect = 1}) => GestureDetector(
+    Widget tile(int i, {double aspect = 1, int more = 0}) => GestureDetector(
           onTap: () => showCommunityGallery(context, images, i),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: AspectRatio(
               aspectRatio: aspect,
-              child: Container(
-                color: Joy.surface2,
-                child: Image.network(thumbUrl(images[i]), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_outlined, color: Joy.textMuted))),
-              ),
+              child: Stack(fit: StackFit.expand, children: [
+                Container(
+                  color: Joy.surface2,
+                  child: Image.network(thumbUrl(images[i]), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image_outlined, color: Joy.textMuted))),
+                ),
+                if (more > 0)
+                  Container(
+                    color: Colors.black.withValues(alpha: .45),
+                    alignment: Alignment.center,
+                    child: Text('+$more', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+                  ),
+              ]),
             ),
           ),
         );
@@ -447,7 +559,7 @@ class CommunityImages extends StatelessWidget {
     return Column(children: [
       Row(children: [Expanded(child: tile(0, aspect: 1.4)), const SizedBox(width: 4), Expanded(child: tile(1, aspect: 1.4))]),
       const SizedBox(height: 4),
-      Row(children: [Expanded(child: tile(2, aspect: 1.4)), const SizedBox(width: 4), Expanded(child: tile(3, aspect: 1.4))]),
+      Row(children: [Expanded(child: tile(2, aspect: 1.4)), const SizedBox(width: 4), Expanded(child: tile(3, aspect: 1.4, more: n - 4))]),
     ]);
   }
 }
@@ -513,10 +625,14 @@ Future<String?> showCommunityPostMenu(BuildContext context, CommunityPost p, {re
       ),
     );
 
-/// مؤلّف المشاركة أسفل المساحة: نص، صور (حتى 4، تُرفع فور اختيارها)، اختيار الموضوع، وزر إرسال.
+/// مؤلّف المشاركة أو الرد: نص، صور (حتى 10 تُرفع فور اختيارها)، تسجيل صوتي (يُرفع عند إيقافه ويظهر كمرفق يمكن سماعه
+/// وحذفه)، اختيار الموضوع للمشاركات، وزر إرسال. مفاتيح الاختبار تبدأ بـ [keyPrefix].
 class CommunityComposer extends ConsumerStatefulWidget {
-  final Future<void> Function(String topic, String text, List<String> images) onSend;
-  const CommunityComposer({super.key, required this.onSend});
+  final Future<void> Function(CommunityDraft draft) onSend;
+  final bool showTopic;
+  final String hint, keyPrefix;
+  final int maxLength;
+  const CommunityComposer({super.key, required this.onSend, this.showTopic = true, this.hint = 'شارك تجربتك أو اسأل…', this.keyPrefix = 'community', this.maxLength = 1000});
   @override
   ConsumerState<CommunityComposer> createState() => _CommunityComposerState();
 }
@@ -526,20 +642,27 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
   final _focus = FocusNode();
   String _topic = 'general';
   final List<({String url, Uint8List bytes})> _images = [];
-  bool _uploading = false, _sending = false;
+  ({String url, Uint8List bytes, String mime, Duration duration})? _voice;
+  VoiceRecordSession? _rec;
+  Timer? _recTimer;
+  Duration _recElapsed = Duration.zero;
+  bool _uploading = false, _sending = false, _recording = false;
 
   @override
   void dispose() {
+    _recTimer?.cancel();
+    _rec?.dispose();
     _text.dispose();
     _focus.dispose();
     super.dispose();
   }
 
-  bool get _canSend => !_sending && !_uploading && (_text.text.trim().isNotEmpty || _images.isNotEmpty);
+  bool get _canSend => !_sending && !_uploading && !_recording && (_text.text.trim().isNotEmpty || _images.isNotEmpty || _voice != null);
+  Key _k(String s) => Key('${widget.keyPrefix}-$s');
 
   Future<void> _pick({bool camera = false}) async {
-    if (_images.length >= 4) {
-      toast(context, 'حتى 4 صور في المشاركة');
+    if (_images.length >= communityMaxImages) {
+      toast(context, 'حتى $communityMaxImages صور في المشاركة');
       return;
     }
     final img = await pickImage(camera: camera);
@@ -550,10 +673,63 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
       if (!mounted) return;
       setState(() {
         _images.add((url: up.url, bytes: img.bytes));
-        if (_topic == 'general' && _text.text.trim().isEmpty) _topic = 'photo';
+        if (_topic == 'general' && _text.text.trim().isEmpty && _voice == null) _topic = 'photo';
       });
     } catch (e) {
       if (mounted) toast(context, 'تعذر رفع الصورة', error: true);
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  // ---- التسجيل الصوتي
+  Future<void> _startRecording() async {
+    if (_voice != null) {
+      toast(context, 'احذف التسجيل الحالي أولاً');
+      return;
+    }
+    final rec = _rec ??= VoiceRecordSession();
+    try {
+      await rec.start();
+    } catch (e) {
+      if (mounted) toast(context, 'تعذر بدء التسجيل: ${e.toString().replaceFirst('Bad state: ', '')}', error: true);
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _recording = true;
+      _recElapsed = Duration.zero;
+    });
+    _recTimer?.cancel();
+    _recTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _recElapsed += const Duration(seconds: 1));
+      if (_recElapsed >= maxVoiceRecord) _stopRecording(keep: true);
+    });
+  }
+
+  Future<void> _stopRecording({required bool keep}) async {
+    _recTimer?.cancel();
+    final rec = _rec;
+    if (!_recording || rec == null) return;
+    setState(() => _recording = false);
+    try {
+      if (!keep) {
+        await rec.cancel();
+        return;
+      }
+      final v = await rec.stop();
+      if (v == null || v.duration < const Duration(seconds: 1)) {
+        if (mounted) toast(context, 'التسجيل قصير جداً');
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _uploading = true);
+      final up = await ref.read(apiClientProvider).uploadMedia(v.bytes, contentType: v.mime, fileName: v.name);
+      if (!mounted) return;
+      setState(() => _voice = (url: up.url, bytes: v.bytes, mime: v.mime, duration: v.duration));
+    } catch (e) {
+      if (mounted) toast(context, 'تعذر حفظ التسجيل', error: true);
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
@@ -563,11 +739,13 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
     if (!_canSend) return;
     setState(() => _sending = true);
     try {
-      await widget.onSend(_topic, _text.text.trim(), [for (final i in _images) i.url]);
+      final v = _voice;
+      await widget.onSend((topic: _topic, text: _text.text.trim(), images: [for (final i in _images) i.url], audio: v?.url, audioMs: v?.duration.inMilliseconds));
       if (!mounted) return;
       setState(() {
         _text.clear();
         _images.clear();
+        _voice = null;
         _topic = 'general';
       });
     } catch (e) {
@@ -580,14 +758,25 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
   @override
   Widget build(BuildContext context) {
     final tc = topicColor(_topic);
+    final voice = _voice;
     return Container(
       decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
       padding: EdgeInsets.fromLTRB(10, 8, 10, 8 + MediaQuery.paddingOf(context).bottom),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (voice != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(children: [
+              Expanded(child: CommunityVoice(key: _k('voice-preview'), bytes: voice.bytes, mime: voice.mime, ms: voice.duration.inMilliseconds, compact: true)),
+              IconButton(key: _k('voice-remove'), tooltip: 'حذف التسجيل', icon: const Icon(Icons.delete_outline_rounded, color: Joy.danger), onPressed: () => setState(() => _voice = null)),
+            ]),
+          ),
         if (_images.isNotEmpty || _uploading)
           SizedBox(
             height: 64,
             child: ListView(scrollDirection: Axis.horizontal, children: [
+              if (_images.isNotEmpty)
+                Padding(padding: const EdgeInsets.only(top: 22, left: 6, right: 2), child: Text('${_images.length}/$communityMaxImages', style: const TextStyle(fontSize: 11.5, color: Joy.textMuted, fontWeight: FontWeight.w600))),
               for (final (i, im) in _images.indexed)
                 Padding(
                   padding: const EdgeInsets.only(right: 6, bottom: 4),
@@ -599,62 +788,80 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
               if (_uploading) const Padding(padding: EdgeInsets.all(18), child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))),
             ]),
           ),
-        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          PopupMenuButton<String>(
-            key: const Key('community-topic'),
-            tooltip: 'الموضوع',
-            initialValue: _topic,
-            onSelected: (t) => setState(() => _topic = t),
-            itemBuilder: (_) => [for (final e in communityTopics.entries) PopupMenuItem(value: e.key, child: Row(children: [Icon(topicIcon(e.key), size: 18, color: topicColor(e.key)), const SizedBox(width: 8), Text(e.value)]))],
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
-              decoration: BoxDecoration(color: tc.withValues(alpha: .12), borderRadius: BorderRadius.circular(14)),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(topicIcon(_topic), size: 17, color: tc), const SizedBox(width: 3), Text(communityTopics[_topic]!, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: tc)), Icon(Icons.expand_more_rounded, size: 16, color: tc)]),
+        if (_recording)
+          Row(children: [
+            IconButton(key: _k('rec-cancel'), tooltip: 'إلغاء التسجيل', onPressed: () => _stopRecording(keep: false), icon: const Icon(Icons.delete_outline_rounded, color: Joy.danger, size: 26)),
+            Container(width: 10, height: 10, decoration: const BoxDecoration(color: Joy.danger, shape: BoxShape.circle)),
+            const SizedBox(width: 8),
+            Text('${_fmt(_recElapsed)} / ${_fmt(maxVoiceRecord)}', textDirection: TextDirection.ltr, style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('جارٍ التسجيل… اضغط ✓ عند الانتهاء', style: TextStyle(color: Joy.textMuted, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis)),
+            SizedBox(
+              width: 42,
+              height: 42,
+              child: IconButton.filled(key: _k('rec-stop'), tooltip: 'إنهاء التسجيل', style: IconButton.styleFrom(backgroundColor: Joy.primary), icon: const Icon(Icons.check_rounded, size: 22), onPressed: () => _stopRecording(keep: true)),
             ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: TextField(
-              key: const Key('community-input'),
-              controller: _text,
-              focusNode: _focus,
-              minLines: 1,
-              maxLines: 5,
-              maxLength: 1000,
-              textInputAction: TextInputAction.newline,
-              onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(
-                hintText: 'شارك تجربتك أو اسأل…',
-                counterText: '',
-                isDense: true,
-                filled: true,
-                fillColor: Joy.surface2,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none),
+          ])
+        else
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            if (widget.showTopic) ...[
+              PopupMenuButton<String>(
+                key: _k('topic'),
+                tooltip: 'الموضوع',
+                initialValue: _topic,
+                onSelected: (t) => setState(() => _topic = t),
+                itemBuilder: (_) => [for (final e in communityTopics.entries) PopupMenuItem(value: e.key, child: Row(children: [Icon(topicIcon(e.key), size: 18, color: topicColor(e.key)), const SizedBox(width: 8), Text(e.value)]))],
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+                  decoration: BoxDecoration(color: tc.withValues(alpha: .12), borderRadius: BorderRadius.circular(14)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(topicIcon(_topic), size: 17, color: tc), const SizedBox(width: 3), Text(communityTopics[_topic]!, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: tc)), Icon(Icons.expand_more_rounded, size: 16, color: tc)]),
+                ),
               ),
-              style: const TextStyle(fontSize: 15),
+              const SizedBox(width: 6),
+            ],
+            Expanded(
+              child: TextField(
+                key: _k('input'),
+                controller: _text,
+                focusNode: _focus,
+                minLines: 1,
+                maxLines: 5,
+                maxLength: widget.maxLength,
+                textInputAction: TextInputAction.newline,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: widget.hint,
+                  counterText: '',
+                  isDense: true,
+                  filled: true,
+                  fillColor: Joy.surface2,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none),
+                ),
+                style: const TextStyle(fontSize: 15),
+              ),
             ),
-          ),
-          IconButton(key: const Key('community-photo'), tooltip: 'إضافة صورة', icon: const Icon(Icons.add_photo_alternate_outlined, color: Joy.primary), onPressed: _uploading ? null : () => _pick()),
-          SizedBox(
-            width: 42,
-            height: 42,
-            child: IconButton.filled(
-              key: const Key('community-send'),
-              tooltip: 'نشر',
-              style: IconButton.styleFrom(backgroundColor: _canSend ? Joy.primary : Joy.control),
-              icon: _sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.send_rounded, size: 20),
-              onPressed: _canSend ? _send : null,
+            IconButton(key: _k('photo'), tooltip: 'إضافة صورة', visualDensity: VisualDensity.compact, icon: const Icon(Icons.add_photo_alternate_outlined, color: Joy.primary), onPressed: _uploading ? null : () => _pick()),
+            IconButton(key: _k('mic'), tooltip: 'تسجيل صوتي', visualDensity: VisualDensity.compact, icon: Icon(Icons.mic_none_rounded, color: voice == null ? Joy.primary : Joy.control), onPressed: _uploading || voice != null ? null : _startRecording),
+            SizedBox(
+              width: 42,
+              height: 42,
+              child: IconButton.filled(
+                key: _k('send'),
+                tooltip: 'نشر',
+                style: IconButton.styleFrom(backgroundColor: _canSend ? Joy.primary : Joy.control),
+                icon: _sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.send_rounded, size: 20),
+                onPressed: _canSend ? _send : null,
+              ),
             ),
-          ),
-        ]),
+          ]),
       ]),
     );
   }
 }
 
-/// نقاش مشاركة: المشاركة كاملة ثم الردود بترتيب زمني، وشريط رد في الأسفل.
+/// نقاش مشاركة: المشاركة كاملة ثم الردود بترتيب زمني، ومؤلّف رد في الأسفل (نص/صوت/صور).
 class CommunityThreadPage extends ConsumerStatefulWidget {
   final String bizId, postId, title;
   const CommunityThreadPage({super.key, required this.bizId, required this.postId, this.title = ''});
@@ -663,38 +870,19 @@ class CommunityThreadPage extends ConsumerStatefulWidget {
 }
 
 class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
-  final _text = TextEditingController();
-  bool _sending = false;
   CommunityPost? _patched;
   final Set<String> _removedReplies = {};
 
   ({String bizId, String postId}) get _arg => (bizId: widget.bizId, postId: widget.postId);
 
-  @override
-  void dispose() {
-    _text.dispose();
-    super.dispose();
-  }
-
-  Future<void> _reply() async {
-    final t = _text.text.trim();
-    if (t.isEmpty || _sending) return;
-    final banned = bannedWordIn(t, ref.read(bannedWordsProvider).valueOrNull ?? const []);
+  Future<void> _reply(CommunityDraft d) async {
+    final banned = bannedWordIn(d.text, ref.read(bannedWordsProvider).valueOrNull ?? const []);
     if (banned != null) {
       toast(context, 'النص يحتوي كلمة غير مسموحة: «$banned»', error: true);
-      return;
+      throw StateError('banned');
     }
-    setState(() => _sending = true);
-    try {
-      await ref.read(apiClientProvider).communityReply(widget.bizId, widget.postId, t);
-      if (!mounted) return;
-      _text.clear();
-      ref.invalidate(communityThreadProvider(_arg));
-    } catch (e) {
-      if (mounted) toast(context, e.toString(), error: true);
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
+    await ref.read(apiClientProvider).communityReply(widget.bizId, widget.postId, text: d.text, images: d.images, audio: d.audio, audioMs: d.audioMs);
+    if (mounted) ref.invalidate(communityThreadProvider(_arg));
   }
 
   Future<void> _like(CommunityPost p) async {
@@ -750,6 +938,7 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
   @override
   Widget build(BuildContext context) {
     final th = ref.watch(communityThreadProvider(_arg));
+    ref.watch(bannedWordsProvider);
     return Scaffold(
       backgroundColor: Joy.bg,
       appBar: AppBar(title: const Text('النقاش')),
@@ -775,35 +964,7 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
                     ),
               ]),
             ),
-            Container(
-              decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
-              padding: EdgeInsets.fromLTRB(12, 8, 12, 8 + MediaQuery.paddingOf(context).bottom),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Expanded(
-                  child: TextField(
-                    key: const Key('community-reply-input'),
-                    controller: _text,
-                    minLines: 1,
-                    maxLines: 4,
-                    maxLength: 500,
-                    onChanged: (_) => setState(() {}),
-                    decoration: InputDecoration(hintText: 'اكتب رداً…', counterText: '', isDense: true, filled: true, fillColor: Joy.surface2, contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), border: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none)),
-                    style: const TextStyle(fontSize: 15),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                SizedBox(
-                  width: 42,
-                  height: 42,
-                  child: IconButton.filled(
-                    key: const Key('community-reply-send'),
-                    style: IconButton.styleFrom(backgroundColor: _text.text.trim().isEmpty ? Joy.control : Joy.primary),
-                    icon: _sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.send_rounded, size: 20),
-                    onPressed: _text.text.trim().isEmpty || _sending ? null : _reply,
-                  ),
-                ),
-              ]),
-            ),
+            CommunityComposer(keyPrefix: 'community-reply', showTopic: false, hint: 'اكتب رداً أو سجّل صوتاً…', maxLength: 500, onSend: _reply),
           ]);
         },
       ),
@@ -831,8 +992,9 @@ class _ReplyTile extends StatelessWidget {
                   Text(timeAgo(reply.createdAt), style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
                   if (onDelete != null) SizedBox(width: 26, height: 22, child: IconButton(padding: EdgeInsets.zero, tooltip: 'حذف الرد', icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Joy.textMuted), onPressed: onDelete)),
                 ]),
-                const SizedBox(height: 3),
-                Text(reply.text, style: const TextStyle(fontSize: 14.5, height: 1.5)),
+                if (reply.text.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 3), child: Text(reply.text, style: const TextStyle(fontSize: 14.5, height: 1.5))),
+                if (reply.audio != null) Padding(padding: const EdgeInsets.only(top: 6), child: CommunityVoice(url: reply.audio, ms: reply.audioMs, compact: true)),
+                if (reply.images.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: CommunityImages(images: reply.images)),
               ]),
             ),
           ),
@@ -840,7 +1002,7 @@ class _ReplyTile extends StatelessWidget {
       );
 }
 
-/// بطاقة الدخول إلى مساحة المجتمع داخل صفحة الدائرة: عدد المشاركات والمشاركين وآخر مشاركتين وزر الفتح.
+/// بطاقة الدخول إلى مساحة المجتمع في أعلى صفحة الدائرة: عدد المشاركات والمشاركين وآخر مشاركتين وزر الفتح.
 class CommunityEntryCard extends ConsumerWidget {
   final String bizId, title;
   final bool prominent;
@@ -863,7 +1025,7 @@ class CommunityEntryCard extends ConsumerWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('مساحة المجتمع', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15.5)),
               Text(
-                feed == null ? 'تواصل مع الزوار وشارك صورك وتجاربك' : (feed.total == 0 ? 'كن أول من يشارك تجربته هنا' : '${feed.total} مشاركة من ${feed.members} مشارك'),
+                feed == null ? 'تواصل مع الزوار بنص أو صوت أو صور' : (feed.total == 0 ? 'كن أول من يشارك تجربته هنا' : '${feed.total} مشاركة من ${feed.members} مشارك'),
                 style: const TextStyle(color: Joy.textMuted, fontSize: 12.5),
               ),
             ]),
@@ -884,7 +1046,7 @@ class CommunityEntryCard extends ConsumerWidget {
                     overflow: TextOverflow.ellipsis,
                     text: TextSpan(style: const TextStyle(fontFamily: AppTheme.bodyFont, fontSize: 13, color: Joy.text), children: [
                       TextSpan(text: '${p.user.nickname}: ', style: const TextStyle(fontWeight: FontWeight.w700)),
-                      TextSpan(text: p.text.isNotEmpty ? p.text : '📷 ${p.images.length == 1 ? 'صورة' : '${p.images.length} صور'}'),
+                      TextSpan(text: p.preview),
                     ]),
                   ),
                 ),

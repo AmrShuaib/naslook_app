@@ -15,6 +15,8 @@ import 'package:naslook/api/community_api.dart';
 import 'package:naslook/api/notify_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/core/media/pick_image.dart';
+import 'package:naslook/core/media/voice_player.dart';
+import 'package:naslook/core/media/voice_record.dart';
 import 'package:naslook/core/notify_open.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/community_page.dart';
@@ -26,6 +28,54 @@ class _SignedIn extends AppStateNotifier {
   _SignedIn(super.api, super.store) {
     state = const AppState(status: AuthStatus.signedIn, session: Session(token: 't', user: SessionUser(id: 'SA0000001', nickname: 'amr')));
   }
+}
+
+/// مسجّل وهمي: يبدأ فوراً ويعيد ملفاً صوتياً بمدة ثابتة عند الإيقاف.
+class _FakeRecorder implements VoiceRecordSession {
+  static int cancelled = 0;
+  bool _on = false;
+  @override
+  bool get recording => _on;
+  @override
+  Duration get elapsed => const Duration(seconds: 3);
+  @override
+  Future<void> start() async {
+    _on = true;
+  }
+
+  @override
+  Future<RecordedVoice?> stop() async {
+    _on = false;
+    return (bytes: Uint8List.fromList(List.filled(120, 1)), mime: 'audio/webm', name: 'voice.webm', duration: const Duration(seconds: 3));
+  }
+
+  @override
+  Future<void> cancel() async {
+    cancelled++;
+    _on = false;
+  }
+
+  @override
+  void dispose() {}
+}
+
+/// مشغّل وهمي: يعلن التشغيل فوراً.
+class _FakePlayer extends VoicePlayerBase {
+  static int plays = 0;
+  @override
+  void setSource({String? url, Uint8List? bytes, String? mime}) {}
+  @override
+  Future<void> play() async {
+    plays++;
+    emit(state.copyWith(playing: true, duration: const Duration(seconds: 7)));
+  }
+
+  @override
+  Future<void> pause() async => emit(state.copyWith(playing: false));
+  @override
+  Future<void> seek(Duration position) async => emit(state.copyWith(position: position));
+  @override
+  void dispose() {}
 }
 
 String _ago(Duration d) => DateTime.now().subtract(d).toUtc().toIso8601String();
@@ -49,6 +99,7 @@ class _Srv {
   int uploads = 0;
   late final posts = <Map<String, dynamic>>[
     {'id': 'c-2', 'bizId': 'biz-kaia', 'user': _person('SA0000002', 'sara'), 'topic': 'photo', 'text': 'الصالة الجديدة من الداخل', 'images': ['/chat/media/a.jpg', '/chat/media/b.jpg'], 'pinned': false, 'hidden': false, 'likes': 2, 'liked': false, 'replies': 0, 'mine': false, 'staff': false, 'createdAt': _ago(const Duration(hours: 5))},
+    {'id': 'c-4', 'bizId': 'biz-kaia', 'user': _person('SA0000003', 'khalid'), 'topic': 'tip', 'text': '', 'images': [], 'audio': '/chat/media/demo.m4a', 'audioMs': 7000, 'pinned': false, 'hidden': false, 'likes': 1, 'liked': false, 'replies': 0, 'mine': false, 'staff': true, 'createdAt': _ago(const Duration(minutes: 15))},
     {'id': 'c-1', 'bizId': 'biz-kaia', 'user': _person('SA0000003', 'khalid'), 'topic': 'general', 'text': 'أهلاً بكم في مساحة المطار، نرد على استفساراتكم هنا', 'images': [], 'pinned': true, 'hidden': false, 'likes': 4, 'liked': false, 'replies': 1, 'mine': false, 'staff': true, 'createdAt': _ago(const Duration(days: 3))},
     {'id': 'c-3', 'bizId': 'biz-kaia', 'user': _person('SA0000001', 'amr'), 'topic': 'question', 'text': 'هل يوجد مصلى في صالة الحج؟', 'images': [], 'pinned': false, 'hidden': false, 'likes': 0, 'liked': false, 'replies': 2, 'mine': true, 'staff': false, 'createdAt': _ago(const Duration(minutes: 30))},
   ];
@@ -67,7 +118,7 @@ class _Srv {
     if (key == 'POST /biz/biz-kaia/community') {
       final b = bodies[key]!;
       if ((b['text'] as String).contains('احتيال')) return _json({'error': 'banned-words', 'word': 'احتيال'}, 400);
-      final p = {'id': 'c-new', 'bizId': 'biz-kaia', 'user': _person('SA0000001', 'amr'), 'topic': b['topic'], 'text': b['text'], 'images': b['images'], 'pinned': false, 'hidden': false, 'likes': 0, 'liked': false, 'replies': 0, 'mine': true, 'staff': false, 'createdAt': _ago(Duration.zero)};
+      final p = {'id': 'c-new', 'bizId': 'biz-kaia', 'user': _person('SA0000001', 'amr'), 'topic': b['topic'], 'text': b['text'], 'images': b['images'], 'audio': b['audio'], 'audioMs': b['audioMs'], 'pinned': false, 'hidden': false, 'likes': 0, 'liked': false, 'replies': 0, 'mine': true, 'staff': false, 'createdAt': _ago(Duration.zero)};
       posts.insert(0, p);
       return _json(p);
     }
@@ -77,13 +128,14 @@ class _Srv {
         {'id': 'r-2', 'postId': 'c-3', 'user': _person('SA0000001', 'amr'), 'text': 'شكراً', 'mine': true, 'createdAt': _ago(const Duration(minutes: 10))},
       ], 'canModerate': moderator});
     }
-    if (key == 'POST /biz/biz-kaia/community/c-3/replies') return _json({'id': 'r-3', 'postId': 'c-3', 'user': _person('SA0000001', 'amr'), 'text': bodies[key]!['text'], 'mine': true, 'createdAt': _ago(Duration.zero)});
+    if (key == 'POST /biz/biz-kaia/community/c-3/replies') return _json({'id': 'r-3', 'postId': 'c-3', 'user': _person('SA0000001', 'amr'), 'text': bodies[key]!['text'], 'images': bodies[key]!['images'], 'audio': bodies[key]!['audio'], 'audioMs': bodies[key]!['audioMs'], 'mine': true, 'createdAt': _ago(Duration.zero)});
     if (key == 'POST /biz/biz-kaia/community/c-2/like') return _json({'ok': true, 'liked': true, 'likes': 3});
     if (key == 'POST /biz/biz-kaia/community/c-2/pin') return _json({...posts.firstWhere((p) => p['id'] == 'c-2'), 'pinned': bodies[key]!['pinned']});
     if (key == 'POST /biz/biz-kaia/community/c-2/hide') return _json({...posts.firstWhere((p) => p['id'] == 'c-2'), 'hidden': bodies[key]!['hidden']});
     if (key == 'POST /chat/upload') {
       uploads++;
-      return _json({'url': '/chat/media/up$uploads.jpg', 'type': 'image/jpeg', 'kind': 'image', 'size': req.bodyBytes.length});
+      final audio = (req.headers['content-type'] ?? '').startsWith('audio/');
+      return _json({'url': '/chat/media/up$uploads.${audio ? 'm4a' : 'jpg'}', 'type': audio ? 'audio/mp4' : 'image/jpeg', 'kind': audio ? 'audio' : 'image', 'size': req.bodyBytes.length});
     }
     if (key == 'POST /safety/report') return _json({'ok': true, 'reports': 1, 'hidden': false, 'threshold': 3});
     if (key == 'GET /safety/words') return _json({'words': ['احتيال'], 'threshold': 3});
@@ -144,7 +196,8 @@ void main() {
     expect(find.text('الواي فاي المجاني ونقاط الشحن'), findsOneWidget);
     expect(find.text('اشترِ'), findsNothing);
     expect(find.byKey(const Key('community-card')), findsOneWidget);
-    expect(find.text('3 مشاركة من 3 مشارك'), findsOneWidget);
+    expect(find.text('4 مشاركة من 3 مشارك'), findsOneWidget);
+    expect(find.byKey(const Key('community-card')).evaluate().single.renderObject!.paintBounds.top, lessThan(400), reason: 'بطاقة المساحة في أعلى الصفحة');
     expect(find.textContaining('أهلاً بكم في مساحة المطار', findRichText: true), findsOneWidget, reason: 'آخر المشاركات تظهر في البطاقة');
     await tester.tap(find.byKey(const Key('community-open')));
     await _settle(tester);
@@ -156,13 +209,14 @@ void main() {
   testWidgets('feed: pinned first with staff badge, topic filter, and posting text with a topic', (tester) async {
     final srv = await _pump(tester, const CommunityPage(bizId: 'biz-kaia', title: 'المطار'));
     await _settle(tester);
-    expect(find.text('3 مشاركة · 3 مشارك'), findsOneWidget);
+    expect(find.text('4 مشاركة · 3 مشارك'), findsOneWidget);
     final cards = find.byType(CommunityPostCard);
-    expect(cards, findsNWidgets(3));
+    expect(cards, findsNWidgets(4));
+    expect(find.byKey(const Key('community-voice-play')), findsOneWidget, reason: 'المشاركة الصوتية تعرض مشغّلاً');
     final first = tester.widget<CommunityPostCard>(cards.first);
     expect(first.post.id, 'c-1', reason: 'المثبّت أولاً');
     expect(find.text('مثبّت'), findsOneWidget);
-    expect(find.text('فريق الدائرة'), findsOneWidget);
+    expect(find.text('فريق الدائرة'), findsNWidgets(2), reason: 'المشاركة المثبّتة والصوتية من الفريق');
     expect(find.text('أنت'), findsOneWidget, reason: 'مشاركتي تُعرض باسم «أنت»');
     expect(find.text('2 ردّان'), findsOneWidget);
     // تصفية بموضوع الأسئلة
@@ -172,7 +226,7 @@ void main() {
     expect(find.byType(CommunityPostCard), findsOneWidget);
     await tester.tap(find.byKey(const Key('community-topic-all')));
     await _settle(tester);
-    expect(find.byType(CommunityPostCard), findsNWidgets(3));
+    expect(find.byType(CommunityPostCard), findsNWidgets(4));
     // النشر: زر الإرسال معطّل بلا نص
     expect(tester.widget<IconButton>(find.byKey(const Key('community-send'))).onPressed, isNull);
     await tester.enterText(find.byKey(const Key('community-input')), 'استخدموا بوابات الجوازات الذكية');
@@ -187,7 +241,7 @@ void main() {
     expect(body['topic'], 'tip');
     expect(body['text'], 'استخدموا بوابات الجوازات الذكية');
     expect(body['images'], isEmpty);
-    expect(find.byType(CommunityPostCard), findsNWidgets(4));
+    expect(find.byType(CommunityPostCard), findsNWidgets(5));
     expect(tester.widget<TextField>(find.byKey(const Key('community-input'))).controller!.text, isEmpty);
     // كلمة محظورة تُرفض قبل الإرسال
     await tester.enterText(find.byKey(const Key('community-input')), 'هذا احتيال');
@@ -233,6 +287,83 @@ void main() {
     await tester.tap(find.byKey(const Key('community-reply-send')));
     await _settle(tester);
     expect(srv.bodies['POST /biz/biz-kaia/community/c-3/replies']!['text'], 'وأين المصلى في الوصول؟');
+  });
+
+  testWidgets('composer records a voice note, uploads it, previews it and sends audio with duration', (tester) async {
+    VoiceRecordSession.factoryOverride = _FakeRecorder.new;
+    VoicePlayer.factoryOverride = _FakePlayer.new;
+    addTearDown(() {
+      VoiceRecordSession.factoryOverride = null;
+      VoicePlayer.factoryOverride = null;
+    });
+    final srv = await _pump(tester, const CommunityPage(bizId: 'biz-kaia', title: 'المطار'));
+    await _settle(tester);
+    // تشغيل المشاركة الصوتية في الخيط
+    await tester.tap(find.byKey(const Key('community-voice-play')));
+    await _settle(tester);
+    expect(_FakePlayer.plays, 1);
+    // تسجيل: يبدأ، يظهر صف التسجيل، ثم إيقاف → رفع → معاينة
+    await tester.tap(find.byKey(const Key('community-mic')));
+    await _settle(tester);
+    expect(find.byKey(const Key('community-rec-stop')), findsOneWidget);
+    expect(find.byKey(const Key('community-input')), findsNothing, reason: 'صف التسجيل يحل محل الحقل');
+    await tester.tap(find.byKey(const Key('community-rec-stop')));
+    await _settle(tester);
+    expect(srv.calls, contains('POST /chat/upload'));
+    expect(find.byKey(const Key('community-voice-preview')), findsOneWidget);
+    expect(tester.widget<IconButton>(find.byKey(const Key('community-send'))).onPressed, isNotNull, reason: 'تسجيل بلا نص يكفي للنشر');
+    await tester.tap(find.byKey(const Key('community-send')));
+    await _settle(tester);
+    final body = srv.bodies['POST /biz/biz-kaia/community']!;
+    expect(body['audio'], '/chat/media/up1.m4a');
+    expect(body['audioMs'], 3000);
+    expect(body['text'], '');
+    expect(find.byKey(const Key('community-voice-preview')), findsNothing, reason: 'المعاينة تختفي بعد النشر');
+    // إلغاء تسجيل لا يرفع شيئاً
+    await tester.tap(find.byKey(const Key('community-mic')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('community-rec-cancel')));
+    await _settle(tester);
+    expect(_FakeRecorder.cancelled, 1);
+    expect(srv.calls.where((c) => c == 'POST /chat/upload').length, 1);
+  });
+
+  testWidgets('composer caps photos at 10', (tester) async {
+    final png = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+    pickImageOverride = ({bool camera = false}) async => (bytes: Uint8List.fromList(png), mime: 'image/png', name: 'g.png');
+    addTearDown(() => pickImageOverride = null);
+    final srv = await _pump(tester, const CommunityPage(bizId: 'biz-kaia', title: 'المطار'));
+    await _settle(tester);
+    for (var i = 0; i < 11; i++) {
+      await tester.tap(find.byKey(const Key('community-photo')));
+      await _settle(tester);
+    }
+    expect(srv.uploads, 10);
+    expect(find.text('حتى 10 صور في المشاركة'), findsOneWidget);
+    expect(find.text('10/10'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 4)); // زوال رسالة الحد قبل النشر
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('community-send')));
+    await _settle(tester);
+    expect((srv.bodies['POST /biz/biz-kaia/community']!['images'] as List).length, 10);
+  });
+
+  testWidgets('thread reply composer sends a voice reply', (tester) async {
+    VoiceRecordSession.factoryOverride = _FakeRecorder.new;
+    addTearDown(() => VoiceRecordSession.factoryOverride = null);
+    final srv = await _pump(tester, const CommunityThreadPage(bizId: 'biz-kaia', postId: 'c-3', title: 'المطار'));
+    await _settle(tester);
+    expect(find.byKey(const Key('community-reply-topic')), findsNothing, reason: 'لا موضوع للردود');
+    await tester.tap(find.byKey(const Key('community-reply-mic')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('community-reply-rec-stop')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('community-reply-send')));
+    await _settle(tester);
+    final body = srv.bodies['POST /biz/biz-kaia/community/c-3/replies']!;
+    expect(body['audio'], '/chat/media/up1.m4a');
+    expect(body['audioMs'], 3000);
+    expect(body['images'], isEmpty);
   });
 
   testWidgets('moderator menu pins and hides; others can report', (tester) async {

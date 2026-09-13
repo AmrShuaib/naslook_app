@@ -1,5 +1,6 @@
 // مساحة مجتمع الدائرة في Naslife: مساحة تواصل عامة داخل كل دائرة تجارية (مطار، مستشفى، متجر…) ينشر فيها المستخدمون
-// رسائل وصوراً مصنّفة بمواضيع (عام، صور، سؤال، نصيحة، تنبيه)، مع ردود وإعجابات، وتثبيت أو إخفاء من إدارة الدائرة.
+// رسائل نصية أو صوتية أو بصور (حتى 10) مصنّفة بمواضيع (عام، صور، سؤال، نصيحة، تنبيه)، مع ردود بالطرق نفسها وإعجابات،
+// وتثبيت أو إخفاء من إدارة الدائرة.
 // يطبّق فلتر الكلمات المحظورة وتصفية المحظورين والإشعارات عبر الإضافات الأخرى (safety.js, notify.js).
 // التسجيل في src/index.js بعد business.js:
 //   await app.register((await import("./biz_community.js")).default, { pool, auth });
@@ -25,6 +26,8 @@ export default async function bizCommunity(app, opts) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS biz_community_replies_post ON biz_community_replies(post_id, created_at);
     CREATE TABLE IF NOT EXISTS biz_community_likes (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
+    ALTER TABLE biz_community_posts ADD COLUMN IF NOT EXISTS audio TEXT, ADD COLUMN IF NOT EXISTS audio_ms INTEGER;
+    ALTER TABLE biz_community_replies ADD COLUMN IF NOT EXISTS images JSONB NOT NULL DEFAULT '[]', ADD COLUMN IF NOT EXISTS audio TEXT, ADD COLUMN IF NOT EXISTS audio_ms INTEGER;
   `);
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
@@ -41,16 +44,26 @@ export default async function bizCommunity(app, opts) {
     const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim().replace(/^www\./i, "");
     return `${proto}://${host}`;
   };
-  // صور المنشور: مسارات وسائط خادمنا فقط (المرفوعة عبر /chat/upload)
+  // صور المشاركة أو الرد: حتى 10 صور من وسائط خادمنا فقط (المرفوعة عبر /chat/upload)
+  const MAX_IMAGES = 10;
+  const ownMedia = (req, raw) => {
+    const s = str(raw, 500); if (!s) return null;
+    const own = OWN_MEDIA.exec(s);
+    if (own) return `${publicOrigin(req)}${own[1]}`;
+    if (/^\/(?:chat\/media|files|media|uploads)\//.test(s)) return `${publicOrigin(req)}${s}`;
+    return null;
+  };
+  // تسجيل صوتي: رابط وسائط خادمنا ومدة بالمللي ثانية (حتى 10 دقائق)
+  const cleanAudio = (req, body) => {
+    const url = ownMedia(req, body?.audio);
+    if (!url) return { audio: null, audioMs: null };
+    const ms = Number(body?.audioMs);
+    return { audio: url, audioMs: Number.isFinite(ms) && ms > 0 ? Math.min(600000, Math.round(ms)) : null };
+  };
   const cleanImages = (req, v) => {
     if (!Array.isArray(v)) return [];
     const out = [];
-    for (const raw of v.slice(0, 4)) {
-      const s = str(raw, 500); if (!s) continue;
-      const own = OWN_MEDIA.exec(s);
-      if (own) out.push(`${publicOrigin(req)}${own[1]}`);
-      else if (/^\/(?:chat\/media|files|media|uploads)\//.test(s)) out.push(`${publicOrigin(req)}${s}`);
-    }
+    for (const raw of v.slice(0, MAX_IMAGES)) { const u = ownMedia(req, raw); if (u) out.push(u); }
     return out;
   };
   async function people(ids) {
@@ -80,7 +93,7 @@ export default async function bizCommunity(app, opts) {
     return [...ids];
   }
   const out = (p, uid, pm, likes, liked, replies, role) => ({
-    id: p.id, bizId: p.biz_id, user: pm.get(p.user_id), topic: p.topic, text: p.text, images: p.images ?? [], pinned: p.pinned, hidden: p.hidden,
+    id: p.id, bizId: p.biz_id, user: pm.get(p.user_id), topic: p.topic, text: p.text, images: p.images ?? [], audio: p.audio ?? null, audioMs: p.audio_ms ?? null, pinned: p.pinned, hidden: p.hidden,
     likes: likes.get(p.id) ?? 0, liked: liked.has(p.id), replies: replies.get(p.id) ?? 0, mine: p.user_id === uid,
     staff: role != null && p.user_id === uid && canModerate(role), createdAt: p.created_at,
   });
@@ -101,7 +114,8 @@ export default async function bizCommunity(app, opts) {
     for (const p of list) p.staff = ids.has(p.user.id);
     return list;
   }
-  const replyOut = (r, pm, uid) => ({ id: r.id, postId: r.post_id, user: pm.get(r.user_id), text: r.text, mine: r.user_id === uid, createdAt: r.created_at });
+  const replyOut = (r, pm, uid) => ({ id: r.id, postId: r.post_id, user: pm.get(r.user_id), text: r.text, images: r.images ?? [], audio: r.audio ?? null, audioMs: r.audio_ms ?? null, mine: r.user_id === uid, createdAt: r.created_at });
+  const preview = (text, images, audio) => text.slice(0, 120) || (audio ? "تسجيل صوتي" : images.length > 1 ? `${images.length} صور` : "صورة");
 
   // ---- القائمة: المثبّتة أولاً ثم الأحدث، بتصفية موضوع، وصفحات بـ before
   app.get("/biz/:id/community", async (req, reply) => {
@@ -130,17 +144,18 @@ export default async function bizCommunity(app, opts) {
     const body = req.body ?? {};
     const text = str(body.text, 1000);
     const images = cleanImages(req, body.images);
-    if (!text && !images.length) return bad(reply, 400, "empty");
-    const topic = TOPICS.has(body.topic) ? body.topic : (images.length && !text ? "photo" : "general");
+    const { audio, audioMs } = cleanAudio(req, body);
+    if (!text && !images.length && !audio) return bad(reply, 400, "empty");
+    const topic = TOPICS.has(body.topic) ? body.topic : (images.length && !text && !audio ? "photo" : "general");
     const banned = checkText(text); if (banned) return bad(reply, 400, "banned-words", { word: banned });
     const recent = (await pool.query("SELECT count(*)::int AS n FROM biz_community_posts WHERE biz_id=$1 AND user_id=$2 AND created_at > now() - interval '1 hour'", [b.id, uid])).rows[0].n;
     if (recent >= 20) return bad(reply, 429, "too-many");
     const id = crypto.randomUUID();
-    const r = await pool.query("INSERT INTO biz_community_posts(id,biz_id,user_id,topic,text,images) VALUES($1,$2,$3,$4,$5,$6) RETURNING *", [id, b.id, uid, topic, text, JSON.stringify(images)]);
+    const r = await pool.query("INSERT INTO biz_community_posts(id,biz_id,user_id,topic,text,images,audio,audio_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", [id, b.id, uid, topic, text, JSON.stringify(images), audio, audioMs]);
     const role = await roleFor(uid, b);
     if (topic === "question" || topic === "alert") {
       const staff = (await staffIds(b)).filter((x) => x !== uid);
-      if (staff.length) await notify(staff, { kind: "community_post", title: `${topic === "question" ? "سؤال" : "تنبيه"} جديد في مساحة ${b.name_ar || b.name}`, body: text.slice(0, 120) || "صورة", data: { bizId: b.id, postId: id } });
+      if (staff.length) await notify(staff, { kind: "community_post", title: `${topic === "question" ? "سؤال" : "تنبيه"} جديد في مساحة ${b.name_ar || b.name}`, body: preview(text, images, audio), data: { bizId: b.id, postId: id } });
     }
     const [p] = await markStaff(await decorate(r.rows, uid, role), b);
     return p;
@@ -208,13 +223,16 @@ export default async function bizCommunity(app, opts) {
     if (!UUID_RE.test(req.params.pid)) return bad(reply, 404, "not-found");
     const p = (await pool.query("SELECT id, user_id, text FROM biz_community_posts WHERE id=$1 AND biz_id=$2 AND hidden=false", [req.params.pid, b.id])).rows[0];
     if (!p) return bad(reply, 404, "not-found");
-    const text = str(req.body?.text, 500); if (!text) return bad(reply, 400, "empty");
+    const text = str(req.body?.text, 500);
+    const images = cleanImages(req, req.body?.images);
+    const { audio, audioMs } = cleanAudio(req, req.body);
+    if (!text && !images.length && !audio) return bad(reply, 400, "empty");
     const banned = checkText(text); if (banned) return bad(reply, 400, "banned-words", { word: banned });
     const id = crypto.randomUUID();
-    const r = await pool.query("INSERT INTO biz_community_replies(id,post_id,user_id,text) VALUES($1,$2,$3,$4) RETURNING *", [id, p.id, uid, text]);
+    const r = await pool.query("INSERT INTO biz_community_replies(id,post_id,user_id,text,images,audio,audio_ms) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *", [id, p.id, uid, text, JSON.stringify(images), audio, audioMs]);
     if (p.user_id !== uid) {
       const pm = await people([uid]);
-      await notify([p.user_id], { kind: "community_reply", title: `رد على منشورك في مساحة ${b.name_ar || b.name}`, body: `${pm.get(uid)?.nickname || uid}: ${text.slice(0, 100)}`, data: { bizId: b.id, postId: p.id } });
+      await notify([p.user_id], { kind: "community_reply", title: `رد على منشورك في مساحة ${b.name_ar || b.name}`, body: `${pm.get(uid)?.nickname || uid}: ${preview(text, images, audio).slice(0, 100)}`, data: { bizId: b.id, postId: p.id } });
     }
     const pm = await people([uid]);
     return replyOut(r.rows[0], pm, uid);

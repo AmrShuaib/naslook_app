@@ -5,22 +5,30 @@ import 'models.dart';
 const communityTopics = {'general': 'عام', 'photo': 'صور', 'question': 'سؤال', 'tip': 'نصيحة', 'alert': 'تنبيه'};
 
 /// منشور في مساحة مجتمع دائرة (server/biz_community.js).
+/// الحد الأقصى لصور المشاركة أو الرد.
+const communityMaxImages = 10;
+
+List<String> _strList(dynamic v) => [for (final u in (v is List ? v : const [])) u.toString()];
+String? _audioOf(Map m) => (m['audio'] is String && (m['audio'] as String).isNotEmpty) ? m['audio'] as String : null;
+
+/// منشور في مساحة مجتمع دائرة (server/biz_community.js): نص و/أو تسجيل صوتي و/أو صور (حتى 10).
 class CommunityPost {
   final String id, bizId, topic, text;
   final Person user;
   final List<String> images;
+  final String? audio;
+  final int? audioMs;
   final bool pinned, hidden, liked, mine, staff;
   final int likes, replies;
   final DateTime? createdAt;
   const CommunityPost({
-    required this.id, required this.bizId, required this.user, required this.topic, required this.text, this.images = const [],
+    required this.id, required this.bizId, required this.user, required this.topic, required this.text, this.images = const [], this.audio, this.audioMs,
     this.pinned = false, this.hidden = false, this.liked = false, this.mine = false, this.staff = false, this.likes = 0, this.replies = 0, this.createdAt,
   });
 
   factory CommunityPost.fromJson(Map m) => CommunityPost(
         id: m['id'].toString(), bizId: m['bizId']?.toString() ?? '', user: Person.fromJson(m['user'] is Map ? m['user'] as Map : const {'id': '', 'nickname': ''}),
-        topic: m['topic']?.toString() ?? 'general', text: m['text']?.toString() ?? '',
-        images: [for (final u in (m['images'] is List ? m['images'] as List : const [])) u.toString()],
+        topic: m['topic']?.toString() ?? 'general', text: m['text']?.toString() ?? '', images: _strList(m['images']), audio: _audioOf(m), audioMs: (m['audioMs'] as num?)?.toInt(),
         pinned: m['pinned'] == true, hidden: m['hidden'] == true, liked: m['liked'] == true, mine: m['mine'] == true, staff: m['staff'] == true,
         likes: (m['likes'] as num?)?.toInt() ?? 0, replies: (m['replies'] as num?)?.toInt() ?? 0,
         createdAt: m['createdAt'] == null ? null : DateTime.tryParse(m['createdAt'].toString())?.toLocal(),
@@ -28,21 +36,28 @@ class CommunityPost {
 
   String get topicLabel => communityTopics[topic] ?? 'عام';
 
+  /// وصف قصير للمعاينات: النص أو نوع المرفق.
+  String get preview => text.isNotEmpty ? text : (audio != null ? 'تسجيل صوتي' : images.length == 1 ? 'صورة' : '${images.length} صور');
+
   CommunityPost copyWith({bool? pinned, bool? hidden, bool? liked, int? likes, int? replies}) => CommunityPost(
-        id: id, bizId: bizId, user: user, topic: topic, text: text, images: images, pinned: pinned ?? this.pinned, hidden: hidden ?? this.hidden,
+        id: id, bizId: bizId, user: user, topic: topic, text: text, images: images, audio: audio, audioMs: audioMs, pinned: pinned ?? this.pinned, hidden: hidden ?? this.hidden,
         liked: liked ?? this.liked, mine: mine, staff: staff, likes: likes ?? this.likes, replies: replies ?? this.replies, createdAt: createdAt);
 }
 
-/// رد على منشور في المساحة.
+/// رد على منشور في المساحة: نص و/أو تسجيل صوتي و/أو صور.
 class CommunityReply {
   final String id, postId, text;
   final Person user;
+  final List<String> images;
+  final String? audio;
+  final int? audioMs;
   final bool mine;
   final DateTime? createdAt;
-  const CommunityReply({required this.id, required this.postId, required this.user, required this.text, this.mine = false, this.createdAt});
+  const CommunityReply({required this.id, required this.postId, required this.user, required this.text, this.images = const [], this.audio, this.audioMs, this.mine = false, this.createdAt});
   factory CommunityReply.fromJson(Map m) => CommunityReply(
         id: m['id'].toString(), postId: m['postId']?.toString() ?? '', user: Person.fromJson(m['user'] is Map ? m['user'] as Map : const {'id': '', 'nickname': ''}),
-        text: m['text']?.toString() ?? '', mine: m['mine'] == true, createdAt: m['createdAt'] == null ? null : DateTime.tryParse(m['createdAt'].toString())?.toLocal());
+        text: m['text']?.toString() ?? '', images: _strList(m['images']), audio: _audioOf(m), audioMs: (m['audioMs'] as num?)?.toInt(),
+        mine: m['mine'] == true, createdAt: m['createdAt'] == null ? null : DateTime.tryParse(m['createdAt'].toString())?.toLocal());
 }
 
 /// صفحة من منشورات المساحة مع إحصاءات المساحة.
@@ -71,8 +86,8 @@ extension CommunityApi on ApiClient {
         'limit': '$limit',
       }));
 
-  Future<CommunityPost> communityPost(String bizId, {required String topic, required String text, List<String> images = const []}) async =>
-      CommunityPost.fromJson(await post('/biz/$bizId/community', {'topic': topic, 'text': text, 'images': images}));
+  Future<CommunityPost> communityPost(String bizId, {required String topic, required String text, List<String> images = const [], String? audio, int? audioMs}) async =>
+      CommunityPost.fromJson(await post('/biz/$bizId/community', {'topic': topic, 'text': text, 'images': images, if (audio != null) 'audio': audio, if (audio != null && audioMs != null) 'audioMs': audioMs}));
 
   Future<CommunityThread> communityThread(String bizId, String postId) async {
     final d = await get('/biz/$bizId/community/$postId');
@@ -88,6 +103,7 @@ extension CommunityApi on ApiClient {
     return (liked: d['liked'] == true, likes: (d['likes'] as num?)?.toInt() ?? 0);
   }
 
-  Future<CommunityReply> communityReply(String bizId, String postId, String text) async => CommunityReply.fromJson(await post('/biz/$bizId/community/$postId/replies', {'text': text}));
+  Future<CommunityReply> communityReply(String bizId, String postId, {required String text, List<String> images = const [], String? audio, int? audioMs}) async =>
+      CommunityReply.fromJson(await post('/biz/$bizId/community/$postId/replies', {'text': text, 'images': images, if (audio != null) 'audio': audio, if (audio != null && audioMs != null) 'audioMs': audioMs}));
   Future<void> communityDeleteReply(String bizId, String postId, String replyId) => delete('/biz/$bizId/community/$postId/replies/$replyId');
 }

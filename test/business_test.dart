@@ -73,6 +73,10 @@ class _Srv {
 }
 
 Future<void> _pump(WidgetTester tester, _Srv srv, Widget home) async {
+  // شاشة طويلة: بطاقة مساحة المجتمع في أعلى صفحة الدائرة تدفع الكتالوج إلى الأسفل
+  tester.view.physicalSize = const Size(800, 2400);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
   final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle));
   await tester.pumpWidget(ProviderScope(
     overrides: [apiClientProvider.overrideWithValue(api), socketProvider.overrideWithValue(null), appStateProvider.overrideWith((ref) => _SignedIn(api, SessionStore()))],

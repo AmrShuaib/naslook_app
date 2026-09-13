@@ -119,6 +119,9 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
             children: [
               _Header(biz: biz, busy: _busy, onFollow: () => _follow(biz)),
               const SizedBox(height: 12),
+              // مساحة المجتمع في أعلى الصفحة: أول ما يراه الزائر بعد اسم الدائرة
+              CommunityEntryCard(bizId: biz.id, title: biz.title, prominent: true),
+              const SizedBox(height: 12),
               _InfoCard(biz: biz, onMap: () => _onMap(biz)),
               if (biz.highlights.isNotEmpty) ...[
                 const SizedBox(height: 10),
@@ -126,10 +129,6 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
               ],
               if (!biz.active)
                 Container(margin: const EdgeInsets.only(top: 10), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(14)), child: const Row(children: [Icon(Icons.pause_circle_outline_rounded, color: Joy.accent), SizedBox(width: 8), Expanded(child: Text('الدائرة موقوفة مؤقتاً ولا تظهر للعامة', style: TextStyle(color: Joy.accent, fontWeight: FontWeight.w600, fontSize: 13)))])),
-              if (biz.category == BizCategory.airport || biz.category == BizCategory.hospital) ...[
-                const SizedBox(height: 14),
-                CommunityEntryCard(bizId: biz.id, title: biz.title, prominent: true),
-              ],
               if (biz.posts.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 const SectionTitle('الأخبار والعروض'),
@@ -149,10 +148,6 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
                     _ => _ProductCard(biz: biz, item: it, onBuy: () => _buy(biz, it)),
                   },
                 ),
-              if (biz.category != BizCategory.airport && biz.category != BizCategory.hospital) ...[
-                const SizedBox(height: 14),
-                CommunityEntryCard(bizId: biz.id, title: biz.title),
-              ],
               if (biz.myOrders.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 SectionTitle('${biz.category.orderNoun == 'طلب' ? 'طلباتي' : 'حجوزاتي'} هنا', action: 'الكل', onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
