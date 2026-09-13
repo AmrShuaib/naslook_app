@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +9,7 @@ import '../state/admin_providers.dart';
 import 'i18n/l10n.dart';
 import '../core/app_theme.dart';
 import '../core/nav_provider.dart';
+import '../core/notify/message_sound.dart';
 import '../api/notify_api.dart';
 import '../core/notify_open.dart';
 import '../core/share/share_links.dart';
@@ -83,6 +86,8 @@ class HomeShell extends ConsumerStatefulWidget {
 
 class _HomeShellState extends ConsumerState<HomeShell> {
   bool _recoveryShown = false;
+  StreamSubscription<Map<String, dynamic>>? _socketSub;
+  late final MessageBell _bell = MessageBell(ref.read);
 
   @override
   void initState() {
@@ -90,11 +95,20 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowRecovery());
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingNotification());
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingLink());
+    // جرس الرسائل: يُفتح سياق الصوت عند أول لمسة، ويُقرع عند وصول رسالة عبر الاتصال المباشر
+    MessageSound.prepare();
     // يفتح اتصال WebSocket مبكراً، ويجدّد اشتراك الإشعارات الفورية إن كان الإذن ممنوحاً
     Future.microtask(() {
-      ref.read(socketProvider);
+      if (!mounted) return;
+      _socketSub = ref.read(socketProvider)?.events.listen(_bell.handle);
       PushService.resubscribeIfGranted(ref.read(apiClientProvider));
     });
+  }
+
+  @override
+  void dispose() {
+    _socketSub?.cancel();
+    super.dispose();
   }
 
   /// رابط عام (`/c/<دائرة>` أو `/u/<نك نيم>`) وصل عند الإقلاع: نفتح وجهته بعد الدخول.

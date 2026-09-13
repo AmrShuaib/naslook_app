@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/notify_api.dart';
+import '../core/notify/message_sound.dart';
 import 'app_state.dart';
+import 'safety_providers.dart';
 
 /// فترة استطلاع عدد الإشعارات غير المقروءة؛ null يعطّل المؤقّت (في الاختبارات).
 final notifyPollIntervalProvider = Provider<Duration?>((_) => const Duration(seconds: 45));
@@ -39,4 +41,44 @@ String? pendingNotificationId;
 void capturePendingNotification([Uri? uri]) {
   final frag = (uri ?? Uri.base).fragment;
   pendingNotificationId = RegExp(r'^/?n/([0-9a-fA-F-]{36})').firstMatch(frag)?.group(1);
+}
+
+/// إعداد جرس الرسائل الجديدة (مفعّل افتراضياً، محفوظ محلياً).
+final messageSoundProvider = StateNotifierProvider<MessageSoundSetting, bool>((_) => MessageSoundSetting());
+
+class MessageSoundSetting extends StateNotifier<bool> {
+  MessageSoundSetting() : super(true) {
+    MessageSound.loadEnabled().then((v) { if (mounted) state = v; });
+  }
+  Future<void> set(bool v) async {
+    state = v;
+    await MessageSound.saveEnabled(v);
+  }
+}
+
+/// يقرع الجرس عند وصول رسالة من شخص آخر عبر الاتصال المباشر (غير مكتوم، والإعداد مفعّل، وبفاصل زمني بين الجرسين).
+class MessageBell {
+  /// قارئ المزوّدات (WidgetRef.read أو ProviderContainer.read).
+  final T Function<T>(ProviderListenable<T> provider) read;
+  MessageBell(this.read);
+
+  static bool isMessageEvent(Map<String, dynamic> e) {
+    final ev = e['event'];
+    return (ev == null && e['senderId'] != null && e['content'] != null) || ev == 'message' || ev == 'new-message';
+  }
+
+  static String? senderOf(Map<String, dynamic> e) {
+    final m = e['message'];
+    final s = e['senderId'] ?? e['sender_id'] ?? e['from'] ?? (m is Map ? (m['sender_id'] ?? m['senderId']) : null);
+    return s?.toString();
+  }
+
+  /// يرجع true إن قُرع الجرس.
+  bool handle(Map<String, dynamic> e) {
+    if (!isMessageEvent(e)) return false;
+    final myId = read(appStateProvider).user?.id ?? '';
+    final ring = MessageSound.shouldRing(enabled: read(messageSoundProvider), senderId: senderOf(e), myId: myId, mutedPeers: read(mutedPeersProvider));
+    if (ring) MessageSound.play();
+    return ring;
+  }
 }

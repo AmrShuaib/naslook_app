@@ -8,6 +8,7 @@ import '../../api/notify_api.dart';
 import '../../api/session.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
+import '../../core/notify/message_sound.dart';
 import '../../core/share/share_links.dart';
 import '../../core/media/pick_image.dart';
 import '../../core/push/push_service.dart';
@@ -115,7 +116,7 @@ class MySpacePage extends ConsumerWidget {
             const SizedBox(height: 14),
           ],
           const SectionTitle('الإشعارات'),
-          const JoyCard(padding: EdgeInsets.zero, child: _PushTile()),
+          const JoyCard(padding: EdgeInsets.zero, child: Column(children: [_PushTile(), Divider(indent: 16, endIndent: 16, height: 1), _SoundTile()])),
           const SizedBox(height: 14),
           const SectionTitle('الخصوصية والموقع'),
           JoyCard(
@@ -334,6 +335,34 @@ class MySpacePage extends ConsumerWidget {
   }
 }
 
+
+/// جرس الرسائل الجديدة على الويب: مفتاح تشغيل وزر تجربة.
+class _SoundTile extends ConsumerWidget {
+  const _SoundTile();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final on = ref.watch(messageSoundProvider);
+    final supported = MessageSound.supported;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      SwitchListTile(
+        key: const Key('sound-toggle'),
+        value: on && supported,
+        onChanged: supported ? (v) => ref.read(messageSoundProvider.notifier).set(v) : null,
+        title: const Text('صوت الجرس للرسائل الجديدة'),
+        subtitle: Text(!supported ? 'متاح في نسخة الويب' : on ? 'يُقرع عند وصول رسالة والتطبيق مفتوح في المتصفح' : 'بلا صوت عند وصول الرسائل'),
+        secondary: Icon(Icons.notifications_none_rounded, color: on && supported ? Joy.primary : Joy.text),
+      ),
+      if (supported)
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Padding(
+            padding: const EdgeInsetsDirectional.only(start: 12, bottom: 4),
+            child: TextButton.icon(key: const Key('sound-test'), onPressed: on ? () { MessageSound.play(); toast(context, 'هذا صوت الجرس'); } : null, icon: const Icon(Icons.volume_up_outlined, size: 18), label: const Text('تجربة الصوت')),
+          ),
+        ),
+    ]);
+  }
+}
 
 /// تفعيل/إيقاف الإشعارات الفورية (Web Push) في هذا المتصفح.
 class _PushTile extends ConsumerStatefulWidget {
