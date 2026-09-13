@@ -39,7 +39,7 @@ class CatalogTab extends ConsumerWidget {
   }
 }
 
-String _addLabel(BizCategory c) => switch (c) { BizCategory.brand => 'إضافة منتج', BizCategory.cinema => 'إضافة فيلم', BizCategory.hotel => 'إضافة غرفة', BizCategory.carRental => 'إضافة سيارة', BizCategory.hospital => 'إضافة عيادة', BizCategory.airport => 'إضافة مرفق أو خدمة', BizCategory.cafe => 'إضافة صنف' };
+String _addLabel(BizCategory c) => switch (c) { BizCategory.brand => 'إضافة منتج', BizCategory.cinema => 'إضافة فيلم', BizCategory.hotel => 'إضافة غرفة', BizCategory.carRental => 'إضافة سيارة', BizCategory.hospital => 'إضافة عيادة', BizCategory.airport => 'إضافة مرفق أو خدمة', BizCategory.cafe => 'إضافة صنف', BizCategory.restaurant => 'إضافة صنف', BizCategory.company => 'إضافة خدمة أو قسم', BizCategory.university => 'إضافة كلية أو خدمة' };
 
 class _ItemRow extends ConsumerWidget {
   final Biz biz;

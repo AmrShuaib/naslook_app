@@ -763,6 +763,9 @@ class _ItemMarker extends StatelessWidget {
         'hospital' => Icons.local_hospital_rounded,
         'airport' => Icons.flight_takeoff_rounded,
         'cafe' => Icons.local_cafe_rounded,
+        'restaurant' => Icons.restaurant_rounded,
+        'company' => Icons.corporate_fare_rounded,
+        'university' => Icons.school_rounded,
         _ => Icons.storefront_rounded,
       };
 }

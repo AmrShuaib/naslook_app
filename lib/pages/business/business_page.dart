@@ -805,6 +805,21 @@ class _InfoServiceCard extends StatelessWidget {
     if (k.contains('facilities') || k.contains('مرافق')) return Icons.local_parking_outlined;
     if (k.contains('volunteer') || k.contains('تطوع')) return Icons.volunteer_activism_outlined;
     if (k.contains('vaccines') || k.contains('تطعيم')) return Icons.vaccines_outlined;
+    // شركات وجامعات
+    if (k.contains('admission') || k.contains('القبول')) return Icons.how_to_reg_outlined;
+    if (k.contains('college') || k.contains('كلية') || k.contains('كليات')) return Icons.school_outlined;
+    if (k.contains('library') || k.contains('المكتبة')) return Icons.local_library_outlined;
+    if (k.contains('deanship') || k.contains('عمادة')) return Icons.account_balance_outlined;
+    if (k.contains('research') || k.contains('البحث') || k.contains('أبحاث')) return Icons.science_outlined;
+    if (k.contains('career') || k.contains('التوظيف') || k.contains('الوظائف')) return Icons.work_outline_rounded;
+    if (k.contains('hq') || k.contains('المقر')) return Icons.apartment_outlined;
+    if (k.contains('customer') || k.contains('العملاء')) return Icons.support_agent_outlined;
+    if (k.contains('branch') || k.contains('فرع') || k.contains('فروع')) return Icons.store_outlined;
+    if (k.contains('portal') || k.contains('البوابة') || k.contains('تطبيق')) return Icons.phone_iphone_outlined;
+    if (k.contains('housing') || k.contains('السكن')) return Icons.house_outlined;
+    if (k.contains('transport') || k.contains('النقل') || k.contains('القطار')) return Icons.train_outlined;
+    if (k.contains('billing') || k.contains('الفواتير') || k.contains('السداد')) return Icons.receipt_long_outlined;
+    if (k.contains('outage') || k.contains('الأعطال') || k.contains('البلاغات')) return Icons.report_problem_outlined;
     if (id.startsWith('kaia-')) {
       if (k.contains('hajj') || k.contains('الحج')) return Icons.mosque_outlined;
       if (k.contains('t1') || k.contains('الصالة')) return Icons.flight_takeoff_rounded;

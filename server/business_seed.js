@@ -1,6 +1,8 @@
 // بيانات الدوائر التجارية الأولية في جدة: براندات عالمية، سينما، فنادق، تأجير سيارات.
 // الإحداثيات من OpenStreetMap (Nominatim) لفروع حقيقية في جدة؛ فرعا هيرتز وسيكست في مطار الملك عبدالعزيز الدولي.
 // الأسعار بالهللة. هذه الدوائر تعريفية ومتاجرها تجريبية عبر محفظة ناس لايف، وليست مرتبطة رسمياً بالعلامات.
+import { SEED_DAMMAM } from "./business_seed_dammam.js";
+
 const P = (sar) => Math.round(sar * 100);
 const product = (id, title, sar, description = "", extra = {}) => ({ id, kind: "product", title, description, price: P(sar), unit: "item", stock: 50, ...extra });
 const movie = (id, title, sar, meta) => ({ id, kind: "showtime", title, description: `${meta.genre} · ${meta.minutes} دقيقة · ${meta.rating}`, price: P(sar), unit: "ticket", stock: meta.seats ?? 120, meta });
@@ -275,4 +277,5 @@ export const SEED = [
     address: "شارع حديقة رامي، حي السلامة، جدة", hours: "", highlights: ["محمصة", "تقطير", "حبوب للبيع"],
     items: [product("yolo-espresso", "إسبريسو", 13), product("yolo-americano", "أمريكانو", 15), product("yolo-flatwhite", "فلات وايت", 17), product("yolo-latte", "لاتيه", 18), product("yolo-v60", "V60 تقطير", 20),
       product("yolo-chemex", "كيمكس", 23), product("yolo-coldbrew", "كولد برو", 19), product("yolo-beans-bra", "حبوب برازيل 250غ", 55)] },
+  ...SEED_DAMMAM,
 ];

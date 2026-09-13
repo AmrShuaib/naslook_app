@@ -22,7 +22,10 @@ enum BizCategory {
   carRental('car_rental', 'تأجير سيارات', 'تأجير سيارات', Icons.directions_car_rounded),
   hospital('hospital', 'مستشفيات', 'مستشفى', Icons.local_hospital_rounded),
   airport('airport', 'مطارات', 'مطار', Icons.flight_takeoff_rounded),
-  cafe('cafe', 'مقاهٍ مختصة', 'مقهى مختص', Icons.coffee_rounded);
+  cafe('cafe', 'مقاهٍ مختصة', 'مقهى مختص', Icons.coffee_rounded),
+  restaurant('restaurant', 'مطاعم', 'مطعم', Icons.restaurant_rounded),
+  company('company', 'شركات كبرى', 'شركة', Icons.corporate_fare_rounded),
+  university('university', 'جامعات', 'جامعة', Icons.school_rounded);
 
   final String key;
   final String plural;
@@ -33,10 +36,10 @@ enum BizCategory {
   static BizCategory of(String? key) => values.firstWhere((c) => c.key == key, orElse: () => BizCategory.brand);
 
   /// نوع العنصر الرئيسي في كتالوج هذه الفئة.
-  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car', hospital => 'clinic', airport => 'info', cafe => 'product' };
-  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات', airport => 'مرافق المطار والخدمات', cafe => 'القائمة' };
-  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً', airport => 'التفاصيل', cafe => 'اطلب' };
-  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد', airport => 'طلب', cafe => 'طلب' };
+  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car', hospital => 'clinic', airport => 'info', cafe => 'product', restaurant => 'product', company => 'info', university => 'info' };
+  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات', airport => 'مرافق المطار والخدمات', cafe => 'القائمة', restaurant => 'القائمة', company => 'الخدمات والأقسام', university => 'الكليات والخدمات' };
+  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً', airport => 'التفاصيل', cafe => 'اطلب', restaurant => 'اطلب', company => 'التفاصيل', university => 'التفاصيل' };
+  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد', airport => 'طلب', cafe => 'طلب', restaurant => 'طلب', company => 'طلب', university => 'طلب' };
 }
 
 /// دائرة تجارية (براند/سينما/فندق/تأجير سيارات/مستشفى/مطار).

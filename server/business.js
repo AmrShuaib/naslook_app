@@ -10,7 +10,7 @@ import { SEED } from "./business_seed.js";
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const ID_RE = /^[A-Z]{2}\d{7}$/;
-const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital", "airport", "cafe"]);
+const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital", "airport", "cafe", "restaurant", "company", "university"]);
 // clinic: عيادة بمواعيد (كالعرض السينمائي لكن مجاناً غالباً)، info: خدمة أو قسم تعريفي لا يُطلب
 const KINDS = new Set(["product", "showtime", "room", "car", "clinic", "info"]);
 const POST_KINDS = new Set(["news", "offer"]);

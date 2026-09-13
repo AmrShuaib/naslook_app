@@ -59,6 +59,9 @@ Color labelColorFor(String? kind) => switch (kind) {
       'airport' => const Color(0xFF1565C0),
       'car_rental' => const Color(0xFF2E7D32),
       'brand' => Joy.primary,
+      'restaurant' => const Color(0xFFC2410C),
+      'company' => const Color(0xFF334E68),
+      'university' => const Color(0xFF3949AB),
       _ => const Color(0xFF3C4043),
     };
 

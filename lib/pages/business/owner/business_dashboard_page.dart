@@ -81,7 +81,7 @@ class BusinessDashboardPage extends ConsumerWidget {
 
 // ------------------------------------------------------------------ نظرة عامة
 
-String _itemNoun(BizCategory c) => switch (c) { BizCategory.brand => 'منتج', BizCategory.cinema => 'فيلم', BizCategory.hotel => 'غرفة', BizCategory.carRental => 'سيارة', BizCategory.hospital => 'عيادة', BizCategory.airport => 'مرفق', BizCategory.cafe => 'صنف' };
+String _itemNoun(BizCategory c) => switch (c) { BizCategory.brand => 'منتج', BizCategory.cinema => 'فيلم', BizCategory.hotel => 'غرفة', BizCategory.carRental => 'سيارة', BizCategory.hospital => 'عيادة', BizCategory.airport => 'مرفق', BizCategory.cafe => 'صنف', BizCategory.restaurant => 'صنف', BizCategory.company => 'خدمة', BizCategory.university => 'كلية' };
 
 class OverviewTab extends ConsumerWidget {
   final Biz biz;
