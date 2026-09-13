@@ -10,7 +10,7 @@ import { SEED } from "./business_seed.js";
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const ID_RE = /^[A-Z]{2}\d{7}$/;
-const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital", "airport"]);
+const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital", "airport", "cafe"]);
 // clinic: عيادة بمواعيد (كالعرض السينمائي لكن مجاناً غالباً)، info: خدمة أو قسم تعريفي لا يُطلب
 const KINDS = new Set(["product", "showtime", "room", "car", "clinic", "info"]);
 const POST_KINDS = new Set(["news", "offer"]);
@@ -116,13 +116,14 @@ export default async function business(app, opts) {
     const bv = [], bp = [];
     SEED.forEach((b, i) => {
       const o = bp.length;
-      bv.push(`($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10},$${o + 11},$${o + 12},$${o + 13},$${o + 14},$${o + 15})`);
-      bp.push(b.id, b.name, b.nameAr ?? "", b.category, b.sector ?? "", b.description ?? "", b.lat, b.lng, b.address ?? "", b.hours ?? "", b.phone ?? null, b.website ?? null, b.color ?? null, JSON.stringify(b.highlights ?? []), i);
+      bv.push(`($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10},$${o + 11},$${o + 12},$${o + 13},$${o + 14},$${o + 15},$${o + 16})`);
+      bp.push(b.id, b.name, b.nameAr ?? "", b.category, b.sector ?? "", b.description ?? "", b.lat, b.lng, b.address ?? "", b.hours ?? "", b.phone ?? null, b.website ?? null, b.color ?? null, JSON.stringify(b.highlights ?? []), i, b.logoUrl ?? null);
     });
-    await pool.query(`INSERT INTO biz(id,name,name_ar,category,sector,description,lat,lng,address,hours,phone,website,color,highlights,sort) VALUES ${bv.join(",")}
+    // الشعار المبذور (asset:… داخل التطبيق) لا يطغى على شعار رفعه صاحب الدائرة
+    await pool.query(`INSERT INTO biz(id,name,name_ar,category,sector,description,lat,lng,address,hours,phone,website,color,highlights,sort,logo_url) VALUES ${bv.join(",")}
       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, name_ar=EXCLUDED.name_ar, category=EXCLUDED.category, sector=EXCLUDED.sector, description=EXCLUDED.description,
         lat=EXCLUDED.lat, lng=EXCLUDED.lng, address=EXCLUDED.address, hours=EXCLUDED.hours, phone=EXCLUDED.phone, website=EXCLUDED.website, color=EXCLUDED.color,
-        highlights=EXCLUDED.highlights, sort=EXCLUDED.sort, active=true WHERE biz.owner_id IS NULL`, bp);
+        highlights=EXCLUDED.highlights, sort=EXCLUDED.sort, active=true, logo_url=COALESCE(biz.logo_url, EXCLUDED.logo_url) WHERE biz.owner_id IS NULL`, bp);
     const iv = [], ip = [];
     for (const b of SEED) {
       (b.items ?? []).forEach((it, j) => {
@@ -479,6 +480,12 @@ export default async function business(app, opts) {
     const staffView = canOperate(role);
     if (!staffView) pool.query("UPDATE biz SET views=views+1 WHERE id=$1", [b.id]).catch(() => {});
     const items = await Promise.all((await pool.query(`SELECT * FROM biz_items WHERE biz_id=$1${staffView ? "" : " AND active"} ORDER BY sort, title`, [b.id])).rows.map((it) => itemOut(it)));
+    // عدد نقاشات كل منتج في مساحة المجتمع (مشاركات وردود تقتبسه) إن كانت الإضافة مسجّلة
+    try {
+      const d = new Map();
+      for (const r of (await pool.query("SELECT item_id, count(*)::int AS n FROM (SELECT item_id FROM biz_community_posts WHERE biz_id=$1 AND hidden=false AND item_id IS NOT NULL UNION ALL SELECT r.item_id FROM biz_community_replies r JOIN biz_community_posts p ON p.id=r.post_id WHERE p.biz_id=$1 AND r.hidden=false AND r.item_id IS NOT NULL) x GROUP BY item_id", [b.id])).rows) d.set(r.item_id, r.n);
+      for (const it of items) it.discussions = d.get(it.id) ?? 0;
+    } catch { for (const it of items) it.discussions = 0; }
     const reviews = await Promise.all((await pool.query("SELECT * FROM biz_reviews WHERE biz_id=$1 ORDER BY created_at DESC LIMIT 50", [b.id])).rows.map(async (x) => ({
       user: await person(x.user_id), rating: x.rating, text: x.text, createdAt: x.created_at, mine: x.user_id === uid, reply: x.reply, replyAt: x.reply_at })));
     const posts = (await pool.query(`SELECT * FROM biz_posts WHERE biz_id=$1${staffView ? "" : " AND active AND (starts_at IS NULL OR starts_at <= now()) AND (ends_at IS NULL OR ends_at >= now())"} ORDER BY created_at DESC LIMIT 30`, [b.id])).rows.map(postOut);

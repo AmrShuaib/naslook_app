@@ -15,6 +15,7 @@ import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
+import '../../api/community_api.dart';
 import 'community_page.dart';
 import 'my_bookings_page.dart';
 import 'owner/business_dashboard_page.dart';
@@ -516,16 +517,20 @@ class BizLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final letters = biz.name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).map((w) => w[0].toUpperCase()).take(2).join();
-    if (biz.logoUrl != null) {
-      return Consumer(builder: (context, ref, _) {
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(color: biz.color, borderRadius: BorderRadius.circular(size * .28), border: Border.all(color: Joy.surface, width: 3), boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 6, offset: Offset(0, 2))]),
-          clipBehavior: Clip.antiAlias,
-          child: Image.network(thumbUrl(biz.logoUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Center(child: Text(letters, style: TextStyle(color: biz.onColor, fontWeight: FontWeight.w800, fontSize: size * .36, fontFamily: 'Rubik')))),
-        );
-      });
+    final logo = biz.logoUrl;
+    if (logo != null && logo.isNotEmpty) {
+      Widget fallback(BuildContext _, Object __, StackTrace? ___) => Center(child: Text(letters, style: TextStyle(color: biz.onColor, fontWeight: FontWeight.w800, fontSize: size * .36, fontFamily: 'Rubik')));
+      // شعارات الدوائر المبذورة مضمّنة في التطبيق (asset:biz/…)؛ شعارات الملّاك تُرفع إلى الخادم
+      final image = logo.startsWith('asset:')
+          ? Image.asset('assets/${logo.substring(6)}', fit: BoxFit.cover, errorBuilder: fallback)
+          : Image.network(thumbUrl(logo), fit: BoxFit.cover, errorBuilder: fallback);
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(color: biz.color, borderRadius: BorderRadius.circular(size * .28), border: Border.all(color: Joy.surface, width: 3), boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 6, offset: Offset(0, 2))]),
+        clipBehavior: Clip.antiAlias,
+        child: image,
+      );
     }
     return Container(
       width: size,
@@ -610,7 +615,23 @@ class _ProductCard extends StatelessWidget {
               ]),
               if (item.description.isNotEmpty) Text(item.description, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5), maxLines: 2, overflow: TextOverflow.ellipsis),
               const SizedBox(height: 4),
-              _Price(item),
+              Wrap(spacing: 10, runSpacing: 2, crossAxisAlignment: WrapCrossAlignment.center, alignment: WrapAlignment.spaceBetween, children: [
+                _Price(item),
+                // نقاش المنتج في مساحة المجتمع: يفتح المساحة مع اقتباس هذا المنتج جاهزاً في المؤلّف
+                InkWell(
+                  key: Key('discuss-${item.id}'),
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CommunityPage(bizId: biz.id, title: biz.title, initialItem: CommunityItemRef.of(item)))),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.mode_comment_outlined, size: 15, color: Joy.primary),
+                      const SizedBox(width: 4),
+                      Text(item.discussions == 0 ? 'ناقش' : '${item.discussions} نقاش', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Joy.primary)),
+                    ]),
+                  ),
+                ),
+              ]),
             ]),
           ),
           const SizedBox(width: 8),

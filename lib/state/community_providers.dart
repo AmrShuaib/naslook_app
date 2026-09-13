@@ -4,7 +4,8 @@ import '../api/community_api.dart';
 import 'app_state.dart';
 
 /// الصفحة الأولى من مساحة مجتمع دائرة (بموضوع اختياري). الصفحات الأقدم تُجلب من الصفحة نفسها بـ before.
-final communityFeedProvider = FutureProvider.family<CommunityFeed, ({String bizId, String? topic})>((ref, a) => ref.watch(apiClientProvider).communityFeed(a.bizId, topic: a.topic));
+typedef CommunityFeedKey = ({String bizId, String? topic, String? itemId, String sort});
+final communityFeedProvider = FutureProvider.family<CommunityFeed, CommunityFeedKey>((ref, a) => ref.watch(apiClientProvider).communityFeed(a.bizId, topic: a.topic, itemId: a.itemId, sort: a.sort));
 
 /// منشور مع ردوده.
 final communityThreadProvider = FutureProvider.family<CommunityThread, ({String bizId, String postId})>((ref, a) => ref.watch(apiClientProvider).communityThread(a.bizId, a.postId));

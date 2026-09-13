@@ -80,6 +80,16 @@ class _FakePlayer extends VoicePlayerBase {
 
 String _ago(Duration d) => DateTime.now().subtract(d).toUtc().toIso8601String();
 Map<String, dynamic> _person(String id, String n) => {'id': id, 'nickname': n, 'avatarUrl': null};
+Map<String, dynamic> _item(String id, String title, int price) => {'id': id, 'title': title, 'price': price, 'unit': 'item', 'kind': 'product', 'imageUrl': null};
+
+Map<String, dynamic> _cafe() => {
+      'id': 'biz-brew92', 'name': 'Brew 92', 'nameAr': 'برو 92', 'category': 'cafe', 'sector': 'محمصة وقهوة مختصة', 'description': 'محمصة', 'lat': 21.57324, 'lng': 39.14363,
+      'address': 'حي الروضة، جدة', 'hours': '', 'website': 'https://www.brew92.com', 'color': '#5B2E1E', 'logoUrl': 'asset:biz/brew92.png', 'highlights': ['محمصة جداوية'], 'followers': 0, 'itemsCount': 2, 'active': true, 'reviews': [], 'myOrders': [], 'posts': [],
+      'items': [
+        {'id': 'brew92-v60', 'bizId': 'biz-brew92', 'kind': 'product', 'title': 'V60 تقطير', 'description': 'حبوب الموسم', 'price': 2200, 'unit': 'item', 'stock': 50, 'meta': {}, 'active': true, 'discussions': 3},
+        {'id': 'brew92-latte', 'bizId': 'biz-brew92', 'kind': 'product', 'title': 'لاتيه', 'description': '', 'price': 1900, 'unit': 'item', 'stock': 50, 'meta': {}, 'active': true, 'discussions': 0},
+      ],
+    };
 
 Map<String, dynamic> _airport() => {
       'id': 'biz-kaia', 'name': 'King Abdulaziz International Airport', 'nameAr': 'مطار الملك عبدالعزيز الدولي بجدة', 'category': 'airport', 'sector': 'مطار دولي',
@@ -103,12 +113,40 @@ class _Srv {
     {'id': 'c-1', 'bizId': 'biz-kaia', 'user': _person('SA0000003', 'khalid'), 'topic': 'general', 'text': 'أهلاً بكم في مساحة المطار، نرد على استفساراتكم هنا', 'images': [], 'pinned': true, 'hidden': false, 'likes': 4, 'liked': false, 'replies': 1, 'mine': false, 'staff': true, 'createdAt': _ago(const Duration(days: 3))},
     {'id': 'c-3', 'bizId': 'biz-kaia', 'user': _person('SA0000001', 'amr'), 'topic': 'question', 'text': 'هل يوجد مصلى في صالة الحج؟', 'images': [], 'pinned': false, 'hidden': false, 'likes': 0, 'liked': false, 'replies': 2, 'mine': true, 'staff': false, 'createdAt': _ago(const Duration(minutes: 30))},
   ];
+  late final cafePosts = <Map<String, dynamic>>[
+    {'id': 'b-1', 'bizId': 'biz-brew92', 'user': _person('SA0000002', 'sara'), 'topic': 'tip', 'text': 'جرّبوا الـV60 بحبوب إثيوبيا', 'images': [], 'item': _item('brew92-v60', 'V60 تقطير', 2200), 'pinned': false, 'hidden': false, 'likes': 5, 'liked': false, 'replies': 1, 'mine': false, 'staff': false, 'createdAt': _ago(const Duration(hours: 2))},
+    {'id': 'b-2', 'bizId': 'biz-brew92', 'user': _person('SA0000003', 'khalid'), 'topic': 'question', 'text': 'الفلات وايت بحليب لوز؟', 'images': [], 'item': null, 'pinned': false, 'hidden': false, 'likes': 1, 'liked': false, 'replies': 0, 'mine': false, 'staff': false, 'createdAt': _ago(const Duration(hours: 1))},
+  ];
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   Future<http.Response> handle(http.Request req) async {
     final key = '${req.method} ${req.url.path}';
     calls.add(key);
     queries[key] = req.url.queryParameters;
     if ((req.headers['content-type'] ?? '').contains('json') && req.body.startsWith('{')) bodies[key] = jsonDecode(req.body) as Map<String, dynamic>;
+    if (key == 'GET /biz/biz-brew92') return _json(_cafe());
+    if (key == 'GET /biz/biz-brew92/community') {
+      final itemId = req.url.queryParameters['itemId'];
+      final top = req.url.queryParameters['sort'] == 'top';
+      final list = [for (final p in cafePosts) if (itemId == null || p['item']?['id'] == itemId) p];
+      if (top) {
+        list.sort((a, b) => (b['likes'] as int).compareTo(a['likes'] as int));
+      } else {
+        list.sort((a, b) => (b['createdAt'] as String).compareTo(a['createdAt'] as String));
+      }
+      return _json({'posts': list, 'total': cafePosts.length, 'members': 2, 'canModerate': false, 'hasMore': false, 'topItems': itemId == null ? [{'item': _item('brew92-v60', 'V60 تقطير', 2200), 'count': 3}] : []});
+    }
+    if (key == 'POST /biz/biz-brew92/community') {
+      final b = bodies[key]!;
+      final p = {'id': 'b-new', 'bizId': 'biz-brew92', 'user': _person('SA0000001', 'amr'), 'topic': b['topic'], 'text': b['text'], 'images': b['images'], 'item': b['itemId'] == 'brew92-latte' ? _item('brew92-latte', 'لاتيه', 1900) : b['itemId'] == 'brew92-v60' ? _item('brew92-v60', 'V60 تقطير', 2200) : null, 'pinned': false, 'hidden': false, 'likes': 0, 'liked': false, 'replies': 0, 'mine': true, 'staff': false, 'createdAt': _ago(Duration.zero)};
+      cafePosts.insert(0, p);
+      return _json(p);
+    }
+    if (key == 'GET /biz/biz-brew92/community/b-1') {
+      return _json({'post': cafePosts.firstWhere((p) => p['id'] == 'b-1'), 'replies': [
+        {'id': 'br-1', 'postId': 'b-1', 'user': _person('SA0000003', 'khalid'), 'text': 'صحيح، والكولد برو أيضاً', 'images': [], 'item': _item('brew92-v60', 'V60 تقطير', 2200), 'likes': 2, 'liked': false, 'mine': false, 'createdAt': _ago(const Duration(minutes: 30))},
+      ], 'canModerate': false});
+    }
+    if (key == 'POST /biz/biz-brew92/community/b-1/replies/br-1/like') return _json({'ok': true, 'liked': true, 'likes': 3});
     if (key == 'GET /biz/biz-kaia') return _json(_airport());
     if (key == 'GET /biz/biz-kaia/community') {
       final topic = req.url.queryParameters['topic'];
@@ -172,6 +210,92 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 void main() {
+  test('cafe category, quoted item model and asset logo', () {
+    expect(BizCategory.of('cafe'), BizCategory.cafe);
+    expect(BizCategory.cafe.itemKind, 'product');
+    expect(BizCategory.cafe.catalogTitle, 'القائمة');
+    final biz = Biz.fromJson(_cafe());
+    expect(biz.logoUrl, 'asset:biz/brew92.png');
+    expect(biz.items.first.discussions, 3);
+    final ref = CommunityItemRef.fromJson(_item('brew92-v60', 'V60 تقطير', 2200));
+    expect(ref.priceLabel, contains('22'));
+    final post = CommunityPost.fromJson({'id': 'x', 'bizId': 'biz-brew92', 'user': _person('SA0000002', 'sara'), 'topic': 'tip', 'text': '', 'item': _item('brew92-v60', 'V60 تقطير', 2200)});
+    expect(post.item!.title, 'V60 تقطير');
+    expect(post.preview, 'عن V60 تقطير');
+    final reply = CommunityReply.fromJson({'id': 'r', 'postId': 'x', 'user': _person('SA0000003', 'khalid'), 'text': 'ok', 'likes': 2, 'liked': true, 'item': _item('brew92-latte', 'لاتيه', 1900)});
+    expect(reply.likes, 2);
+    expect(reply.copyWith(liked: false, likes: 1).liked, isFalse);
+    final feed = CommunityFeed.fromJson({'posts': [], 'topItems': [{'item': _item('brew92-v60', 'V60 تقطير', 2200), 'count': 3}]});
+    expect(feed.topItems.single.count, 3);
+  });
+
+  testWidgets('cafe page shows the bundled logo, menu prices and a discuss button that opens the space with the product quoted', (tester) async {
+    final srv = await _pump(tester, const BusinessPage(id: 'biz-brew92'));
+    await _settle(tester);
+    expect(find.text('برو 92'), findsWidgets);
+    expect(find.text('القائمة'), findsOneWidget);
+    expect(find.byWidgetPredicate((w) => w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == 'assets/biz/brew92.png'), findsWidgets, reason: 'الشعار المضمّن يُعرض');
+    expect(find.text('3 نقاش'), findsOneWidget);
+    expect(find.text('ناقش'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('discuss-brew92-v60')));
+    await tester.tap(find.byKey(const Key('discuss-brew92-v60')));
+    await _settle(tester);
+    expect(find.byType(CommunityPage), findsOneWidget);
+    expect(srv.queries['GET /biz/biz-brew92/community']?['itemId'], 'brew92-v60', reason: 'المساحة تُفتح مصفّاة على المنتج');
+    expect(find.textContaining('النقاش عن: V60 تقطير'), findsOneWidget);
+    expect(find.byKey(const Key('community-quote-chip')), findsOneWidget, reason: 'الاقتباس جاهز في المؤلّف');
+    expect(find.byType(CommunityPostCard), findsOneWidget);
+    // إزالة التصفية تعرض كل المساحة وشريط الأكثر نقاشاً
+    await tester.tap(find.byKey(const Key('community-filter-clear')));
+    await _settle(tester);
+    expect(find.byType(CommunityPostCard), findsNWidgets(2));
+    expect(find.byKey(const Key('community-top-brew92-v60')), findsOneWidget);
+    // إرسال مع الاقتباس الجاهز
+    await tester.enterText(find.byKey(const Key('community-input')), 'أفضل قهوة مقطّرة في الروضة');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('community-send')));
+    await _settle(tester);
+    expect(srv.bodies['POST /biz/biz-brew92/community']!['itemId'], 'brew92-v60');
+    expect(find.byKey(const Key('community-quote-chip')), findsNothing, reason: 'الاقتباس يُمسح بعد النشر');
+  });
+
+  testWidgets('composer picks a product to quote; sort menu requests top; thread reply hearts', (tester) async {
+    final srv = await _pump(tester, const CommunityPage(bizId: 'biz-brew92', title: 'برو 92'));
+    await _settle(tester);
+    // اختيار صنف من القائمة
+    await tester.tap(find.byKey(const Key('community-quote')));
+    await _settle(tester);
+    await tester.enterText(find.byKey(const Key('item-picker-search')), 'لات');
+    await _settle(tester);
+    expect(find.byKey(const Key('pick-item-brew92-v60')), findsNothing);
+    await tester.tap(find.byKey(const Key('pick-item-brew92-latte')));
+    await _settle(tester);
+    expect(find.byKey(const Key('community-quote-chip')), findsOneWidget);
+    expect(find.text('ما رأيك في لاتيه؟'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('community-input')), 'كريمي ومتوازن');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('community-send')));
+    await _settle(tester);
+    expect(srv.bodies['POST /biz/biz-brew92/community']!['itemId'], 'brew92-latte');
+    expect(find.text('لاتيه'), findsWidgets, reason: 'المشاركة الجديدة تعرض الاقتباس');
+    // الترتيب
+    await tester.tap(find.byKey(const Key('community-sort')));
+    await _settle(tester);
+    await tester.tap(find.text('الأكثر تفاعلاً'));
+    await _settle(tester);
+    expect(srv.queries['GET /biz/biz-brew92/community']?['sort'], 'top');
+    expect(tester.widget<CommunityPostCard>(find.byType(CommunityPostCard).first).post.id, 'b-1', reason: 'الأكثر قلوباً أولاً');
+    // النقاش: قلب على رد
+    await tester.tap(find.text('جرّبوا الـV60 بحبوب إثيوبيا'));
+    await _settle(tester);
+    expect(find.byType(CommunityThreadPage), findsOneWidget);
+    expect(find.byKey(const Key('reply-like-br-1')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('reply-like-br-1')));
+    await _settle(tester);
+    expect(srv.calls, contains('POST /biz/biz-brew92/community/b-1/replies/br-1/like'));
+    expect(find.text('3'), findsOneWidget, reason: 'عدّاد قلوب الرد يتحدث');
+  });
+
   test('airport category and community models', () {
     expect(BizCategory.of('airport'), BizCategory.airport);
     expect(BizCategory.airport.itemKind, 'info');

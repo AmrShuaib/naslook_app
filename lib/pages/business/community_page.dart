@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../api/client.dart';
 import '../../api/community_api.dart';
 import '../../api/chat_tools_api.dart';
+import '../../api/commerce_models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
@@ -21,7 +22,7 @@ import '../../state/safety_providers.dart';
 import '../../ui/widgets.dart';
 
 /// محتوى مشاركة أو رد جاهز للإرسال: نص و/أو صور مرفوعة و/أو تسجيل صوتي مرفوع.
-typedef CommunityDraft = ({String topic, String text, List<String> images, String? audio, int? audioMs});
+typedef CommunityDraft = ({String topic, String text, List<String> images, String? audio, int? audioMs, String? itemId});
 
 String _fmt(Duration d) => '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
 
@@ -31,24 +32,29 @@ class CommunityPage extends ConsumerStatefulWidget {
   final String bizId;
   final String title;
   final String? initialPostId;
-  const CommunityPage({super.key, required this.bizId, this.title = '', this.initialPostId});
+  /// منتج يُفتح النقاش عنه: تُصفّى المساحة عليه ويُقتبس جاهزاً في المؤلّف.
+  final CommunityItemRef? initialItem;
+  const CommunityPage({super.key, required this.bizId, this.title = '', this.initialPostId, this.initialItem});
   @override
   ConsumerState<CommunityPage> createState() => _CommunityPageState();
 }
 
 class _CommunityPageState extends ConsumerState<CommunityPage> {
   String? _topic;
+  CommunityItemRef? _filterItem;
+  String _sort = 'new';
   final List<CommunityPost> _older = [];
   final Map<String, CommunityPost> _patch = {};
   final Set<String> _removed = {};
   bool _loadingMore = false, _noMore = false;
   Timer? _poll;
 
-  ({String bizId, String? topic}) get _arg => (bizId: widget.bizId, topic: _topic);
+  CommunityFeedKey get _arg => (bizId: widget.bizId, topic: _topic, itemId: _filterItem?.id, sort: _sort);
 
   @override
   void initState() {
     super.initState();
+    _filterItem = widget.initialItem;
     _poll = Timer.periodic(const Duration(seconds: 15), (_) => ref.invalidate(communityFeedProvider(_arg)));
     if (widget.initialPostId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -83,12 +89,30 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
     });
   }
 
+  void _setFilterItem(CommunityItemRef? it) {
+    if (it?.id == _filterItem?.id) return;
+    setState(() {
+      _filterItem = it;
+      _older.clear();
+      _noMore = false;
+    });
+  }
+
+  void _setSort(String v) {
+    if (v == _sort) return;
+    setState(() {
+      _sort = v;
+      _older.clear();
+      _noMore = false;
+    });
+  }
+
   Future<void> _loadMore(List<CommunityPost> current) async {
     if (_loadingMore || _noMore || current.isEmpty) return;
     setState(() => _loadingMore = true);
     try {
       final last = current.where((p) => !p.pinned).lastOrNull ?? current.last;
-      final more = await ref.read(apiClientProvider).communityFeed(widget.bizId, topic: _topic, before: last.createdAt);
+      final more = await ref.read(apiClientProvider).communityFeed(widget.bizId, topic: _topic, before: last.createdAt, itemId: _filterItem?.id, sort: _sort);
       if (!mounted) return;
       setState(() {
         final known = {for (final p in current) p.id};
@@ -109,9 +133,10 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
       toast(context, 'النص يحتوي كلمة غير مسموحة: «$banned»', error: true);
       throw StateError('banned');
     }
-    await api.communityPost(widget.bizId, topic: d.topic, text: d.text, images: d.images, audio: d.audio, audioMs: d.audioMs);
+    await api.communityPost(widget.bizId, topic: d.topic, text: d.text, images: d.images, audio: d.audio, audioMs: d.audioMs, itemId: d.itemId);
     if (!mounted) return;
     if (_topic != null && _topic != d.topic) _setTopic(null);
+    if (_filterItem != null && _filterItem!.id != d.itemId) _setFilterItem(null);
     ref.invalidate(communityFeedProvider(_arg));
   }
 
@@ -200,12 +225,59 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
           if (feed != null) Text('${feed.total} مشاركة · ${feed.members} مشارك', style: const TextStyle(fontSize: 12, color: Joy.textMuted, fontWeight: FontWeight.w500)),
         ]),
         actions: [
+          PopupMenuButton<String>(
+            key: const Key('community-sort'),
+            tooltip: 'الترتيب',
+            initialValue: _sort,
+            onSelected: _setSort,
+            icon: Icon(_sort == 'top' ? Icons.local_fire_department_rounded : Icons.sort_rounded, color: _sort == 'top' ? Joy.accent : null),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'new', child: Row(children: [Icon(Icons.schedule_rounded, size: 18), SizedBox(width: 8), Text('الأحدث')])),
+              PopupMenuItem(value: 'top', child: Row(children: [Icon(Icons.local_fire_department_rounded, size: 18, color: Joy.accent), SizedBox(width: 8), Text('الأكثر تفاعلاً')])),
+            ],
+          ),
           IconButton(tooltip: 'تحديث', icon: const Icon(Icons.refresh_rounded), onPressed: _refresh),
           IconButton(tooltip: 'عن المساحة', icon: const Icon(Icons.info_outline_rounded), onPressed: () => _about(bizTitle)),
         ],
       ),
       body: Column(children: [
         _TopicBar(selected: _topic, onSelect: _setTopic),
+        if (_filterItem != null)
+          Container(
+            color: Joy.surface,
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+            child: Row(children: [
+              const Icon(Icons.format_quote_rounded, size: 18, color: Joy.primary),
+              const SizedBox(width: 6),
+              Expanded(child: Text('النقاش عن: ${_filterItem!.title} · ${_filterItem!.priceLabel}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Joy.primary))),
+              InkWell(key: const Key('community-filter-clear'), onTap: () => _setFilterItem(null), borderRadius: BorderRadius.circular(12), child: const Padding(padding: EdgeInsets.all(4), child: Row(mainAxisSize: MainAxisSize.min, children: [Text('كل المساحة', style: TextStyle(fontSize: 12.5, color: Joy.textMuted, fontWeight: FontWeight.w600)), SizedBox(width: 2), Icon(Icons.close_rounded, size: 16, color: Joy.textMuted)]))),
+            ]),
+          )
+        else if (feed != null && feed.topItems.isNotEmpty)
+          Container(
+            color: Joy.surface,
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                const Icon(Icons.local_fire_department_rounded, size: 16, color: Joy.accent),
+                const SizedBox(width: 4),
+                const Text('الأكثر نقاشاً', style: TextStyle(fontSize: 12, color: Joy.textMuted, fontWeight: FontWeight.w700)),
+                for (final t in feed.topItems) ...[
+                  const SizedBox(width: 6),
+                  ActionChip(
+                    key: Key('community-top-${t.item.id}'),
+                    label: Text('${t.item.title} · ${t.count}'),
+                    labelStyle: const TextStyle(fontFamily: AppTheme.bodyFont, fontSize: 12.5, fontWeight: FontWeight.w600, color: Joy.text),
+                    backgroundColor: Joy.surface2,
+                    side: BorderSide.none,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => _setFilterItem(t.item),
+                  ),
+                ],
+              ]),
+            ),
+          ),
         Expanded(
           child: feedAsync.when(
             skipLoadingOnRefresh: true,
@@ -245,6 +317,7 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
                             onLike: () => _like(p),
                             onOpen: () => _openThread(p.id),
                             onMenu: () => _menu(p, f.canModerate),
+                            onQuote: p.item == null ? null : () => _setFilterItem(p.item),
                           ),
                         );
                       },
@@ -252,7 +325,7 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
             ),
           ),
         ),
-        CommunityComposer(onSend: _send),
+        CommunityComposer(bizId: widget.bizId, initialItem: widget.initialItem, onSend: _send),
       ]),
     );
   }
@@ -269,6 +342,8 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
                 style: TextStyle(height: 1.6, color: Joy.text)),
             const SizedBox(height: 12),
             const _Rule(icon: Icons.mic_none_rounded, text: 'شارك بنص أو تسجيل صوتي أو صور (حتى 10 صور)، والردود بالطرق نفسها'),
+            const _Rule(icon: Icons.format_quote_rounded, text: 'اقتبس أي صنف من قائمة الدائرة وعلّق عليه، واضغط الاقتباس لترى كل ما قيل عنه'),
+            const _Rule(icon: Icons.favorite_border_rounded, text: 'قلب على المشاركات والردود، و«الأكثر تفاعلاً» يرتّب بحسب القلوب والردود'),
             const _Rule(icon: Icons.verified_user_outlined, text: 'تظهر شارة «فريق الدائرة» على مشاركات الإدارة والموظفين'),
             const _Rule(icon: Icons.push_pin_outlined, text: 'تثبّت الإدارة المشاركات المهمة في أعلى المساحة'),
             const _Rule(icon: Icons.flag_outlined, text: 'أبلغ عن أي مشاركة مسيئة؛ تُخفى تلقائياً بعد عدة بلاغات'),
@@ -338,8 +413,8 @@ Color topicColor(String key) => switch (key) { 'photo' => Joy.primary, 'question
 class CommunityPostCard extends StatelessWidget {
   final CommunityPost post;
   final bool canModerate, expanded;
-  final VoidCallback? onLike, onOpen, onMenu;
-  const CommunityPostCard({super.key, required this.post, this.canModerate = false, this.expanded = false, this.onLike, this.onOpen, this.onMenu});
+  final VoidCallback? onLike, onOpen, onMenu, onQuote;
+  const CommunityPostCard({super.key, required this.post, this.canModerate = false, this.expanded = false, this.onLike, this.onOpen, this.onMenu, this.onQuote});
 
   @override
   Widget build(BuildContext context) {
@@ -373,6 +448,7 @@ class CommunityPostCard extends StatelessWidget {
             ),
             if (onMenu != null) SizedBox(width: 32, height: 32, child: IconButton(padding: EdgeInsets.zero, tooltip: 'خيارات', icon: const Icon(Icons.more_horiz_rounded, size: 20, color: Joy.textMuted), onPressed: onMenu)),
           ]),
+          if (p.item != null) Padding(padding: const EdgeInsets.only(top: 8), child: CommunityQuoteChip(item: p.item!, onTap: onQuote)),
           if (p.text.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -422,6 +498,98 @@ class _Action extends StatelessWidget {
           child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 19, color: color), const SizedBox(width: 5), Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color))]),
         ),
       );
+}
+
+/// اقتباس منتج من قائمة الدائرة داخل مشاركة أو رد: أيقونة الصنف واسمه وسعره؛ اللمس يصفّي المساحة عليه.
+class CommunityQuoteChip extends StatelessWidget {
+  final CommunityItemRef item;
+  final VoidCallback? onTap, onRemove;
+  const CommunityQuoteChip({super.key, required this.item, this.onTap, this.onRemove});
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+          decoration: BoxDecoration(color: Joy.primarySoft.withValues(alpha: .6), borderRadius: BorderRadius.circular(12), border: Border(right: BorderSide(color: Joy.primary.withValues(alpha: .6), width: 3))),
+          child: Row(children: [
+            Container(width: 30, height: 30, decoration: BoxDecoration(color: Joy.surface, borderRadius: BorderRadius.circular(9)), child: Icon(item.kind == 'product' ? Icons.local_cafe_outlined : Icons.sell_outlined, size: 17, color: Joy.primary)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('من القائمة', style: TextStyle(fontSize: 10.5, color: Joy.textMuted, fontWeight: FontWeight.w600)),
+                Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+              ]),
+            ),
+            const SizedBox(width: 6),
+            Text(item.priceLabel, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Joy.primary)),
+            if (onRemove != null) SizedBox(width: 28, height: 28, child: IconButton(padding: EdgeInsets.zero, tooltip: 'إزالة الاقتباس', icon: const Icon(Icons.close_rounded, size: 16, color: Joy.textMuted), onPressed: onRemove)),
+          ]),
+        ),
+      );
+}
+
+/// اختيار صنف من قائمة الدائرة لاقتباسه: بحث بالاسم وقائمة بالأسعار.
+Future<CommunityItemRef?> showCommunityItemPicker(BuildContext context, String bizId) => showModalBottomSheet<CommunityItemRef>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => _ItemPicker(bizId: bizId),
+    );
+
+class _ItemPicker extends ConsumerStatefulWidget {
+  final String bizId;
+  const _ItemPicker({required this.bizId});
+  @override
+  ConsumerState<_ItemPicker> createState() => _ItemPickerState();
+}
+
+class _ItemPickerState extends ConsumerState<_ItemPicker> {
+  String _q = '';
+  @override
+  Widget build(BuildContext context) {
+    final biz = ref.watch(bizDetailProvider(widget.bizId));
+    return SizedBox(
+      height: MediaQuery.sizeOf(context).height * .72,
+      child: Column(children: [
+        const Padding(padding: EdgeInsets.fromLTRB(20, 0, 20, 8), child: Row(children: [Icon(Icons.format_quote_rounded, color: Joy.primary), SizedBox(width: 8), Expanded(child: Text('اقتبس صنفاً من القائمة', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)))])),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+          child: TextField(key: const Key('item-picker-search'), autofocus: false, onChanged: (v) => setState(() => _q = v.trim()), decoration: const InputDecoration(hintText: 'ابحث في القائمة…', prefixIcon: Icon(Icons.search_rounded), isDense: true)),
+        ),
+        Expanded(
+          child: biz.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => ErrorState(e),
+            data: (b) {
+              final q = _q.toLowerCase();
+              final items = b.items.where((i) => i.active && (q.isEmpty || i.title.toLowerCase().contains(q) || i.description.toLowerCase().contains(q))).toList();
+              if (items.isEmpty) return const EmptyState(icon: Icons.local_cafe_outlined, title: 'لا أصناف مطابقة');
+              return ListView.separated(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (_, i) {
+                  final it = items[i];
+                  return ListTile(
+                    key: Key('pick-item-${it.id}'),
+                    leading: Container(width: 40, height: 40, decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.local_cafe_outlined, color: Joy.primary, size: 20)),
+                    title: Text(it.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5)),
+                    subtitle: it.description.isEmpty ? null : Text(it.description, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text(it.isFree ? 'مجاني' : money(it.price), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary)),
+                      if (it.discussions > 0) Padding(padding: const EdgeInsets.only(right: 8), child: Text('${it.discussions} نقاش', style: const TextStyle(fontSize: 11.5, color: Joy.textMuted))),
+                    ]),
+                    onTap: () => Navigator.pop(context, CommunityItemRef.of(it)),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ]),
+    );
+  }
 }
 
 /// مشغّل تسجيل صوتي داخل مشاركة أو رد: تشغيل/إيقاف وشريط تقدّم ومدة. يعمل عبر [VoicePlayer] (play() داخل حدث اللمس لأجل iOS).
@@ -628,11 +796,13 @@ Future<String?> showCommunityPostMenu(BuildContext context, CommunityPost p, {re
 /// مؤلّف المشاركة أو الرد: نص، صور (حتى 10 تُرفع فور اختيارها)، تسجيل صوتي (يُرفع عند إيقافه ويظهر كمرفق يمكن سماعه
 /// وحذفه)، اختيار الموضوع للمشاركات، وزر إرسال. مفاتيح الاختبار تبدأ بـ [keyPrefix].
 class CommunityComposer extends ConsumerStatefulWidget {
+  final String bizId;
   final Future<void> Function(CommunityDraft draft) onSend;
   final bool showTopic;
   final String hint, keyPrefix;
   final int maxLength;
-  const CommunityComposer({super.key, required this.onSend, this.showTopic = true, this.hint = 'شارك تجربتك أو اسأل…', this.keyPrefix = 'community', this.maxLength = 1000});
+  final CommunityItemRef? initialItem;
+  const CommunityComposer({super.key, required this.bizId, required this.onSend, this.showTopic = true, this.hint = 'شارك تجربتك أو اسأل…', this.keyPrefix = 'community', this.maxLength = 1000, this.initialItem});
   @override
   ConsumerState<CommunityComposer> createState() => _CommunityComposerState();
 }
@@ -643,7 +813,19 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
   String _topic = 'general';
   final List<({String url, Uint8List bytes})> _images = [];
   ({String url, Uint8List bytes, String mime, Duration duration})? _voice;
+  CommunityItemRef? _quote;
   VoiceRecordSession? _rec;
+
+  @override
+  void initState() {
+    super.initState();
+    _quote = widget.initialItem;
+  }
+
+  Future<void> _pickQuote() async {
+    final it = await showCommunityItemPicker(context, widget.bizId);
+    if (it != null && mounted) setState(() => _quote = it);
+  }
   Timer? _recTimer;
   Duration _recElapsed = Duration.zero;
   bool _uploading = false, _sending = false, _recording = false;
@@ -658,6 +840,7 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
   }
 
   bool get _canSend => !_sending && !_uploading && !_recording && (_text.text.trim().isNotEmpty || _images.isNotEmpty || _voice != null);
+  String get _hint => _quote != null ? 'ما رأيك في ${_quote!.title}؟' : widget.hint;
   Key _k(String s) => Key('${widget.keyPrefix}-$s');
 
   Future<void> _pick({bool camera = false}) async {
@@ -740,12 +923,13 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
     setState(() => _sending = true);
     try {
       final v = _voice;
-      await widget.onSend((topic: _topic, text: _text.text.trim(), images: [for (final i in _images) i.url], audio: v?.url, audioMs: v?.duration.inMilliseconds));
+      await widget.onSend((topic: _topic, text: _text.text.trim(), images: [for (final i in _images) i.url], audio: v?.url, audioMs: v?.duration.inMilliseconds, itemId: _quote?.id));
       if (!mounted) return;
       setState(() {
         _text.clear();
         _images.clear();
         _voice = null;
+        _quote = null;
         _topic = 'general';
       });
     } catch (e) {
@@ -763,6 +947,7 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
       decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
       padding: EdgeInsets.fromLTRB(10, 8, 10, 8 + MediaQuery.paddingOf(context).bottom),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (_quote != null) Padding(padding: const EdgeInsets.only(bottom: 6), child: CommunityQuoteChip(key: _k('quote-chip'), item: _quote!, onRemove: () => setState(() => _quote = null))),
         if (voice != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
@@ -831,7 +1016,7 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
                 textInputAction: TextInputAction.newline,
                 onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
-                  hintText: widget.hint,
+                  hintText: _hint,
                   counterText: '',
                   isDense: true,
                   filled: true,
@@ -842,6 +1027,7 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
                 style: const TextStyle(fontSize: 15),
               ),
             ),
+            IconButton(key: _k('quote'), tooltip: 'اقتباس صنف من القائمة', visualDensity: VisualDensity.compact, icon: Icon(Icons.format_quote_rounded, color: _quote == null ? Joy.primary : Joy.control), onPressed: _quote != null ? null : _pickQuote),
             IconButton(key: _k('photo'), tooltip: 'إضافة صورة', visualDensity: VisualDensity.compact, icon: const Icon(Icons.add_photo_alternate_outlined, color: Joy.primary), onPressed: _uploading ? null : () => _pick()),
             IconButton(key: _k('mic'), tooltip: 'تسجيل صوتي', visualDensity: VisualDensity.compact, icon: Icon(Icons.mic_none_rounded, color: voice == null ? Joy.primary : Joy.control), onPressed: _uploading || voice != null ? null : _startRecording),
             SizedBox(
@@ -872,6 +1058,16 @@ class CommunityThreadPage extends ConsumerStatefulWidget {
 class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
   CommunityPost? _patched;
   final Set<String> _removedReplies = {};
+  final Map<String, CommunityReply> _replyPatch = {};
+
+  Future<void> _likeReply(CommunityReply r) async {
+    try {
+      final res = await ref.read(apiClientProvider).communityReplyLike(widget.bizId, widget.postId, r.id);
+      if (mounted) setState(() => _replyPatch[r.id] = (_replyPatch[r.id] ?? r).copyWith(liked: res.liked, likes: res.likes));
+    } catch (e) {
+      if (mounted) toast(context, 'تعذر تسجيل القلب', error: true);
+    }
+  }
 
   ({String bizId, String postId}) get _arg => (bizId: widget.bizId, postId: widget.postId);
 
@@ -881,7 +1077,7 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
       toast(context, 'النص يحتوي كلمة غير مسموحة: «$banned»', error: true);
       throw StateError('banned');
     }
-    await ref.read(apiClientProvider).communityReply(widget.bizId, widget.postId, text: d.text, images: d.images, audio: d.audio, audioMs: d.audioMs);
+    await ref.read(apiClientProvider).communityReply(widget.bizId, widget.postId, text: d.text, images: d.images, audio: d.audio, audioMs: d.audioMs, itemId: d.itemId);
     if (mounted) ref.invalidate(communityThreadProvider(_arg));
   }
 
@@ -948,7 +1144,7 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(communityThreadProvider(_arg))),
         data: (t) {
           final p = _patched ?? t.post;
-          final replies = t.replies.where((r) => !_removedReplies.contains(r.id)).toList();
+          final replies = [for (final r in t.replies) if (!_removedReplies.contains(r.id)) _replyPatch[r.id] ?? r];
           return Column(children: [
             Expanded(
               child: ListView(padding: const EdgeInsets.fromLTRB(14, 10, 14, 16), children: [
@@ -960,11 +1156,11 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
                   for (final r in replies)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: _ReplyTile(reply: r, onDelete: r.mine || t.canModerate ? () => _deleteReply(r) : null),
+                      child: _ReplyTile(reply: r, onLike: () => _likeReply(r), onDelete: r.mine || t.canModerate ? () => _deleteReply(r) : null),
                     ),
               ]),
             ),
-            CommunityComposer(keyPrefix: 'community-reply', showTopic: false, hint: 'اكتب رداً أو سجّل صوتاً…', maxLength: 500, onSend: _reply),
+            CommunityComposer(bizId: widget.bizId, keyPrefix: 'community-reply', showTopic: false, hint: 'اكتب رداً أو سجّل صوتاً…', maxLength: 500, onSend: _reply),
           ]);
         },
       ),
@@ -974,8 +1170,8 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
 
 class _ReplyTile extends StatelessWidget {
   final CommunityReply reply;
-  final VoidCallback? onDelete;
-  const _ReplyTile({required this.reply, this.onDelete});
+  final VoidCallback? onDelete, onLike;
+  const _ReplyTile({required this.reply, this.onDelete, this.onLike});
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsetsDirectional.only(start: 26),
@@ -992,9 +1188,14 @@ class _ReplyTile extends StatelessWidget {
                   Text(timeAgo(reply.createdAt), style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
                   if (onDelete != null) SizedBox(width: 26, height: 22, child: IconButton(padding: EdgeInsets.zero, tooltip: 'حذف الرد', icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Joy.textMuted), onPressed: onDelete)),
                 ]),
+                if (reply.item != null) Padding(padding: const EdgeInsets.only(top: 6), child: CommunityQuoteChip(item: reply.item!)),
                 if (reply.text.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 3), child: Text(reply.text, style: const TextStyle(fontSize: 14.5, height: 1.5))),
                 if (reply.audio != null) Padding(padding: const EdgeInsets.only(top: 6), child: CommunityVoice(url: reply.audio, ms: reply.audioMs, compact: true)),
                 if (reply.images.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: CommunityImages(images: reply.images)),
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: _Action(key: Key('reply-like-${reply.id}'), icon: reply.liked ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: reply.liked ? Joy.accent : Joy.textMuted, label: reply.likes == 0 ? 'قلب' : '${reply.likes}', onTap: onLike),
+                ),
               ]),
             ),
           ),
@@ -1010,7 +1211,7 @@ class CommunityEntryCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final feed = ref.watch(communityFeedProvider((bizId: bizId, topic: null))).valueOrNull;
+    final feed = ref.watch(communityFeedProvider((bizId: bizId, topic: null, itemId: null, sort: 'new'))).valueOrNull;
     final latest = feed?.posts.where((p) => !p.hidden).take(2).toList() ?? const <CommunityPost>[];
     void open() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CommunityPage(bizId: bizId, title: title)));
     return JoyCard(

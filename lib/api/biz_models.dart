@@ -21,7 +21,8 @@ enum BizCategory {
   hotel('hotel', 'فنادق', 'فندق', Icons.hotel_rounded),
   carRental('car_rental', 'تأجير سيارات', 'تأجير سيارات', Icons.directions_car_rounded),
   hospital('hospital', 'مستشفيات', 'مستشفى', Icons.local_hospital_rounded),
-  airport('airport', 'مطارات', 'مطار', Icons.flight_takeoff_rounded);
+  airport('airport', 'مطارات', 'مطار', Icons.flight_takeoff_rounded),
+  cafe('cafe', 'مقاهٍ مختصة', 'مقهى مختص', Icons.coffee_rounded);
 
   final String key;
   final String plural;
@@ -32,10 +33,10 @@ enum BizCategory {
   static BizCategory of(String? key) => values.firstWhere((c) => c.key == key, orElse: () => BizCategory.brand);
 
   /// نوع العنصر الرئيسي في كتالوج هذه الفئة.
-  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car', hospital => 'clinic', airport => 'info' };
-  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات', airport => 'مرافق المطار والخدمات' };
-  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً', airport => 'التفاصيل' };
-  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد', airport => 'طلب' };
+  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car', hospital => 'clinic', airport => 'info', cafe => 'product' };
+  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات', airport => 'مرافق المطار والخدمات', cafe => 'القائمة' };
+  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً', airport => 'التفاصيل', cafe => 'اطلب' };
+  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد', airport => 'طلب', cafe => 'طلب' };
 }
 
 /// دائرة تجارية (براند/سينما/فندق/تأجير سيارات/مستشفى/مطار).
@@ -118,11 +119,13 @@ class BizItem {
   final List<Showtime> slots;
   final bool active;
   final int sort;
-  const BizItem({required this.id, required this.bizId, required this.kind, required this.title, this.description = '', required this.price, this.unit = 'item', this.stock, this.meta = const {}, this.imageUrl, this.slots = const [], this.active = true, this.sort = 0});
+  /// عدد مشاركات وردود المجتمع التي تقتبس هذا المنتج.
+  final int discussions;
+  const BizItem({required this.id, required this.bizId, required this.kind, required this.title, this.description = '', required this.price, this.unit = 'item', this.stock, this.meta = const {}, this.imageUrl, this.slots = const [], this.active = true, this.sort = 0, this.discussions = 0});
   factory BizItem.fromJson(Map m) => BizItem(
         id: m['id'].toString(), bizId: m['bizId']?.toString() ?? '', kind: m['kind']?.toString() ?? 'product', title: m['title']?.toString() ?? '', description: m['description']?.toString() ?? '',
         price: _i(m['price']), unit: m['unit']?.toString() ?? 'item', stock: m['stock'] == null ? null : _i(m['stock']), meta: _m(m['meta']), imageUrl: m['imageUrl']?.toString(),
-        slots: asList(m['slots']).map(Showtime.fromJson).toList(), active: m['active'] != false, sort: _i(m['sort']),
+        slots: asList(m['slots']).map(Showtime.fromJson).toList(), active: m['active'] != false, sort: _i(m['sort']), discussions: _i(m['discussions']),
       );
   int? get oldPrice => meta['oldPrice'] == null ? null : _i(meta['oldPrice']);
   bool get isOffer => oldPrice != null && oldPrice! > price;
