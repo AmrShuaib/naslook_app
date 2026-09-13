@@ -53,7 +53,17 @@ async function setup(app, opts) {
     CREATE TABLE IF NOT EXISTS chat_message_meta (
       message_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, reply_to TEXT, quote JSONB, forwarded_from TEXT, extra JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS chat_reactions (message_id TEXT NOT NULL, user_id TEXT NOT NULL, emoji TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (message_id, user_id));
   `);
+  // تفاعلات الرسائل (قلب بالنقر المزدوج، أو إيموجي من الضغط المطوّل): مجموعة ثابتة، واحد لكل مستخدم لكل رسالة
+  const REACTIONS = ["❤️", "😂", "😮", "😢", "🔥", "👏", "☕", "👍"];
+  async function reactionsFor(ids, uid) {
+    const m = {};
+    if (!ids.length) return m;
+    const rows = (await pool.query("SELECT message_id, emoji, count(*)::int AS n, bool_or(user_id=$2) AS mine FROM chat_reactions WHERE message_id = ANY($1) GROUP BY message_id, emoji ORDER BY n DESC, emoji", [ids, uid])).rows;
+    for (const r of rows) (m[r.message_id] ??= []).push({ emoji: r.emoji, count: r.n, mine: r.mine === true });
+    return m;
+  }
   let MEDIA_DIR = null;
   const mediaErrors = [];
   for (const dir of mediaCandidates()) {
@@ -250,7 +260,25 @@ async function setup(app, opts) {
     const ids = String(req.query?.ids ?? "").split(",").map((s) => s.trim()).filter((s) => s && s.length <= 64).slice(0, 200);
     if (!ids.length) return {};
     const r = await pool.query("SELECT * FROM chat_message_meta WHERE message_id = ANY($1)", [ids]);
-    return Object.fromEntries(r.rows.map((x) => [x.message_id, metaOut(x)]));
+    const out = Object.fromEntries(r.rows.map((x) => [x.message_id, metaOut(x)]));
+    // التفاعلات تُضاف لكل رسالة لها تفاعل حتى بلا صف بيانات إضافية
+    const rx = await reactionsFor(ids, uid);
+    for (const [id, list] of Object.entries(rx)) (out[id] ??= { replyTo: null, quote: null, forwardedFrom: null, extra: null }).reactions = list;
+    return out;
+  });
+  app.post("/chat/react", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const id = String(req.body?.messageId ?? "");
+    if (!id || id.length > 64) return bad(reply, 400, "bad-id");
+    const raw = String(req.body?.emoji ?? "").trim();
+    if (raw && !REACTIONS.includes(raw)) return bad(reply, 400, "bad-emoji", { allowed: REACTIONS });
+    if (!raw) await pool.query("DELETE FROM chat_reactions WHERE message_id=$1 AND user_id=$2", [id, uid]);
+    else {
+      const cur = (await pool.query("SELECT emoji FROM chat_reactions WHERE message_id=$1 AND user_id=$2", [id, uid])).rows[0];
+      if (cur && cur.emoji === raw) await pool.query("DELETE FROM chat_reactions WHERE message_id=$1 AND user_id=$2", [id, uid]);
+      else await pool.query("INSERT INTO chat_reactions(message_id,user_id,emoji) VALUES($1,$2,$3) ON CONFLICT (message_id,user_id) DO UPDATE SET emoji=EXCLUDED.emoji, created_at=now()", [id, uid, raw]);
+    }
+    return { ok: true, messageId: id, reactions: (await reactionsFor([id], uid))[id] ?? [] };
   });
 
   // ---- فحص: معلومات الوسائط لملف (يفيد التطبيق لمعرفة النوع قبل العرض)

@@ -19,6 +19,7 @@ import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
 import '../../state/community_providers.dart';
 import '../../state/safety_providers.dart';
+import '../../ui/reactions.dart';
 import '../../ui/widgets.dart';
 
 /// محتوى مشاركة أو رد جاهز للإرسال: نص و/أو صور مرفوعة و/أو تسجيل صوتي مرفوع.
@@ -46,8 +47,10 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
   final List<CommunityPost> _older = [];
   final Map<String, CommunityPost> _patch = {};
   final Set<String> _removed = {};
+  final Map<String, int> _bursts = {};
   bool _loadingMore = false, _noMore = false;
-  Timer? _poll;
+  Timer? _poll, _openTimer;
+  DateTime? _lastDoubleTap;
 
   CommunityFeedKey get _arg => (bizId: widget.bizId, topic: _topic, itemId: _filterItem?.id, sort: _sort);
 
@@ -66,7 +69,18 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
   @override
   void dispose() {
     _poll?.cancel();
+    _openTimer?.cancel();
     super.dispose();
+  }
+
+  /// نقرة واحدة تفتح النقاش بعد مهلة قصيرة حتى لا تفتحه النقرة الأولى من نقر مزدوج
+  void _tapOpen(String postId) {
+    _openTimer?.cancel();
+    // النقرة الثانية من نقر مزدوج تصل هنا أيضاً بعد أن أطلق الكاشف القلب: لا نفتح النقاش
+    if (_lastDoubleTap != null && DateTime.now().difference(_lastDoubleTap!) < const Duration(milliseconds: 600)) return;
+    _openTimer = Timer(const Duration(milliseconds: 320), () {
+      if (mounted) _openThread(postId);
+    });
   }
 
   Future<void> _refresh() async {
@@ -146,6 +160,37 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
       if (mounted) setState(() => _patch[p.id] = (_patch[p.id] ?? p).copyWith(liked: r.liked, likes: r.likes));
     } catch (e) {
       if (mounted) toast(context, 'تعذر تسجيل الإعجاب', error: true);
+    }
+  }
+
+  /// نقر مزدوج: قلب أحمر ينبثق، ويُسجَّل الإعجاب إن لم يكن مسجّلاً (لا يُلغى بالنقر المزدوج كما في إنستغرام).
+  void _doubleTap(CommunityPost p) {
+    _openTimer?.cancel();
+    _lastDoubleTap = DateTime.now();
+    setState(() => _bursts[p.id] = (_bursts[p.id] ?? 0) + 1);
+    if (!p.liked) _like(p);
+  }
+
+  /// ضغط مطوّل: شريط إيموجي عند موضع الضغط، ثم يُطبَّق التفاعل محلياً فوراً ويُرسل للخادم.
+  Future<void> _pickReaction(CommunityPost p, Offset at) async {
+    final mine = p.reactions.where((r) => r.mine).firstOrNull?.emoji;
+    final e = await showReactionPicker(context, at: at, current: mine);
+    if (e == null || !mounted) return;
+    _react(p, e);
+  }
+
+  Future<void> _react(CommunityPost p, String emoji) async {
+    final wasMine = p.reactions.any((r) => r.mine && r.emoji == emoji);
+    final next = wasMine ? null : emoji;
+    setState(() => _patch[p.id] = (_patch[p.id] ?? p).copyWith(reactions: applyMyReaction(p.reactions, next)));
+    try {
+      final rx = await ref.read(apiClientProvider).communityReact(widget.bizId, p.id, next);
+      if (mounted) setState(() => _patch[p.id] = (_patch[p.id] ?? p).copyWith(reactions: rx));
+    } catch (e) {
+      if (mounted) {
+        setState(() => _patch[p.id] = (_patch[p.id] ?? p).copyWith(reactions: p.reactions));
+        toast(context, 'تعذر تسجيل التفاعل', error: true);
+      }
     }
   }
 
@@ -315,9 +360,13 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
                             post: p,
                             canModerate: f.canModerate,
                             onLike: () => _like(p),
-                            onOpen: () => _openThread(p.id),
+                            onOpen: () => _tapOpen(p.id),
                             onMenu: () => _menu(p, f.canModerate),
                             onQuote: p.item == null ? null : () => _setFilterItem(p.item),
+                            onDoubleTap: () => _doubleTap(p),
+                            onLongPress: (at) => _pickReaction(p, at),
+                            onReact: (e) => _react(p, e),
+                            heartTrigger: _bursts[p.id] ?? 0,
                           ),
                         );
                       },
@@ -343,7 +392,7 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
             const SizedBox(height: 12),
             const _Rule(icon: Icons.mic_none_rounded, text: 'شارك بنص أو تسجيل صوتي أو صور (حتى 10 صور)، والردود بالطرق نفسها'),
             const _Rule(icon: Icons.format_quote_rounded, text: 'اقتبس أي صنف من قائمة الدائرة وعلّق عليه، واضغط الاقتباس لترى كل ما قيل عنه'),
-            const _Rule(icon: Icons.favorite_border_rounded, text: 'قلب على المشاركات والردود، و«الأكثر تفاعلاً» يرتّب بحسب القلوب والردود'),
+            const _Rule(icon: Icons.favorite_border_rounded, text: 'نقرتان على المشاركة تعطيانها قلباً، وضغطة مطوّلة تفتح تفاعلات الإيموجي'),
             const _Rule(icon: Icons.verified_user_outlined, text: 'تظهر شارة «فريق الدائرة» على مشاركات الإدارة والموظفين'),
             const _Rule(icon: Icons.push_pin_outlined, text: 'تثبّت الإدارة المشاركات المهمة في أعلى المساحة'),
             const _Rule(icon: Icons.flag_outlined, text: 'أبلغ عن أي مشاركة مسيئة؛ تُخفى تلقائياً بعد عدة بلاغات'),
@@ -413,8 +462,11 @@ Color topicColor(String key) => switch (key) { 'photo' => Joy.primary, 'question
 class CommunityPostCard extends StatelessWidget {
   final CommunityPost post;
   final bool canModerate, expanded;
-  final VoidCallback? onLike, onOpen, onMenu, onQuote;
-  const CommunityPostCard({super.key, required this.post, this.canModerate = false, this.expanded = false, this.onLike, this.onOpen, this.onMenu, this.onQuote});
+  final VoidCallback? onLike, onOpen, onMenu, onQuote, onDoubleTap;
+  final ValueChanged<Offset>? onLongPress;
+  final ValueChanged<String>? onReact;
+  final int heartTrigger;
+  const CommunityPostCard({super.key, required this.post, this.canModerate = false, this.expanded = false, this.onLike, this.onOpen, this.onMenu, this.onQuote, this.onDoubleTap, this.onLongPress, this.onReact, this.heartTrigger = 0});
 
   @override
   Widget build(BuildContext context) {
@@ -422,10 +474,17 @@ class CommunityPostCard extends StatelessWidget {
     final tc = topicColor(p.topic);
     return Semantics(
       label: 'مشاركة ${p.user.nickname}',
-      child: JoyCard(
+      child: DoubleTapDetector(
+        onDoubleTap: onDoubleTap,
+        child: GestureDetector(
+        key: Key('post-gesture-${p.id}'),
+        behavior: HitTestBehavior.opaque,
+        onTap: expanded ? null : onOpen,
+        onLongPressStart: onLongPress == null ? null : (d) => onLongPress!(d.globalPosition),
+        child: Stack(alignment: Alignment.center, children: [
+      JoyCard(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
         color: p.hidden ? Joy.surface2 : (p.pinned ? Joy.sunSoft.withValues(alpha: .55) : null),
-        onTap: expanded ? null : onOpen,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Avatar(name: p.user.nickname, url: p.user.avatarUrl, size: 38),
@@ -456,6 +515,7 @@ class CommunityPostCard extends StatelessWidget {
             ),
           if (p.audio != null) Padding(padding: const EdgeInsets.only(top: 8), child: CommunityVoice(url: p.audio, ms: p.audioMs)),
           if (p.images.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: CommunityImages(images: p.images)),
+          if (p.reactions.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: ReactionChips(reactions: p.reactions, onTap: onReact)),
           const SizedBox(height: 6),
           Row(children: [
             _Action(key: Key('community-like-${p.id}'), icon: p.liked ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: p.liked ? Joy.accent : Joy.textMuted, label: p.likes == 0 ? 'إعجاب' : '${p.likes}', onTap: onLike),
@@ -465,6 +525,10 @@ class CommunityPostCard extends StatelessWidget {
             if (!expanded && p.replies > 0) Text('افتح النقاش', style: TextStyle(fontSize: 12, color: Joy.primary.withValues(alpha: .9), fontWeight: FontWeight.w600)),
           ]),
         ]),
+      ),
+      HeartBurst(trigger: heartTrigger),
+        ]),
+        ),
       ),
     );
   }
@@ -1059,6 +1123,46 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
   CommunityPost? _patched;
   final Set<String> _removedReplies = {};
   final Map<String, CommunityReply> _replyPatch = {};
+  final Map<String, int> _bursts = {};
+
+  void _doubleTapPost(CommunityPost p) {
+    setState(() => _bursts[p.id] = (_bursts[p.id] ?? 0) + 1);
+    if (!p.liked) _like(p);
+  }
+
+  Future<void> _reactPost(CommunityPost p, String emoji) async {
+    final wasMine = p.reactions.any((r) => r.mine && r.emoji == emoji);
+    final next = wasMine ? null : emoji;
+    setState(() => _patched = p.copyWith(reactions: applyMyReaction(p.reactions, next)));
+    try {
+      final rx = await ref.read(apiClientProvider).communityReact(widget.bizId, p.id, next);
+      if (mounted) setState(() => _patched = (_patched ?? p).copyWith(reactions: rx));
+    } catch (e) {
+      if (mounted) toast(context, 'تعذر تسجيل التفاعل', error: true);
+    }
+  }
+
+  void _doubleTapReply(CommunityReply r) {
+    setState(() => _bursts[r.id] = (_bursts[r.id] ?? 0) + 1);
+    if (!r.liked) _likeReply(r);
+  }
+
+  Future<void> _reactReply(CommunityReply r, String emoji) async {
+    final wasMine = r.reactions.any((x) => x.mine && x.emoji == emoji);
+    final next = wasMine ? null : emoji;
+    setState(() => _replyPatch[r.id] = (_replyPatch[r.id] ?? r).copyWith(reactions: applyMyReaction(r.reactions, next)));
+    try {
+      final rx = await ref.read(apiClientProvider).communityReplyReact(widget.bizId, widget.postId, r.id, next);
+      if (mounted) setState(() => _replyPatch[r.id] = (_replyPatch[r.id] ?? r).copyWith(reactions: rx));
+    } catch (e) {
+      if (mounted) toast(context, 'تعذر تسجيل التفاعل', error: true);
+    }
+  }
+
+  Future<void> _pickReplyReaction(CommunityReply r, Offset at) async {
+    final e = await showReactionPicker(context, at: at, current: r.reactions.where((x) => x.mine).firstOrNull?.emoji);
+    if (e != null && mounted) _reactReply(r, e);
+  }
 
   Future<void> _likeReply(CommunityReply r) async {
     try {
@@ -1148,7 +1252,20 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
           return Column(children: [
             Expanded(
               child: ListView(padding: const EdgeInsets.fromLTRB(14, 10, 14, 16), children: [
-                CommunityPostCard(post: p.copyWith(replies: replies.length), canModerate: t.canModerate, expanded: true, onLike: () => _like(p), onMenu: () => _menu(p, t.canModerate)),
+                CommunityPostCard(
+                  post: p.copyWith(replies: replies.length),
+                  canModerate: t.canModerate,
+                  expanded: true,
+                  onLike: () => _like(p),
+                  onMenu: () => _menu(p, t.canModerate),
+                  onDoubleTap: () => _doubleTapPost(p),
+                  onLongPress: (at) async {
+                    final e = await showReactionPicker(context, at: at, current: p.reactions.where((x) => x.mine).firstOrNull?.emoji);
+                    if (e != null && mounted) _reactPost(p, e);
+                  },
+                  onReact: (e) => _reactPost(p, e),
+                  heartTrigger: _bursts[p.id] ?? 0,
+                ),
                 const SizedBox(height: 14),
                 if (replies.isEmpty)
                   const Padding(padding: EdgeInsets.symmetric(vertical: 18), child: Center(child: Text('لا ردود بعد — كن أول من يرد', style: TextStyle(color: Joy.textMuted))))
@@ -1156,7 +1273,7 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
                   for (final r in replies)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: _ReplyTile(reply: r, onLike: () => _likeReply(r), onDelete: r.mine || t.canModerate ? () => _deleteReply(r) : null),
+                      child: _ReplyTile(reply: r, onLike: () => _likeReply(r), onDelete: r.mine || t.canModerate ? () => _deleteReply(r) : null, onDoubleTap: () => _doubleTapReply(r), onLongPress: (at) => _pickReplyReaction(r, at), onReact: (e) => _reactReply(r, e), heartTrigger: _bursts[r.id] ?? 0),
                     ),
               ]),
             ),
@@ -1170,8 +1287,11 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
 
 class _ReplyTile extends StatelessWidget {
   final CommunityReply reply;
-  final VoidCallback? onDelete, onLike;
-  const _ReplyTile({required this.reply, this.onDelete, this.onLike});
+  final VoidCallback? onDelete, onLike, onDoubleTap;
+  final ValueChanged<Offset>? onLongPress;
+  final ValueChanged<String>? onReact;
+  final int heartTrigger;
+  const _ReplyTile({required this.reply, this.onDelete, this.onLike, this.onDoubleTap, this.onLongPress, this.onReact, this.heartTrigger = 0});
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsetsDirectional.only(start: 26),
@@ -1179,7 +1299,14 @@ class _ReplyTile extends StatelessWidget {
           Avatar(name: reply.user.nickname, url: reply.user.avatarUrl, size: 30),
           const SizedBox(width: 8),
           Expanded(
-            child: Container(
+            child: DoubleTapDetector(
+              onDoubleTap: onDoubleTap,
+              child: GestureDetector(
+              key: Key('reply-gesture-${reply.id}'),
+              behavior: HitTestBehavior.opaque,
+              onLongPressStart: onLongPress == null ? null : (d) => onLongPress!(d.globalPosition),
+              child: Stack(alignment: Alignment.center, children: [
+            Container(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               decoration: BoxDecoration(color: reply.mine ? Joy.bubbleOut : Joy.surface2, borderRadius: BorderRadius.circular(14)),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1192,11 +1319,15 @@ class _ReplyTile extends StatelessWidget {
                 if (reply.text.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 3), child: Text(reply.text, style: const TextStyle(fontSize: 14.5, height: 1.5))),
                 if (reply.audio != null) Padding(padding: const EdgeInsets.only(top: 6), child: CommunityVoice(url: reply.audio, ms: reply.audioMs, compact: true)),
                 if (reply.images.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: CommunityImages(images: reply.images)),
-                Align(
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: _Action(key: Key('reply-like-${reply.id}'), icon: reply.liked ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: reply.liked ? Joy.accent : Joy.textMuted, label: reply.likes == 0 ? 'قلب' : '${reply.likes}', onTap: onLike),
-                ),
+                Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                  Expanded(child: reply.reactions.isEmpty ? const SizedBox.shrink() : Padding(padding: const EdgeInsets.only(top: 4), child: ReactionChips(reactions: reply.reactions, onTap: onReact, compact: true))),
+                  _Action(key: Key('reply-like-${reply.id}'), icon: reply.liked ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: reply.liked ? Joy.accent : Joy.textMuted, label: reply.likes == 0 ? 'قلب' : '${reply.likes}', onTap: onLike),
+                ]),
               ]),
+            ),
+            HeartBurst(trigger: heartTrigger, size: 64),
+              ]),
+              ),
             ),
           ),
         ]),

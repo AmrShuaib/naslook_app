@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'client.dart';
 import 'models.dart';
+import '../ui/reactions.dart';
 
 /// نتيجة رفع ملف وسائط إلى الخادم.
 class UploadedMedia {
@@ -38,6 +39,9 @@ extension ChatToolsApi on ApiClient {
       });
 
   /// بيانات إضافية لمجموعة رسائل: معرّف → {replyTo, quote, forwardedFrom, extra}
+  /// تفاعل بإيموجي على رسالة (فارغ يزيله)؛ يعيد تفاعلات الرسالة المحدّثة.
+  Future<List<Reaction>> chatReact(String messageId, String? emoji) async => parseReactions((await post('/chat/react', {'messageId': messageId, 'emoji': emoji ?? ''}))['reactions']);
+
   Future<Map<String, Map<String, dynamic>>> messageMeta(Iterable<String> ids) async {
     final list = ids.where((s) => s.isNotEmpty).toList();
     if (list.isEmpty) return const {};

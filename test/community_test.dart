@@ -23,6 +23,7 @@ import 'package:naslook/pages/business/community_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
 import 'package:naslook/state/providers.dart';
+import 'package:naslook/ui/reactions.dart';
 
 class _SignedIn extends AppStateNotifier {
   _SignedIn(super.api, super.store) {
@@ -147,6 +148,11 @@ class _Srv {
       ], 'canModerate': false});
     }
     if (key == 'POST /biz/biz-brew92/community/b-1/replies/br-1/like') return _json({'ok': true, 'liked': true, 'likes': 3});
+    if (key == 'POST /biz/biz-brew92/community/b-1/like') return _json({'ok': true, 'liked': true, 'likes': 6});
+    if (key == 'POST /biz/biz-brew92/community/b-1/react' || key == 'POST /biz/biz-brew92/community/b-1/replies/br-1/react') {
+      final e = bodies[key]!['emoji'] as String;
+      return _json({'ok': true, 'reactions': e.isEmpty ? [] : [{'emoji': e, 'count': 1, 'mine': true}]});
+    }
     if (key == 'GET /biz/biz-kaia') return _json(_airport());
     if (key == 'GET /biz/biz-kaia/community') {
       final topic = req.url.queryParameters['topic'];
@@ -488,6 +494,62 @@ void main() {
     expect(body['audio'], '/chat/media/up1.m4a');
     expect(body['audioMs'], 3000);
     expect(body['images'], isEmpty);
+  });
+
+  testWidgets('double-tap hearts a post with a burst; long-press opens the emoji bar and toggles a reaction', (tester) async {
+    final srv = await _pump(tester, const CommunityPage(bizId: 'biz-brew92', title: 'برو 92'));
+    await _settle(tester);
+    final card = find.byKey(const Key('post-gesture-b-1'));
+    expect(find.byKey(const Key('heart-burst')), findsNothing);
+    // نقرتان على رأس البطاقة (منطقة الاسم) لا على اقتباس المنتج
+    final head = tester.getTopLeft(card) + const Offset(200, 24);
+    await tester.tapAt(head);
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tapAt(head);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const Key('heart-burst')), findsOneWidget, reason: 'قلب أحمر ينبثق');
+    await _settle(tester);
+    expect(srv.calls, contains('POST /biz/biz-brew92/community/b-1/like'));
+    expect(find.text('6'), findsOneWidget, reason: 'عدّاد القلوب يتحدث');
+    // ضغط مطوّل → شريط الإيموجي
+    await tester.longPressAt(head);
+    await _settle(tester);
+    expect(find.byKey(const Key('reaction-picker')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('react-😂')));
+    await _settle(tester);
+    expect(srv.bodies['POST /biz/biz-brew92/community/b-1/react']!['emoji'], '😂');
+    expect(find.byKey(const Key('chip-😂')), findsOneWidget);
+    // اللمس على شريحتي يزيل التفاعل
+    await tester.tap(find.byKey(const Key('chip-😂')));
+    await _settle(tester);
+    expect(srv.bodies['POST /biz/biz-brew92/community/b-1/react']!['emoji'], '');
+    expect(find.byKey(const Key('chip-😂')), findsNothing);
+  });
+
+  testWidgets('thread: double-tap hearts a reply; long-press reacts on it', (tester) async {
+    final srv = await _pump(tester, const CommunityThreadPage(bizId: 'biz-brew92', postId: 'b-1', title: 'برو 92'));
+    await _settle(tester);
+    final reply = find.byKey(const Key('reply-gesture-br-1'));
+    await tester.tap(reply);
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tap(reply);
+    await _settle(tester);
+    expect(srv.calls, contains('POST /biz/biz-brew92/community/b-1/replies/br-1/like'));
+    await tester.longPress(reply);
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('react-☕')));
+    await _settle(tester);
+    expect(srv.bodies['POST /biz/biz-brew92/community/b-1/replies/br-1/react']!['emoji'], '☕');
+    expect(find.byKey(const Key('chip-☕')), findsOneWidget);
+  });
+
+  test('applyMyReaction moves my reaction between emojis and removes it', () {
+    final cur = [const Reaction(emoji: '🔥', count: 3, mine: true), const Reaction(emoji: '☕', count: 1)];
+    final moved = applyMyReaction(cur, '☕');
+    expect(moved.map((r) => '${r.emoji}${r.count}${r.mine ? '*' : ''}').toList(), ['🔥2', '☕2*']);
+    final removed = applyMyReaction(moved, null);
+    expect(removed.map((r) => '${r.emoji}${r.count}${r.mine ? '*' : ''}').toList(), ['🔥2', '☕1']);
+    expect(applyMyReaction(const [], '😂').single.mine, isTrue);
   });
 
   testWidgets('moderator menu pins and hides; others can report', (tester) async {

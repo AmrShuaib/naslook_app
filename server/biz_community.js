@@ -8,6 +8,8 @@
 import crypto from "node:crypto";
 
 const TOPICS = new Set(["general", "photo", "question", "tip", "alert"]);
+// تفاعلات الضغط المطوّل: مجموعة ثابتة حتى لا تُخزَّن نصوص عشوائية
+export const REACTIONS = ["❤️", "😂", "😮", "😢", "🔥", "👏", "☕", "👍"];
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const OWN_MEDIA = /^https?:\/\/[^/]+(\/(?:chat\/media|files|media|uploads)\/.*)$/i;
@@ -33,6 +35,8 @@ export default async function bizCommunity(app, opts) {
     ALTER TABLE biz_community_replies ADD COLUMN IF NOT EXISTS item_id TEXT;
     CREATE INDEX IF NOT EXISTS biz_community_posts_item ON biz_community_posts(biz_id, item_id);
     CREATE TABLE IF NOT EXISTS biz_community_reply_likes (reply_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (reply_id, user_id));
+    CREATE TABLE IF NOT EXISTS biz_community_reactions (target_type TEXT NOT NULL, target_id UUID NOT NULL, user_id TEXT NOT NULL, emoji TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (target_type, target_id, user_id));
   `);
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
@@ -90,6 +94,25 @@ export default async function bizCommunity(app, opts) {
     try { for (const it of (await pool.query("SELECT id, title, price, unit, kind, image_url FROM biz_items WHERE biz_id=$1 AND id = ANY($2)", [bizId, uniq])).rows) m.set(it.id, itemOut(it)); } catch { /* ignore */ }
     return m;
   }
+  // تفاعلات (إيموجي) على مشاركات وردود: خريطة الهدف → [{emoji, count, mine}] بترتيب الأكثر
+  async function reactionsMap(type, ids, uid) {
+    const m = new Map();
+    if (!ids.length) return m;
+    const rows = (await pool.query("SELECT target_id, emoji, count(*)::int AS n, bool_or(user_id=$3) AS mine FROM biz_community_reactions WHERE target_type=$1 AND target_id = ANY($2::uuid[]) GROUP BY target_id, emoji ORDER BY n DESC, emoji", [type, ids, uid ?? ""])).rows;
+    for (const r of rows) { if (!m.has(r.target_id)) m.set(r.target_id, []); m.get(r.target_id).push({ emoji: r.emoji, count: r.n, mine: r.mine === true }); }
+    return m;
+  }
+  async function setReaction(type, id, uid, emoji) {
+    if (emoji) {
+      const cur = (await pool.query("SELECT emoji FROM biz_community_reactions WHERE target_type=$1 AND target_id=$2 AND user_id=$3", [type, id, uid])).rows[0];
+      if (cur && cur.emoji === emoji) await pool.query("DELETE FROM biz_community_reactions WHERE target_type=$1 AND target_id=$2 AND user_id=$3", [type, id, uid]); // الإيموجي نفسه مرة ثانية يزيله
+      else await pool.query("INSERT INTO biz_community_reactions(target_type,target_id,user_id,emoji) VALUES($1,$2,$3,$4) ON CONFLICT (target_type,target_id,user_id) DO UPDATE SET emoji=EXCLUDED.emoji, created_at=now()", [type, id, uid, emoji]);
+    } else {
+      await pool.query("DELETE FROM biz_community_reactions WHERE target_type=$1 AND target_id=$2 AND user_id=$3", [type, id, uid]);
+    }
+    return (await reactionsMap(type, [id], uid)).get(id) ?? [];
+  }
+  const cleanEmoji = (v) => { const e = str(v, 8); return e === "" ? null : REACTIONS.includes(e) ? e : undefined; };
   // معرّف منتج مقتبس: يجب أن يكون من منتجات الدائرة نفسها وفعّالاً
   async function cleanItem(bizId, v) {
     const id = str(v, 64); if (!id) return { itemId: null };
@@ -112,9 +135,9 @@ export default async function bizCommunity(app, opts) {
     try { for (const r of (await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1 AND role IN ('manager','staff')", [b.id])).rows) ids.add(r.user_id); } catch { /* ignore */ }
     return [...ids];
   }
-  const out = (p, uid, pm, likes, liked, replies, role, im) => ({
+  const out = (p, uid, pm, likes, liked, replies, role, im, rx) => ({
     id: p.id, bizId: p.biz_id, user: pm.get(p.user_id), topic: p.topic, text: p.text, images: p.images ?? [], audio: p.audio ?? null, audioMs: p.audio_ms ?? null,
-    item: (p.item_id && im?.get(p.item_id)) || null, pinned: p.pinned, hidden: p.hidden,
+    item: (p.item_id && im?.get(p.item_id)) || null, reactions: rx?.get(p.id) ?? [], pinned: p.pinned, hidden: p.hidden,
     likes: likes.get(p.id) ?? 0, liked: liked.has(p.id), replies: replies.get(p.id) ?? 0, mine: p.user_id === uid,
     staff: role != null && p.user_id === uid && canModerate(role), createdAt: p.created_at,
   });
@@ -122,6 +145,7 @@ export default async function bizCommunity(app, opts) {
     const ids = rows.map((p) => p.id);
     const pm = await people(rows.map((p) => p.user_id));
     const im = rows.length ? await itemsMap(rows[0].biz_id, rows.map((p) => p.item_id)) : new Map();
+    const rx = await reactionsMap("post", ids, uid);
     const likes = new Map(), replies = new Map(), liked = new Set();
     if (ids.length) {
       for (const r of (await pool.query("SELECT post_id, count(*)::int AS n FROM biz_community_likes WHERE post_id = ANY($1::uuid[]) GROUP BY post_id", [ids])).rows) likes.set(r.post_id, r.n);
@@ -129,15 +153,15 @@ export default async function bizCommunity(app, opts) {
       if (uid) for (const r of (await pool.query("SELECT post_id FROM biz_community_likes WHERE post_id = ANY($1::uuid[]) AND user_id=$2", [ids, uid])).rows) liked.add(r.post_id);
     }
     // من هم من طاقم الدائرة يُعلَّمون حتى تظهر شارة «إدارة الدائرة»
-    return rows.map((p) => out(p, uid, pm, likes, liked, replies, role, im));
+    return rows.map((p) => out(p, uid, pm, likes, liked, replies, role, im, rx));
   }
   async function markStaff(list, b) {
     const ids = new Set(await staffIds(b));
     for (const p of list) p.staff = ids.has(p.user.id);
     return list;
   }
-  const replyOut = (r, pm, uid, im, rl, rliked) => ({ id: r.id, postId: r.post_id, user: pm.get(r.user_id), text: r.text, images: r.images ?? [], audio: r.audio ?? null, audioMs: r.audio_ms ?? null,
-    item: (r.item_id && im?.get(r.item_id)) || null, likes: rl?.get(r.id) ?? 0, liked: rliked?.has(r.id) ?? false, mine: r.user_id === uid, createdAt: r.created_at });
+  const replyOut = (r, pm, uid, im, rl, rliked, rx) => ({ id: r.id, postId: r.post_id, user: pm.get(r.user_id), text: r.text, images: r.images ?? [], audio: r.audio ?? null, audioMs: r.audio_ms ?? null,
+    item: (r.item_id && im?.get(r.item_id)) || null, likes: rl?.get(r.id) ?? 0, liked: rliked?.has(r.id) ?? false, reactions: rx?.get(r.id) ?? [], mine: r.user_id === uid, createdAt: r.created_at });
   async function decorateReplies(rows, uid, bizId) {
     const pm = await people(rows.map((r) => r.user_id));
     const im = await itemsMap(bizId, rows.map((r) => r.item_id));
@@ -147,7 +171,8 @@ export default async function bizCommunity(app, opts) {
       for (const x of (await pool.query("SELECT reply_id, count(*)::int AS n FROM biz_community_reply_likes WHERE reply_id = ANY($1::uuid[]) GROUP BY reply_id", [ids])).rows) rl.set(x.reply_id, x.n);
       if (uid) for (const x of (await pool.query("SELECT reply_id FROM biz_community_reply_likes WHERE reply_id = ANY($1::uuid[]) AND user_id=$2", [ids, uid])).rows) rliked.add(x.reply_id);
     }
-    return rows.map((r) => replyOut(r, pm, uid, im, rl, rliked));
+    const rx = await reactionsMap("reply", ids, uid);
+    return rows.map((r) => replyOut(r, pm, uid, im, rl, rliked, rx));
   }
   const preview = (text, images, audio) => text.slice(0, 120) || (audio ? "تسجيل صوتي" : images.length > 1 ? `${images.length} صور` : "صورة");
 
@@ -228,6 +253,7 @@ export default async function bizCommunity(app, opts) {
     if (!p) return bad(reply, 404, "not-found");
     if (p.user_id !== uid && !canModerate(await roleFor(uid, b))) return bad(reply, 403, "forbidden");
     await pool.query("DELETE FROM biz_community_reply_likes WHERE reply_id IN (SELECT id FROM biz_community_replies WHERE post_id=$1)", [req.params.pid]);
+    await pool.query("DELETE FROM biz_community_reactions WHERE (target_type='reply' AND target_id IN (SELECT id FROM biz_community_replies WHERE post_id=$1)) OR (target_type='post' AND target_id=$1)", [req.params.pid]);
     await pool.query("DELETE FROM biz_community_replies WHERE post_id=$1", [req.params.pid]);
     await pool.query("DELETE FROM biz_community_likes WHERE post_id=$1", [req.params.pid]);
     await pool.query("DELETE FROM biz_community_posts WHERE id=$1", [req.params.pid]);
@@ -284,6 +310,23 @@ export default async function bizCommunity(app, opts) {
     const [outReply] = await decorateReplies(r.rows, uid, b.id);
     return outReply;
   });
+  // ---- تفاعل بإيموجي على مشاركة أو رد (ضغط مطوّل): واحد لكل مستخدم، الإيموجي نفسه مرة ثانية يزيله، فارغ يزيله
+  app.post("/biz/:id/community/:pid/react", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.pid)) return bad(reply, 404, "not-found");
+    const emoji = cleanEmoji(req.body?.emoji); if (emoji === undefined) return bad(reply, 400, "bad-emoji", { allowed: REACTIONS });
+    const p = (await pool.query("SELECT id FROM biz_community_posts WHERE id=$1 AND biz_id=$2 AND hidden=false", [req.params.pid, String(req.params.id)])).rows[0];
+    if (!p) return bad(reply, 404, "not-found");
+    return { ok: true, reactions: await setReaction("post", p.id, uid, emoji) };
+  });
+  app.post("/biz/:id/community/:pid/replies/:rid/react", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.pid) || !UUID_RE.test(req.params.rid)) return bad(reply, 404, "not-found");
+    const emoji = cleanEmoji(req.body?.emoji); if (emoji === undefined) return bad(reply, 400, "bad-emoji", { allowed: REACTIONS });
+    const r = (await pool.query("SELECT r.id FROM biz_community_replies r JOIN biz_community_posts p ON p.id=r.post_id WHERE r.id=$1 AND r.post_id=$2 AND p.biz_id=$3 AND r.hidden=false AND p.hidden=false", [req.params.rid, req.params.pid, String(req.params.id)])).rows[0];
+    if (!r) return bad(reply, 404, "not-found");
+    return { ok: true, reactions: await setReaction("reply", r.id, uid, emoji) };
+  });
   // ---- قلب على رد
   app.post("/biz/:id/community/:pid/replies/:rid/like", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -304,6 +347,7 @@ export default async function bizCommunity(app, opts) {
     if (!r) return bad(reply, 404, "not-found");
     if (r.user_id !== uid && !canModerate(await roleFor(uid, b))) return bad(reply, 403, "forbidden");
     await pool.query("DELETE FROM biz_community_reply_likes WHERE reply_id=$1", [req.params.rid]);
+    await pool.query("DELETE FROM biz_community_reactions WHERE target_type='reply' AND target_id=$1", [req.params.rid]);
     await pool.query("DELETE FROM biz_community_replies WHERE id=$1", [req.params.rid]);
     return { ok: true };
   });
@@ -312,5 +356,5 @@ export default async function bizCommunity(app, opts) {
     const r = await pool.query("UPDATE biz_community_posts SET hidden=true, hidden_by='auto', updated_at=now() WHERE id=$1 AND hidden=false RETURNING user_id, biz_id", [postId]);
     return r.rows[0] ?? null;
   };
-  app.get("/biz/community/status", async () => ({ ok: true, topics: [...TOPICS] }));
+  app.get("/biz/community/status", async () => ({ ok: true, topics: [...TOPICS], reactions: REACTIONS }));
 }

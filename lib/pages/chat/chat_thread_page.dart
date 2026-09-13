@@ -24,6 +24,7 @@ import '../../state/providers.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/pattern_background.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/reactions.dart';
 import '../../ui/widgets.dart';
 
 /// تسمية فاصل اليوم: اليوم، أمس، اسم اليوم خلال الأسبوع، وإلا اليوم والشهر (والسنة إن اختلفت).
@@ -81,6 +82,10 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   /// مرتبة من الأقدم إلى الأحدث.
   List<Message> _messages = const [];
   final _metaFetched = <String>{};
+  /// تفاعلات الرسائل بمعرّف الرسالة (تصل مع البيانات الإضافية وتُحدَّث دورياً)، وعدّاد انبثاق القلب لكل رسالة
+  final _reactions = <String, List<Reaction>>{};
+  final _bursts = <String, int>{};
+  Timer? _reactionsTimer;
   /// بايتات الوسائط المحلية قبل/أثناء الرفع (للمعاينة وإعادة المحاولة).
   final _localBytes = <String, ({Uint8List bytes, String mime, String name})>{};
   bool _loading = true;
@@ -130,6 +135,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     _sub = s?.events.listen(_onEvent);
     _socketDown = s != null && !s.connected;
     _presenceTimer = Timer.periodic(const Duration(seconds: 45), (_) => _presence());
+    _reactionsTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refreshReactions());
     _presence();
   }
 
@@ -140,6 +146,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     _sub?.cancel();
     _typingTimer?.cancel();
     _presenceTimer?.cancel();
+    _reactionsTimer?.cancel();
     _highlightTimer?.cancel();
     _recTimer?.cancel();
     _recorder.dispose();
@@ -269,6 +276,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         for (final e in meta.entries) {
           final m = _byKey[e.key];
           if (m != null) _byKey[e.key] = m.withMeta(e.value);
+          if (e.value['reactions'] != null) _reactions[e.key] = parseReactions(e.value['reactions']);
         }
         _rebuild();
       });
@@ -323,6 +331,49 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       setState(() {});
       if (n > 0) _onNewFromPeer(n);
     } catch (_) {}
+    _refreshReactions();
+  }
+
+  /// يجدّد تفاعلات آخر الرسائل (تفاعلات الطرف الآخر لا تصل عبر المقبس)
+  Future<void> _refreshReactions() async {
+    final ids = _messages.where((m) => m.id.isNotEmpty && !m.id.startsWith('local-')).map((m) => m.id).toList();
+    final recent = ids.length > 60 ? ids.sublist(ids.length - 60) : ids;
+    if (recent.isEmpty) return;
+    try {
+      final meta = await _api.messageMeta(recent);
+      if (!mounted) return;
+      setState(() {
+        for (final id in recent) {
+          _reactions[id] = parseReactions(meta[id]?['reactions']);
+        }
+      });
+    } catch (_) {}
+  }
+
+  /// تفاعل بإيموجي على رسالة: يُطبَّق محلياً فوراً ثم يُرسل؛ الإيموجي نفسه مرة ثانية يزيله.
+  Future<void> _react(Message m, String emoji) async {
+    if (m.id.isEmpty || m.id.startsWith('local-')) return;
+    final cur = _reactions[m.id] ?? const <Reaction>[];
+    final wasMine = cur.any((r) => r.mine && r.emoji == emoji);
+    final next = wasMine ? null : emoji;
+    setState(() => _reactions[m.id] = applyMyReaction(cur, next));
+    try {
+      final rx = await _api.chatReact(m.id, next);
+      if (mounted) setState(() => _reactions[m.id] = rx);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _reactions[m.id] = cur);
+        toast(context, 'تعذر تسجيل التفاعل', error: true);
+      }
+    }
+  }
+
+  /// نقر مزدوج على رسالة: قلب أحمر ينبثق ويُسجَّل ❤️ إن لم يكن مسجّلاً
+  void _doubleTap(Message m) {
+    if (m.id.isEmpty || m.id.startsWith('local-')) return;
+    setState(() => _bursts[m.id] = (_bursts[m.id] ?? 0) + 1);
+    final cur = _reactions[m.id] ?? const <Reaction>[];
+    if (!cur.any((r) => r.mine && r.emoji == '❤️')) _react(m, '❤️');
   }
 
   void _onNewFromPeer(int n) {
@@ -612,6 +663,24 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             const SizedBox(height: 8),
+            // شريط التفاعلات أعلى الخيارات (كما في واتساب)
+            if (m.status == MessageStatus.sent && !m.id.startsWith('local-'))
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                  for (final e in reactionEmojis)
+                    InkWell(
+                      key: Key('react-$e'),
+                      customBorder: const CircleBorder(),
+                      onTap: () => Navigator.pop(ctx, 'react:$e'),
+                      child: Container(
+                        width: 42, height: 42, alignment: Alignment.center,
+                        decoration: BoxDecoration(shape: BoxShape.circle, color: (_reactions[m.id] ?? const <Reaction>[]).any((r) => r.mine && r.emoji == e) ? Joy.primarySoft : Joy.surface2),
+                        child: Text(e, style: const TextStyle(fontSize: 22)),
+                      ),
+                    ),
+                ]),
+              ),
             if (m.status == MessageStatus.sent) ListTile(leading: const Icon(Icons.reply_rounded), title: const Text('رد'), onTap: () => Navigator.pop(ctx, 'reply')),
             if (m.status == MessageStatus.sent) ListTile(leading: const Icon(Icons.forward_rounded), title: const Text('إعادة توجيه'), onTap: () => Navigator.pop(ctx, 'forward')),
             if (m.mediaKind == 'text') ListTile(leading: const Icon(Icons.copy_rounded), title: const Text('نسخ النص'), onTap: () => Navigator.pop(ctx, 'copy')),
@@ -627,6 +696,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       ),
     );
     if (!mounted || action == null) return;
+    if (action.startsWith('react:')) return _react(m, action.substring(6));
     switch (action) {
       case 'reply':
         setState(() => _replyTo = m);
@@ -835,6 +905,10 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           localBytes: _localBytes[m.key]?.bytes,
           mediaUrl: m.content.isEmpty ? null : _api.media(m.content),
           onLongPress: () => _actions(m),
+          onDoubleTap: () => _doubleTap(m),
+          onReactionTap: (e) => _react(m, e),
+          reactions: _reactions[m.id] ?? const <Reaction>[],
+          heartTrigger: _bursts[m.id] ?? 0,
           onRetry: () => _send(type: m.type, content: m.content, retry: m),
           onQuoteTap: m.quote == null ? null : () { if (!_jumpToKey(m.quote!.id)) _revealMessage(m.quote!.id); },
         );
@@ -999,9 +1073,12 @@ class _Bubble extends StatefulWidget {
   final String? mediaUrl;
   final VoidCallback onLongPress;
   final VoidCallback onRetry;
-  final VoidCallback? onQuoteTap;
+  final VoidCallback? onQuoteTap, onDoubleTap;
+  final ValueChanged<String>? onReactionTap;
+  final List<Reaction> reactions;
+  final int heartTrigger;
   const _Bubble(this.m, {required this.mine, required this.peerName, this.dateLabel, this.joinedAbove = false, this.joinedBelow = false, this.highlighted = false,
-      this.searchQuery = '', this.localBytes, this.mediaUrl, required this.onLongPress, required this.onRetry, this.onQuoteTap});
+      this.searchQuery = '', this.localBytes, this.mediaUrl, required this.onLongPress, required this.onRetry, this.onQuoteTap, this.onDoubleTap, this.onReactionTap, this.reactions = const [], this.heartTrigger = 0});
   @override
   State<_Bubble> createState() => _BubbleState();
 }
@@ -1128,10 +1205,14 @@ class _BubbleState extends State<_Bubble> {
         alignment: mine ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-          child: GestureDetector(
+          child: DoubleTapDetector(
+            onDoubleTap: widget.onDoubleTap,
+            child: GestureDetector(
             onLongPress: widget.onLongPress,
             onTap: failed ? widget.onRetry : null,
-            child: AnimatedOpacity(
+            child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Stack(alignment: Alignment.center, children: [
+            AnimatedOpacity(
               duration: const Duration(milliseconds: 200),
               opacity: m.status == MessageStatus.sending ? 0.7 : 1,
               child: AnimatedContainer(
@@ -1165,6 +1246,12 @@ class _BubbleState extends State<_Bubble> {
                   ]),
                 ]),
               ),
+            ),
+            HeartBurst(trigger: widget.heartTrigger, size: 64),
+            ]),
+            if (widget.reactions.isNotEmpty)
+              Padding(padding: const EdgeInsets.fromLTRB(6, 0, 6, 4), child: ReactionChips(reactions: widget.reactions, onTap: widget.onReactionTap, compact: true)),
+            ]),
             ),
           ),
         ),
