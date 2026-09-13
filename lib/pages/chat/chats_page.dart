@@ -8,6 +8,7 @@ import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import 'chat_thread_page.dart';
@@ -142,6 +143,7 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
 
   Widget _chatsTab(AsyncValue<List<Chat>> chats) => chats.when(
         data: (all) {
+          final muted = ref.watch(mutedPeersProvider);
           final q = _q.toLowerCase();
           final list = q.isEmpty ? all : all.where((c) => c.peer.nickname.toLowerCase().contains(q) || c.peer.id.toLowerCase().contains(q) || (c.lastContent?.toLowerCase().contains(q) ?? false)).toList();
           if (all.isEmpty) {
@@ -153,7 +155,7 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
               padding: const EdgeInsets.only(bottom: 96),
               children: [
                 if (list.isEmpty && _hits.isEmpty && !_searchingServer) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('لا نتائج', style: TextStyle(color: Joy.textMuted)))),
-                for (final (i, c) in list.indexed) _ChatRow(c, divider: i < list.length - 1 || _hits.isNotEmpty),
+                for (final (i, c) in list.indexed) _ChatRow(c, muted: muted.contains(c.peer.id), divider: i < list.length - 1 || _hits.isNotEmpty),
                 if (_q.length >= 2) ...[
                   if (_searchingServer) const Padding(padding: EdgeInsets.all(12), child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))),
                   if (_hits.isNotEmpty) const Padding(padding: EdgeInsets.fromLTRB(16, 14, 16, 4), child: Text('رسائل', style: TextStyle(fontWeight: FontWeight.w700, color: Joy.textMuted, fontSize: 13))),
@@ -196,12 +198,12 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
 
 class _ChatRow extends StatelessWidget {
   final Chat c;
-  final bool divider;
-  const _ChatRow(this.c, {this.divider = true});
+  final bool divider, muted;
+  const _ChatRow(this.c, {this.divider = true, this.muted = false});
   @override
   Widget build(BuildContext context) {
     final preview = c.lastContent == null ? 'ابدأ المحادثة' : Message.previewOf(c.lastType ?? 'text', c.lastContent!);
-    final unread = c.unread > 0;
+    final unread = c.unread > 0 && !muted;
     return ListRow(
       divider: divider,
       onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: c.peer))),
@@ -209,7 +211,10 @@ class _ChatRow extends StatelessWidget {
       title: Text(c.peer.nickname, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text('${c.lastMine ? 'أنت: ' : ''}$preview', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: unread ? Joy.text : Joy.textMuted, fontWeight: unread ? FontWeight.w600 : FontWeight.w500)),
       trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
-        Text(timeAgo(c.lastAt), style: TextStyle(fontSize: 11.5, color: unread ? Joy.primary : Joy.textMuted, fontWeight: unread ? FontWeight.w600 : FontWeight.w500)),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          if (muted) const Padding(padding: EdgeInsetsDirectional.only(end: 4), child: Icon(Icons.volume_off_rounded, size: 14, color: Joy.textMuted)),
+          Text(timeAgo(c.lastAt), style: TextStyle(fontSize: 11.5, color: unread ? Joy.primary : Joy.textMuted, fontWeight: unread ? FontWeight.w600 : FontWeight.w500)),
+        ]),
         const SizedBox(height: 4),
         if (unread)
           Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.primary, borderRadius: BorderRadius.circular(999)), child: Text('${c.unread}', style: const TextStyle(color: Joy.primaryOn, fontSize: 11, fontWeight: FontWeight.w700)))

@@ -18,7 +18,7 @@ class AdminSettingsPage extends ConsumerStatefulWidget {
 }
 
 class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
-  final maxTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController();
+  final maxTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
   bool? testTopup, maintenance;
   bool loaded = false, busy = false;
 
@@ -28,6 +28,8 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     maxTopup.text = (s.maxTopup / 100).toStringAsFixed(0);
     announcement.text = s.announcement;
     support.text = s.supportHandle;
+    bannedWords.text = s.bannedWords;
+    threshold.text = '${s.reportThreshold}';
     testTopup = s.testTopup;
     maintenance = s.maintenance;
   }
@@ -52,12 +54,18 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             TextField(controller: support, decoration: const InputDecoration(labelText: 'نك نيم حساب الدعم (اختياري)')),
             SwitchListTile(contentPadding: EdgeInsets.zero, value: maintenance ?? s.maintenance, onChanged: (v) => setState(() => maintenance = v), title: const Text('وضع الصيانة'), subtitle: const Text('يعرض تنبيه صيانة للمستخدمين دون إيقاف الخدمة')),
           ])),
+          const SectionTitle('الأمان والإشراف'),
+          JoyCard(child: Column(children: [
+            TextField(controller: bannedWords, maxLines: 4, decoration: const InputDecoration(labelText: 'كلمات محظورة (كلمة في كل سطر أو مفصولة بفواصل)', helperText: 'تُرفض المنشورات والعروض والتقييمات التي تحتويها، ويُنبَّه المرسل قبل إرسال رسالة تحتويها')),
+            const SizedBox(height: 8),
+            TextField(controller: threshold, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'عدد البلاغات للإخفاء التلقائي', helperText: 'يُخفى المنشور أو العرض تلقائياً عند بلوغ هذا العدد من المبلّغين المختلفين ويُشعَر المشرفون')),
+          ])),
           const SizedBox(height: 10),
           FilledButton.icon(
             onPressed: busy ? null : () async {
               setState(() => busy = true);
               try {
-                await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance});
+                await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold});
                 loaded = false;
                 invalidateAdmin(ref);
                 ref.invalidate(publicSettingsProvider);

@@ -499,6 +499,8 @@ export default async function business(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const rating = Math.round(Number(req.body?.rating)); const text = str(req.body?.text, 500);
     if (!(rating >= 1 && rating <= 5)) return bad(reply, 400, "bad-rating");
+    const banned = globalThis.naslifeCheckText?.(text);
+    if (banned) return reply.code(400).send({ error: "banned-words", word: banned });
     const b = await loadBiz(req.params.id);
     if (!b) return bad(reply, 404, "not-found");
     await pool.query("INSERT INTO biz_reviews(biz_id,user_id,rating,text) VALUES($1,$2,$3,$4) ON CONFLICT (biz_id,user_id) DO UPDATE SET rating=EXCLUDED.rating, text=EXCLUDED.text, created_at=now(), reply=NULL, reply_at=NULL", [b.id, uid, rating, text]);
@@ -594,6 +596,8 @@ export default async function business(app, opts) {
     const g = await guard(req, reply, "manage"); if (!g) return;
     const f = postFieldsFrom(req.body ?? {});
     if (!f.title) return bad(reply, 400, "bad-title");
+    const bannedW = globalThis.naslifeCheckText?.(f.title, f.body);
+    if (bannedW) return reply.code(400).send({ error: "banned-words", word: bannedW });
     const id = crypto.randomUUID();
     await pool.query("INSERT INTO biz_posts(id,biz_id,kind,title,body,image_url,starts_at,ends_at,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
       [id, g.b.id, f.kind, f.title, f.body, f.image_url ?? null, f.starts_at ?? null, f.ends_at ?? null, f.active ?? true]);

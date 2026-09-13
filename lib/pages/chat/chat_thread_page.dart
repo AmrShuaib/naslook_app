@@ -15,11 +15,13 @@ import '../../api/chat_tools_api.dart';
 import '../../api/client.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
+import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/media/media.dart';
 import '../../core/media/voice_player.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/pattern_background.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
@@ -391,6 +393,12 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   Future<void> _sendText() async {
     final t = _text.text.trim();
     if (t.isEmpty) return;
+    // تحقق مسبق من الكلمات المحظورة (رسائل النواة لا تمر بفلتر الخادم)
+    final banned = bannedWordIn(t, ref.read(bannedWordsProvider).value ?? const []);
+    if (banned != null) {
+      toast(context, 'الرسالة تحتوي كلمة غير مسموحة: «$banned»', error: true);
+      return;
+    }
     _text.clear();
     await _send(type: 'text', content: t);
   }
@@ -664,6 +672,36 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     }
   }
 
+  /// كتم إشعارات هذه المحادثة (بلا شارة) لمدة أو دائماً، أو إلغاء الكتم.
+  Future<void> _toggleMute() async {
+    final muted = ref.read(mutedPeersProvider).contains(_peerId);
+    try {
+      if (muted) {
+        await _api.unmute(_peerId);
+        ref.invalidate(mutesProvider);
+        if (mounted) toast(context, 'أُلغي كتم ${widget.peer.nickname}');
+        return;
+      }
+      final hours = await showModalBottomSheet<int>(
+        context: context,
+        builder: (ctx) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const ListTile(title: Text('كتم الإشعارات', style: TextStyle(fontWeight: FontWeight.w700))),
+            ListTile(leading: const Icon(Icons.schedule_rounded), title: const Text('8 ساعات'), onTap: () => Navigator.pop(ctx, 8)),
+            ListTile(leading: const Icon(Icons.calendar_view_week_rounded), title: const Text('أسبوع'), onTap: () => Navigator.pop(ctx, 24 * 7)),
+            ListTile(leading: const Icon(Icons.volume_off_rounded), title: const Text('دائماً'), onTap: () => Navigator.pop(ctx, 0)),
+          ]),
+        ),
+      );
+      if (hours == null || !mounted) return;
+      await _api.mute(_peerId, hours: hours == 0 ? null : hours);
+      ref.invalidate(mutesProvider);
+      if (mounted) toast(context, 'كُتمت إشعارات ${widget.peer.nickname}');
+    } catch (e) {
+      if (mounted) toast(context, errText(e), error: true);
+    }
+  }
+
   Future<void> _block() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -731,11 +769,15 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         IconButton(tooltip: 'بحث', icon: const Icon(Icons.search_rounded), onPressed: () => setState(() => _searching = true)),
         PopupMenuButton<String>(
           tooltip: 'المزيد',
-          onSelected: (v) => v == 'report' ? _report() : _block(),
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'report', child: ListTile(leading: Icon(Icons.flag_outlined), title: Text('إبلاغ'))),
-            PopupMenuItem(value: 'block', child: ListTile(leading: Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر', style: TextStyle(color: Joy.danger)))),
-          ],
+          onSelected: (v) => v == 'report' ? _report() : v == 'mute' ? _toggleMute() : _block(),
+          itemBuilder: (_) {
+            final muted = ref.read(mutedPeersProvider).contains(_peerId);
+            return [
+              PopupMenuItem(value: 'mute', child: ListTile(leading: Icon(muted ? Icons.volume_up_outlined : Icons.volume_off_outlined), title: Text(muted ? 'إلغاء كتم الإشعارات' : 'كتم الإشعارات'))),
+              const PopupMenuItem(value: 'report', child: ListTile(leading: Icon(Icons.flag_outlined), title: Text('إبلاغ'))),
+              const PopupMenuItem(value: 'block', child: ListTile(leading: Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر', style: TextStyle(color: Joy.danger)))),
+            ];
+          },
         ),
       ],
     );
@@ -743,6 +785,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(bannedWordsProvider); // تُجلب مبكراً حتى يعمل التحقق المسبق عند أول رسالة
     return Scaffold(
       backgroundColor: Joy.bg,
       appBar: _appBar(),

@@ -8,6 +8,8 @@ import '../pages/business/my_bookings_page.dart';
 import '../pages/business/owner/business_dashboard_page.dart';
 import '../pages/events/events_page.dart';
 import '../pages/market/market_page.dart';
+import '../pages/myspace/wishlist_page.dart';
+import '../pages/posts/my_posts_page.dart';
 import '../pages/wallet/wallet_page.dart';
 import '../state/notify_providers.dart';
 import '../state/app_state.dart';
@@ -61,6 +63,14 @@ Widget? notificationTarget(AppNotification n) {
       return const AdminShell(standalone: false, initialSection: 2);
     case 'admin_granted':
       return const AdminShell(standalone: false);
+    case 'post_blocked':
+      return const MyPostsPage();
+    case 'wish_price_drop':
+    case 'wish_available':
+    case 'wish_event_reminder':
+      return const WishlistPage();
+    case 'content_autohidden':
+      return const AdminShell(standalone: false, initialSection: 5);
   }
   return null;
 }
@@ -91,10 +101,16 @@ Widget? notificationTarget(AppNotification n) {
     case 'report_new':
     case 'account_warning':
     case 'account_suspended':
+    case 'content_autohidden':
+    case 'post_blocked':
       return (icon: Icons.report_gmailerrorred_outlined, color: Joy.danger);
     case 'admin_granted':
     case 'account_restored':
       return (icon: Icons.verified_user_outlined, color: Joy.primary);
+    case 'wish_price_drop':
+    case 'wish_available':
+    case 'wish_event_reminder':
+      return (icon: Icons.bookmark_added_outlined, color: Joy.accent);
   }
   return (icon: Icons.notifications_outlined, color: Joy.textMuted);
 }

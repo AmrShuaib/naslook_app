@@ -12,6 +12,7 @@ import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
+import '../../api/safety_api.dart';
 import '../chat/chat_thread_page.dart';
 import '../wallet/wallet_page.dart';
 import '../../api/client.dart';
@@ -193,7 +194,15 @@ class _ListingPageState extends ConsumerState<ListingPage> {
     final l = ref.watch(listingProvider(widget.id));
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('العرض'), actions: [WishButton(kind: 'market', refId: widget.id)]),
+      appBar: AppBar(title: const Text('العرض'), actions: [
+        WishButton(kind: 'market', refId: widget.id),
+        if (l.value?.mine == false)
+          PopupMenuButton<String>(
+            tooltip: 'المزيد',
+            onSelected: (_) => _reportListing(),
+            itemBuilder: (_) => const [PopupMenuItem(value: 'report', child: ListTile(leading: Icon(Icons.flag_outlined), title: Text('إبلاغ عن العرض')))],
+          ),
+      ]),
       body: l.when(
         data: (x) => ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
           if (x.imageUrl != null && x.imageUrl!.isNotEmpty) ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.network(thumbUrl(x.imageUrl!), height: 220, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())),
@@ -228,6 +237,17 @@ class _ListingPageState extends ConsumerState<ListingPage> {
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(listingProvider(widget.id))),
       ),
     );
+  }
+
+  Future<void> _reportListing() async {
+    final reason = await askText(context, title: 'إبلاغ عن العرض', hint: 'ما المشكلة؟ (احتيال، سلعة مخالفة، مضلل…)', confirm: 'إرسال البلاغ');
+    if (reason == null || reason.isEmpty || !mounted) return;
+    try {
+      final r = await ref.read(apiClientProvider).reportContent(type: 'listing', id: widget.id, reason: reason);
+      if (mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفي العرض للمراجعة' : 'وصل بلاغك وسنراجعه');
+    } catch (e) {
+      if (mounted) toast(context, e.toString(), error: true);
+    }
   }
 
   Future<void> _order(Listing x) async {

@@ -142,9 +142,11 @@ class AdminContent {
 class AdminSettings {
   final bool testTopup, maintenance, setupCodePresent;
   final int maxTopup;
-  final String announcement, supportHandle;
-  const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = ''});
-  factory AdminSettings.fromJson(Map m) => AdminSettings(testTopup: m['testTopup'] == true, maintenance: m['maintenance'] == true, setupCodePresent: m['setupCodePresent'] == true, maxTopup: _i(m['maxTopup']), announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '');
+  final String announcement, supportHandle, bannedWords;
+  final int reportThreshold;
+  const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = '', this.bannedWords = '', this.reportThreshold = 3});
+  factory AdminSettings.fromJson(Map m) => AdminSettings(testTopup: m['testTopup'] == true, maintenance: m['maintenance'] == true, setupCodePresent: m['setupCodePresent'] == true, maxTopup: _i(m['maxTopup']), announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '',
+      bannedWords: m['bannedWords']?.toString() ?? '', reportThreshold: m['reportThreshold'] == null ? 3 : _i(m['reportThreshold']));
 }
 
 class AdminAudit {

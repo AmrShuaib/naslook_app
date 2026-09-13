@@ -93,7 +93,7 @@ export default async function admin(app, opts) {
   await ensureSetupCode();
 
   // ---- الإعدادات الحية: تُطبَّق على العملية نفسها (الشحن التجريبي وسقفه) وتُقرأ من الإضافات الأخرى
-  const DEFAULT_SETTINGS = { testTopup: process.env.WALLET_TEST_TOPUP === "1", maxTopup: 10000000, announcement: "", maintenance: false, supportHandle: "" };
+  const DEFAULT_SETTINGS = { testTopup: process.env.WALLET_TEST_TOPUP === "1", maxTopup: 10000000, announcement: "", maintenance: false, supportHandle: "", bannedWords: "", reportThreshold: 3 };
   async function loadSettings() {
     const rows = (await pool.query("SELECT key, value FROM platform_settings")).rows;
     const s = { ...DEFAULT_SETTINGS };
@@ -470,6 +470,8 @@ export default async function admin(app, opts) {
     if (b.announcement !== undefined) patch.announcement = str(b.announcement, 300);
     if (b.maintenance !== undefined) patch.maintenance = b.maintenance === true;
     if (b.supportHandle !== undefined) patch.supportHandle = str(b.supportHandle, 40);
+    if (b.bannedWords !== undefined) patch.bannedWords = str(b.bannedWords, 5000);
+    if (b.reportThreshold !== undefined) patch.reportThreshold = Math.max(1, Math.min(50, Math.round(Number(b.reportThreshold)) || 3));
     const s = await saveSettings(patch);
     await audit(uid, "settings.update", "platform", patch);
     return s;

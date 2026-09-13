@@ -269,6 +269,8 @@ export default async function commerce(app, opts) {
     const kind = b.kind === "service" ? "service" : "product";
     const category = CATEGORIES.has(b.category) ? b.category : "other";
     const price = SAR(b.price); if (price < 0) return bad(reply, 400, "bad-price");
+    const banned = globalThis.naslifeCheckText?.(title, b.description, b.placeName);
+    if (banned) return reply.code(400).send({ error: "banned-words", word: banned });
     const id = crypto.randomUUID();
     await pool.query("INSERT INTO market_listings(id,seller_id,kind,category,title,description,price,image_url,place_name,lat,lng) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
       [id, uid, kind, category, title, String(b.description ?? "").slice(0, 2000), price, absUrl(req, b.imageUrl), b.placeName ? String(b.placeName).slice(0, 80) : null,
@@ -316,6 +318,8 @@ export default async function commerce(app, opts) {
     if (l.seller_id !== uid) return bad(reply, 403, "forbidden");
     const b = req.body ?? {}; const sets = []; const vals = [];
     const set = (c, v) => { vals.push(v); sets.push(`${c}=$${vals.length}`); };
+    const bannedP = globalThis.naslifeCheckText?.(b.title, b.description, b.placeName);
+    if (bannedP) return reply.code(400).send({ error: "banned-words", word: bannedP });
     if (b.title !== undefined) { const t = String(b.title).trim(); if (!t || t.length > 100) return bad(reply, 400, "bad-title"); set("title", t); }
     if (b.description !== undefined) set("description", String(b.description).slice(0, 2000));
     if (b.price !== undefined) { const p = SAR(b.price); if (p < 0) return bad(reply, 400, "bad-price"); set("price", p); }

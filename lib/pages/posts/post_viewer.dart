@@ -6,6 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/commerce_models.dart';
 import '../../api/posts_api.dart';
+import '../../api/safety_api.dart';
+import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
@@ -128,6 +130,43 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     }
   }
 
+  /// قائمة منشور شخص آخر: إبلاغ عن المنشور أو حظر ناشره.
+  Future<void> _otherMenu(int i) async {
+    final p = posts[i];
+    paused = true;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF1C1F24),
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.flag_outlined, color: Colors.white), title: const Text('إبلاغ عن المنشور', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'report')),
+          ListTile(leading: const Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر ${p.user.nickname}', style: const TextStyle(color: Joy.danger)), onTap: () => Navigator.pop(ctx, 'block')),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    paused = false;
+    if (!mounted || choice == null) return;
+    final api = ref.read(apiClientProvider);
+    try {
+      if (choice == 'report') {
+        final reason = await askText(context, title: 'إبلاغ عن المنشور', hint: 'ما المشكلة؟ (احتيال، محتوى مسيء، مضلل…)', confirm: 'إرسال البلاغ');
+        if (reason == null || reason.isEmpty || !mounted) return;
+        final r = await api.reportContent(type: 'post', id: p.id, reason: reason);
+        if (mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفي المنشور للمراجعة' : 'وصل بلاغك وسنراجعه');
+      } else if (choice == 'block') {
+        await api.blockUser(p.user.id);
+        invalidatePosts(ref);
+        if (mounted) {
+          toast(context, 'تم حظر ${p.user.nickname}');
+          Navigator.pop(context);
+        }
+      }
+    } catch (e) {
+      if (mounted) toast(context, e.toString(), error: true);
+    }
+  }
+
   Future<void> _menu(int i) async {
     final p = posts[i];
     paused = true;
@@ -205,7 +244,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
                 onPrev: _prev,
                 onNext: _next,
                 onLike: () => _like(i),
-                onMenu: posts[i].mine ? () => _menu(i) : null,
+                onMenu: posts[i].mine ? () => _menu(i) : () => _otherMenu(i),
                 onHold: (h) => paused = h,
               ),
             ),

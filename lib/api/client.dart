@@ -226,6 +226,7 @@ class ApiClient {
 
   String _errorMessage(int status, Map<String, dynamic> body) {
     final code = body['error'];
+    if (code == 'banned-words') return 'النص يحتوي كلمة غير مسموحة${body['word'] is String ? ': «${body['word']}»' : ''}';
     if (code is String && _serverErrors.containsKey(code)) {
       return _serverErrors[code]!;
     }

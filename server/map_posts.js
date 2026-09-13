@@ -121,6 +121,8 @@ export default async function posts(app, opts) {
     const caption = str(b.caption, 500);
     const overlays = cleanOverlays(b.overlays);
     if (kind === "text" && !caption && !overlays.some((o) => o.type === "text")) return bad(reply, 400, "empty");
+    const banned = globalThis.naslifeCheckText?.(caption, str(b.title, 80), str(b.placeName, 80), ...overlays.filter((o) => o.type === "text").map((o) => o.text));
+    if (banned) return reply.code(400).send({ error: "banned-words", word: banned });
     const ttl = TTL_HOURS.has(Number(b.ttlHours)) ? Number(b.ttlHours) : 24;
     const price = b.price == null || b.price === "" ? null : Math.max(0, Math.round(Number(b.price) || 0));
     const id = crypto.randomUUID();
@@ -137,9 +139,12 @@ export default async function posts(app, opts) {
     const bb = bbox(req.query?.bbox);
     const limit = Math.max(1, Math.min(300, Number(req.query?.limit) || 200));
     const tag = TAGS.has(req.query?.tag) ? req.query.tag : null;
+    // من حظرهم المستخدم أو حظروه لا يظهر محتواهم له
+    const blocked = uid ? await (globalThis.naslifeBlockedIds?.(uid) ?? []) : [];
     const rows = (await pool.query(`${SELECT} WHERE p.status='active' AND p.expires_at > now()
       AND ($2::float8 IS NULL OR (p.lat BETWEEN $3 AND $5 AND p.lng BETWEEN $2 AND $4)) AND ($6::text IS NULL OR p.tag=$6)
-      ORDER BY p.created_at DESC LIMIT $7`, [uid, bb?.minLng ?? null, bb?.minLat ?? null, bb?.maxLng ?? null, bb?.maxLat ?? null, tag, limit])).rows;
+      AND NOT (p.user_id = ANY($8::text[]))
+      ORDER BY p.created_at DESC LIMIT $7`, [uid, bb?.minLng ?? null, bb?.minLat ?? null, bb?.maxLng ?? null, bb?.maxLat ?? null, tag, limit, blocked])).rows;
     return many(rows, uid);
   });
   app.get("/mapposts/mine", async (req, reply) => {
@@ -165,6 +170,8 @@ export default async function posts(app, opts) {
     if (p.user_id !== uid) return bad(reply, 403, "forbidden");
     const b = req.body ?? {}; const sets = []; const vals = [];
     const set = (c, v) => { vals.push(v); sets.push(`${c}=$${vals.length}`); };
+    const bannedP = globalThis.naslifeCheckText?.(b.caption, b.title, b.placeName, ...(Array.isArray(b.overlays) ? b.overlays.map((o) => o?.text) : []));
+    if (bannedP) return reply.code(400).send({ error: "banned-words", word: bannedP });
     if (b.caption !== undefined) set("caption", str(b.caption, 500));
     if (b.overlays !== undefined) set("overlays", JSON.stringify(cleanOverlays(b.overlays)));
     if (b.bg !== undefined) set("bg", HEX_RE.test(String(b.bg ?? "")) ? String(b.bg) : null);

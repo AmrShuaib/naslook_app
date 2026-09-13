@@ -4,6 +4,7 @@ import '../api/models.dart';
 import '../api/naslife_api.dart';
 import '../api/ws.dart';
 import 'app_state.dart';
+import 'safety_providers.dart';
 
 /// اتصال WebSocket واحد طوال الجلسة، يُعاد إنشاؤه عند تغيّر الرمز.
 final socketProvider = Provider<NaslifeSocket?>((ref) {
@@ -35,5 +36,7 @@ final businessesProvider = FutureProvider<List<Business>>((ref) => ref.watch(api
 final unreadCountProvider = Provider<int>((ref) {
   final chats = ref.watch(chatsProvider).value ?? const [];
   final reqs = ref.watch(requestsProvider).value ?? const [];
-  return chats.fold<int>(0, (n, c) => n + c.unread) + reqs.length;
+  final muted = ref.watch(mutedPeersProvider);
+  // المحادثات المكتومة لا تُحسب في الشارة
+  return chats.fold<int>(0, (n, c) => n + (muted.contains(c.peer.id) ? 0 : c.unread)) + reqs.length;
 });
