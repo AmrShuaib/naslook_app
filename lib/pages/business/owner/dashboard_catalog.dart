@@ -39,7 +39,7 @@ class CatalogTab extends ConsumerWidget {
   }
 }
 
-String _addLabel(BizCategory c) => switch (c) { BizCategory.brand => 'إضافة منتج', BizCategory.cinema => 'إضافة فيلم', BizCategory.hotel => 'إضافة غرفة', BizCategory.carRental => 'إضافة سيارة' };
+String _addLabel(BizCategory c) => switch (c) { BizCategory.brand => 'إضافة منتج', BizCategory.cinema => 'إضافة فيلم', BizCategory.hotel => 'إضافة غرفة', BizCategory.carRental => 'إضافة سيارة', BizCategory.hospital => 'إضافة عيادة' };
 
 class _ItemRow extends ConsumerWidget {
   final Biz biz;
@@ -47,7 +47,7 @@ class _ItemRow extends ConsumerWidget {
   const _ItemRow({required this.biz, required this.item});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final stockLabel = switch (item.kind) { 'showtime' => '${item.stock ?? 0} مقعد/عرض', 'room' => '${item.stock ?? 0} غرف', 'car' => '${item.stock ?? 0} سيارات', _ => item.stock == null ? 'كمية مفتوحة' : '${item.stock} متبقٍ' };
+    final stockLabel = switch (item.kind) { 'showtime' => '${item.stock ?? 0} مقعد/عرض', 'clinic' => '${item.stock ?? 0} مرضى/موعد', 'info' => 'خدمة تعريفية', 'room' => '${item.stock ?? 0} غرف', 'car' => '${item.stock ?? 0} سيارات', _ => item.stock == null ? 'كمية مفتوحة' : '${item.stock} متبقٍ' };
     return Opacity(
       opacity: item.active ? 1 : .55,
       child: JoyCard(
@@ -56,7 +56,7 @@ class _ItemRow extends ConsumerWidget {
           Container(
             width: 54, height: 54,
             decoration: BoxDecoration(color: biz.color.withValues(alpha: .12), borderRadius: BorderRadius.circular(14), image: item.imageUrl != null ? DecorationImage(image: NetworkImage(thumbUrl(item.imageUrl!)), fit: BoxFit.cover) : null),
-            child: item.imageUrl == null ? Icon(switch (item.kind) { 'showtime' => Icons.movie_outlined, 'room' => Icons.king_bed_outlined, 'car' => Icons.directions_car_outlined, _ => Icons.shopping_bag_outlined }, color: biz.color.computeLuminance() > .6 ? Joy.text : biz.color) : null,
+            child: item.imageUrl == null ? Icon(switch (item.kind) { 'showtime' => Icons.movie_outlined, 'clinic' => Icons.medical_services_outlined, 'info' => Icons.info_outline_rounded, 'room' => Icons.king_bed_outlined, 'car' => Icons.directions_car_outlined, _ => Icons.shopping_bag_outlined }, color: biz.color.computeLuminance() > .6 ? Joy.text : biz.color) : null,
           ),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -64,7 +64,7 @@ class _ItemRow extends ConsumerWidget {
               Expanded(child: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5), maxLines: 1, overflow: TextOverflow.ellipsis)),
               if (item.isOffer) Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(999)), child: const Text('عرض', style: TextStyle(color: Joy.accent, fontSize: 10.5, fontWeight: FontWeight.w700))),
             ]),
-            Text('${money(item.price)} ${item.unitLabel} · $stockLabel${item.kind == 'showtime' ? ' · ${(item.meta['times'] as List?)?.join(' ، ') ?? ''}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5), maxLines: 2, overflow: TextOverflow.ellipsis),
+            Text('${money(item.price)} ${item.unitLabel} · $stockLabel${item.kind == 'showtime' || item.kind == 'clinic' ? ' · ${(item.meta['times'] as List?)?.join(' ، ') ?? ''}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5), maxLines: 2, overflow: TextOverflow.ellipsis),
           ])),
           if (biz.canManage)
             Switch(
@@ -119,8 +119,8 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
     description = TextEditingController(text: it?.description ?? '');
     price = TextEditingController(text: sar(it?.price));
     oldPrice = TextEditingController(text: sar(it?.oldPrice));
-    stock = TextEditingController(text: it?.stock?.toString() ?? (kind == 'showtime' ? '100' : kind == 'product' ? '' : '1'));
-    hall = TextEditingController(text: m['hall']?.toString() ?? '');
+    stock = TextEditingController(text: it?.stock?.toString() ?? (kind == 'showtime' ? '100' : kind == 'clinic' ? '6' : kind == 'product' ? '' : '1'));
+    hall = TextEditingController(text: (m['hall'] ?? m['floor'])?.toString() ?? '');
     minutes = TextEditingController(text: m['minutes']?.toString() ?? '');
     genre = TextEditingController(text: m['genre']?.toString() ?? '');
     rating = TextEditingController(text: m['rating']?.toString() ?? '');
@@ -150,8 +150,8 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
   @override
   Widget build(BuildContext context) {
     final isNew = it == null;
-    final priceLabel = switch (kind) { 'showtime' => 'سعر التذكرة (ر.س)', 'room' => 'سعر الليلة (ر.س)', 'car' => 'سعر اليوم (ر.س)', _ => 'السعر (ر.س)' };
-    final stockLabel = switch (kind) { 'showtime' => 'مقاعد كل عرض', 'room' => 'عدد الغرف', 'car' => 'عدد السيارات', _ => 'الكمية (فارغ = مفتوحة)' };
+    final priceLabel = switch (kind) { 'showtime' => 'سعر التذكرة (ر.س)', 'clinic' => 'رسوم الموعد (0 = مجاني)', 'room' => 'سعر الليلة (ر.س)', 'car' => 'سعر اليوم (ر.س)', _ => 'السعر (ر.س)' };
+    final stockLabel = switch (kind) { 'showtime' => 'مقاعد كل عرض', 'clinic' => 'مرضى لكل موعد', 'room' => 'عدد الغرف', 'car' => 'عدد السيارات', _ => 'الكمية (فارغ = مفتوحة)' };
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 0, 20, 24 + MediaQuery.viewInsetsOf(context).bottom),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -169,7 +169,7 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
             ),
           ),
           const SizedBox(width: 12),
-          Expanded(child: TextField(controller: title, decoration: InputDecoration(labelText: switch (kind) { 'showtime' => 'اسم الفيلم', 'room' => 'اسم الغرفة', 'car' => 'السيارة (الطراز والسنة)', _ => 'اسم المنتج' }))),
+          Expanded(child: TextField(controller: title, decoration: InputDecoration(labelText: switch (kind) { 'showtime' => 'اسم الفيلم', 'clinic' => 'اسم العيادة', 'info' => 'اسم الخدمة أو القسم', 'room' => 'اسم الغرفة', 'car' => 'السيارة (الطراز والسنة)', _ => 'اسم المنتج' }))),
         ]),
         const SizedBox(height: 10),
         TextField(controller: description, maxLines: 2, decoration: const InputDecoration(labelText: 'الوصف')),
@@ -183,9 +183,9 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
           const SizedBox(height: 10),
           TextField(controller: oldPrice, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'السعر قبل الخصم (اختياري، لعرض شارة "عرض")')),
         ],
-        if (kind == 'showtime') ...[
+        if (kind == 'showtime' || kind == 'clinic') ...[
           const SizedBox(height: 14),
-          const Text('مواعيد العرض اليومية', style: TextStyle(fontWeight: FontWeight.w700)),
+          Text(kind == 'clinic' ? 'مواعيد العيادة اليومية (الأحد – الخميس)' : 'مواعيد العرض اليومية', style: const TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
           Wrap(spacing: 6, runSpacing: 6, children: [for (final t in times) InputChip(label: Text(t, style: const TextStyle(fontFamily: AppTheme.bodyFont)), onDeleted: () => setState(() => times.remove(t)))]),
           Row(children: [
@@ -198,7 +198,7 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
             }, icon: const Icon(Icons.schedule_rounded, color: Joy.primary)),
           ]),
           Row(children: [
-            Expanded(child: TextField(controller: hall, decoration: const InputDecoration(labelText: 'الصالة'))),
+            Expanded(child: TextField(controller: hall, decoration: InputDecoration(labelText: kind == 'clinic' ? 'الدور / الموقع' : 'الصالة'))),
             const SizedBox(width: 8),
             Expanded(child: TextField(controller: minutes, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'المدة (دقيقة)'))),
           ]),
@@ -289,12 +289,13 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
   Future<void> _save() async {
     if (title.text.trim().isEmpty) { toast(context, 'اكتب العنوان', error: true); return; }
     final p = parseSar(price.text);
-    if (p <= 0 && kind != 'product') { toast(context, 'اكتب سعراً صحيحاً', error: true); return; }
-    if (kind == 'showtime' && times.isEmpty) { toast(context, 'أضف موعد عرض واحداً على الأقل', error: true); return; }
+    if (p <= 0 && kind != 'product' && kind != 'clinic' && kind != 'info') { toast(context, 'اكتب سعراً صحيحاً', error: true); return; }
+    if ((kind == 'showtime' || kind == 'clinic') && times.isEmpty) { toast(context, 'أضف موعداً واحداً على الأقل', error: true); return; }
     int? intOf(TextEditingController c) => int.tryParse(c.text.trim().replaceAll(RegExp(r'[^0-9]'), ''));
     final meta = <String, dynamic>{
       if (kind == 'product' && parseSar(oldPrice.text) > p) 'oldPrice': parseSar(oldPrice.text),
       if (kind == 'showtime') ...{'times': times, 'hall': hall.text.trim(), 'minutes': intOf(minutes) ?? 120, 'genre': genre.text.trim(), 'rating': rating.text.trim()},
+      if (kind == 'clinic') ...{'times': times, 'floor': hall.text.trim(), 'minutes': intOf(minutes) ?? 20, 'days': [0, 1, 2, 3, 4]},
       if (kind == 'room') ...{'beds': beds.text.trim(), 'guests': intOf(guests) ?? 2, 'size': intOf(size), 'view': view.text.trim(), 'breakfast': breakfast},
       if (kind == 'car') ...{'cls': cls.text.trim(), 'seats': intOf(seats) ?? 5, 'transmission': transmission.text.trim(), 'year': intOf(year), 'fuel': fuel.text.trim()},
     };

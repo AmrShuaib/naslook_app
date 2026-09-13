@@ -139,7 +139,7 @@ class _BusinessEditorPageState extends ConsumerState<BusinessEditorPage> {
           ]),
           if (!isNew) const Padding(padding: EdgeInsets.only(top: 6), child: Align(alignment: AlignmentDirectional.centerStart, child: Text('التخصص يُحدَّد عند الإنشاء لأن الكتالوج يعتمد عليه', style: TextStyle(color: Joy.textMuted, fontSize: 11.5)))),
           const SizedBox(height: 10),
-          TextField(controller: sector, decoration: InputDecoration(labelText: 'القطاع', hintText: switch (category) { BizCategory.brand => 'مقهى، أزياء، إلكترونيات…', BizCategory.cinema => 'سينما', BizCategory.hotel => 'فندق 4 نجوم', BizCategory.carRental => 'تأجير سيارات' })),
+          TextField(controller: sector, decoration: InputDecoration(labelText: 'القطاع', hintText: switch (category) { BizCategory.brand => 'مقهى، أزياء، إلكترونيات…', BizCategory.cinema => 'سينما', BizCategory.hotel => 'فندق 4 نجوم', BizCategory.carRental => 'تأجير سيارات', BizCategory.hospital => 'مستشفى عام' })),
           const SizedBox(height: 10),
           TextField(controller: description, maxLines: 3, decoration: const InputDecoration(labelText: 'الوصف', hintText: 'عرّف بنشاطك في سطرين أو ثلاثة')),
         ])),

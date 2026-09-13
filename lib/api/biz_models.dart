@@ -11,12 +11,16 @@ double? _d(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString()
 /// قائمة نصوص (asList في models.dart تحوّل العناصر إلى خرائط، فلا تصلح للنصوص).
 List<String> _strings(dynamic v) => v is List ? v.map((e) => e.toString()).where((e) => e.isNotEmpty && e != '{}').toList() : const [];
 
+/// الأنواع التي تُحجز بموعد محدد (عرض سينمائي أو عيادة).
+bool isSlotKind(String kind) => kind == 'showtime' || kind == 'clinic';
+
 /// فئات الدوائر التجارية وتخصصها.
 enum BizCategory {
   brand('brand', 'براندات', 'براند عالمي', Icons.storefront_rounded),
   cinema('cinema', 'سينما', 'سينما', Icons.local_movies_rounded),
   hotel('hotel', 'فنادق', 'فندق', Icons.hotel_rounded),
-  carRental('car_rental', 'تأجير سيارات', 'تأجير سيارات', Icons.directions_car_rounded);
+  carRental('car_rental', 'تأجير سيارات', 'تأجير سيارات', Icons.directions_car_rounded),
+  hospital('hospital', 'مستشفيات', 'مستشفى', Icons.local_hospital_rounded);
 
   final String key;
   final String plural;
@@ -27,10 +31,10 @@ enum BizCategory {
   static BizCategory of(String? key) => values.firstWhere((c) => c.key == key, orElse: () => BizCategory.brand);
 
   /// نوع العنصر الرئيسي في كتالوج هذه الفئة.
-  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car' };
-  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات' };
-  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز' };
-  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة' };
+  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car', hospital => 'clinic' };
+  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات' };
+  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً' };
+  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد' };
 }
 
 /// دائرة تجارية (براند/سينما/فندق/تأجير سيارات).
@@ -121,7 +125,8 @@ class BizItem {
       );
   int? get oldPrice => meta['oldPrice'] == null ? null : _i(meta['oldPrice']);
   bool get isOffer => oldPrice != null && oldPrice! > price;
-  String get unitLabel => switch (unit) { 'night' => 'لليلة', 'day' => 'لليوم', 'ticket' => 'للتذكرة', _ => '' };
+  String get unitLabel => switch (unit) { 'night' => 'لليلة', 'day' => 'لليوم', 'ticket' => 'للتذكرة', 'visit' => 'للزيارة', _ => '' };
+  bool get isFree => price == 0;
   bool get soldOut => kind == 'product' && stock != null && stock! <= 0;
 }
 
@@ -235,12 +240,13 @@ class BizOrder {
       );
 
   String get statusLabel => switch (status) { 'confirmed' => 'مؤكد', 'used' => 'مستخدم', 'cancelled' => 'ملغى', _ => status };
-  String get kindLabel => switch (kind) { 'showtime' => 'تذاكر سينما', 'room' => 'حجز فندقي', 'car' => 'حجز سيارة', _ => 'طلب شراء' };
+  String get kindLabel => switch (kind) { 'showtime' => 'تذاكر سينما', 'clinic' => 'موعد عيادة', 'room' => 'حجز فندقي', 'car' => 'حجز سيارة', _ => 'طلب شراء' };
   bool get upcoming => status == 'confirmed' && (startAt == null || startAt!.isAfter(DateTime.now().subtract(const Duration(hours: 6))));
 
   /// وصف مختصر للكمية والمدة: "3 تذاكر" أو "غرفتان × ليلتان".
   String get summary => switch (kind) {
         'showtime' => '$qty ${qty == 1 ? 'تذكرة' : 'تذاكر'}',
+        'clinic' => 'موعد لشخص واحد',
         'room' => '$qty ${qty == 1 ? 'غرفة' : 'غرف'} × $units ${units == 1 ? 'ليلة' : 'ليالٍ'}',
         'car' => '$units ${units == 1 ? 'يوم' : 'أيام'}',
         _ => '$qty × ${money(total ~/ (qty == 0 ? 1 : qty))}',

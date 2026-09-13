@@ -85,7 +85,7 @@ class OwnerOrderCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = o.customer;
     final active = o.status == 'confirmed';
-    final when = o.startAt == null ? 'طُلب ${timeAgo(o.createdAt)}' : o.kind == 'showtime' ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} ${shortDate(o.startAt!)}${o.endAt != null ? ' → ${shortDate(o.endAt!)}' : ''}';
+    final when = o.startAt == null ? 'طُلب ${timeAgo(o.createdAt)}' : isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} ${shortDate(o.startAt!)}${o.endAt != null ? ' → ${shortDate(o.endAt!)}' : ''}';
     return JoyCard(
       onTap: () => showOwnerOrderSheet(context, ref, biz, o),
       child: Row(children: [
@@ -132,8 +132,8 @@ void showOwnerOrderSheet(BuildContext context, WidgetRef ref, Biz biz, BizOrder 
         const SizedBox(height: 8),
         kv('العنصر', o.title),
         kv('التفاصيل', o.summary),
-        if (o.startAt != null) kv(o.kind == 'showtime' ? 'الموعد' : 'من', o.kind == 'showtime' ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
-        if (o.endAt != null && o.kind != 'showtime') kv('إلى', '${dayLabel(o.endAt!)} · ${shortDate(o.endAt!)}'),
+        if (o.startAt != null) kv(isSlotKind(o.kind) ? 'الموعد' : 'من', isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
+        if (o.endAt != null && !isSlotKind(o.kind)) kv('إلى', '${dayLabel(o.endAt!)} · ${shortDate(o.endAt!)}'),
         if (o.meta['guests'] != null) kv('النزلاء', '${o.meta['guests']}'),
         if (o.meta['hall'] != null) kv('الصالة', '${o.meta['hall']}'),
         if (o.note.isNotEmpty) kv('ملاحظة العميل', o.note),
@@ -150,7 +150,7 @@ void showOwnerOrderSheet(BuildContext context, WidgetRef ref, Biz biz, BizOrder 
               } catch (e) { if (ctx.mounted) toast(ctx, ownerErrText(e), error: true); }
             },
             icon: const Icon(Icons.task_alt_rounded),
-            label: Text(o.kind == 'product' ? 'تأكيد التسليم' : o.kind == 'showtime' ? 'تأكيد الدخول' : 'تأكيد الوصول'),
+            label: Text(o.kind == 'product' ? 'تأكيد التسليم' : isSlotKind(o.kind) ? 'تأكيد الدخول' : 'تأكيد الوصول'),
           ),
           if (biz.canManage) ...[
             const SizedBox(height: 8),

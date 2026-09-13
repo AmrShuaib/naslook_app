@@ -10,8 +10,9 @@ import { SEED } from "./business_seed.js";
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const ID_RE = /^[A-Z]{2}\d{7}$/;
-const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental"]);
-const KINDS = new Set(["product", "showtime", "room", "car"]);
+const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital"]);
+// clinic: عيادة بمواعيد (كالعرض السينمائي لكن مجاناً غالباً)، info: خدمة أو قسم تعريفي لا يُطلب
+const KINDS = new Set(["product", "showtime", "room", "car", "clinic", "info"]);
 const POST_KINDS = new Set(["news", "offer"]);
 const STAFF_ROLES = new Set(["manager", "staff"]);
 const DAY = 86400000;
@@ -250,7 +251,11 @@ export default async function business(app, opts) {
     const local = new Date(now.getTime() + RIYADH_OFFSET_MIN * 60000);
     const y = local.getUTCFullYear(), m = local.getUTCMonth(), d = local.getUTCDate();
     const out = [];
-    for (let day = 0; day < SHOWTIME_DAYS; day++) {
+    // العيادات تعرض أسبوعاً وتلتزم بأيام العمل (meta.days: 0=الأحد … 6=السبت) إن حُددت
+    const span = item.kind === "clinic" ? 7 : SHOWTIME_DAYS;
+    const workDays = Array.isArray(item.meta?.days) && item.meta.days.length ? item.meta.days.map(Number) : null;
+    for (let day = 0; day < span; day++) {
+      if (workDays && !workDays.includes(new Date(Date.UTC(y, m, d + day)).getUTCDay())) continue;
       for (const t of times) {
         const [hh, mm] = String(t).split(":").map(Number);
         if (!Number.isFinite(hh) || !Number.isFinite(mm)) continue;
@@ -284,7 +289,7 @@ export default async function business(app, opts) {
   });
   async function itemOut(it, now = new Date()) {
     const base = { id: it.id, bizId: it.biz_id, kind: it.kind, title: it.title, description: it.description, price: Number(it.price), unit: it.unit, stock: it.stock, meta: it.meta ?? {}, imageUrl: it.image_url, active: it.active, sort: it.sort };
-    if (it.kind === "showtime") {
+    if (it.kind === "showtime" || it.kind === "clinic") {
       const slots = showtimeSlots(it, now);
       const taken = slots.length ? (await pool.query("SELECT start_at, COALESCE(SUM(qty),0)::int AS n FROM biz_orders WHERE item_id=$1 AND status IN ('confirmed','used') AND start_at = ANY($2) GROUP BY start_at", [it.id, slots])).rows : [];
       const map = new Map(taken.map((r) => [new Date(r.start_at).getTime(), r.n]));
@@ -303,7 +308,7 @@ export default async function business(app, opts) {
     if (o.status !== "confirmed") return false;
     const start = o.start_at ? new Date(o.start_at).getTime() : null;
     if (o.kind === "product") return now - new Date(o.created_at).getTime() < DAY;
-    if (o.kind === "showtime") return start != null && start - now > 2 * 3600000;
+    if (o.kind === "showtime" || o.kind === "clinic") return start != null && start - now > 2 * 3600000;
     return start != null && start - now > DAY;
   }
   const ORDER_JOIN = "SELECT o.*, i.title AS item_title, b.name AS biz_name, b.name_ar AS biz_name_ar, b.category FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id";
@@ -522,7 +527,7 @@ export default async function business(app, opts) {
   function itemFieldsFrom(body, { partial = false, category = "brand" } = {}) {
     const out = {};
     const has = (k) => body[k] !== undefined;
-    if (!partial) out.kind = KINDS.has(body.kind) ? body.kind : ({ cinema: "showtime", hotel: "room", car_rental: "car" }[category] ?? "product");
+    if (!partial) out.kind = KINDS.has(body.kind) ? body.kind : ({ cinema: "showtime", hotel: "room", car_rental: "car", hospital: "clinic" }[category] ?? "product");
     if (!partial || has("title")) out.title = str(body.title, 100);
     if (!partial || has("description")) out.description = str(body.description, 500);
     if (!partial || has("price")) out.price = Math.max(0, Math.round(Number(body.price) || 0));
@@ -538,13 +543,13 @@ export default async function business(app, opts) {
     if (has("active")) out.active = body.active !== false;
     return out;
   }
-  const unitOf = (kind) => ({ showtime: "ticket", room: "night", car: "day" }[kind] ?? "item");
+  const unitOf = (kind) => ({ showtime: "ticket", room: "night", car: "day", clinic: "visit" }[kind] ?? "item");
   app.post("/biz/:id/items", async (req, reply) => {
     const g = await guard(req, reply, "manage"); if (!g) return;
     const f = itemFieldsFrom(req.body ?? {}, { category: g.b.category });
     if (!f.title) return bad(reply, 400, "bad-title");
-    if (f.kind === "showtime" && !(JSON.parse(f.meta).times ?? []).length) return bad(reply, 400, "bad-times");
-    if (f.kind !== "product" && f.stock == null) f.stock = f.kind === "showtime" ? 100 : 1;
+    if ((f.kind === "showtime" || f.kind === "clinic") && !(JSON.parse(f.meta).times ?? []).length) return bad(reply, 400, "bad-times");
+    if (f.kind !== "product" && f.stock == null) f.stock = f.kind === "showtime" ? 100 : f.kind === "clinic" ? 6 : 1;
     const count = (await pool.query("SELECT count(*)::int AS n FROM biz_items WHERE biz_id=$1", [g.b.id])).rows[0].n;
     if (count >= 300) return bad(reply, 409, "too-many");
     const id = `${g.b.id.replace(/^biz-/, "").slice(0, 20)}-${crypto.randomBytes(3).toString("hex")}`;
@@ -560,7 +565,7 @@ export default async function business(app, opts) {
     if (!it) return bad(reply, 404, "not-found");
     const f = itemFieldsFrom(req.body ?? {}, { partial: true });
     if ("title" in f && !f.title) delete f.title;
-    if (it.kind === "showtime" && "meta" in f && !(JSON.parse(f.meta).times ?? []).length) return bad(reply, 400, "bad-times");
+    if ((it.kind === "showtime" || it.kind === "clinic") && "meta" in f && !(JSON.parse(f.meta).times ?? []).length) return bad(reply, 400, "bad-times");
     const keys = Object.keys(f);
     if (keys.length) {
       const sets = keys.map((k, i) => `${k}=$${i + 2}`).join(", ");
@@ -684,19 +689,21 @@ export default async function business(app, opts) {
         if (!b) throw fail("not-found");
         const it = (await c.query("SELECT * FROM biz_items WHERE id=$1 AND biz_id=$2 AND active FOR UPDATE", [body.itemId, b.id])).rows[0];
         if (!it || !KINDS.has(it.kind)) throw fail("not-found");
+        if (it.kind === "info") throw fail("not-orderable");
         const price = Number(it.price);
         let units = 1, total = 0, s = null, e = null, meta = {};
         if (it.kind === "product") {
           if (it.stock != null && it.stock < qty) throw fail("sold-out", { left: it.stock });
           total = price * qty;
           if (it.stock != null) await c.query("UPDATE biz_items SET stock=stock-$2 WHERE id=$1", [it.id, qty]);
-        } else if (it.kind === "showtime") {
+        } else if (it.kind === "showtime" || it.kind === "clinic") {
           if (!startAt || !isSlot(it, startAt)) throw fail("bad-slot");
-          if (qty > 10) throw fail("too-many");
+          const n = it.kind === "clinic" ? 1 : qty; // موعد العيادة لشخص واحد
+          if (n > 10) throw fail("too-many");
           const taken = await seatsTaken(c, it.id, startAt);
-          if (taken + qty > (it.stock ?? 0)) throw fail("sold-out", { left: Math.max(0, (it.stock ?? 0) - taken) });
-          total = price * qty; s = startAt; e = new Date(startAt.getTime() + ((it.meta?.minutes ?? 120) * 60000));
-          meta = { movie: it.title, hall: it.meta?.hall ?? null };
+          if (taken + n > (it.stock ?? 0)) throw fail("sold-out", { left: Math.max(0, (it.stock ?? 0) - taken) });
+          total = price * n; s = startAt; e = new Date(startAt.getTime() + ((it.meta?.minutes ?? (it.kind === "clinic" ? 20 : 120)) * 60000));
+          meta = it.kind === "clinic" ? { clinic: it.title, doctor: it.meta?.doctor ?? null, floor: it.meta?.floor ?? null, building: it.meta?.building ?? null } : { movie: it.title, hall: it.meta?.hall ?? null };
         } else {
           if (!startAt || !endAt) throw fail("bad-date");
           const days = Math.round((endAt.getTime() - startAt.getTime()) / DAY);
@@ -708,7 +715,7 @@ export default async function business(app, opts) {
           units = days; total = price * days * rooms; s = startAt; e = endAt;
           meta = it.kind === "room" ? { rooms, guests: Math.max(1, Math.min(20, Math.round(Number(body.guests) || 1))) } : { pickup: b.address };
         }
-        const finalQty = it.kind === "room" ? Math.min(qty, 5) : it.kind === "car" ? 1 : qty;
+        const finalQty = it.kind === "room" ? Math.min(qty, 5) : it.kind === "car" || it.kind === "clinic" ? 1 : qty;
         const code = "NAS-" + crypto.randomBytes(4).toString("hex").toUpperCase();
         const label = `${b.name_ar || b.name} · ${it.title}`;
         if (total > 0) {
@@ -724,7 +731,7 @@ export default async function business(app, opts) {
       if (err.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds");
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       if (["sold-out", "unavailable"].includes(err.code)) return bad(reply, 409, err.code, { left: err.left ?? 0 });
-      if (["bad-slot", "bad-date", "bad-range", "in-past", "too-many"].includes(err.code)) return bad(reply, 400, err.code);
+      if (["bad-slot", "bad-date", "bad-range", "in-past", "too-many", "not-orderable"].includes(err.code)) return bad(reply, 400, err.code);
       throw err;
     }
     await notify(await bizTeam(out.b), { kind: "biz_order", title: `${orderNoun(out.it.kind)} جديد · ${bizName(out.b)}`,

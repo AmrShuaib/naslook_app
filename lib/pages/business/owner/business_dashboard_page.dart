@@ -81,6 +81,8 @@ class BusinessDashboardPage extends ConsumerWidget {
 
 // ------------------------------------------------------------------ نظرة عامة
 
+String _itemNoun(BizCategory c) => switch (c) { BizCategory.brand => 'منتج', BizCategory.cinema => 'فيلم', BizCategory.hotel => 'غرفة', BizCategory.carRental => 'سيارة', BizCategory.hospital => 'عيادة' };
+
 class OverviewTab extends ConsumerWidget {
   final Biz biz;
   const OverviewTab({super.key, required this.biz});
@@ -160,7 +162,7 @@ class OverviewTab extends ConsumerWidget {
         const SectionTitle('إجراءات سريعة'),
         Wrap(spacing: 8, runSpacing: 8, children: [
           _Action(icon: Icons.qr_code_scanner_rounded, label: 'تأكيد استلام برمز', onTap: () => checkinByCode(context, ref, biz)),
-          if (biz.canManage) _Action(icon: Icons.add_box_outlined, label: 'إضافة ${biz.category == BizCategory.brand ? 'منتج' : biz.category == BizCategory.cinema ? 'فيلم' : biz.category == BizCategory.hotel ? 'غرفة' : 'سيارة'}', onTap: () => openItemEditor(context, biz)),
+          if (biz.canManage) _Action(icon: Icons.add_box_outlined, label: 'إضافة ${_itemNoun(biz.category)}', onTap: () => openItemEditor(context, biz)),
           if (biz.canManage) _Action(icon: Icons.local_offer_outlined, label: 'نشر عرض', onTap: () => openPostEditor(context, biz, kind: 'offer')),
           if (biz.canManage) _Action(icon: Icons.edit_outlined, label: 'تعديل الملف', onTap: () => openBusinessEditor(context, biz: biz)),
           _Action(icon: Icons.open_in_new_rounded, label: 'الصفحة العامة', onTap: () => openBusiness(context, biz.id)),

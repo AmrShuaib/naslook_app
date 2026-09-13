@@ -138,6 +138,8 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
                   padding: const EdgeInsets.only(bottom: 10),
                   child: switch (it.kind) {
                     'showtime' => _ShowtimeCard(biz: biz, item: it, onOrder: _order),
+                    'clinic' => _ClinicCard(biz: biz, item: it, onOrder: _order),
+                    'info' => _InfoServiceCard(biz: biz, item: it),
                     'room' || 'car' => _BookableCard(biz: biz, item: it, onBook: () => _book(biz, it)),
                     _ => _ProductCard(biz: biz, item: it, onBuy: () => _buy(biz, it)),
                   },
@@ -408,8 +410,8 @@ void showOrderSheet(BuildContext context, BizOrder o, {Biz? biz, VoidCallback? o
           SelectableText(o.code, style: const TextStyle(fontWeight: FontWeight.w700, letterSpacing: 2, fontSize: 16)),
           const SizedBox(height: 10),
           _kv('التفاصيل', o.summary),
-          if (o.startAt != null) _kv(o.kind == 'showtime' ? 'الموعد' : 'من', o.kind == 'showtime' ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
-          if (o.endAt != null && o.kind != 'showtime') _kv('إلى', '${dayLabel(o.endAt!)} · ${shortDate(o.endAt!)}'),
+          if (o.startAt != null) _kv(isSlotKind(o.kind) ? 'الموعد' : 'من', isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
+          if (o.endAt != null && !isSlotKind(o.kind)) _kv('إلى', '${dayLabel(o.endAt!)} · ${shortDate(o.endAt!)}'),
           if (o.meta['hall'] != null) _kv('الصالة', o.meta['hall'].toString()),
           _kv('المبلغ', money(o.total)),
           _kv('الحالة', o.statusLabel),
@@ -579,8 +581,8 @@ class _Price extends StatelessWidget {
   const _Price(this.item);
   @override
   Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-        Text(money(item.price), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary, fontSize: 16)),
-        if (item.unitLabel.isNotEmpty) Padding(padding: const EdgeInsets.only(right: 4), child: Text(item.unitLabel, style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
+        Text(item.isFree ? 'مجاني' : money(item.price), style: TextStyle(fontWeight: FontWeight.w800, color: item.isFree ? Joy.success : Joy.primary, fontSize: 16)),
+        if (item.unitLabel.isNotEmpty && !item.isFree) Padding(padding: const EdgeInsets.only(right: 4), child: Text(item.unitLabel, style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
         if (item.isOffer) Padding(padding: const EdgeInsets.only(right: 6), child: Text(money(item.oldPrice!), style: const TextStyle(color: Joy.textMuted, fontSize: 12, decoration: TextDecoration.lineThrough))),
       ]);
 }
@@ -648,6 +650,148 @@ class _BookableCard extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// عيادة بمواعيد للأسبوع القادم في أيام العمل: اختيار الموعد ثم الحجز (مجاناً غالباً) لشخص واحد.
+class _ClinicCard extends StatefulWidget {
+  final Biz biz;
+  final BizItem item;
+  final Future<void> Function(Biz, BizItem, {required int qty, DateTime? startAt, DateTime? endAt, int? guests}) onOrder;
+  const _ClinicCard({required this.biz, required this.item, required this.onOrder});
+  @override
+  State<_ClinicCard> createState() => _ClinicCardState();
+}
+
+class _ClinicCardState extends State<_ClinicCard> {
+  DateTime? picked;
+  bool busy = false, expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final it = widget.item;
+    final byDay = <String, List<Showtime>>{};
+    for (final s in it.slots) {
+      byDay.putIfAbsent(dayLabel(s.startsAt), () => []).add(s);
+    }
+    final days = byDay.entries.toList();
+    final shown = expanded ? days : days.take(2).toList();
+    final floor = it.meta['floor']?.toString() ?? '';
+    final doctor = it.meta['doctor']?.toString() ?? '';
+    return JoyCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(width: 54, height: 54, decoration: BoxDecoration(color: widget.biz.color.withValues(alpha: .12), borderRadius: BorderRadius.circular(14)), child: Icon(Icons.medical_services_outlined, color: widget.biz.color.computeLuminance() > .6 ? Joy.text : widget.biz.color)),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(it.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
+            if (it.description.isNotEmpty) Text(it.description, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+            if (floor.isNotEmpty || doctor.isNotEmpty)
+              Padding(padding: const EdgeInsets.only(top: 2), child: Text([if (doctor.isNotEmpty) 'د. $doctor', if (floor.isNotEmpty) floor].join(' · '), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5))),
+            const SizedBox(height: 2),
+            _Price(it),
+          ])),
+          WishButton(kind: 'item', refId: it.id, compact: true),
+        ]),
+        if (it.slots.isEmpty)
+          const Padding(padding: EdgeInsets.only(top: 8), child: Text('لا مواعيد متاحة هذا الأسبوع', style: TextStyle(color: Joy.textMuted)))
+        else ...[
+          for (final e in shown) ...[
+            Padding(padding: const EdgeInsets.only(top: 10, bottom: 4), child: Text(e.key, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final s in e.value)
+                ChoiceChip(
+                  label: Text('${clockOf(s.startsAt)}${s.seatsLeft <= 2 && s.seatsLeft > 0 ? ' · متبقٍ ${s.seatsLeft}' : ''}'),
+                  selected: picked == s.startsAt,
+                  onSelected: s.seatsLeft == 0 ? null : (_) => setState(() => picked = s.startsAt),
+                  showCheckmark: false,
+                  selectedColor: Joy.primary,
+                  labelStyle: TextStyle(color: picked == s.startsAt ? Joy.primaryOn : Joy.text, fontSize: 12.5),
+                ),
+            ]),
+          ],
+          if (days.length > 2)
+            TextButton(onPressed: () => setState(() => expanded = !expanded), child: Text(expanded ? 'أيام أقل' : 'كل أيام الأسبوع (${days.length})')),
+        ],
+        if (picked != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Row(children: [
+              Expanded(child: Text('الموعد: ${dayLabel(picked!)} · ${clockOf(picked!)}', style: const TextStyle(fontWeight: FontWeight.w600))),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(minimumSize: const Size(44, 40)),
+                onPressed: busy
+                    ? null
+                    : () async {
+                        setState(() => busy = true);
+                        try {
+                          await widget.onOrder(widget.biz, it, qty: 1, startAt: picked);
+                        } finally {
+                          if (mounted) setState(() => busy = false);
+                        }
+                      },
+                icon: const Icon(Icons.event_available_rounded, size: 18),
+                label: Text(it.isFree ? 'احجز الموعد' : 'احجز · ${money(it.price)}'),
+              ),
+            ]),
+          ),
+      ]),
+    );
+  }
+}
+
+/// قسم أو خدمة تعريفية (طوارئ، مختبر، صيدلية…): الوصف وساعات العمل والموقع ورقم للاتصال، بلا طلب.
+class _InfoServiceCard extends StatelessWidget {
+  final Biz biz;
+  final BizItem item;
+  const _InfoServiceCard({required this.biz, required this.item});
+
+  static IconData _iconFor(String id, String title) {
+    final k = '$id $title';
+    if (k.contains('-er') || k.contains('طوارئ')) return Icons.emergency_outlined;
+    if (k.contains('lab') || k.contains('مختبر')) return Icons.biotech_outlined;
+    if (k.contains('blood') || k.contains('دم')) return Icons.bloodtype_outlined;
+    if (k.contains('radiology') || k.contains('أشعة')) return Icons.radio_button_checked_outlined;
+    if (k.contains('pharmacy') || k.contains('صيدلية')) return Icons.medication_outlined;
+    if (k.contains('ambulance') || k.contains('إسعاف')) return Icons.local_shipping_outlined;
+    if (k.contains('visiting') || k.contains('زيارة')) return Icons.schedule_outlined;
+    if (k.contains('reports') || k.contains('تقارير')) return Icons.description_outlined;
+    if (k.contains('facilities') || k.contains('مرافق')) return Icons.local_parking_outlined;
+    if (k.contains('volunteer') || k.contains('تطوع')) return Icons.volunteer_activism_outlined;
+    if (k.contains('vaccines') || k.contains('تطعيم')) return Icons.vaccines_outlined;
+    return Icons.local_hospital_outlined;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = item.meta;
+    final hours = m['hours']?.toString() ?? '', location = m['location']?.toString() ?? '', phone = m['phone']?.toString() ?? '';
+    return JoyCard(
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(width: 54, height: 54, decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)), child: Icon(_iconFor(item.id, item.title), color: biz.color.computeLuminance() > .6 ? Joy.text : biz.color)),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(item.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
+          if (item.description.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 2), child: Text(item.description, style: const TextStyle(color: Joy.text, fontSize: 13, height: 1.5))),
+          if (hours.isNotEmpty || location.isNotEmpty || phone.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(spacing: 12, runSpacing: 6, children: [
+                if (hours.isNotEmpty) _fact(Icons.schedule_outlined, hours),
+                if (location.isNotEmpty) _fact(Icons.place_outlined, location),
+                if (phone.isNotEmpty)
+                  InkWell(onTap: () => launchUrl(Uri.parse('tel:$phone')), child: _fact(Icons.call_outlined, phone, color: Joy.primary)),
+              ]),
+            ),
+        ])),
+      ]),
+    );
+  }
+
+  Widget _fact(IconData icon, String text, {Color color = Joy.textMuted}) => Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 15, color: color),
+        const SizedBox(width: 4),
+        Text(text, style: TextStyle(color: color, fontSize: 12.5, fontWeight: color == Joy.primary ? FontWeight.w600 : FontWeight.w400)),
+      ]);
 }
 
 /// فيلم بمواعيد عرضه للأيام القادمة؛ اختيار الموعد وعدد التذاكر ثم الدفع.
@@ -774,11 +918,11 @@ class OrderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = o.status == 'confirmed';
-    final icon = switch (o.kind) { 'showtime' => Icons.local_movies_outlined, 'room' => Icons.hotel_outlined, 'car' => Icons.directions_car_outlined, _ => Icons.shopping_bag_outlined };
+    final icon = switch (o.kind) { 'showtime' => Icons.local_movies_outlined, 'clinic' => Icons.medical_services_outlined, 'room' => Icons.hotel_outlined, 'car' => Icons.directions_car_outlined, _ => Icons.shopping_bag_outlined };
     return ListRow(
       leading: Container(width: 46, height: 46, decoration: BoxDecoration(color: active ? Joy.primarySoft : Joy.surface2, borderRadius: BorderRadius.circular(14)), child: Icon(icon, color: active ? Joy.primary : Joy.textMuted)),
       title: Text(showBiz ? '${o.bizName} · ${o.title}' : o.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text('${o.summary}${o.startAt != null ? ' · ${dayLabel(o.startAt!)}${o.kind == 'showtime' ? ' ${clockOf(o.startAt)}' : ''}' : ''} · ${o.statusLabel}', maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text('${o.summary}${o.startAt != null ? ' · ${dayLabel(o.startAt!)}${isSlotKind(o.kind) ? ' ${clockOf(o.startAt)}' : ''}' : ''} · ${o.statusLabel}', maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
         Text(money(o.total), style: TextStyle(fontWeight: FontWeight.w700, color: active ? Joy.text : Joy.textMuted, fontSize: 13.5)),
         const Icon(Icons.qr_code_2_rounded, size: 18, color: Joy.textMuted),

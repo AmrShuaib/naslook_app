@@ -757,6 +757,7 @@ class _ItemMarker extends StatelessWidget {
         'hotel' => Icons.hotel_rounded,
         'car_rental' => Icons.directions_car_rounded,
         'brand' => Icons.local_mall_rounded,
+        'hospital' => Icons.local_hospital_rounded,
         _ => Icons.storefront_rounded,
       };
 }

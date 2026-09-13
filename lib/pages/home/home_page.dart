@@ -123,7 +123,7 @@ class HomePage extends ConsumerWidget {
               const SizedBox(width: 12),
               const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('الدوائر التجارية', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-                Text('براندات عالمية · سينما · فنادق · تأجير سيارات', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+                Text('براندات عالمية · سينما · فنادق · تأجير سيارات · مستشفيات', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
               ])),
               const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
             ]),
