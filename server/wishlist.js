@@ -28,7 +28,12 @@ export default async function wishlist(app, opts) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE UNIQUE INDEX IF NOT EXISTS wishlist_items_ref ON wishlist_items(user_id, kind, ref_id) WHERE ref_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS wishlist_items_user ON wishlist_items(user_id, created_at DESC);
+    ALTER TABLE wishlist_items ADD COLUMN IF NOT EXISTS last_available BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE wishlist_items ADD COLUMN IF NOT EXISTS reminded_at TIMESTAMPTZ;
+    ALTER TABLE wishlist_items ADD COLUMN IF NOT EXISTS alerted_at TIMESTAMPTZ;
   `);
+  const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch { /* ignore */ } };
+  const SAR = (h) => (h % 100 === 0 ? String(h / 100) : (h / 100).toFixed(2)) + " ر.س";
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error) => reply.code(code).send({ error });
   const tableExists = async (name) => (await pool.query("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1", [name])).rowCount > 0;
@@ -54,7 +59,7 @@ export default async function wishlist(app, opts) {
           if (!tables.event || !UUID_RE.test(refId)) return null;
           const r = await pool.query("SELECT e.title, e.place_name, e.starts_at, e.cancelled, (SELECT min(price) FROM ticket_tiers t WHERE t.event_id=e.id) AS min_price FROM events e WHERE e.id=$1", [refId]);
           const e = r.rows[0]; if (!e) return null;
-          return { title: e.title, subtitle: ["فعالية", e.place_name].filter(Boolean).join(" · "), price: e.min_price == null ? null : Number(e.min_price), imageUrl: null, available: !e.cancelled && (!e.starts_at || new Date(e.starts_at) > new Date(Date.now() - 86400000)) };
+          return { title: e.title, subtitle: ["فعالية", e.place_name].filter(Boolean).join(" · "), price: e.min_price == null ? null : Number(e.min_price), imageUrl: null, available: !e.cancelled && (!e.starts_at || new Date(e.starts_at) > new Date(Date.now() - 86400000)), startsAt: e.starts_at, placeName: e.place_name };
         }
         case "biz": {
           if (!tables.biz) return null;
@@ -142,5 +147,52 @@ export default async function wishlist(app, opts) {
     return { ok: true };
   });
 
-  app.get("/wishlist/status", async () => ({ ok: true, sources: tables }));
+  // ---- تنبيهات الأمنيات: انخفاض السعر، عودة التوفر، وتذكير بالفعالية قبل يوم. تُفحص العناصر غير المحقَّقة دورياً
+  // وتُقارن ببياناتها المحفوظة؛ السعر المحفوظ يُحدَّث بعد كل مقارنة حتى لا يتكرر التنبيه نفسه.
+  let sweeping = false;
+  async function sweep() {
+    if (sweeping) return { skipped: true };
+    sweeping = true;
+    const stats = { checked: 0, priceDrops: 0, available: 0, reminders: 0 };
+    try {
+      const rows = (await pool.query("SELECT * FROM wishlist_items WHERE done=false AND kind<>'custom' AND ref_id IS NOT NULL ORDER BY created_at DESC LIMIT 5000")).rows;
+      for (const w of rows) {
+        stats.checked++;
+        const live = await resolve(w.kind, w.ref_id);
+        if (!live) continue;
+        const sets = [], vals = []; const set = (col, v) => { vals.push(v); sets.push(`${col}=$${vals.length}`); };
+        const oldPrice = w.price == null ? null : Number(w.price);
+        if (live.price != null && oldPrice != null && live.price < oldPrice) {
+          stats.priceDrops++;
+          await notify([w.user_id], { kind: "wish_price_drop", title: `انخفض سعر «${live.title}»`, body: `من ${SAR(oldPrice)} إلى ${SAR(live.price)} — من قائمة أمنياتك`, data: { wishId: w.id, kind: w.kind, refId: w.ref_id, oldPrice, price: live.price } });
+          set("alerted_at", new Date());
+        }
+        if (live.price != null && live.price !== oldPrice) set("price", live.price);
+        if (live.available && w.last_available === false) {
+          stats.available++;
+          await notify([w.user_id], { kind: "wish_available", title: `عاد «${live.title}» متاحاً`, body: "أحد عناصر قائمة أمنياتك متاح الآن", data: { wishId: w.id, kind: w.kind, refId: w.ref_id } });
+          set("alerted_at", new Date());
+        }
+        if (!!live.available !== !!w.last_available) set("last_available", !!live.available);
+        if (w.kind === "event" && live.startsAt && !w.reminded_at) {
+          const ms = new Date(live.startsAt).getTime() - Date.now();
+          if (ms > 0 && ms <= 26 * 3600e3 && live.available) {
+            stats.reminders++;
+            const d = new Date(live.startsAt);
+            const when = `${d.getUTCHours() + 3 >= 24 ? d.getUTCHours() + 3 - 24 : d.getUTCHours() + 3}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+            await notify([w.user_id], { kind: "wish_event_reminder", title: `غداً: ${live.title}`, body: `${live.placeName ? live.placeName + " · " : ""}الساعة ${when} — من قائمة أمنياتك`, data: { wishId: w.id, kind: "event", refId: w.ref_id, eventId: w.ref_id } });
+            set("reminded_at", new Date());
+          }
+        }
+        if (sets.length) { vals.push(w.id); await pool.query(`UPDATE wishlist_items SET ${sets.join(",")} WHERE id=$${vals.length}`, vals); }
+      }
+    } finally { sweeping = false; }
+    return stats;
+  }
+  globalThis.naslifeWishlistSweep = sweep;
+  const SWEEP_MS = opts.sweepMs ?? (Number(process.env.WISHLIST_SWEEP_MS) || 30 * 60 * 1000);
+  let timer = null;
+  if (SWEEP_MS > 0) { timer = setInterval(() => sweep().catch(() => {}), SWEEP_MS); timer.unref?.(); app.addHook("onClose", async () => { if (timer) clearInterval(timer); }); }
+
+  app.get("/wishlist/status", async () => ({ ok: true, sources: tables, sweepEveryMs: SWEEP_MS }));
 }
