@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/chat_tools_api.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
+import '../../core/chat/codes.dart';
 import '../../core/location.dart';
 import '../../core/media/pick_image.dart';
 import '../../state/app_state.dart';
@@ -195,6 +197,15 @@ class _ListingPageState extends ConsumerState<ListingPage> {
     return Scaffold(
       backgroundColor: Joy.bg,
       appBar: AppBar(title: const Text('العرض'), actions: [
+        IconButton(
+          key: const Key('copy-listing-code'),
+          tooltip: 'انسخ رمز المحادثة',
+          icon: const Icon(Icons.bolt_rounded),
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: listingCode(widget.id)));
+            if (context.mounted) toast(context, 'نُسخ الرمز ${listingCode(widget.id)}، الصقه في أي محادثة');
+          },
+        ),
         WishButton(kind: 'market', refId: widget.id),
         if (l.value?.mine == false)
           PopupMenuButton<String>(

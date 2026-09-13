@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
+import '../../core/chat/codes.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
@@ -150,7 +152,17 @@ class EventDetailPage extends ConsumerWidget {
     final ev = ref.watch(eventProvider(eventId));
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('الفعالية')),
+      appBar: AppBar(title: const Text('الفعالية'), actions: [
+        IconButton(
+          key: const Key('copy-event-code'),
+          tooltip: 'انسخ رمز المحادثة',
+          icon: const Icon(Icons.bolt_rounded),
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: eventCode(eventId)));
+            if (context.mounted) toast(context, 'نُسخ الرمز ${eventCode(eventId)}، الصقه في أي محادثة');
+          },
+        ),
+      ]),
       body: ev.when(
         data: (e) => ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
           Text(e.title, style: Theme.of(context).textTheme.headlineSmall),

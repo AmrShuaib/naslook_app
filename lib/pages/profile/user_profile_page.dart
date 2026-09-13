@@ -5,6 +5,7 @@ import '../../api/client.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/chat/codes.dart';
 import '../../core/share/share_links.dart';
 import '../../core/nav_provider.dart';
 import '../../state/app_state.dart';
@@ -48,7 +49,7 @@ class UserProfilePage extends ConsumerWidget {
       appBar: AppBar(
         title: Text(nickname),
         actions: [
-          IconButton(key: const Key('share-profile'), tooltip: 'مشاركة الحساب', icon: const Icon(Icons.ios_share_rounded), onPressed: () => shareLink(context, title: nickname, url: profileLink(nickname), subtitle: 'حساب على ناس لايف')),
+          IconButton(key: const Key('share-profile'), tooltip: 'مشاركة الحساب', icon: const Icon(Icons.ios_share_rounded), onPressed: () => shareLink(context, title: nickname, url: profileLink(nickname), subtitle: 'حساب على ناس لايف', code: userCode(nickname))),
           if (!isMe)
             PopupMenuButton<String>(
               tooltip: 'المزيد',

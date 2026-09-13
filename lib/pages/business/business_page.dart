@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,6 +9,7 @@ import '../../api/biz_models.dart';
 import '../../api/client.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
+import '../../core/chat/codes.dart';
 import '../../core/nav_provider.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
@@ -109,7 +111,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
         title: Text(b?.title ?? 'الدائرة'),
         actions: [
           if (b != null && b.canOperate) IconButton(tooltip: 'لوحة التحكم', icon: const Icon(Icons.dashboard_customize_outlined, color: Joy.primary), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BusinessDashboardPage(id: b.id, initial: b)))),
-          if (b != null) IconButton(key: const Key('share-circle'), tooltip: 'مشاركة الدائرة', icon: const Icon(Icons.ios_share_rounded), onPressed: () => shareLink(context, title: b.title, url: circleLink(b.id), subtitle: 'دائرة ${b.category.label} على ناس لايف')),
+          if (b != null) IconButton(key: const Key('share-circle'), tooltip: 'مشاركة الدائرة', icon: const Icon(Icons.ios_share_rounded), onPressed: () => shareLink(context, title: b.title, url: circleLink(b.id), subtitle: 'دائرة ${b.category.label} على ناس لايف', code: circleCode(b.id))),
           if (b != null) IconButton(tooltip: 'على الخريطة', icon: const Icon(Icons.map_outlined), onPressed: () => _onMap(b)),
           IconButton(tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
         ],
@@ -630,6 +632,24 @@ class _ProductCard extends StatelessWidget {
                       const Icon(Icons.mode_comment_outlined, size: 15, color: Joy.primary),
                       const SizedBox(width: 4),
                       Text(item.discussions == 0 ? 'ناقش' : '${item.discussions} نقاش', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Joy.primary)),
+                    ]),
+                  ),
+                ),
+                // رمز الصنف للمحادثات: #brew92/v60
+                InkWell(
+                  key: Key('code-${item.id}'),
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () async {
+                    final code = itemCode(biz.id, item.id);
+                    await Clipboard.setData(ClipboardData(text: code));
+                    if (context.mounted) toast(context, 'نُسخ الرمز $code، الصقه في أي محادثة');
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.bolt_rounded, size: 15, color: Joy.textMuted),
+                      const SizedBox(width: 2),
+                      Text(itemCode(biz.id, item.id), textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Joy.textMuted, fontFamily: AppTheme.bodyFont)),
                     ]),
                   ),
                 ),

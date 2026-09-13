@@ -11,21 +11,38 @@ import 'package:record/record.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../api/biz_api.dart';
+import '../../api/chat_cards_api.dart';
 import '../../api/chat_tools_api.dart';
 import '../../api/client.dart';
+import '../../api/commerce_api.dart';
+import '../../api/commerce_models.dart';
+import '../../api/community_api.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
+import '../../api/posts_api.dart';
 import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/chat/codes.dart';
+import '../../core/location.dart';
 import '../../core/media/media.dart';
 import '../../core/media/voice_player.dart';
 import '../../state/app_state.dart';
+import '../../state/biz_providers.dart';
 import '../../state/providers.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/pattern_background.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/reactions.dart';
 import '../../ui/widgets.dart';
+import '../business/business_page.dart';
+import '../business/community_page.dart';
+import '../events/events_page.dart';
+import '../market/market_page.dart';
+import '../posts/post_viewer.dart';
+import '../profile/public_profile_page.dart';
+import '../wallet/wallet_page.dart';
+import 'chat_cards.dart';
 
 /// تسمية فاصل اليوم: اليوم، أمس، اسم اليوم خلال الأسبوع، وإلا اليوم والشهر (والسنة إن اختلفت).
 String dayLabel(DateTime t, {DateTime? now}) {
@@ -86,6 +103,14 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   final _reactions = <String, List<Reaction>>{};
   final _bursts = <String, int>{};
   Timer? _reactionsTimer;
+  /// رموز الاختصار: نص الرسالة محلّلاً (بمفتاح الرسالة)، والبطاقات المحلولة من الخادم (بمفتاح الرمز)، والطلبات المسجّلة (بمعرّف الرسالة)
+  final _parsed = <String, ParsedText>{};
+  final _cards = <String, ChatCard?>{};
+  final _cardsInFlight = <String>{};
+  final _requests = <String, ChatRequest>{};
+  final _busyCards = <String>{};
+  final _requestRetries = <String, int>{};
+  Timer? _requestRetryTimer;
   /// بايتات الوسائط المحلية قبل/أثناء الرفع (للمعاينة وإعادة المحاولة).
   final _localBytes = <String, ({Uint8List bytes, String mime, String name})>{};
   bool _loading = true;
@@ -147,6 +172,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     _typingTimer?.cancel();
     _presenceTimer?.cancel();
     _reactionsTimer?.cancel();
+    _requestRetryTimer?.cancel();
     _highlightTimer?.cancel();
     _recTimer?.cancel();
     _recorder.dispose();
@@ -261,7 +287,59 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     final l = _byKey.values.toList()
       ..sort((a, b) => (a.sentAt ?? DateTime(2100)).compareTo(b.sentAt ?? DateTime(2100)));
     _messages = l;
+    for (final m in l) {
+      if (m.mediaKind == 'text') _parsed.putIfAbsent(m.key, () => parseChatText(m.content));
+    }
     if (_searching) _recomputeMatches(keepIndex: true);
+    _resolveCards();
+  }
+
+  ParsedText _parsedOf(Message m) => _parsed[m.key] ??= parseChatText(m.content);
+
+  /// يحلّ الإشارات غير المحلولة بعد (ومكان الموعد إن كان دائرة) دفعة واحدة عبر الخادم.
+  Future<void> _resolveCards() async {
+    final refs = <String>{};
+    for (final p in _parsed.values) {
+      for (final r in p.refKeys) {
+        if (!_cards.containsKey(r) && !_cardsInFlight.contains(r)) refs.add(r);
+      }
+    }
+    if (refs.isEmpty) return;
+    final batch = refs.take(40).toList();
+    _cardsInFlight.addAll(batch);
+    try {
+      final res = await _api.chatCards(batch);
+      if (!mounted) return;
+      setState(() => _cards.addAll(res));
+    } catch (_) {
+      // تُعاد المحاولة مع أول إعادة بناء
+    } finally {
+      _cardsInFlight.removeAll(batch);
+    }
+    if (refs.length > batch.length && mounted) _resolveCards();
+  }
+
+  void _noteRequest(String id, dynamic raw) {
+    final r = ChatRequest.maybe(raw);
+    if (r != null) {
+      _requests[id] = r;
+      _requestRetries.remove(id);
+      return;
+    }
+    // رسالة أمر بلا طلب مسجّل بعد (سباق بين وصول الرسالة وتسجيل الطلب): نعيد الجلب بعد قليل
+    final m = _byKey[id];
+    if (m == null || _requests.containsKey(id)) return;
+    final cmd = _parsedOf(m).command;
+    if (cmd == null || !cmd.kind.needsRequest) return;
+    final tries = _requestRetries[id] ?? 0;
+    if (tries >= 4) return;
+    _requestRetries[id] = tries + 1;
+    _requestRetryTimer?.cancel();
+    _requestRetryTimer = Timer(Duration(seconds: 2 + tries * 2), () {
+      if (!mounted) return;
+      _metaFetched.remove(id);
+      _fetchMeta();
+    });
   }
 
   /// يجلب بيانات الرد/التوجيه/المدة للرسائل التي لم تُجلب لها بعد.
@@ -277,6 +355,10 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           final m = _byKey[e.key];
           if (m != null) _byKey[e.key] = m.withMeta(e.value);
           if (e.value['reactions'] != null) _reactions[e.key] = parseReactions(e.value['reactions']);
+          _noteRequest(e.key, e.value['request']);
+        }
+        for (final id in ids) {
+          if (!meta.containsKey(id)) _noteRequest(id, null);
         }
         _rebuild();
       });
@@ -345,6 +427,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       setState(() {
         for (final id in recent) {
           _reactions[id] = parseReactions(meta[id]?['reactions']);
+          final r = ChatRequest.maybe(meta[id]?['request']);
+          if (r != null) _requests[id] = r;
         }
       });
     } catch (_) {}
@@ -442,7 +526,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   // ---------------------------------------------------------------------------
 
   Future<void> _sendText() async {
-    final t = _text.text.trim();
+    var t = _text.text.trim();
     if (t.isEmpty) return;
     // تحقق مسبق من الكلمات المحظورة (رسائل النواة لا تمر بفلتر الخادم)
     final banned = bannedWordIn(t, ref.read(bannedWordsProvider).valueOrNull ?? const []);
@@ -450,8 +534,219 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       toast(context, 'الرسالة تحتوي كلمة غير مسموحة: «$banned»', error: true);
       return;
     }
+    if (t.startsWith('/')) {
+      final prepared = await _prepareCommand(t);
+      if (prepared == null || !mounted) return;
+      t = prepared;
+    }
     _text.clear();
-    await _send(type: 'text', content: t);
+    final cmd = parseCommand(t);
+    await _send(type: 'text', content: t, onSent: cmd != null && cmd.kind.needsRequest ? (id) => _registerRequest(id, cmd) : null);
+  }
+
+  // ---------------------------------------------------------------------------
+  // رموز الاختصار: تحضير الأوامر قبل الإرسال، تسجيل الطلبات، وإجراءات البطاقات
+  // ---------------------------------------------------------------------------
+
+  /// يوسّع الأوامر التي تحتاج شيئاً من الجهاز أو المستخدم قبل الإرسال (/me، /loc، /ticket، /order، /wish، /send، /help)،
+  /// ويتحقق من حجج البقية. يرجع النص الجاهز للإرسال أو null للإلغاء.
+  Future<String?> _prepareCommand(String t) async {
+    final m = RegExp(r'^/([a-zA-Z\u0600-\u06FF]+)\s*(.*)$', dotAll: true).firstMatch(t);
+    if (m == null) return t;
+    final cmd = m.group(1)!.toLowerCase();
+    final rest = m.group(2)!.trim();
+    switch (cmd) {
+      case 'help':
+      case 'دليل':
+        await _openGuide();
+        return null;
+      case 'me':
+        if (myName.isEmpty) { toast(context, 'لا يوجد نك نيم لحسابك', error: true); return null; }
+        return '@$myName${rest.isEmpty ? '' : ' $rest'}';
+      case 'loc':
+        if (rest.isNotEmpty && parseCommand(t) != null) return t;
+        final loc = await DeviceLocation.current();
+        if (!mounted) return null;
+        if (loc == null) { toast(context, 'تعذّر تحديد موقعك؛ اسمح بالوصول إلى الموقع ثم أعد المحاولة', error: true); return null; }
+        return '/loc ${loc.latitude.toStringAsFixed(5)},${loc.longitude.toStringAsFixed(5)}${rest.isEmpty ? '' : ' $rest'}';
+      case 'ticket':
+        return pickTicketCode(context, _api);
+      case 'order':
+        return pickOrderCode(context, _api);
+      case 'wish':
+        return pickWishCode(context, _api);
+      case 'send':
+        final code = parseCommand(t);
+        if (code == null) { toast(context, 'الصيغة: /send المبلغ [السبب]', error: true); return null; }
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('تأكيد التحويل'),
+            content: Text('تحويل ${money(code.amount)} من محفظتك إلى ${widget.peer.nickname}${code.note.isEmpty ? '' : ' · ${code.note}'}؟'),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(key: const Key('send-confirm'), onPressed: () => Navigator.pop(ctx, true), child: const Text('حوّل'))],
+          ),
+        );
+        if (ok != true || !mounted) return null;
+        try {
+          await _api.walletTransfer(_peerId, code.amount, note: code.note);
+        } catch (e) {
+          if (mounted) toast(context, e is ApiException && e.message.contains('insufficient') ? 'رصيد محفظتك لا يكفي' : 'لم يتم التحويل: ${errText(e)}', error: true);
+          return null;
+        }
+        return t;
+      case 'pay':
+      case 'split':
+      case 'meet':
+      case 'invite':
+        if (parseCommand(t) != null) return t;
+        final e = commandCatalog.firstWhere((c) => c.trigger == '/$cmd');
+        toast(context, 'الصيغة: ${e.hint} · مثال: ${e.example}', error: true);
+        return null;
+      default:
+        return t;
+    }
+  }
+
+  /// بعد وصول معرّف الرسالة من الخادم: يسجّل الطلب (مبلغ/تقسيم/موعد/إرسال) حتى يتمكن الطرف الآخر من الرد بزر واحد.
+  Future<void> _registerRequest(String messageId, ChatCode code) async {
+    try {
+      final r = await _api.chatRequest(messageId: messageId, peerId: _peerId, kind: code.kind.name, amount: code.amount, n: code.n, note: code.note, when: code.kind == CodeKind.meet ? code.note : '', place: code.place);
+      if (mounted) setState(() => _requests[messageId] = r);
+    } catch (e) {
+      if (mounted) toast(context, 'أُرسلت الرسالة لكن لم يُسجَّل الطلب: ${errText(e)}', error: true);
+    }
+  }
+
+  Future<void> _openGuide() async {
+    final s = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const ChatCodesGuidePage(canInsert: true)));
+    if (s != null && mounted) _insertText(s);
+  }
+
+  /// يضع نصاً في حقل الكتابة (يستبدل الحالي) ويضع المؤشر في نهايته.
+  void _insertText(String s) {
+    _text.value = TextEditingValue(text: s, selection: TextSelection.collapsed(offset: s.length));
+  }
+
+  /// يستبدل جزءاً من النص الحالي (اقتراح الإكمال).
+  void _replaceRange(int start, int end, String insert) {
+    final t = _text.text;
+    final a = start.clamp(0, t.length), b = end.clamp(a, t.length);
+    final next = t.replaceRange(a, b, insert);
+    _text.value = TextEditingValue(text: next, selection: TextSelection.collapsed(offset: a + insert.length));
+  }
+
+  Future<void> _codeMenu(String result) async {
+    if (result == 'guide') return _openGuide();
+    if (result.startsWith('insert:')) {
+      final s = result.substring(7);
+      final cur = _text.text;
+      _insertText(cur.isEmpty || s.startsWith('/') ? s : '$cur${cur.endsWith(' ') ? '' : ' '}$s');
+      return;
+    }
+    String? code;
+    switch (result) {
+      case 'picker:ticket': code = await pickTicketCode(context, _api);
+      case 'picker:order': code = await pickOrderCode(context, _api);
+      case 'picker:wish': code = await pickWishCode(context, _api);
+    }
+    if (code != null && mounted) _insertText(code);
+  }
+
+  Future<void> _runCard(String key, Future<void> Function() fn) async {
+    if (_busyCards.contains(key)) return;
+    setState(() => _busyCards.add(key));
+    try {
+      await fn();
+    } catch (e) {
+      if (mounted) toast(context, errText(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busyCards.remove(key));
+    }
+  }
+
+  /// إجراء من بطاقة رمز داخل رسالة.
+  Future<void> _onCode(Message m, ChatCode code, String action) async {
+    final card = code.ref == null ? null : _cards[code.ref!];
+    final nav = Navigator.of(context);
+    switch (action) {
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: card?.code ?? code.raw));
+        if (mounted) toast(context, 'نُسخ');
+      case 'directions':
+        if (code.lat != null) await openDirections(code.lat!, code.lng!);
+      case 'wallet':
+        nav.push(MaterialPageRoute(builder: (_) => const WalletPage()));
+      case 'share-loc':
+        final loc = await DeviceLocation.current();
+        if (!mounted) return;
+        if (loc == null) { toast(context, 'تعذّر تحديد موقعك', error: true); return; }
+        await _send(type: 'text', content: '/loc ${loc.latitude.toStringAsFixed(5)},${loc.longitude.toStringAsFixed(5)}');
+      case 'counter':
+        _insertText('/meet ');
+      case 'pay':
+        final r = _requests[m.id];
+        if (r == null) { toast(context, 'الطلب لم يُسجَّل بعد، حاول بعد لحظة'); _metaFetched.remove(m.id); _fetchMeta(); return; }
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('تأكيد الدفع'),
+            content: Text('دفع ${money(r.share)} من محفظتك إلى ${widget.peer.nickname}${r.note.isEmpty ? '' : ' · ${r.note}'}؟'),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(key: const Key('pay-confirm'), onPressed: () => Navigator.pop(ctx, true), child: const Text('ادفع'))],
+          ),
+        );
+        if (ok != true || !mounted) return;
+        await _runCard(m.id, () async {
+          try {
+            final res = await _api.chatRequestPay(m.id);
+            if (mounted) { setState(() => _requests[m.id] = res); toast(context, 'تم الدفع ✓'); }
+          } on ApiException catch (e) {
+            if (!mounted) return;
+            if (e.message.contains('insufficient')) { toast(context, 'رصيد محفظتك لا يكفي', error: true); } else { rethrow; }
+          }
+        });
+      case 'accept':
+      case 'decline':
+      case 'cancel':
+        if (!_requests.containsKey(m.id)) { toast(context, 'الطلب لم يُسجَّل بعد، حاول بعد لحظة'); return; }
+        await _runCard(m.id, () async {
+          final res = switch (action) { 'accept' => await _api.chatRequestAccept(m.id), 'decline' => await _api.chatRequestDecline(m.id), _ => await _api.chatRequestCancel(m.id) };
+          if (mounted) setState(() => _requests[m.id] = res);
+        });
+      case 'join':
+        if (card == null) return;
+        if (card.type == 'event') { nav.push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: card.id))); return; }
+        await _runCard(code.raw, () async {
+          try { await _api.followBiz(card.id); invalidateBiz(ref, card.id); } catch (_) {}
+          if (mounted) nav.push(MaterialPageRoute(builder: (_) => BusinessPage(id: card.id)));
+        });
+      case 'chat':
+        if (card?.type != 'user') return;
+        if (card!.id == _peerId) { toast(context, 'أنت في محادثته الآن'); return; }
+        if (card.id == myId) { toast(context, 'هذا حسابك'); return; }
+        nav.push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: Person(id: card.id, nickname: card.title, avatarUrl: card.image))));
+      case 'discuss':
+        if (card?.type != 'item' || card!.bizId == null) return;
+        nav.push(MaterialPageRoute(builder: (_) => CommunityPage(bizId: card.bizId!, title: card.subtitle, initialItem: CommunityItemRef(id: card.id, title: card.title, price: card.price ?? 0, unit: card.kind ?? 'item', kind: card.kind ?? 'product', imageUrl: card.image))));
+      case 'place':
+      case 'open':
+        if (card == null) return;
+        switch (card.type) {
+          case 'user': nav.push(MaterialPageRoute(builder: (_) => PublicProfilePage(handle: card.title)));
+          case 'biz': nav.push(MaterialPageRoute(builder: (_) => BusinessPage(id: card.id)));
+          case 'item': nav.push(MaterialPageRoute(builder: (_) => BusinessPage(id: card.bizId ?? card.id)));
+          case 'order': nav.push(MaterialPageRoute(builder: (_) => BusinessPage(id: card.bizId ?? card.id)));
+          case 'event': nav.push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: card.id)));
+          case 'ticket': nav.push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: card.eventId ?? card.id)));
+          case 'listing': nav.push(MaterialPageRoute(builder: (_) => ListingPage(card.id)));
+          case 'space': nav.push(MaterialPageRoute(builder: (_) => CommunityPage(bizId: card.bizId ?? card.id, title: card.title)));
+          case 'spacepost': nav.push(MaterialPageRoute(builder: (_) => CommunityPage(bizId: card.bizId ?? '', title: card.subtitle, initialPostId: card.id)));
+          case 'post':
+            await _runCard(code.raw, () async {
+              final p = await _api.mapPost(card.id);
+              if (mounted) await PostViewerPage.open(context, [p]);
+            });
+        }
+    }
   }
 
   Future<void> _send({
@@ -460,6 +755,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     ({Uint8List bytes, String mime, String name})? media,
     Map<String, dynamic>? extra,
     Message? retry,
+    Future<void> Function(String serverId)? onSent,
   }) async {
     final quote = retry?.quote ?? (_replyTo == null ? null : MessageQuote(id: _replyTo!.key, senderId: _replyTo!.senderId, senderName: _replyTo!.senderId == myId ? 'أنت' : widget.peer.nickname, type: _replyTo!.mediaKind, content: _replyTo!.mediaKind == 'text' ? _replyTo!.content : ''));
     final local = retry?.copyWith(status: MessageStatus.sending) ??
@@ -498,6 +794,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       if (serverId != null && (local.quote != null || local.forwardedFrom != null || extra.isNotEmpty)) {
         _api.setMessageMeta(serverId, replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: extra).catchError((_) {});
       }
+      if (serverId != null && onSent != null) await onSent(serverId);
       ref.invalidate(chatsProvider);
     } catch (e) {
       if (!mounted) return;
@@ -513,16 +810,21 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     final choice = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const SizedBox(height: 8),
-          ListTile(leading: const Icon(Icons.photo_library_outlined, color: Joy.primary), title: const Text('صورة من المعرض'), onTap: () => Navigator.pop(ctx, 'image')),
-          ListTile(leading: const Icon(Icons.photo_camera_outlined, color: Joy.primary), title: const Text('التقاط صورة'), onTap: () => Navigator.pop(ctx, 'camera')),
-          ListTile(leading: const Icon(Icons.videocam_outlined, color: Joy.accent), title: const Text('فيديو'), onTap: () => Navigator.pop(ctx, 'video')),
-          const SizedBox(height: 8),
-        ]),
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const SizedBox(height: 8),
+            CodesMenuGrid(onPick: (r) => Navigator.pop(ctx, 'code:$r')),
+            const Divider(height: 8),
+            ListTile(leading: const Icon(Icons.photo_library_outlined, color: Joy.primary), title: const Text('صورة من المعرض'), onTap: () => Navigator.pop(ctx, 'image')),
+            ListTile(leading: const Icon(Icons.photo_camera_outlined, color: Joy.primary), title: const Text('التقاط صورة'), onTap: () => Navigator.pop(ctx, 'camera')),
+            ListTile(leading: const Icon(Icons.videocam_outlined, color: Joy.accent), title: const Text('فيديو'), onTap: () => Navigator.pop(ctx, 'video')),
+            const SizedBox(height: 8),
+          ]),
+        ),
       ),
     );
     if (choice == null || !mounted) return;
+    if (choice.startsWith('code:')) return _codeMenu(choice.substring(5));
     try {
       ({Uint8List bytes, String mime, String name}) picked;
       if (kIsWeb && WebMedia.available) {
@@ -911,6 +1213,12 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           heartTrigger: _bursts[m.id] ?? 0,
           onRetry: () => _send(type: m.type, content: m.content, retry: m),
           onQuoteTap: m.quote == null ? null : () { if (!_jumpToKey(m.quote!.id)) _revealMessage(m.quote!.id); },
+          parsed: m.mediaKind == 'text' ? _parsedOf(m) : null,
+          cards: _cards,
+          resolvedRefs: _cards.keys.toSet(),
+          request: _requests[m.id],
+          busy: _busyCards.contains(m.id),
+          onCode: (c, a) => _onCode(m, c, a),
         );
       },
     );
@@ -944,6 +1252,13 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       child: Container(
         decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (!_recording)
+            CodeSuggestions(
+              controller: _text,
+              people: _people(),
+              onInsert: _replaceRange,
+              onAction: (a) => _codeMenu(a == 'guide' ? 'guide' : a),
+            ),
           if (_replyTo != null)
             Container(
               padding: const EdgeInsets.fromLTRB(14, 8, 8, 0),
@@ -995,6 +1310,14 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           child: InkWell(customBorder: const CircleBorder(), onTap: () => _stopRecording(send: true), child: const SizedBox(width: 46, height: 46, child: Icon(Icons.send_rounded, color: Joy.primaryOn, size: 20))),
         ),
       ]);
+
+  /// الأشخاص المعروفون للإكمال بعد @: الطرف الآخر وجهات الاتصال والمحادثات.
+  List<Person> _people() {
+    final chats = ref.read(chatsProvider).valueOrNull ?? const <Chat>[];
+    final contacts = ref.read(contactsProvider).valueOrNull ?? const <Person>[];
+    final people = <String, Person>{widget.peer.id: widget.peer, for (final c in chats) c.peer.id: c.peer, for (final p in contacts) p.id: p};
+    return people.values.toList();
+  }
 
   bool _sameDay(DateTime? a, DateTime? b) => a != null && b != null && a.year == b.year && a.month == b.month && a.day == b.day;
   bool _close(DateTime? a, DateTime? b) => a != null && b != null && b.difference(a).abs() < const Duration(minutes: 5);
@@ -1077,8 +1400,16 @@ class _Bubble extends StatefulWidget {
   final ValueChanged<String>? onReactionTap;
   final List<Reaction> reactions;
   final int heartTrigger;
+  /// رموز الاختصار في النص وبطاقاتها المحلولة وطلبها المسجّل
+  final ParsedText? parsed;
+  final Map<String, ChatCard?> cards;
+  final Set<String> resolvedRefs;
+  final ChatRequest? request;
+  final bool busy;
+  final CodeAction? onCode;
   const _Bubble(this.m, {required this.mine, required this.peerName, this.dateLabel, this.joinedAbove = false, this.joinedBelow = false, this.highlighted = false,
-      this.searchQuery = '', this.localBytes, this.mediaUrl, required this.onLongPress, required this.onRetry, this.onQuoteTap, this.onDoubleTap, this.onReactionTap, this.reactions = const [], this.heartTrigger = 0});
+      this.searchQuery = '', this.localBytes, this.mediaUrl, required this.onLongPress, required this.onRetry, this.onQuoteTap, this.onDoubleTap, this.onReactionTap, this.reactions = const [], this.heartTrigger = 0,
+      this.parsed, this.cards = const {}, this.resolvedRefs = const {}, this.request, this.busy = false, this.onCode});
   @override
   State<_Bubble> createState() => _BubbleState();
 }
@@ -1094,11 +1425,29 @@ class _BubbleState extends State<_Bubble> {
     super.dispose();
   }
 
+  /// النص مع الروابط، وأجزاء الرموز (إشارات) مميّزة وقابلة للنقر.
   List<InlineSpan> _rich(String text, TextStyle style) {
     for (final r in _recognizers) {
       r.dispose();
     }
     _recognizers.clear();
+    final refs = widget.parsed?.refs ?? const <ChatCode>[];
+    if (refs.isEmpty) return _richPlain(text, style);
+    final spans = <InlineSpan>[];
+    var last = 0;
+    for (final c in refs) {
+      if (c.start < last) continue;
+      if (c.start > last) spans.addAll(_richPlain(text.substring(last, c.start), style));
+      final rec = TapGestureRecognizer()..onTap = () => widget.onCode?.call(c, 'open');
+      _recognizers.add(rec);
+      spans.add(TextSpan(text: text.substring(c.start, c.end), style: style.copyWith(color: widget.mine ? Joy.bubbleOutText : Joy.primary, fontWeight: FontWeight.w700), recognizer: rec));
+      last = c.end;
+    }
+    if (last < text.length) spans.addAll(_richPlain(text.substring(last), style));
+    return spans;
+  }
+
+  List<InlineSpan> _richPlain(String text, TextStyle style) {
     final q = widget.searchQuery.toLowerCase();
     final hl = style.copyWith(backgroundColor: Joy.sun.withValues(alpha: .55));
     List<InlineSpan> plain(String s) {
@@ -1233,7 +1582,18 @@ class _BubbleState extends State<_Bubble> {
                   if (m.forwardedFrom != null)
                     Padding(padding: const EdgeInsets.only(bottom: 4), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.forward_rounded, size: 14, color: Joy.textMuted), const SizedBox(width: 4), Text('معاد توجيهها من ${m.forwardedFrom}', style: const TextStyle(fontSize: 11, color: Joy.textMuted, fontStyle: FontStyle.italic))])),
                   if (m.quote != null) _QuoteBox(name: m.quote!.senderName.isNotEmpty ? m.quote!.senderName : widget.peerName, text: m.quote!.preview, onDark: mine, onTap: widget.onQuoteTap),
-                  if (m.mediaKind == 'text') Text.rich(TextSpan(style: style, children: _rich(m.content, style))) else _media(m),
+                  if (m.mediaKind == 'text' && !(widget.parsed?.commandOnly ?? false)) Text.rich(TextSpan(style: style, children: _rich(m.content, style))) else if (m.mediaKind != 'text') _media(m),
+                  for (final c in widget.parsed?.all ?? const <ChatCode>[])
+                    ChatCodeCard(
+                      code: c,
+                      card: c.ref == null ? null : widget.cards[c.ref!],
+                      resolved: c.ref == null || widget.resolvedRefs.contains(c.ref!),
+                      request: widget.request,
+                      mine: mine,
+                      peerName: widget.peerName,
+                      busy: widget.busy,
+                      onAction: (code, a) => widget.onCode?.call(code, a),
+                    ),
                   const SizedBox(height: 2),
                   Row(mainAxisSize: MainAxisSize.min, children: [
                     if (failed)

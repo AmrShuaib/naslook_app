@@ -116,21 +116,39 @@ export default async function commerce(app, opts) {
     await tx((c) => ledger(c, userId, amount > 0 ? "credit" : "debit", amount, { note: String(note ?? "").slice(0, 120), peerId: uid }));
     return { ok: true };
   });
+  // تحويل بين محفظتين (يستخدمه المسار أدناه وإضافة رموز المحادثة عبر globalThis.naslifeWalletTransfer)؛ الأخطاء تحمل code:
+  // bad-recipient | bad-amount | suspended | not-found | insufficient-funds
+  async function transfer({ from, to, amount, note = "", ref = null }) {
+    amount = SAR(amount); note = String(note ?? "").slice(0, 120);
+    const fail = (code) => Object.assign(new Error(code), { code });
+    if (!ID_RE.test(to ?? "") || !ID_RE.test(from ?? "") || to === from) throw fail("bad-recipient");
+    if (amount <= 0) throw fail("bad-amount");
+    if (await isSuspended(from)) throw fail("suspended");
+    const recipient = await userRow(to);
+    if (!recipient || recipient.deleted_at || recipient.deleted === true) throw fail("not-found");
+    await tx(async (c) => {
+      await ledger(c, from, "transfer_out", -amount, { peerId: to, note, ref });
+      await ledger(c, to, "transfer_in", amount, { peerId: from, note, ref });
+    });
+    await notify(to, { kind: "transfer_in", title: "وصلك تحويل", body: `${await nickOf(from)} حوّل لك ${sar(amount)}${note ? " · " + note : ""}`, data: { from, amount } });
+    return { ok: true, amount };
+  }
+  globalThis.naslifeWalletTransfer = transfer;
   app.post("/wallet/transfer", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
-    if (await isSuspended(uid)) return bad(reply, 403, "suspended");
-    const { to } = req.body ?? {}; const amount = SAR(req.body?.amount); const note = String(req.body?.note ?? "").slice(0, 120);
-    if (!ID_RE.test(to ?? "") || to === uid) return bad(reply, 400, "bad-recipient");
-    if (amount <= 0) return bad(reply, 400, "bad-amount");
-    const recipient = await userRow(to);
-    if (!recipient || recipient.deleted_at || recipient.deleted === true) return bad(reply, 404, "not-found");
+    const { to } = req.body ?? {};
     try {
-      await tx(async (c) => {
-        await ledger(c, uid, "transfer_out", -amount, { peerId: to, note });
-        await ledger(c, to, "transfer_in", amount, { peerId: uid, note });
-      });
-    } catch (e) { if (e.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds"); throw e; }
-    await notify(to, { kind: "transfer_in", title: "وصلك تحويل", body: `${await nickOf(uid)} حوّل لك ${sar(amount)}${note ? " · " + note : ""}`, data: { from: uid, amount } });
+      await transfer({ from: uid, to, amount: req.body?.amount, note: req.body?.note });
+    } catch (e) {
+      switch (e.code) {
+        case "bad-recipient": return bad(reply, 400, "bad-recipient");
+        case "bad-amount": return bad(reply, 400, "bad-amount");
+        case "suspended": return bad(reply, 403, "suspended");
+        case "not-found": return bad(reply, 404, "not-found");
+        case "insufficient-funds": return bad(reply, 402, "insufficient-funds");
+        default: throw e;
+      }
+    }
     return { ok: true };
   });
 

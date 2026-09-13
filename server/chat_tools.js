@@ -264,6 +264,11 @@ async function setup(app, opts) {
     // التفاعلات تُضاف لكل رسالة لها تفاعل حتى بلا صف بيانات إضافية
     const rx = await reactionsFor(ids, uid);
     for (const [id, list] of Object.entries(rx)) (out[id] ??= { replyTo: null, quote: null, forwardedFrom: null, extra: null }).reactions = list;
+    // طلبات رموز الاختصار (مبلغ/تقسيم/موعد/إرسال) من server/chat_cards.js إن كانت مسجّلة
+    try {
+      const rq = await globalThis.naslifeChatRequests?.(ids, uid);
+      for (const [id, r] of Object.entries(rq ?? {})) (out[id] ??= { replyTo: null, quote: null, forwardedFrom: null, extra: null }).request = r;
+    } catch { /* بلا طلبات */ }
     return out;
   });
   app.post("/chat/react", async (req, reply) => {

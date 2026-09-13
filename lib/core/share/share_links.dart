@@ -52,7 +52,8 @@ String circleLink(String id) => '${publicOrigin()}/c/$id';
 String profileLink(String nickname) => '${publicOrigin()}/u/${Uri.encodeComponent(nickname)}';
 
 /// ورقة مشاركة: رمز QR والرابط وأزرار المشاركة الأصلية والنسخ.
-Future<void> shareLink(BuildContext context, {required String title, required String url, String subtitle = 'على ناس لايف'}) => showModalBottomSheet<void>(
+/// [code] رمز الاختصار للمحادثة (مثل `@brew92`) يُعرض مع زر نسخ إن مُرِّر.
+Future<void> shareLink(BuildContext context, {required String title, required String url, String subtitle = 'على ناس لايف', String? code}) => showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (ctx) => Padding(
@@ -78,6 +79,28 @@ Future<void> shareLink(BuildContext context, {required String title, required St
               Expanded(child: SelectableText(url, key: const Key('share-url'), textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 13, fontFamily: AppTheme.bodyFont, fontWeight: FontWeight.w600))),
             ]),
           ),
+          if (code != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(12)),
+              child: Row(children: [
+                const Icon(Icons.bolt_rounded, size: 18, color: Joy.primary),
+                const SizedBox(width: 8),
+                Expanded(child: Text.rich(TextSpan(children: [const TextSpan(text: 'رمز المحادثة: ', style: TextStyle(fontSize: 12.5, color: Joy.textMuted)), TextSpan(text: code, style: const TextStyle(fontSize: 13.5, fontFamily: AppTheme.bodyFont, fontWeight: FontWeight.w700, color: Joy.primary))]))),
+                IconButton(
+                  key: const Key('share-code'),
+                  tooltip: 'انسخ الرمز',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.copy_rounded, size: 18, color: Joy.primary),
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: code));
+                    if (ctx.mounted) toast(ctx, 'نُسخ الرمز $code، الصقه في أي محادثة');
+                  },
+                ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(children: [
             Expanded(
