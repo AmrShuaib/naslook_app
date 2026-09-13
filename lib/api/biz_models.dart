@@ -20,7 +20,8 @@ enum BizCategory {
   cinema('cinema', 'سينما', 'سينما', Icons.local_movies_rounded),
   hotel('hotel', 'فنادق', 'فندق', Icons.hotel_rounded),
   carRental('car_rental', 'تأجير سيارات', 'تأجير سيارات', Icons.directions_car_rounded),
-  hospital('hospital', 'مستشفيات', 'مستشفى', Icons.local_hospital_rounded);
+  hospital('hospital', 'مستشفيات', 'مستشفى', Icons.local_hospital_rounded),
+  airport('airport', 'مطارات', 'مطار', Icons.flight_takeoff_rounded);
 
   final String key;
   final String plural;
@@ -31,13 +32,13 @@ enum BizCategory {
   static BizCategory of(String? key) => values.firstWhere((c) => c.key == key, orElse: () => BizCategory.brand);
 
   /// نوع العنصر الرئيسي في كتالوج هذه الفئة.
-  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car', hospital => 'clinic' };
-  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات' };
-  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً' };
-  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد' };
+  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car', hospital => 'clinic', airport => 'info' };
+  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات', airport => 'مرافق المطار والخدمات' };
+  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً', airport => 'التفاصيل' };
+  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد', airport => 'طلب' };
 }
 
-/// دائرة تجارية (براند/سينما/فندق/تأجير سيارات).
+/// دائرة تجارية (براند/سينما/فندق/تأجير سيارات/مستشفى/مطار).
 class Biz {
   final String id, name, nameAr, sector, description, address, hours;
   final BizCategory category;

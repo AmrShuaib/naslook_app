@@ -10,7 +10,7 @@ import { SEED } from "./business_seed.js";
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const ID_RE = /^[A-Z]{2}\d{7}$/;
-const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital"]);
+const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital", "airport"]);
 // clinic: عيادة بمواعيد (كالعرض السينمائي لكن مجاناً غالباً)، info: خدمة أو قسم تعريفي لا يُطلب
 const KINDS = new Set(["product", "showtime", "room", "car", "clinic", "info"]);
 const POST_KINDS = new Set(["news", "offer"]);
@@ -527,7 +527,7 @@ export default async function business(app, opts) {
   function itemFieldsFrom(body, { partial = false, category = "brand" } = {}) {
     const out = {};
     const has = (k) => body[k] !== undefined;
-    if (!partial) out.kind = KINDS.has(body.kind) ? body.kind : ({ cinema: "showtime", hotel: "room", car_rental: "car", hospital: "clinic" }[category] ?? "product");
+    if (!partial) out.kind = KINDS.has(body.kind) ? body.kind : ({ cinema: "showtime", hotel: "room", car_rental: "car", hospital: "clinic", airport: "info" }[category] ?? "product");
     if (!partial || has("title")) out.title = str(body.title, 100);
     if (!partial || has("description")) out.description = str(body.description, 500);
     if (!partial || has("price")) out.price = Math.max(0, Math.round(Number(body.price) || 0));

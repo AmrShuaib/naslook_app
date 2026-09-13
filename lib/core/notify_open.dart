@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/notify_api.dart';
 import '../pages/admin/admin_shell.dart';
 import '../pages/business/business_page.dart';
+import '../pages/business/community_page.dart';
 import '../pages/business/my_bookings_page.dart';
 import '../pages/business/owner/business_dashboard_page.dart';
 import '../pages/events/events_page.dart';
@@ -74,6 +75,10 @@ Widget? notificationTarget(AppNotification n) {
       return SearchPage(initialQuery: n.str('q') ?? '');
     case 'content_autohidden':
       return const AdminShell(standalone: false, initialSection: 5);
+    case 'community_post':
+    case 'community_reply':
+    case 'community_hidden':
+      return biz == null ? null : CommunityPage(bizId: biz, initialPostId: n.str('postId'));
   }
   return null;
 }
@@ -116,6 +121,11 @@ Widget? notificationTarget(AppNotification n) {
       return (icon: Icons.bookmark_added_outlined, color: Joy.accent);
     case 'saved_search_match':
       return (icon: Icons.saved_search_rounded, color: Joy.primary);
+    case 'community_post':
+    case 'community_reply':
+      return (icon: Icons.forum_outlined, color: Joy.primary);
+    case 'community_hidden':
+      return (icon: Icons.visibility_off_outlined, color: Joy.danger);
   }
   return (icon: Icons.notifications_outlined, color: Joy.textMuted);
 }

@@ -9,7 +9,7 @@ import { normQ } from "./business.js";
 
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const ID_RE = /^[A-Z]{2}\d{7}$/i;
-const TARGETS = new Set(["post", "listing"]);
+const TARGETS = new Set(["post", "listing", "community"]);
 const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
 const str = (v, max) => String(v ?? "").trim().slice(0, max);
 
@@ -114,6 +114,13 @@ export default async function safety(app, opts) {
       const r = await pool.query("SELECT seller_id AS owner, title, status FROM market_listings WHERE id=$1", [id]);
       return r.rows[0] ?? null;
     }
+    if (type === "community") {
+      if (!UUID_RE.test(id)) return null;
+      try {
+        const r = await pool.query("SELECT user_id AS owner, COALESCE(NULLIF(left(text, 80), ''), 'منشور في مساحة الدائرة') AS title, CASE WHEN hidden THEN 'blocked' ELSE 'active' END AS status, biz_id FROM biz_community_posts WHERE id=$1", [id]);
+        return r.rows[0] ?? null;
+      } catch { return null; }
+    }
     return null;
   }
   async function autoHide(type, id, info, n) {
@@ -121,12 +128,16 @@ export default async function safety(app, opts) {
       const r = await pool.query("UPDATE map_posts SET status='blocked', updated_at=now() WHERE id=$1 AND status<>'blocked' RETURNING id", [id]);
       if (!r.rowCount) return false;
       await notify([info.owner], { kind: "post_blocked", title: "أُخفي منشورك بعد عدة بلاغات", body: `«${info.title}» قيد مراجعة الإدارة`, data: { postId: id, reason: "reports", reports: n } });
+    } else if (type === "community") {
+      const r = await globalThis.naslifeCommunityHide?.(id);
+      if (!r) return false;
+      await notify([info.owner], { kind: "community_hidden", title: "أُخفي منشورك في مساحة الدائرة بعد عدة بلاغات", body: `«${info.title}» قيد مراجعة الإدارة`, data: { bizId: info.biz_id, postId: id, reason: "reports", reports: n } });
     } else {
       const r = await pool.query("UPDATE market_listings SET status='blocked' WHERE id=$1 AND status<>'blocked' RETURNING id", [id]);
       if (!r.rowCount) return false;
       await notify([info.owner], { kind: "listing_hidden", title: "أُخفي عرضك بعد عدة بلاغات", body: `«${info.title}» قيد مراجعة الإدارة`, data: { listingId: id, reason: "reports", reports: n } });
     }
-    await notifyAdmins({ kind: "content_autohidden", title: `أُخفي ${type === "post" ? "منشور" : "عرض"} تلقائياً بعد ${n} بلاغات`, body: `«${info.title}» — راجعه في قسم المحتوى`, data: { targetType: type, targetId: id, reports: n } });
+    await notifyAdmins({ kind: "content_autohidden", title: `أُخفي ${type === "post" ? "منشور" : type === "community" ? "منشور مجتمع" : "عرض"} تلقائياً بعد ${n} بلاغات`, body: `«${info.title}» — راجعه في قسم المحتوى`, data: { targetType: type, targetId: id, reports: n } });
     return true;
   }
   app.post("/safety/report", async (req, reply) => {
@@ -140,7 +151,7 @@ export default async function safety(app, opts) {
     const n = (await pool.query("SELECT count(DISTINCT reporter_id)::int AS n FROM content_reports WHERE target_type=$1 AND target_id=$2", [type, id])).rows[0].n;
     let hidden = false;
     if (n >= threshold() && info.status !== "blocked") hidden = await autoHide(type, id, info, n);
-    else if (n === 1) await notifyAdmins({ kind: "report_new", title: `بلاغ على ${type === "post" ? "منشور" : "عرض"}`, body: `«${info.title}»${reason ? ` — ${reason}` : ""}`, data: { targetType: type, targetId: id, reports: n }, push: false });
+    else if (n === 1) await notifyAdmins({ kind: "report_new", title: `بلاغ على ${type === "post" ? "منشور" : type === "community" ? "منشور مجتمع" : "عرض"}`, body: `«${info.title}»${reason ? ` — ${reason}` : ""}`, data: { targetType: type, targetId: id, reports: n }, push: false });
     return { ok: true, reports: n, hidden, threshold: threshold() };
   });
   // بلاغات عنصر (للإدارة)

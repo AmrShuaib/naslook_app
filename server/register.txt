@@ -3,6 +3,7 @@ await app.register((await import("./notify.js")).default, { pool, auth });
 await app.register((await import("./commerce.js")).default, { pool, auth });
 await app.register((await import("./chat_tools.js")).default, { pool, auth });
 await app.register((await import("./business.js")).default, { pool, auth });
+await app.register((await import("./biz_community.js")).default, { pool, auth });
 await app.register((await import("./search.js")).default, { pool, auth });
 await app.register((await import("./profile.js")).default, { pool, auth });
 await app.register((await import("./map_posts.js")).default, { pool, auth });

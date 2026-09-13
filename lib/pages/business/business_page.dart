@@ -15,6 +15,7 @@ import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
+import 'community_page.dart';
 import 'my_bookings_page.dart';
 import 'owner/business_dashboard_page.dart';
 import 'owner/dashboard_posts.dart';
@@ -125,6 +126,10 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
               ],
               if (!biz.active)
                 Container(margin: const EdgeInsets.only(top: 10), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(14)), child: const Row(children: [Icon(Icons.pause_circle_outline_rounded, color: Joy.accent), SizedBox(width: 8), Expanded(child: Text('الدائرة موقوفة مؤقتاً ولا تظهر للعامة', style: TextStyle(color: Joy.accent, fontWeight: FontWeight.w600, fontSize: 13)))])),
+              if (biz.category == BizCategory.airport || biz.category == BizCategory.hospital) ...[
+                const SizedBox(height: 14),
+                CommunityEntryCard(bizId: biz.id, title: biz.title, prominent: true),
+              ],
               if (biz.posts.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 const SectionTitle('الأخبار والعروض'),
@@ -144,6 +149,10 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
                     _ => _ProductCard(biz: biz, item: it, onBuy: () => _buy(biz, it)),
                   },
                 ),
+              if (biz.category != BizCategory.airport && biz.category != BizCategory.hospital) ...[
+                const SizedBox(height: 14),
+                CommunityEntryCard(bizId: biz.id, title: biz.title),
+              ],
               if (biz.myOrders.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 SectionTitle('${biz.category.orderNoun == 'طلب' ? 'طلباتي' : 'حجوزاتي'} هنا', action: 'الكل', onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
@@ -758,6 +767,34 @@ class _InfoServiceCard extends StatelessWidget {
     if (k.contains('facilities') || k.contains('مرافق')) return Icons.local_parking_outlined;
     if (k.contains('volunteer') || k.contains('تطوع')) return Icons.volunteer_activism_outlined;
     if (k.contains('vaccines') || k.contains('تطعيم')) return Icons.vaccines_outlined;
+    if (id.startsWith('kaia-')) {
+      if (k.contains('hajj') || k.contains('الحج')) return Icons.mosque_outlined;
+      if (k.contains('t1') || k.contains('الصالة')) return Icons.flight_takeoff_rounded;
+      if (k.contains('checkin') || k.contains('تسجيل')) return Icons.how_to_reg_outlined;
+      if (k.contains('passport') || k.contains('الجوازات')) return Icons.badge_outlined;
+      if (k.contains('transfer') || k.contains('الترانزيت')) return Icons.connecting_airports_outlined;
+      if (k.contains('lost') || k.contains('المفقودة')) return Icons.luggage_outlined;
+      if (k.contains('wrap') || k.contains('تغليف')) return Icons.inventory_2_outlined;
+      if (k.contains('special') || k.contains('الإعاقة')) return Icons.accessible_forward_outlined;
+      if (k.contains('family') || k.contains('العائلات')) return Icons.family_restroom_outlined;
+      if (k.contains('lounges') || k.contains('الصالات')) return Icons.chair_outlined;
+      if (k.contains('food') || k.contains('المطاعم')) return Icons.restaurant_outlined;
+      if (k.contains('dutyfree') || k.contains('السوق الحرة')) return Icons.shopping_bag_outlined;
+      if (k.contains('prayer') || k.contains('المصليات')) return Icons.mosque_outlined;
+      if (k.contains('money') || k.contains('الصرافة')) return Icons.currency_exchange_outlined;
+      if (k.contains('parking') || k.contains('المواقف')) return Icons.local_parking_outlined;
+      if (k.contains('taxi') || k.contains('الأجرة')) return Icons.local_taxi_outlined;
+      if (k.contains('train') || k.contains('القطار')) return Icons.train_outlined;
+      if (k.contains('bus') || k.contains('الحافلات')) return Icons.directions_bus_outlined;
+      if (k.contains('carrental') || k.contains('تأجير')) return Icons.car_rental_outlined;
+      if (k.contains('wifi') || k.contains('واي فاي')) return Icons.wifi_outlined;
+      if (k.contains('info') || k.contains('الاستعلامات')) return Icons.support_agent_outlined;
+      if (k.contains('flights') || k.contains('الرحلات')) return Icons.flight_outlined;
+      if (k.contains('complaints') || k.contains('الشكاوى')) return Icons.rate_review_outlined;
+      if (k.contains('security') || k.contains('الأمن')) return Icons.local_police_outlined;
+      if (k.contains('medical') || k.contains('الطبية')) return Icons.medical_services_outlined;
+      return Icons.info_outline_rounded;
+    }
     return Icons.local_hospital_outlined;
   }
 
@@ -790,7 +827,7 @@ class _InfoServiceCard extends StatelessWidget {
   Widget _fact(IconData icon, String text, {Color color = Joy.textMuted}) => Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 15, color: color),
         const SizedBox(width: 4),
-        Text(text, style: TextStyle(color: color, fontSize: 12.5, fontWeight: color == Joy.primary ? FontWeight.w600 : FontWeight.w400)),
+        Flexible(child: Text(text, style: TextStyle(color: color, fontSize: 12.5, fontWeight: color == Joy.primary ? FontWeight.w600 : FontWeight.w400))),
       ]);
 }
 
