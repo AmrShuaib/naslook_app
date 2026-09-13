@@ -99,11 +99,66 @@ async function setup(app, opts) {
   }
   logger(MEDIA_DIR ? `chat_tools: media dir ${MEDIA_DIR}` : `chat_tools: NO writable media dir (${mediaErrors.join("; ")})`);
 
+  // ---- المصغّرات: نسخة JPEG بحد 480 بكسل للصور، وإطار من الثانية الأولى للفيديو. تُولَّد عند الرفع وعند أول طلب
+  // (فتشمل الملفات القديمة)، وتُخزَّن في MEDIA_DIR/thumbs. إن تعذّر التوليد يُقدَّم الملف الأصلي.
+  const THUMB_MAX = Number(process.env.CHAT_THUMB_MAX) || 480;
+  const THUMB_DIR = MEDIA_DIR ? path.join(MEDIA_DIR, "thumbs") : null;
+  if (THUMB_DIR) await fs.mkdir(THUMB_DIR, { recursive: true }).catch(() => {});
+  const inflight = new Map();
+  const thumbPath = (name) => path.join(THUMB_DIR, name.replace(/\.[a-z0-9]+$/, "") + ".jpg");
+  async function makeThumb(name) {
+    if (!THUMB_DIR || !ffmpeg) return null;
+    const out = thumbPath(name);
+    try { await fs.access(out); return out; } catch { /* يُولَّد الآن */ }
+    if (inflight.has(name)) return inflight.get(name);
+    const type = EXT_TYPE[name.split(".").pop()] || "";
+    if (!type.startsWith("image/") && !type.startsWith("video/")) return null;
+    const job = (async () => {
+      const src = path.join(MEDIA_DIR, name);
+      const tmp = out + ".part.jpg";
+      const args = ["-y", "-hide_banner", "-loglevel", "error"];
+      if (type.startsWith("video/")) args.push("-ss", "0.5");
+      args.push("-i", src);
+      if (type.startsWith("video/")) args.push("-frames:v", "1");
+      args.push("-vf", `scale='min(${THUMB_MAX},iw)':'min(${THUMB_MAX},ih)':force_original_aspect_ratio=decrease`, "-c:v", "mjpeg", "-q:v", "5", "-f", "image2", tmp);
+      try {
+        await execFileP("ffmpeg", args, { timeout: 30000 });
+        await fs.rename(tmp, out);
+        return out;
+      } catch (e) {
+        await fs.unlink(tmp).catch(() => {});
+        logger(`chat_tools: thumb failed for ${name}: ${e?.message || e}`);
+        return null;
+      } finally { inflight.delete(name); }
+    })();
+    inflight.set(name, job);
+    return job;
+  }
+  const sendFile = (reply, file, type, size) => {
+    reply.header("content-type", type).header("content-length", size).header("cache-control", "public, max-age=31536000, immutable");
+    return reply.send(createReadStream(file));
+  };
+  app.get("/chat/thumb/:name", { config: { rateLimit: false } }, async (req, reply) => {
+    const name = String(req.params.name);
+    if (!MEDIA_DIR || !NAME_RE.test(name)) return bad(reply, 404, "not-found");
+    const src = path.join(MEDIA_DIR, name);
+    let st;
+    try { st = await fs.stat(src); } catch { return bad(reply, 404, "not-found"); }
+    const type = EXT_TYPE[name.split(".").pop()] || "application/octet-stream";
+    if (!type.startsWith("image/") && !type.startsWith("video/")) return bad(reply, 404, "not-found");
+    const t = await makeThumb(name);
+    if (t) {
+      try { const ts = await fs.stat(t); return sendFile(reply, t, "image/jpeg", ts.size); } catch { /* نعود للأصل */ }
+    }
+    if (type.startsWith("video/")) return bad(reply, 404, "not-found");
+    return sendFile(reply, src, type, st.size);
+  });
+
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error) => reply.code(code).send({ error });
 
   // حالة الإضافة (بلا مصادقة وبلا مسارات): يفيد التحقق من النشر
-  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, maxBytes: MAX_BYTES }));
+  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, thumbs: !!MEDIA_DIR && ffmpeg, maxBytes: MAX_BYTES }));
 
   // محلل محتوى ثنائي داخل نطاق هذه الإضافة فقط؛ نتخطى أي نوع سجّله الخادم الأساسي مسبقاً (وإلا رمى Fastify خطأ FST_ERR_CTP_ALREADY_PRESENT)
   for (const type of [...Object.keys(TYPES), "application/octet-stream"]) {
@@ -142,7 +197,8 @@ async function setup(app, opts) {
         name = path.basename(file); ct = "video/mp4"; size = (await fs.stat(file)).size;
       } catch (e) { logger(`chat_tools: video normalize failed, keeping original: ${e?.message || e}`); }
     }
-    return { url: `/chat/media/${name}`, type: ct, kind: kindOf(ct), size };
+    if (ct.startsWith("image/") || ct.startsWith("video/")) makeThumb(name).catch(() => {});
+    return { url: `/chat/media/${name}`, type: ct, kind: kindOf(ct), size, thumbUrl: ct.startsWith("image/") || ct.startsWith("video/") ? `/chat/thumb/${name}` : null };
   });
 
   // ---- التقديم مع دعم Range للصوت والفيديو

@@ -563,7 +563,7 @@ class _MapPageState extends ConsumerState<MapPage> {
       ]),
       const SizedBox(height: 12),
       if (s.type == 'image' && s.content.startsWith('http'))
-        ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.network(mediaUrl(s.content), fit: BoxFit.cover, height: 220, width: double.infinity, errorBuilder: (_, __, ___) => const SizedBox.shrink()))
+        ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.network(thumbUrl(s.content), fit: BoxFit.cover, height: 220, width: double.infinity, errorBuilder: (_, __, ___) => const SizedBox.shrink()))
       else
         Text(s.content, style: const TextStyle(fontSize: 17, height: 1.6)),
       if (s.caption.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(s.caption, style: const TextStyle(color: Joy.textMuted))),

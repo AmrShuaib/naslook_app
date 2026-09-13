@@ -119,6 +119,12 @@ void main() {
       expect(mediaUrl('https://cdn.example.com/img.png', base: base), 'https://cdn.example.com/img.png');
       expect(mediaUrl('  ', base: base), '');
     });
+    test('thumbUrl points chat uploads at /chat/thumb and leaves other links alone', () {
+      expect(thumbUrl('https://www.naslife.app/chat/media/k9x1zz-ab12cd34ef56ab12cd34ef56.jpg', base: base), 'https://naslife.app/chat/thumb/k9x1zz-ab12cd34ef56ab12cd34ef56.jpg');
+      expect(thumbUrl('/chat/media/k9x1zz-ab12cd34ef56ab12cd34ef56.mp4', base: base), 'https://naslife.app/chat/thumb/k9x1zz-ab12cd34ef56ab12cd34ef56.mp4');
+      expect(thumbUrl('https://naslife.app/files/old.jpg', base: base), 'https://naslife.app/files/old.jpg');
+      expect(thumbUrl('https://cdn.example.com/img.png', base: base), 'https://cdn.example.com/img.png');
+    });
     test('defaults to the last constructed client base', () {
       ApiClient(baseUrl: 'https://test.local/', httpClient: MockClient(_handle));
       expect(ApiClient.mediaBase, 'https://test.local');

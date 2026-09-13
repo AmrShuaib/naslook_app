@@ -1018,7 +1018,7 @@ class _BubbleState extends State<_Bubble> {
             ? Image.memory(widget.localBytes!, fit: BoxFit.cover)
             : url == null
                 ? const SizedBox(width: 200, height: 120)
-                : Image.network(url, fit: BoxFit.cover, loadingBuilder: (_, child, p) => p == null ? child : const SizedBox(width: 200, height: 160, child: Center(child: CircularProgressIndicator(strokeWidth: 2))), errorBuilder: (_, __, ___) => const SizedBox(width: 200, height: 120, child: Icon(Icons.broken_image_outlined, color: Joy.textMuted)));
+                : Image.network(thumbUrl(url), fit: BoxFit.cover, loadingBuilder: (_, child, p) => p == null ? child : const SizedBox(width: 200, height: 160, child: Center(child: CircularProgressIndicator(strokeWidth: 2))), errorBuilder: (_, __, ___) => const SizedBox(width: 200, height: 120, child: Icon(Icons.broken_image_outlined, color: Joy.textMuted)));
         return GestureDetector(
           onTap: url == null ? null : () => _viewImage(context, url, widget.localBytes),
           child: ClipRRect(borderRadius: BorderRadius.circular(12), child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320), child: img)),

@@ -121,7 +121,7 @@ class UserProfilePage extends ConsumerWidget {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: JoyCard(child: Row(children: [
-                        if (o.imageUrl != null && o.imageUrl!.isNotEmpty) ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.network(mediaUrl(o.imageUrl!), width: 52, height: 52, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox(width: 52, height: 52))) else const Icon(Icons.local_offer_outlined, color: Joy.primary),
+                        if (o.imageUrl != null && o.imageUrl!.isNotEmpty) ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.network(thumbUrl(o.imageUrl!), width: 52, height: 52, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox(width: 52, height: 52))) else const Icon(Icons.local_offer_outlined, color: Joy.primary),
                         const SizedBox(width: 10),
                         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(o.name, style: const TextStyle(fontWeight: FontWeight.w600)), if (o.description.isNotEmpty) Text(o.description, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5), maxLines: 2, overflow: TextOverflow.ellipsis)])),
                       ])),

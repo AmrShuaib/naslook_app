@@ -205,7 +205,7 @@ class WishRow extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(color: w.done ? Joy.surface2 : Joy.accentSoft, borderRadius: BorderRadius.circular(14)),
           child: w.imageUrl != null && w.imageUrl!.isNotEmpty
-              ? Image.network(mediaUrl(w.imageUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Icon(iconFor(w.kind), color: Joy.accent))
+              ? Image.network(thumbUrl(w.imageUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Icon(iconFor(w.kind), color: Joy.accent))
               : Icon(iconFor(w.kind), color: w.done ? Joy.textMuted : Joy.accent),
         ),
         const SizedBox(width: 12),

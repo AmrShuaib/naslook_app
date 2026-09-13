@@ -93,7 +93,7 @@ class _BusinessEditorPageState extends ConsumerState<BusinessEditorPage> {
               onTap: uploading ? null : () => _upload(cover: true),
               child: Container(
                 height: 120,
-                decoration: BoxDecoration(color: _hex(color).withValues(alpha: .85), borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), image: coverUrl != null ? DecorationImage(image: NetworkImage(mediaUrl(coverUrl!)), fit: BoxFit.cover) : null),
+                decoration: BoxDecoration(color: _hex(color).withValues(alpha: .85), borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), image: coverUrl != null ? DecorationImage(image: NetworkImage(thumbUrl(coverUrl!)), fit: BoxFit.cover) : null),
                 alignment: Alignment.center,
                 child: uploading ? const CircularProgressIndicator(color: Colors.white) : Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.add_photo_alternate_outlined, color: Colors.white), const SizedBox(width: 6), Text(coverUrl == null ? 'صورة الغلاف' : 'تغيير الغلاف', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))]),
               ),
@@ -105,7 +105,7 @@ class _BusinessEditorPageState extends ConsumerState<BusinessEditorPage> {
                   onTap: uploading ? null : () => _upload(cover: false),
                   child: Container(
                     width: 72, height: 72,
-                    decoration: BoxDecoration(color: _hex(color), borderRadius: BorderRadius.circular(20), image: logoUrl != null ? DecorationImage(image: NetworkImage(mediaUrl(logoUrl!)), fit: BoxFit.cover) : null),
+                    decoration: BoxDecoration(color: _hex(color), borderRadius: BorderRadius.circular(20), image: logoUrl != null ? DecorationImage(image: NetworkImage(thumbUrl(logoUrl!)), fit: BoxFit.cover) : null),
                     alignment: Alignment.center,
                     child: logoUrl == null ? const Icon(Icons.add_a_photo_outlined, color: Colors.white) : null,
                   ),

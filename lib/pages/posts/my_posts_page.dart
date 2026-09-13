@@ -71,7 +71,7 @@ class MyPostRow extends StatelessWidget {
         Container(
           width: 52, height: 52, clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)),
-          child: p.kind == 'image' && p.mediaUrl != null ? Image.network(mediaUrl(p.mediaUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Icon(icon, color: Joy.textMuted)) : Icon(icon, color: p.kind == 'text' ? Joy.primary : Joy.textMuted),
+          child: p.kind == 'image' && p.mediaUrl != null ? Image.network(thumbUrl(p.mediaUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Icon(icon, color: Joy.textMuted)) : Icon(icon, color: p.kind == 'text' ? Joy.primary : Joy.textMuted),
         ),
         const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

@@ -55,7 +55,7 @@ class _ItemRow extends ConsumerWidget {
         child: Row(children: [
           Container(
             width: 54, height: 54,
-            decoration: BoxDecoration(color: biz.color.withValues(alpha: .12), borderRadius: BorderRadius.circular(14), image: item.imageUrl != null ? DecorationImage(image: NetworkImage(mediaUrl(item.imageUrl!)), fit: BoxFit.cover) : null),
+            decoration: BoxDecoration(color: biz.color.withValues(alpha: .12), borderRadius: BorderRadius.circular(14), image: item.imageUrl != null ? DecorationImage(image: NetworkImage(thumbUrl(item.imageUrl!)), fit: BoxFit.cover) : null),
             child: item.imageUrl == null ? Icon(switch (item.kind) { 'showtime' => Icons.movie_outlined, 'room' => Icons.king_bed_outlined, 'car' => Icons.directions_car_outlined, _ => Icons.shopping_bag_outlined }, color: biz.color.computeLuminance() > .6 ? Joy.text : biz.color) : null,
           ),
           const SizedBox(width: 12),
@@ -163,7 +163,7 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
             borderRadius: BorderRadius.circular(16),
             child: Container(
               width: 84, height: 84,
-              decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(16), image: imageUrl != null ? DecorationImage(image: NetworkImage(mediaUrl(imageUrl!)), fit: BoxFit.cover) : null),
+              decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(16), image: imageUrl != null ? DecorationImage(image: NetworkImage(thumbUrl(imageUrl!)), fit: BoxFit.cover) : null),
               alignment: Alignment.center,
               child: uploading ? const CircularProgressIndicator() : imageUrl == null ? const Icon(Icons.add_photo_alternate_outlined, color: Joy.textMuted) : null,
             ),

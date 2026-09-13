@@ -24,7 +24,7 @@ class Avatar extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       alignment: Alignment.center,
       child: url != null && url!.isNotEmpty
-          ? Image.network(mediaUrl(url!), width: size, height: size, fit: BoxFit.cover,
+          ? Image.network(thumbUrl(url!), width: size, height: size, fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => Text(initial, style: TextStyle(fontSize: size * 0.4, fontWeight: FontWeight.w700, color: Joy.text)))
           : Text(initial, style: TextStyle(fontSize: size * 0.4, fontWeight: FontWeight.w700, color: Joy.text)),
     );

@@ -370,7 +370,7 @@ class PostCard extends ConsumerWidget {
         ]),
         const SizedBox(height: 10),
         if (post.type == 'text') Text(post.content, style: const TextStyle(fontSize: 14.5, height: 1.6))
-        else if (post.type == 'image') ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.network(mediaUrl(post.content), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox()))
+        else if (post.type == 'image') ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.network(thumbUrl(post.content), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox()))
         else Row(children: [const Icon(Icons.attach_file_rounded, size: 18, color: Joy.textMuted), const SizedBox(width: 6), Expanded(child: Text(post.content, style: const TextStyle(color: Joy.textMuted)))]),
         if (post.caption.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(post.caption, style: const TextStyle(color: Joy.textMuted, fontSize: 13))),
         const SizedBox(height: 8),

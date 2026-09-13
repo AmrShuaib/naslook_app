@@ -273,3 +273,16 @@ String mediaUrl(String url, {String? base}) {
   if (u == null || !_ownMediaPath.hasMatch(u.path)) return s;
   return '$b${u.path}${u.hasQuery ? '?${u.query}' : ''}';
 }
+
+final _chatMediaPath = RegExp(r'^/chat/media/([a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5})$', caseSensitive: false);
+
+/// رابط المصغّر (JPEG بحد 480 بكسل، أو إطار من الفيديو) لملف مرفوع عبر /chat/upload؛ يخدم القوائم والخريطة
+/// والصور الرمزية فتقل البيانات المستهلكة. غير ذلك من الروابط يُعاد كما هو عبر [mediaUrl].
+/// الخادم يقدّم الملف الأصلي إن تعذّر توليد المصغّر، فلا حاجة لاحتياط في التطبيق.
+String thumbUrl(String url, {String? base}) {
+  final full = mediaUrl(url, base: base);
+  final u = Uri.tryParse(full);
+  final m = u == null ? null : _chatMediaPath.firstMatch(u.path);
+  if (m == null) return full;
+  return '${base ?? ApiClient.mediaBase}/chat/thumb/${m.group(1)}';
+}
