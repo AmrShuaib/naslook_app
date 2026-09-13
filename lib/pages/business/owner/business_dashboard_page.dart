@@ -8,6 +8,7 @@ import '../../../core/app_theme.dart';
 import '../../../state/app_state.dart';
 import '../../../state/biz_providers.dart';
 import '../../../ui/widgets.dart';
+import '../../posts/post_stats.dart';
 import '../business_page.dart' show openBusiness, BizLogo, Stars, dayLabel, shortDate;
 import 'business_editor.dart';
 import 'dashboard_catalog.dart';
@@ -127,6 +128,7 @@ class OverviewTab extends ConsumerWidget {
             const SizedBox(height: 16),
             const SectionTitle('الإيرادات · آخر 14 يوماً'),
             JoyCard(child: RevenueBars(daily: s.daily)),
+            _BizPostsCard(bizId: biz.id),
             if (s.byKind.isNotEmpty || s.topItems.isNotEmpty) ...[
               const SizedBox(height: 8),
               const SectionTitle('الأكثر مبيعاً'),
@@ -175,6 +177,30 @@ class OverviewTab extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) toast(context, ownerErrText(e), error: true);
     }
+  }
+}
+
+/// منشورات الخريطة التي تروّج للدائرة (زر إجراء «دائرة تجارية»): مشاهدات وضغطات ومراسلات خلال 30 يوماً.
+class _BizPostsCard extends ConsumerWidget {
+  final String bizId;
+  const _BizPostsCard({required this.bizId});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final stats = ref.watch(postStatsProvider((postId: null, bizId: bizId, days: 30)));
+    final s = stats.value;
+    if (s == null || s.posts == 0) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const SizedBox(height: 8),
+      SectionTitle('منشورات الخريطة عن الدائرة · ${s.posts}', action: 'التفاصيل', onAction: () => showPostStats(context, bizId: bizId)),
+      JoyCard(
+        child: Row(children: [
+          _Mini(icon: Icons.visibility_outlined, value: '${s.totals.views}', label: 'مشاهدة'),
+          _Mini(icon: Icons.ads_click_rounded, value: '${s.totals.cta}', label: 'ضغطة إجراء'),
+          _Mini(icon: Icons.chat_bubble_outline_rounded, value: '${s.totals.contacts}', label: 'مراسلة'),
+          _Mini(icon: Icons.favorite_border_rounded, value: '${s.totals.likes}', label: 'إعجاب'),
+        ]),
+      ),
+    ]);
   }
 }
 

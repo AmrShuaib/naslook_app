@@ -19,12 +19,21 @@ import '../chat/chat_thread_page.dart';
 import '../market/market_page.dart';
 import 'overlay_canvas.dart';
 import 'post_composer.dart';
+import 'post_stats.dart';
 import 'post_media.dart';
 
 /// ينفّذ زر الإجراء في المنشور: رابط، واتساب، اتصال، دائرة تجارية، عرض في السوق، مراسلة صاحب المنشور.
 Future<void> runPostCta(BuildContext context, MapPost p) async {
   final c = p.cta;
   if (c == null) return;
+  try {
+    await _runCta(context, c, p);
+  } catch (_) {
+    if (context.mounted) toast(context, 'تعذر فتح الرابط على هذا الجهاز', error: true);
+  }
+}
+
+Future<void> _runCta(BuildContext context, PostCta c, MapPost p) async {
   switch (c.type) {
     case 'link':
       await launchUrl(Uri.parse(c.value), mode: LaunchMode.externalApplication);
@@ -175,6 +184,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
       backgroundColor: const Color(0xFF1C1F24),
       builder: (ctx) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.insights_outlined, color: Colors.white), title: const Text('الإحصاءات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'stats')),
           ListTile(leading: const Icon(Icons.edit_outlined, color: Colors.white), title: const Text('تعديل المنشور', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'edit')),
           ListTile(leading: Icon(p.status == 'active' ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: Colors.white), title: Text(p.status == 'active' ? 'إخفاء من الخريطة' : 'إظهار على الخريطة', style: const TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'toggle')),
           ListTile(leading: const Icon(Icons.delete_outline_rounded, color: Joy.danger), title: const Text('حذف المنشور', style: TextStyle(color: Joy.danger)), onTap: () => Navigator.pop(ctx, 'delete')),
@@ -186,6 +196,12 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     if (!mounted || choice == null) return;
     final api = ref.read(apiClientProvider);
     try {
+      if (choice == 'stats') {
+        paused = true;
+        await showPostStats(context, postId: p.id);
+        paused = false;
+        return;
+      }
       if (choice == 'edit') {
         final updated = await PostComposerPage.open(context, lat: p.lat, lng: p.lng, placeName: p.placeName, edit: p);
         if (updated != null && mounted) setState(() => posts[i] = updated);
@@ -346,7 +362,7 @@ class PostView extends ConsumerWidget {
             if (p.cta != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => runPostCta(context, p), icon: Icon(_ctaIcon(p.cta!.type)), label: Text(p.cta!.label.isNotEmpty ? p.cta!.label : postCtaTypes[p.cta!.type] ?? ''))),
+                child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () { if (!p.mine) unawaited(ref.read(apiClientProvider).trackCta(p.id)); runPostCta(context, p); }, icon: Icon(_ctaIcon(p.cta!.type)), label: Text(p.cta!.label.isNotEmpty ? p.cta!.label : postCtaTypes[p.cta!.type] ?? ''))),
               ),
             Row(children: [
               _action(p.liked ? Icons.favorite_rounded : Icons.favorite_outline_rounded, '${p.likes}', onLike, color: p.liked ? Joy.accent : Colors.white),
@@ -354,7 +370,7 @@ class PostView extends ConsumerWidget {
               if (p.mine) _action(Icons.visibility_outlined, '${p.views}', null),
               if (!p.mine && me != null) ...[
                 const SizedBox(width: 6),
-                _action(Icons.chat_bubble_outline_rounded, 'مراسلة', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user)))),
+                _action(Icons.chat_bubble_outline_rounded, 'مراسلة', () { unawaited(ref.read(apiClientProvider).trackContact(p.id)); Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user))); }),
                 const SizedBox(width: 2),
                 WishButton(kind: 'post', refId: p.id, dark: true, compact: true),
               ],

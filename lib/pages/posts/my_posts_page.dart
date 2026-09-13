@@ -9,6 +9,7 @@ import '../../state/posts_providers.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import 'post_composer.dart';
+import 'post_stats.dart';
 import 'post_viewer.dart';
 import '../../api/client.dart';
 
@@ -41,9 +42,11 @@ class MyPostsPage extends ConsumerWidget {
                 onRefresh: () async => ref.invalidate(myPostsProvider),
                 child: ListView.separated(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 96),
-                  itemCount: posts.length,
+                  itemCount: posts.length + 1,
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (_, i) => MyPostRow(posts[i], onTap: () => PostViewerPage.open(context, posts, index: i)),
+                  itemBuilder: (_, i) => i == 0
+                      ? const _MySummary()
+                      : MyPostRow(posts[i - 1], onTap: () => PostViewerPage.open(context, posts, index: i - 1), onStats: () => showPostStats(context, postId: posts[i - 1].id)),
                 ),
               ),
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -55,10 +58,49 @@ class MyPostsPage extends ConsumerWidget {
 
 String postStatusLabel(MapPost p) => p.status == 'blocked' ? 'أخفته الإدارة' : p.status == 'hidden' ? 'مخفي' : p.expired ? 'انتهت مدته' : 'ظاهر على الخريطة';
 
+/// ملخص 7 أيام لكل منشوراتي مع زر التفاصيل.
+class _MySummary extends ConsumerWidget {
+  const _MySummary();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final stats = ref.watch(postStatsProvider((postId: null, bizId: null, days: 7)));
+    return JoyCard(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Expanded(child: Text('آخر 7 أيام', style: TextStyle(fontWeight: FontWeight.w700))),
+          TextButton.icon(onPressed: () => showPostStats(context), icon: const Icon(Icons.insights_outlined, size: 18), label: const Text('التفاصيل')),
+        ]),
+        stats.when(
+          data: (s) => Row(children: [
+            _SumItem('${s.totals.views}', 'مشاهدة'),
+            _SumItem('${s.totals.likes}', 'إعجاب'),
+            _SumItem('${s.totals.cta}', 'ضغطة إجراء'),
+            _SumItem('${s.totals.contacts}', 'مراسلة'),
+          ]),
+          loading: () => const Padding(padding: EdgeInsets.all(8), child: LinearProgressIndicator(minHeight: 2)),
+          error: (_, __) => const Text('تعذر جلب الإحصاءات', style: TextStyle(color: Joy.textMuted, fontSize: 12)),
+        ),
+      ]),
+    );
+  }
+}
+
+class _SumItem extends StatelessWidget {
+  final String value, label;
+  const _SumItem(this.value, this.label);
+  @override
+  Widget build(BuildContext context) => Expanded(child: Column(children: [
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        Text(label, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
+      ]));
+}
+
 class MyPostRow extends StatelessWidget {
   final MapPost p;
   final VoidCallback onTap;
-  const MyPostRow(this.p, {super.key, required this.onTap});
+  final VoidCallback? onStats;
+  const MyPostRow(this.p, {super.key, required this.onTap, this.onStats});
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +121,7 @@ class MyPostRow extends StatelessWidget {
           Text('${p.tagLabel} · ${postStatusLabel(p)}${p.expiresAt != null && ok ? ' · ينتهي ${timeAgo(p.expiresAt).replaceFirst('قبل', 'بعد')}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: ok ? Joy.success : Joy.textMuted, fontSize: 12.5, fontWeight: FontWeight.w600)),
           Text('${p.views} مشاهدة · ${p.likes} إعجاب · ${timeAgo(p.createdAt)}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
         ])),
-        const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+        if (onStats != null) IconButton(tooltip: 'الإحصاءات', onPressed: onStats, icon: const Icon(Icons.insights_outlined, color: Joy.primary)) else const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
       ]),
     );
   }

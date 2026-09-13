@@ -80,3 +80,56 @@ extension PostsApi on ApiClient {
     return (liked: d['liked'] == true, likes: _i(d['likes']));
   }
 }
+
+/// مجاميع أحداث المنشورات: مشاهدات (كل فتح)، ضغطات زر الإجراء، مراسلات، إعجابات.
+class PostStatTotals {
+  final int views, cta, contacts, likes;
+  const PostStatTotals({this.views = 0, this.cta = 0, this.contacts = 0, this.likes = 0});
+  factory PostStatTotals.fromJson(Map m) => PostStatTotals(views: _i(m['views']), cta: _i(m['cta']), contacts: _i(m['contacts']), likes: _i(m['likes']));
+}
+
+/// نقطة في سلسلة زمنية (ساعة أو يوم).
+class PostStatPoint {
+  final String label;
+  final PostStatTotals t;
+  const PostStatPoint(this.label, this.t);
+}
+
+/// إحصاءات منشور واحد أو مجموعة منشورات (منشوراتي أو منشورات دائرة) مع سلسلتي 24 ساعة والأيام.
+class PostStats {
+  final int days, posts, uniqueViews;
+  final PostStatTotals totals;
+  final List<PostStatPoint> hourly, daily;
+  final List<PostBriefStats> byPost;
+  final int? likesTotal, viewsTotal;
+  const PostStats({required this.days, this.posts = 1, required this.totals, this.uniqueViews = 0, this.hourly = const [], this.daily = const [], this.byPost = const [], this.likesTotal, this.viewsTotal});
+  factory PostStats.fromJson(Map m) => PostStats(
+        days: _i(m['days']), posts: m['posts'] == null ? 1 : _i(m['posts']), totals: PostStatTotals.fromJson(asMap(m['totals'])), uniqueViews: _i(m['uniqueViews']),
+        hourly: [for (final h in asList(m['hourly'])) PostStatPoint(_hourLabel(h['at']?.toString()), PostStatTotals.fromJson(h))],
+        daily: [for (final d in asList(m['daily'])) PostStatPoint(_dayLabel(d['date']?.toString()), PostStatTotals.fromJson(d))],
+        byPost: asList(m['byPost']).map(PostBriefStats.fromJson).toList(),
+        likesTotal: m['likesTotal'] == null ? null : _i(m['likesTotal']), viewsTotal: m['viewsTotal'] == null ? null : _i(m['viewsTotal']),
+      );
+  static String _hourLabel(String? iso) {
+    final d = iso == null ? null : DateTime.tryParse(iso)?.toUtc().add(const Duration(hours: 3));
+    return d == null ? '' : '${d.hour}';
+  }
+  static String _dayLabel(String? date) => date == null || date.length < 10 ? '' : '${int.tryParse(date.substring(8, 10)) ?? ''}/${int.tryParse(date.substring(5, 7)) ?? ''}';
+}
+
+/// منشور مع مجاميعه داخل ملخص.
+class PostBriefStats {
+  final String id, title, kind, tag, status;
+  final PostStatTotals t;
+  const PostBriefStats({required this.id, required this.title, required this.kind, required this.tag, required this.status, required this.t});
+  factory PostBriefStats.fromJson(Map m) => PostBriefStats(id: m['id'].toString(), title: m['title']?.toString() ?? '', kind: m['kind']?.toString() ?? 'text', tag: m['tag']?.toString() ?? 'moment', status: m['status']?.toString() ?? 'active', t: PostStatTotals.fromJson(m));
+}
+
+extension PostStatsApi on ApiClient {
+  Future<PostStats> postStats(String id, {int days = 7}) async => PostStats.fromJson(await get('/mapposts/$id/stats', query: {'days': '$days'}));
+  Future<PostStats> myPostStats({int days = 7}) async => PostStats.fromJson(await get('/mapposts/stats/mine', query: {'days': '$days'}));
+  Future<PostStats> bizPostStats(String slug, {int days = 30}) async => PostStats.fromJson(await get('/mapposts/stats/biz/$slug', query: {'days': '$days'}));
+  /// تتبّع بلا انتظار: ضغطة زر الإجراء أو فتح المراسلة من المنشور.
+  Future<void> trackCta(String id) => post('/mapposts/$id/cta', const {}).then((_) {}).catchError((_) {});
+  Future<void> trackContact(String id) => post('/mapposts/$id/contact', const {}).then((_) {}).catchError((_) {});
+}

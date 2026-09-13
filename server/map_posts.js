@@ -68,6 +68,14 @@ export default async function posts(app, opts) {
     CREATE TABLE IF NOT EXISTS map_post_likes (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
     CREATE TABLE IF NOT EXISTS map_post_views (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
   `);
+  // سجل أحداث المنشورات للإحصاءات: مشاهدة (كل فتح)، ضغطة زر الإجراء، مراسلة الناشر، إعجاب
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS map_post_events (
+      id BIGSERIAL PRIMARY KEY, post_id UUID NOT NULL, user_id TEXT, kind TEXT NOT NULL, at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE INDEX IF NOT EXISTS map_post_events_post_at ON map_post_events(post_id, at DESC);
+  `);
+  const EVENT_KINDS = new Set(["view", "cta", "contact", "like"]);
+  const logEvent = async (postId, uid, kind) => { try { await pool.query("INSERT INTO map_post_events(post_id,user_id,kind) VALUES($1,$2,$3)", [postId, uid, kind]); } catch { /* ignore */ } };
   // روابط حُفظت سابقاً بمضيف www. تُعاد إلى المضيف الأساسي (انظر publicOrigin)
   try { await pool.query(String.raw`UPDATE map_posts SET media_url = regexp_replace(media_url, '^(https?://)www\.', '\1', 'i') WHERE media_url ~* '^https?://www\.'`); } catch { /* ignore */ }
 
@@ -207,6 +215,8 @@ export default async function posts(app, opts) {
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const r = await pool.query("INSERT INTO map_post_views(post_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING 1", [req.params.id, uid]);
     if (r.rowCount) await pool.query("UPDATE map_posts SET views=views+1 WHERE id=$1 AND user_id<>$2", [req.params.id, uid]);
+    const own = (await pool.query("SELECT 1 FROM map_posts WHERE id=$1 AND user_id=$2", [req.params.id, uid])).rowCount > 0;
+    if (!own) await logEvent(req.params.id, uid, "view");
     const v = (await pool.query("SELECT views FROM map_posts WHERE id=$1", [req.params.id])).rows[0];
     return { ok: true, views: Number(v?.views ?? 0) };
   });
@@ -220,11 +230,87 @@ export default async function posts(app, opts) {
     if (!del.rowCount) {
       await pool.query("INSERT INTO map_post_likes(post_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [req.params.id, uid]);
       liked = true;
+      if (p.user_id !== uid) await logEvent(req.params.id, uid, "like");
       if (p.user_id !== uid) await notify(p.user_id, { kind: "post_like", title: "إعجاب بمنشورك", body: `${(await person(uid)).nickname || uid} أعجب بمنشورك${p.title ? " «" + p.title + "»" : ""}`, data: { postId: req.params.id } });
     }
     const n = (await pool.query("SELECT count(*)::int AS n FROM map_post_likes WHERE post_id=$1", [req.params.id])).rows[0].n;
     return { ok: true, liked, likes: n };
   });
+  // ---- تتبّع زر الإجراء والمراسلة (للإحصاءات)
+  for (const kind of ["cta", "contact"]) {
+    app.post(`/mapposts/:id/${kind}`, async (req, reply) => {
+      const uid = await auth(req); if (!uid) return unauthorized(reply);
+      if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+      const p = (await pool.query("SELECT user_id FROM map_posts WHERE id=$1", [req.params.id])).rows[0];
+      if (!p) return bad(reply, 404, "not-found");
+      if (p.user_id !== uid) await logEvent(req.params.id, uid, kind);
+      return { ok: true };
+    });
+  }
+
+  // ---- الإحصاءات: لكل منشور (المالك أو الإدارة)، ولكل منشوراتي، ولمنشورات دائرة تجارية (مالكها أو طاقمها أو الإدارة)
+  const daysOf = (v) => Math.max(1, Math.min(90, Math.round(Number(v)) || 7));
+  const emptyTotals = () => ({ views: 0, cta: 0, contacts: 0, likes: 0 });
+  const fieldOf = (kind) => ({ view: "views", like: "likes", contact: "contacts", cta: "cta" })[kind] ?? null;
+  async function series(postIds, days) {
+    if (!postIds.length) return { totals: emptyTotals(), uniqueViews: 0, hourly: [], daily: [] };
+    const t = (await pool.query(`SELECT kind, count(*)::int AS n FROM map_post_events WHERE post_id = ANY($1::uuid[]) AND at > now() - ($2 || ' days')::interval GROUP BY kind`, [postIds, String(days)])).rows;
+    const totals = emptyTotals(); for (const r of t) { const f = fieldOf(r.kind); if (f) totals[f] = r.n; }
+    const uniq = (await pool.query("SELECT count(*)::int AS n FROM map_post_views v JOIN map_posts p ON p.id=v.post_id WHERE v.post_id = ANY($1::uuid[]) AND v.user_id <> p.user_id", [postIds])).rows[0].n;
+    const h = (await pool.query(`SELECT date_trunc('hour', at) AS h, kind, count(*)::int AS n FROM map_post_events WHERE post_id = ANY($1::uuid[]) AND at > now() - interval '24 hours' GROUP BY 1, 2`, [postIds])).rows;
+    const hourly = []; const nowH = new Date(); nowH.setMinutes(0, 0, 0);
+    for (let i = 23; i >= 0; i--) { const at = new Date(nowH.getTime() - i * 3600e3); hourly.push({ at: at.toISOString(), views: 0, cta: 0, contacts: 0, likes: 0 }); }
+    for (const r of h) { const slot = hourly.find((x) => x.at === new Date(r.h).toISOString()); const f = fieldOf(r.kind); if (slot && f) slot[f] = r.n; }
+    const d = (await pool.query(`SELECT (at AT TIME ZONE 'Asia/Riyadh')::date AS d, kind, count(*)::int AS n FROM map_post_events WHERE post_id = ANY($1::uuid[]) AND at > now() - ($2 || ' days')::interval GROUP BY 1, 2`, [postIds, String(days)])).rows;
+    const daily = []; const today = new Date(Date.now() + 3 * 3600e3);
+    for (let i = days - 1; i >= 0; i--) { const dd = new Date(today.getTime() - i * 86400e3); daily.push({ date: dd.toISOString().slice(0, 10), views: 0, cta: 0, contacts: 0, likes: 0 }); }
+    for (const r of d) { const key = r.d instanceof Date ? new Date(r.d.getTime() - r.d.getTimezoneOffset() * 60000).toISOString().slice(0, 10) : String(r.d).slice(0, 10); const slot = daily.find((x) => x.date === key); const f = fieldOf(r.kind); if (slot && f) slot[f] = r.n; }
+    return { totals, uniqueViews: uniq, hourly, daily };
+  }
+  const postBrief = (p) => ({ id: p.id, title: p.title || p.caption || (p.kind === "text" ? "منشور نصي" : "منشور"), kind: p.kind, tag: p.tag, status: p.status, createdAt: p.created_at, expiresAt: p.expires_at });
+  async function perPost(postIds, days) {
+    if (!postIds.length) return new Map();
+    const rows = (await pool.query(`SELECT post_id, kind, count(*)::int AS n FROM map_post_events WHERE post_id = ANY($1::uuid[]) AND at > now() - ($2 || ' days')::interval GROUP BY 1, 2`, [postIds, String(days)])).rows;
+    const m = new Map(); for (const id of postIds) m.set(id, emptyTotals());
+    for (const r of rows) { const t = m.get(r.post_id); const f = fieldOf(r.kind); if (t && f) t[f] = r.n; }
+    return m;
+  }
+  app.get("/mapposts/stats/mine", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const days = daysOf(req.query?.days);
+    const posts = (await pool.query("SELECT * FROM map_posts WHERE user_id=$1 AND created_at > now() - interval '90 days' ORDER BY created_at DESC LIMIT 200", [uid])).rows;
+    const ids = posts.map((p) => p.id);
+    const agg = await series(ids, days); const per = await perPost(ids, days);
+    return { days, posts: posts.length, ...agg, byPost: posts.map((p) => ({ ...postBrief(p), ...per.get(p.id) })) };
+  });
+  app.get("/mapposts/stats/biz/:slug", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const slug = str(req.params.slug, 64); const days = daysOf(req.query?.days);
+    let allowed = await isAdmin(uid);
+    if (!allowed) {
+      try {
+        const b = (await pool.query("SELECT owner_id FROM biz WHERE id=$1", [slug])).rows[0];
+        allowed = !!b && (b.owner_id === uid || (await pool.query("SELECT 1 FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [slug, uid])).rowCount > 0);
+      } catch { allowed = false; }
+    }
+    if (!allowed) return bad(reply, 403, "forbidden");
+    const posts = (await pool.query("SELECT * FROM map_posts WHERE cta->>'type'='biz' AND cta->>'value'=$1 AND created_at > now() - interval '90 days' ORDER BY created_at DESC LIMIT 200", [slug])).rows;
+    const ids = posts.map((p) => p.id);
+    const agg = await series(ids, days); const per = await perPost(ids, days);
+    return { days, posts: posts.length, ...agg, byPost: posts.map((p) => ({ ...postBrief(p), author: p.user_id, ...per.get(p.id) })) };
+  });
+  app.get("/mapposts/:id/stats", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const p = (await pool.query("SELECT * FROM map_posts WHERE id=$1", [req.params.id])).rows[0];
+    if (!p) return bad(reply, 404, "not-found");
+    if (p.user_id !== uid && !(await isAdmin(uid))) return bad(reply, 403, "forbidden");
+    const days = daysOf(req.query?.days);
+    const agg = await series([p.id], days);
+    const likes = (await pool.query("SELECT count(*)::int AS n FROM map_post_likes WHERE post_id=$1", [p.id])).rows[0].n;
+    return { days, post: postBrief(p), ...agg, likesTotal: likes, viewsTotal: Number(p.views ?? 0) };
+  });
+
   app.post("/mapposts/:id/block", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
