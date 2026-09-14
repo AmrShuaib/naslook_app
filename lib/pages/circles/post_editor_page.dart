@@ -10,84 +10,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/text/markup_edit.dart';
 import '../../core/text/post_markup.dart';
+import '../../ui/markup_toolbar.dart';
 import '../../state/app_state.dart';
 import '../../ui/widgets.dart';
 
-/// عمليات تحرير نقية على قيمة الحقل (قابلة للاختبار بلا واجهة).
-class MarkupEdit {
-  /// يلفّ التحديد بالعلامة (مثل `**`)؛ بلا تحديد يدرج العلامتين ويضع المؤشر بينهما؛ وإن كان التحديد ملفوفاً أصلاً أزال اللفّ.
-  static TextEditingValue wrap(TextEditingValue v, String marker) {
-    final text = v.text;
-    final sel = v.selection.isValid ? v.selection : TextSelection.collapsed(offset: text.length);
-    final start = sel.start, end = sel.end;
-    if (start == end) {
-      final t = text.substring(0, start) + marker + marker + text.substring(end);
-      return TextEditingValue(text: t, selection: TextSelection.collapsed(offset: start + marker.length));
-    }
-    final selected = text.substring(start, end);
-    if (selected.length >= marker.length * 2 && selected.startsWith(marker) && selected.endsWith(marker)) {
-      final inner = selected.substring(marker.length, selected.length - marker.length);
-      final t = text.substring(0, start) + inner + text.substring(end);
-      return TextEditingValue(text: t, selection: TextSelection(baseOffset: start, extentOffset: start + inner.length));
-    }
-    final t = text.substring(0, start) + marker + selected + marker + text.substring(end);
-    return TextEditingValue(text: t, selection: TextSelection(baseOffset: start, extentOffset: end + marker.length * 2));
-  }
-
-  /// يضيف بادئة لكل سطر يمسّه التحديد (أو السطر الحالي). إن كانت كل الأسطر تحمل البادئة نفسها أزالها (تبديل).
-  /// مع [numbered] تكون البادئة `1. ` `2. ` … بالترتيب.
-  static TextEditingValue prefixLines(TextEditingValue v, String prefix, {bool numbered = false}) {
-    final text = v.text;
-    final sel = v.selection.isValid ? v.selection : TextSelection.collapsed(offset: text.length);
-    final lineStart = sel.start == 0 ? 0 : text.lastIndexOf('\n', sel.start - 1) + 1;
-    final nl = text.indexOf('\n', sel.end);
-    final lineEnd = nl == -1 ? text.length : nl;
-    final segment = text.substring(lineStart, lineEnd);
-    final lines = segment.split('\n');
-    final numberedRe = RegExp(r'^\s*[0-9]{1,3}[.)]\s+');
-    final hasAll = lines.every((l) => numbered ? numberedRe.hasMatch(l) : l.startsWith(prefix));
-    final out = <String>[];
-    for (var i = 0; i < lines.length; i++) {
-      final l = lines[i];
-      if (hasAll) {
-        out.add(numbered ? l.replaceFirst(numberedRe, '') : l.substring(prefix.length));
-      } else {
-        final clean = numbered ? l.replaceFirst(numberedRe, '') : l;
-        out.add(numbered ? '${i + 1}. $clean' : '$prefix$clean');
-      }
-    }
-    final replaced = out.join('\n');
-    final t = text.substring(0, lineStart) + replaced + text.substring(lineEnd);
-    // تحديد ممتد يبقى ممتداً على الأسطر نفسها (فضغطة ثانية تعكس العملية)، والمؤشر المفرد يبقى في نهاية سطره
-    final selection = sel.isCollapsed ? TextSelection.collapsed(offset: lineStart + replaced.length) : TextSelection(baseOffset: lineStart, extentOffset: lineStart + replaced.length);
-    return TextEditingValue(text: t, selection: selection);
-  }
-
-  /// يدرج نصاً مكان التحديد ويضع المؤشر بعده (أو عند [cursorAt] من بداية المُدرج).
-  static TextEditingValue insert(TextEditingValue v, String s, {int? cursorAt}) {
-    final text = v.text;
-    final sel = v.selection.isValid ? v.selection : TextSelection.collapsed(offset: text.length);
-    final t = text.substring(0, sel.start) + s + text.substring(sel.end);
-    return TextEditingValue(text: t, selection: TextSelection.collapsed(offset: sel.start + (cursorAt ?? s.length)));
-  }
-
-  /// يدرج فاصلاً أفقياً على سطر مستقل.
-  static TextEditingValue divider(TextEditingValue v) {
-    final text = v.text;
-    final sel = v.selection.isValid ? v.selection : TextSelection.collapsed(offset: text.length);
-    final before = text.substring(0, sel.start);
-    final needsNl = before.isNotEmpty && !before.endsWith('\n');
-    return insert(v, '${needsNl ? '\n' : ''}---\n');
-  }
-
-  /// النص النهائي للنشر: العنوان (إن وُجد) سطر `#` ثم النص.
-  static String compose({required String title, required String body}) {
-    final t = title.trim(), b = body.trim();
-    if (t.isEmpty) return b;
-    return b.isEmpty ? '# $t' : '# $t\n\n$b';
-  }
-}
+export '../../core/text/markup_edit.dart' show MarkupEdit;
 
 class PostEditorPage extends ConsumerStatefulWidget {
   final String vesselId;
@@ -171,37 +100,6 @@ class _PostEditorPageState extends ConsumerState<PostEditorPage> {
     } catch (_) {}
   }
 
-  void _apply(TextEditingValue Function(TextEditingValue) f) {
-    _body.value = f(_body.value);
-    _bodyFocus.requestFocus();
-  }
-
-  Future<void> _link() async {
-    final sel = _body.selection;
-    final selected = sel.isValid && !sel.isCollapsed ? _body.text.substring(sel.start, sel.end) : '';
-    final url = TextEditingController(text: 'https://');
-    final label = TextEditingController(text: selected);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('إدراج رابط'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(key: const Key('link-url'), controller: url, autofocus: true, keyboardType: TextInputType.url, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'الرابط')),
-          const SizedBox(height: 10),
-          TextField(key: const Key('link-label'), controller: label, decoration: const InputDecoration(labelText: 'النص الظاهر (اختياري)')),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          FilledButton(key: const Key('link-ok'), onPressed: () => Navigator.pop(ctx, true), child: const Text('إدراج')),
-        ],
-      ),
-    );
-    final u = url.text.trim();
-    if (ok != true || u.isEmpty || u == 'https://') return;
-    final l = label.text.trim();
-    _apply((v) => MarkupEdit.insert(v, l.isEmpty ? u : '[$l]($u)'));
-  }
-
   Future<void> _publish() async {
     if (!_hasContent || _publishing) return;
     setState(() => _publishing = true);
@@ -225,33 +123,6 @@ class _PostEditorPageState extends ConsumerState<PostEditorPage> {
       toast(context, 'حُفظت مسودتك وستجدها عند العودة');
     }
     Navigator.of(context).pop();
-  }
-
-  void _help() {
-    showModalBottomSheet(
-      context: context,
-      showDragHandle: true,
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('تنسيق المنشور', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-            const SizedBox(height: 6),
-            const Text('اكتب بحرية، أو استخدم أزرار الشريط. العلامات نفسها يمكن كتابتها يدوياً:', style: TextStyle(color: Joy.textMuted, fontSize: 13)),
-            const SizedBox(height: 10),
-            for (final (code, meaning) in const [('# عنوان', 'عنوان رئيسي'), ('## عنوان', 'عنوان فرعي'), ('**نص**', 'نص عريض'), ('- بند', 'قائمة نقطية'), ('1. بند', 'قائمة مرقّمة'), ('> نص', 'اقتباس'), ('---', 'فاصل'), ('[نص](https://…)', 'رابط بعنوان')])
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(children: [
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(8)), child: Text(code, textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700))),
-                  const SizedBox(width: 10),
-                  Text(meaning, style: const TextStyle(fontSize: 13.5)),
-                ]),
-              ),
-          ]),
-        ),
-      ),
-    );
   }
 
   @override
@@ -357,43 +228,13 @@ class _PostEditorPageState extends ConsumerState<PostEditorPage> {
     );
   }
 
-  Widget _toolbar(int chars) {
-    final tools = <(String, IconData, String, VoidCallback)>[
-      ('bold', Icons.format_bold_rounded, 'عريض', () => _apply((v) => MarkupEdit.wrap(v, '**'))),
-      ('h1', Icons.title_rounded, 'عنوان', () => _apply((v) => MarkupEdit.prefixLines(v, '# '))),
-      ('h2', Icons.text_fields_rounded, 'عنوان فرعي', () => _apply((v) => MarkupEdit.prefixLines(v, '## '))),
-      ('bullet', Icons.format_list_bulleted_rounded, 'نقاط', () => _apply((v) => MarkupEdit.prefixLines(v, '- '))),
-      ('number', Icons.format_list_numbered_rounded, 'ترقيم', () => _apply((v) => MarkupEdit.prefixLines(v, '', numbered: true))),
-      ('quote', Icons.format_quote_rounded, 'اقتباس', () => _apply((v) => MarkupEdit.prefixLines(v, '> '))),
-      ('link', Icons.link_rounded, 'رابط', _link),
-      ('divider', Icons.horizontal_rule_rounded, 'فاصل', () => _apply(MarkupEdit.divider)),
-    ];
-    return SafeArea(
-      top: false,
-      child: Container(
-        key: const Key('editor-toolbar'),
-        decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
-        padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-        child: Row(children: [
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(children: [
-                for (final (id, icon, tip, fn) in tools)
-                  IconButton(key: Key('tool-$id'), tooltip: tip, icon: Icon(icon), color: Joy.text, onPressed: _preview ? null : fn, visualDensity: VisualDensity.compact),
-                IconButton(key: const Key('editor-help'), tooltip: 'كيف أنسّق؟', icon: const Icon(Icons.help_outline_rounded), color: Joy.textMuted, onPressed: _help, visualDensity: VisualDensity.compact),
-              ]),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsetsDirectional.only(start: 6, end: 4),
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('$chars حرف', style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
-              if (_draftState.isNotEmpty) Text(_draftState, key: const Key('editor-draft-state'), style: const TextStyle(fontSize: 10.5, color: Joy.success, fontWeight: FontWeight.w600)),
-            ]),
-          ),
+  Widget _toolbar(int chars) => MarkupToolbar(
+        controller: _body,
+        focusNode: _bodyFocus,
+        enabled: !_preview,
+        trailing: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text('$chars حرف', style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
+          if (_draftState.isNotEmpty) Text(_draftState, key: const Key('editor-draft-state'), style: const TextStyle(fontSize: 10.5, color: Joy.success, fontWeight: FontWeight.w600)),
         ]),
-      ),
-    );
-  }
+      );
 }

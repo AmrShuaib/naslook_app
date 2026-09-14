@@ -13,4 +13,4 @@ await app.register((await import("./safety.js")).default, { pool, auth });
 await app.register((await import("./admin.js")).default, { pool, auth });
 await app.register((await import("./share.js")).default, { pool, auth });
 await app.register((await import("./chat_cards.js")).default, { pool, auth });
-await app.register((await import("./blog.js")).default);
+await app.register((await import("./blog.js")).default, { pool, auth });

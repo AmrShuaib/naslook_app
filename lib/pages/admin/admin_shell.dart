@@ -8,6 +8,7 @@ import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import 'admin_biz.dart';
+import 'admin_blog.dart';
 import 'admin_content.dart';
 import 'admin_finance.dart';
 import 'admin_overview.dart';
@@ -23,6 +24,7 @@ const adminSections = [
   ('biz', 'الدوائر التجارية', Icons.storefront_outlined),
   ('finance', 'المالية', Icons.account_balance_wallet_outlined),
   ('content', 'المحتوى', Icons.inventory_2_outlined),
+  ('blog', 'المدونة', Icons.newspaper_outlined),
   ('settings', 'الإعدادات', Icons.tune_rounded),
   ('audit', 'سجل الإجراءات', Icons.history_rounded),
 ];
@@ -84,6 +86,7 @@ class _Layout extends ConsumerWidget {
         'biz' => const AdminBizPage(),
         'finance' => const AdminFinancePage(),
         'content' => const AdminContentPage(),
+        'blog' => const AdminBlogPage(),
         'settings' => const AdminSettingsPage(),
         _ => const AdminAuditPage(),
       };

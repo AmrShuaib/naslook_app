@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/admin_api.dart';
+import '../api/admin_blog_api.dart';
 import '../api/models.dart';
 import 'app_state.dart';
 
@@ -33,6 +34,9 @@ final adminContentProvider = FutureProvider<AdminContent>((ref) => ref.watch(api
 final adminSettingsProvider = FutureProvider<AdminSettings>((ref) => ref.watch(apiClientProvider).adminSettings());
 final adminAuditProvider = FutureProvider<List<AdminAudit>>((ref) => ref.watch(apiClientProvider).adminAudit());
 final adminAdminsProvider = FutureProvider<List<({Person user, String grantedBy, DateTime? since})>>((ref) => ref.watch(apiClientProvider).adminAdmins());
+/// قائمة المدونة في لوحة الإدارة مفتاحها (البحث، النوع، الحالة).
+final adminBlogProvider = FutureProvider.family<BlogAdminList, ({String q, String kind, String status})>((ref, k) => ref.watch(apiClientProvider).adminBlogList(q: k.q, kind: k.kind, status: k.status));
+final adminBlogPostProvider = FutureProvider.family<BlogPost, String>((ref, id) => ref.watch(apiClientProvider).adminBlogGet(id));
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
 
 void invalidateAdmin(WidgetRef ref) {
@@ -40,6 +44,8 @@ void invalidateAdmin(WidgetRef ref) {
     ref.invalidate(p);
   }
   ref.invalidate(adminUsersProvider);
+  ref.invalidate(adminBlogProvider);
+  ref.invalidate(adminBlogPostProvider);
   ref.invalidate(adminUserProvider);
   ref.invalidate(adminReportsProvider);
 }
