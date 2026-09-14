@@ -148,8 +148,9 @@ footer a{color:var(--muted)}
 `;
 
 export default async function blog(app, opts = {}) {
-  const pool = opts.pool ?? null;
-  const auth = opts.auth ?? null;
+  // قد تُسجَّل الإضافة بلا خيارات (سطر التسجيل الأول في index.js لا يُحدَّث تلقائياً)، فنأخذ الاتصال والمصادقة من business.js
+  const pool = opts.pool ?? globalThis.naslifePool ?? null;
+  const auth = opts.auth ?? globalThis.naslifeAuth ?? null;
   let dbOk = false;
   const log = (lvl, ...a) => { try { app.log[lvl]?.(...a); } catch { /* ignore */ } };
 

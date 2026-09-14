@@ -66,6 +66,9 @@ export function isOpenNow(text, now = new Date()) {
 
 export default async function business(app, opts) {
   const { pool, auth } = opts;
+  // النشر التلقائي يضيف سطر تسجيل الإضافة الجديدة مرة واحدة ولا يعدّله لاحقاً، فإضافةٌ سُجّلت بلا خيارات (مثل blog.js) تأخذ الاتصال من هنا
+  globalThis.naslifePool ??= pool;
+  globalThis.naslifeAuth ??= auth;
   if (!pool || !auth) throw new Error("business: pool and auth are required");
 
   await pool.query(`
