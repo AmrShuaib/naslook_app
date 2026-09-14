@@ -13,8 +13,12 @@ class AdminStatus {
   final bool hasAdmin, setupRequired, isAdmin;
   final Person? user;
   final int admins;
-  const AdminStatus({this.hasAdmin = false, this.setupRequired = false, this.isAdmin = false, this.user, this.admins = 0});
-  factory AdminStatus.fromJson(Map m) => AdminStatus(hasAdmin: m['hasAdmin'] == true, setupRequired: m['setupRequired'] == true, isAdmin: m['isAdmin'] == true, user: m['user'] is Map ? Person.fromJson(_m(m['user'])) : null, admins: _i(m['admins']));
+  /// عند الإعداد الأول: آخر حرفين من رمز الإعداد الفعّال وتاريخه ومسار ملف admin-ids على الخادم.
+  final String? setupHint, bootstrapFile;
+  final DateTime? setupCodeCreatedAt;
+  const AdminStatus({this.hasAdmin = false, this.setupRequired = false, this.isAdmin = false, this.user, this.admins = 0, this.setupHint, this.bootstrapFile, this.setupCodeCreatedAt});
+  factory AdminStatus.fromJson(Map m) => AdminStatus(hasAdmin: m['hasAdmin'] == true, setupRequired: m['setupRequired'] == true, isAdmin: m['isAdmin'] == true, user: m['user'] is Map ? Person.fromJson(_m(m['user'])) : null, admins: _i(m['admins']),
+      setupHint: m['setupHint']?.toString(), bootstrapFile: m['bootstrapFile']?.toString(), setupCodeCreatedAt: _t(m['setupCodeCreatedAt']));
 }
 
 class AdminOverview {

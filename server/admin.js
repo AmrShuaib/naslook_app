@@ -79,6 +79,24 @@ export default async function admin(app, opts) {
   for (const id of String(process.env.NASLIFE_ADMIN_IDS ?? "").split(",").map((s) => s.trim().toUpperCase()).filter((s) => ID_RE.test(s))) {
     await pool.query("INSERT INTO admins(user_id, granted_by) VALUES($1,'env') ON CONFLICT DO NOTHING", [id]);
   }
+  /// تطبيع رمز الإعداد المُدخل: أرقام عربية/فارسية → لاتينية، حروف كبيرة، وإسقاط كل ما ليس حرفاً أو رقماً (شرطات بأنواعها، مسافات، علامات اتجاه خفية)
+  const normCode = (v) => String(v ?? "").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 40);
+  // ---- مديرون من ملف التشغيل OPS/admin-ids: سطر لكل معرّف (SA0000001) أو نك نيم؛ يُقرأ عند كل إقلاع (بديل لرمز الإعداد عبر SSH)
+  async function grantFromOpsFile() {
+    let lines = [];
+    try { lines = fs.readFileSync(path.join(OPS, "admin-ids"), "utf8").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#")); } catch { return; }
+    for (const raw of lines) {
+      let id = raw.toUpperCase();
+      if (!ID_RE.test(id)) {
+        if (!U.ok || !U.nick) continue;
+        try { id = (await pool.query(`SELECT id FROM users WHERE lower(${q(U.nick)})=lower($1) LIMIT 1`, [raw])).rows[0]?.id ?? null; } catch { id = null; }
+        if (!id) { try { app.log.warn(`admin-ids: no user named ${raw}`); } catch { /* ignore */ } continue; }
+      }
+      await pool.query("INSERT INTO admins(user_id, granted_by) VALUES($1,'ops-file') ON CONFLICT DO NOTHING", [id]);
+      try { app.log.warn(`admin-ids: ${id} is an admin`); } catch { /* ignore */ }
+    }
+  }
+  await grantFromOpsFile();
   let setupCode = null;
   async function ensureSetupCode() {
     if ((await adminCount()) > 0) { setupCode = null; return; }
@@ -152,14 +170,19 @@ export default async function admin(app, opts) {
   app.get("/adminapi/status", async (req) => {
     const uid = (await auth(req).catch(() => null)) || null;
     const n = await adminCount();
-    return { hasAdmin: n > 0, setupRequired: n === 0, isAdmin: uid ? await isAdmin(uid) : false, user: uid ? await person(uid) : null, admins: n, version: 1 };
+    // تلميح للمؤسس عند الإعداد الأول: آخر حرفين من الرمز الحالي وتاريخه، حتى يتأكد أن ما نسخه من الخادم هو الرمز الفعّال
+    let setupHint = null, setupCodeCreatedAt = null;
+    if (n === 0 && setupCode) { setupHint = setupCode.slice(-2); try { setupCodeCreatedAt = (await pool.query("SELECT created_at FROM admin_setup WHERE code=$1", [setupCode])).rows[0]?.created_at ?? null; } catch { /* ignore */ } }
+    return { hasAdmin: n > 0, setupRequired: n === 0, isAdmin: uid ? await isAdmin(uid) : false, user: uid ? await person(uid) : null, admins: n, version: 1, setupHint, setupCodeCreatedAt, bootstrapFile: n === 0 ? path.join(OPS, "admin-ids") : null };
   });
   app.post("/adminapi/setup", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if ((await adminCount()) > 0) return bad(reply, 409, "already-set-up");
-    const code = str(req.body?.code, 40).toUpperCase().replace(/\s+/g, "");
-    const row = (await pool.query("SELECT code FROM admin_setup WHERE used_at IS NULL AND code=$1", [code])).rows[0];
+    const norm = normCode(req.body?.code);
+    if (!norm) return bad(reply, 400, "bad-code");
+    const row = (await pool.query("SELECT code FROM admin_setup WHERE used_at IS NULL AND regexp_replace(upper(code), '[^A-Z0-9]', '', 'g')=$1 LIMIT 1", [norm])).rows[0];
     if (!row) return bad(reply, 400, "bad-code");
+    const code = row.code;
     await tx(async (c) => {
       await c.query("UPDATE admin_setup SET used_by=$2, used_at=now() WHERE code=$1", [code, uid]);
       await c.query("INSERT INTO admins(user_id, granted_by) VALUES($1,'setup') ON CONFLICT DO NOTHING", [uid]);

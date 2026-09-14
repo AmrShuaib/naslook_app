@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/admin_api.dart';
@@ -172,7 +173,18 @@ class _SetupScreenState extends ConsumerState<_SetupScreen> {
               const SizedBox(height: 8),
               Text('أدخل رمز الإعداد ليصبح حسابك ${widget.status.user?.nickname ?? ''} أول مدير للمنصة. الرمز مكتوب على الخادم في الملف /opt/naslife/ops/admin-setup-code ومطبوع في سجل التشغيل.', textAlign: TextAlign.center, style: const TextStyle(color: Joy.textMuted, height: 1.6)),
               const SizedBox(height: 18),
-              TextField(controller: code, textAlign: TextAlign.center, style: const TextStyle(letterSpacing: 2, fontWeight: FontWeight.w700), decoration: const InputDecoration(hintText: 'NL-XXXXXX-XXXXXX')),
+              TextField(
+                key: const Key('setup-code'),
+                controller: code,
+                textAlign: TextAlign.center,
+                textDirection: TextDirection.ltr,
+                autocorrect: false,
+                enableSuggestions: false,
+                keyboardType: TextInputType.visiblePassword,
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9\-]'))],
+                style: const TextStyle(letterSpacing: 2, fontWeight: FontWeight.w700),
+                decoration: InputDecoration(hintText: 'NL-XXXXXX-XXXXXX', helperText: widget.status.setupHint == null ? null : 'الرمز الفعّال الآن ينتهي بـ ${widget.status.setupHint}${widget.status.setupCodeCreatedAt != null ? ' · أُنشئ ${timeAgo(widget.status.setupCodeCreatedAt)}' : ''}', helperStyle: const TextStyle(color: Joy.textMuted)),
+              ),
               const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: busy ? null : () async {
@@ -192,6 +204,8 @@ class _SetupScreenState extends ConsumerState<_SetupScreen> {
               ),
               const SizedBox(height: 10),
               const Text('لعرض الرمز عبر SSH:\ncat /opt/naslife/ops/admin-setup-code', textAlign: TextAlign.center, style: TextStyle(color: Joy.textMuted, fontSize: 12, fontFamily: 'monospace')),
+              const SizedBox(height: 10),
+              Text('بديل بلا رمز: اكتب معرّف حسابك${widget.status.user != null ? ' (${widget.status.user!.id})' : ''} في الملف ${widget.status.bootstrapFile ?? '/opt/naslife/ops/admin-ids'} على الخادم ثم أعد تشغيل الخدمة:\necho ${widget.status.user?.id ?? 'SA0000001'} > ${widget.status.bootstrapFile ?? '/opt/naslife/ops/admin-ids'} && systemctl restart naslife', textAlign: TextAlign.center, style: const TextStyle(color: Joy.textMuted, fontSize: 12, fontFamily: 'monospace')),
             ]),
           ),
         ),
