@@ -8,6 +8,7 @@ import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import 'post_editor_page.dart';
 import '../home/home_page.dart';
 
 final vesselDetailProvider = FutureProvider.family<(Vessel, List<Post>), String>((ref, id) => ref.watch(apiClientProvider).vessel(id));
@@ -115,15 +116,16 @@ class _CircleDetailPageState extends ConsumerState<CircleDetailPage> {
   }
 
   Future<void> _newPost() async {
-    final text = await askText(context, title: 'منشور جديد', hint: 'اكتب للدائرة…', confirm: 'نشر', maxLines: 5);
-    if (text == null || text.isEmpty) return;
-    try {
-      await ref.read(apiClientProvider).createPost(widget.vesselId, text);
-      ref.invalidate(vesselDetailProvider(widget.vesselId));
-      ref.invalidate(feedProvider);
-    } catch (e) {
-      if (mounted) toast(context, e.toString(), error: true);
-    }
+    final v = ref.read(vesselDetailProvider(widget.vesselId)).value?.$1 ?? widget.initial;
+    final role = v?.role;
+    final post = await Navigator.of(context).push<Post>(MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => PostEditorPage(vesselId: widget.vesselId, vesselName: v?.name, canAnnounce: role == 'owner' || role == 'moderator' || role == 'admin'),
+    ));
+    if (post == null) return;
+    ref.invalidate(vesselDetailProvider(widget.vesselId));
+    ref.invalidate(feedProvider);
+    if (mounted) toast(context, 'نُشر في الدائرة');
   }
 
   void _members(BuildContext context) {

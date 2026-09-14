@@ -31,6 +31,19 @@
 
   <title>Naslife</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    /* الخطوط نفسها التي يحمّلها التطبيق (assets/fonts) تُسجَّل هنا للمتصفح أيضاً: حقل الإدخال الخفي الذي ينشئه
+       Flutter فوق كل مربع كتابة يستخدم خط CSS لا خط الرسم، فإن اختلف الخط اختلفت مواضع الكلمات وصار تحديد كلمة
+       على آيفون يقع على كلمة أخرى. */
+    @font-face { font-family: 'Rubik'; font-weight: 400; src: url('assets/fonts/Rubik-Regular.ttf') format('truetype'); }
+    @font-face { font-family: 'Rubik'; font-weight: 500; src: url('assets/fonts/Rubik-Medium.ttf') format('truetype'); }
+    @font-face { font-family: 'Rubik'; font-weight: 600; src: url('assets/fonts/Rubik-SemiBold.ttf') format('truetype'); }
+    @font-face { font-family: 'Rubik'; font-weight: 700; src: url('assets/fonts/Rubik-Bold.ttf') format('truetype'); }
+    @font-face { font-family: 'BalooBhaijaan2'; font-weight: 700; src: url('assets/fonts/BalooBhaijaan2-Bold.ttf') format('truetype'); }
+    /* التطبيق كله من اليمين إلى اليسار بينما يترك Flutter اتجاه الحقل الخفي LTR، فيرسم المتصفح النص المختلط
+       (عربي + إنجليزي) بترتيب مغاير لما يُرسم على الشاشة؛ نوحّد الاتجاه حتى يطابق التحديد والمؤشر ما يراه المستخدم. */
+    flt-text-editing-host input, flt-text-editing-host textarea, flutter-view input, flutter-view textarea, flt-glass-pane input, flt-glass-pane textarea { direction: rtl !important; }
+  </style>
 </head>
 <body>
   <script>
@@ -45,6 +58,44 @@
       });
       if (window.caches) { caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); }); }
     }
+  </script>
+  <script>
+    // احتياط للحقول التي تُنشأ داخل shadow DOM حيث لا تصل قاعدة CSS أعلاه: نضبط اتجاهها وخطها عند ظهورها
+    (function () {
+      var fix = function (el) {
+        if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
+        if (el.style.direction !== 'rtl') el.style.direction = 'rtl';
+      };
+      var scan = function (root) {
+        if (!root || !root.querySelectorAll) return;
+        root.querySelectorAll('input, textarea').forEach(fix);
+      };
+      var observe = function (root) {
+        if (!root || root.__naslifeObserved) return;
+        root.__naslifeObserved = true;
+        scan(root);
+        new MutationObserver(function (muts) {
+          muts.forEach(function (m) {
+            m.addedNodes.forEach(function (n) {
+              if (n.nodeType !== 1) return;
+              fix(n); scan(n);
+              if (n.shadowRoot) observe(n.shadowRoot);
+            });
+          });
+        }).observe(root, { childList: true, subtree: true });
+      };
+      observe(document);
+      // نحمّل أوزان Rubik مسبقاً حتى يكون الخط جاهزاً في حقل الإدخال الخفي منذ أول لمسة
+      if (document.fonts && document.fonts.load) {
+        ['400', '500', '600', '700'].forEach(function (w) { document.fonts.load(w + ' 16px Rubik').catch(function () {}); });
+        document.fonts.load('700 16px BalooBhaijaan2').catch(function () {});
+      }
+      // flutter-view قد يُنشأ لاحقاً مع shadow root
+      var tick = setInterval(function () {
+        document.querySelectorAll('flutter-view, flt-glass-pane').forEach(function (v) { if (v.shadowRoot) observe(v.shadowRoot); });
+      }, 1000);
+      setTimeout(function () { clearInterval(tick); }, 30000);
+    })();
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>

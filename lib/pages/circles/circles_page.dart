@@ -100,36 +100,151 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
       );
 
   Future<void> _create() async {
-    final name = TextEditingController(), topic = TextEditingController();
-    bool isPublic = true;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          title: const Text('دائرة جديدة'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(controller: name, decoration: const InputDecoration(labelText: 'اسم الدائرة'), autofocus: true),
-            const SizedBox(height: 12),
-            TextField(controller: topic, decoration: const InputDecoration(labelText: 'الموضوع أو الوصف'), maxLines: 2),
-            const SizedBox(height: 8),
-            SwitchListTile(contentPadding: EdgeInsets.zero, value: isPublic, onChanged: (v) => setS(() => isPublic = v), title: const Text('دائرة عامة'), subtitle: const Text('يمكن لأي أحد إيجادها والانضمام')),
-          ]),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('إنشاء')),
-          ],
-        ),
-      ),
-    );
-    if (ok != true || name.text.trim().isEmpty) return;
+    final r = await showCreateCircleSheet(context);
+    if (r == null) return;
     try {
-      final v = await ref.read(apiClientProvider).createVessel(name: name.text.trim(), topic: topic.text.trim(), isPublic: isPublic);
+      final v = await ref.read(apiClientProvider).createVessel(name: r.name, topic: r.topic, isPublic: r.isPublic);
       ref.invalidate(myVesselsProvider);
       if (mounted) Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleDetailPage(vesselId: v.id, initial: v)));
     } catch (e) {
       if (mounted) toast(context, e.toString(), error: true);
     }
   }
+}
+
+/// ما تعود به ورقة إنشاء الدائرة.
+class NewCircle {
+  final String name, topic;
+  final bool isPublic;
+  const NewCircle({required this.name, required this.topic, required this.isPublic});
+}
+
+/// ورقة سفلية لإنشاء دائرة: تتحرك فوق لوحة المفاتيح ولا يغطّيها شيء، مع عدّاد للاسم واختيار عامة/خاصة كبطاقتين.
+Future<NewCircle?> showCreateCircleSheet(BuildContext context) => showModalBottomSheet<NewCircle>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: Joy.surface,
+      builder: (_) => const CreateCircleSheet(),
+    );
+
+class CreateCircleSheet extends StatefulWidget {
+  const CreateCircleSheet({super.key});
+  @override
+  State<CreateCircleSheet> createState() => _CreateCircleSheetState();
+}
+
+class _CreateCircleSheetState extends State<CreateCircleSheet> {
+  final _name = TextEditingController();
+  final _topic = TextEditingController();
+  var _public = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _name.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _topic.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final n = _name.text.trim();
+    if (n.isEmpty) return;
+    Navigator.of(context).pop(NewCircle(name: n, topic: _topic.text.trim(), isPublic: _public));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canCreate = _name.text.trim().isNotEmpty;
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 150),
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Container(width: 44, height: 44, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.groups_rounded, color: Joy.primary)),
+            const SizedBox(width: 12),
+            const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('دائرة جديدة', style: TextStyle(fontFamily: AppTheme.displayFont, fontWeight: FontWeight.w700, fontSize: 21)),
+              Text('مكان لأصدقائك أو جيرانك أو مهتمّين بموضوع واحد', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+            ])),
+          ]),
+          const SizedBox(height: 18),
+          TextField(
+            key: const Key('circle-name'),
+            controller: _name,
+            autofocus: true,
+            maxLength: 40,
+            textInputAction: TextInputAction.next,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+            decoration: const InputDecoration(labelText: 'اسم الدائرة', hintText: 'مثال: ناس لايف · التحديثات', prefixIcon: Icon(Icons.badge_outlined, color: Joy.textMuted)),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            key: const Key('circle-topic'),
+            controller: _topic,
+            maxLength: 160,
+            maxLines: 3,
+            minLines: 2,
+            textInputAction: TextInputAction.newline,
+            decoration: const InputDecoration(labelText: 'الموضوع أو الوصف', hintText: 'عمّ تتحدث الدائرة؟ يظهر للمنضمّين الجدد', alignLabelWithHint: true),
+          ),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: _VisibilityOption(key: const Key('circle-public'), selected: _public, icon: Icons.public_rounded, title: 'عامة', subtitle: 'يجدها الجميع وينضمون فوراً', onTap: () => setState(() => _public = true))),
+            const SizedBox(width: 10),
+            Expanded(child: _VisibilityOption(key: const Key('circle-private'), selected: !_public, icon: Icons.lock_outline_rounded, title: 'خاصة', subtitle: 'بدعوة منك فقط', onTap: () => setState(() => _public = false))),
+          ]),
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            key: const Key('circle-create'),
+            onPressed: canCreate ? _submit : null,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('إنشاء الدائرة'),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _VisibilityOption extends StatelessWidget {
+  final bool selected;
+  final IconData icon;
+  final String title, subtitle;
+  final VoidCallback onTap;
+  const _VisibilityOption({super.key, required this.selected, required this.icon, required this.title, required this.subtitle, required this.onTap});
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          decoration: BoxDecoration(
+            color: selected ? Joy.primarySoft : Joy.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: selected ? Joy.primary : Joy.line, width: selected ? 1.5 : 1),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(icon, size: 20, color: selected ? Joy.primary : Joy.textMuted),
+              const Spacer(),
+              if (selected) const Icon(Icons.check_circle_rounded, size: 18, color: Joy.primary),
+            ]),
+            const SizedBox(height: 8),
+            Text(title, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5, color: selected ? Joy.primary : Joy.text)),
+            Text(subtitle, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5, height: 1.4)),
+          ]),
+        ),
+      );
 }
 
 class VesselRow extends ConsumerWidget {

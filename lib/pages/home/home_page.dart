@@ -5,6 +5,7 @@ import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/posts_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/text/post_markup.dart';
 import '../../core/nav_provider.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
@@ -369,7 +370,7 @@ class PostCard extends ConsumerWidget {
           if (isAnnouncement) const Icon(Icons.campaign_rounded, color: Joy.sunText, size: 20),
         ]),
         const SizedBox(height: 10),
-        if (post.type == 'text') Text(post.content, style: const TextStyle(fontSize: 14.5, height: 1.6))
+        if (post.type == 'text') PostMarkup(post.content, fontSize: 14.5, collapsed: showVessel, onMore: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleDetailPage(vesselId: post.vesselId, focusPostId: post.id))))
         else if (post.type == 'image') ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.network(thumbUrl(post.content), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox()))
         else Row(children: [const Icon(Icons.attach_file_rounded, size: 18, color: Joy.textMuted), const SizedBox(width: 6), Expanded(child: Text(post.content, style: const TextStyle(color: Joy.textMuted)))]),
         if (post.caption.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(post.caption, style: const TextStyle(color: Joy.textMuted, fontSize: 13))),
