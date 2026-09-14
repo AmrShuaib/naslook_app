@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/chat_tools_api.dart';
 import '../../api/models.dart';
@@ -102,6 +103,8 @@ class MySpacePage extends ConsumerWidget {
             ListTile(leading: const Icon(Icons.saved_search_rounded, color: Joy.primary), title: const Text('بحوثي المحفوظة'), subtitle: const Text('تنبيه عند ظهور جديد يطابق ما تبحث عنه'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SavedSearchesPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.bookmark_added_outlined, color: Joy.accent), title: const Text('قائمة أمنياتي'), subtitle: const Text('منتجات وخدمات وفعاليات ومنشورات أتمناها'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WishlistPage()))),
+            const Divider(indent: 16, endIndent: 16, height: 1),
+            ListTile(key: const Key('blog-link'), leading: const Icon(Icons.newspaper_outlined, color: Joy.primary), title: const Text('التحديثات والأخبار'), subtitle: const Text('مدونة ناس لايف: كل جديد في التطبيق'), trailing: const Icon(Icons.open_in_new_rounded, color: Joy.textMuted, size: 18), onTap: () => launchUrl(Uri.parse('${publicOrigin()}/blog'), mode: LaunchMode.externalApplication)),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.storefront_outlined, color: Joy.sunText), title: const Text('عروضي وطلباتي في السوق'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 0)))),
           ])),
