@@ -161,7 +161,10 @@ export default async function blog(app, opts = {}) {
   const effective = (p, now = Date.now()) => (p.status !== "published" ? "draft" : p.publishedAt && p.publishedAt.getTime() > now ? "scheduled" : "published");
   const COLS = "id, slug, kind, title, summary, body, cover_url, tags, status, pinned, published_at, views, created_at, updated_at, author_id";
 
-  if (pool) {
+  let dbError = null, lastInit = 0;
+  async function initDb() {
+    if (!pool || dbOk) return;
+    lastInit = Date.now();
     try {
       await pool.query(`CREATE TABLE IF NOT EXISTS blog_posts (
         id UUID PRIMARY KEY, slug TEXT NOT NULL UNIQUE, kind TEXT NOT NULL DEFAULT 'update', title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '',
@@ -173,9 +176,12 @@ export default async function blog(app, opts = {}) {
         await pool.query(`INSERT INTO blog_posts(id, slug, kind, title, summary, body, status, published_at, created_at, updated_at) VALUES($1,$2,$3,$4,$5,$6,'published',$7,$7,$7) ON CONFLICT (slug) DO NOTHING`,
           [crypto.randomUUID(), p.slug, p.kind, p.title, p.summary, p.body, p.publishedAt]);
       }
-      dbOk = true;
-    } catch (e) { log("error", { err: e }, "blog: table/seed failed; serving static posts"); }
+      dbOk = true; dbError = null;
+    } catch (e) { dbError = String(e?.message ?? e).slice(0, 300); log("error", { err: e }, "blog: table/seed failed; serving static posts"); }
   }
+  await initDb();
+  // إعادة محاولة التهيئة عند أول طلب بعد دقيقة إن فشلت (قاعدة البيانات قد تكون متأخرة عند الإقلاع)
+  app.addHook("onRequest", async () => { if (pool && !dbOk && Date.now() - lastInit > 60e3) await initDb(); });
 
   async function publicPosts() {
     if (!dbOk) return staticPosts();
@@ -326,7 +332,7 @@ ${newer ? `<a href="/blog/${esc(newer.slug)}" style="text-align:left"><span>ال
     const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0"><channel><title>مدونة ${esc(SITE)}</title><link>${origin}/blog</link><description>تحديثات وأخبار وتدوينات ناس لايف</description><language>ar</language>\n${items}\n</channel></rss>`;
     return reply.type("application/rss+xml; charset=utf-8").header("cache-control", "public, max-age=120").send(xml);
   });
-  app.get("/blog/status", async () => { const list = await publicPosts(); return { ok: true, db: dbOk, posts: list.length, latest: list[0]?.slug ?? null, kinds: Object.keys(KINDS) }; });
+  app.get("/blog/status", async () => { const list = await publicPosts(); return { ok: true, db: dbOk, dbError, posts: list.length, latest: list[0]?.slug ?? null, kinds: Object.keys(KINDS) }; });
   app.get("/blog/:slug", async (req, reply) => {
     const slug = String(req.params.slug ?? "");
     const key = req.query?.key ? String(req.query.key) : null;
