@@ -41,6 +41,8 @@ String _fmt(DateTime? d) {
   return '${l.day}/${l.month}/${l.year} ${two(l.hour)}:${two(l.minute)}';
 }
 
+String _fmtDay(DateTime? d) { if (d == null) return ''; final l = d.toLocal(); return '${l.day}/${l.month}/${l.year}'; }
+
 Color _kindColor(String k) => switch (k) { 'news' => Joy.accent, 'post' => Joy.sunText, _ => Joy.primary };
 IconData _kindIcon(String k) => switch (k) { 'news' => Icons.campaign_outlined, 'post' => Icons.article_outlined, _ => Icons.new_releases_outlined };
 
@@ -178,7 +180,7 @@ class _AdminBlogPageState extends ConsumerState<AdminBlogPage> {
                     subtitle: Row(children: [
                       _StatusChip(p.effectiveStatus),
                       const SizedBox(width: 6),
-                      Expanded(child: Text('${p.kindLabel} · ${p.effectiveStatus == 'draft' ? 'عُدّل ${timeAgo(p.updatedAt)}' : _fmt(p.publishedAt)} · ${p.views} مشاهدة', maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      Expanded(child: Text('${p.kindLabel} · ${p.effectiveStatus == 'draft' ? 'عُدّل ${timeAgo(p.updatedAt)}' : _fmtDay(p.publishedAt)} · ${p.views} مشاهدة', maxLines: 1, overflow: TextOverflow.ellipsis)),
                     ]),
                     trailing: PopupMenuButton<String>(
                       key: Key('blog-menu-${p.id}'),
