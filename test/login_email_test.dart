@@ -62,7 +62,7 @@ void main() {
       child: const MaterialApp(locale: Locale('ar'), home: LoginPage()),
     ));
     await tester.pump();
-    expect(find.text('البريد الإلكتروني أو اسم المستخدم'), findsOneWidget);
+    expect(find.text('البريد أو اسم المستخدم'), findsOneWidget);
     final fields = find.byType(TextFormField);
     await tester.enterText(fields.at(0), 'Jeddahh@gmail.com');
     await tester.enterText(fields.at(1), 'Morio@1982');

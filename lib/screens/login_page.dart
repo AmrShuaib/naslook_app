@@ -95,7 +95,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
   String? _validateHandle(String? v) {
     final s = (v ?? '').trim().toLowerCase();
-    if (s.isEmpty) return 'أدخل البريد الإلكتروني أو اسم المستخدم';
+    if (s.isEmpty) return 'أدخل البريد أو اسم المستخدم';
     if (s.contains('@')) return _emailRe.hasMatch(s) ? null : 'صيغة البريد غير صحيحة';
     if (s.length < 3) return 'اسم المستخدم 3 خانات على الأقل';
     if (!_nickRe.hasMatch(s)) return 'حروف إنجليزية صغيرة وأرقام و _ فقط، بلا مسافات';
@@ -137,8 +137,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       );
 
-  Widget _emailField({required Key key, bool autofocus = false}) => TextFormField(
-        key: key, controller: _email, autofocus: autofocus, autofillHints: const [AutofillHints.email], textInputAction: TextInputAction.next,
+  Widget _emailField({required Key key, bool autofocus = false, bool last = false}) => TextFormField(
+        key: key, controller: _email, autofocus: autofocus, autofillHints: const [AutofillHints.email], textInputAction: last ? TextInputAction.done : TextInputAction.next,
+        onFieldSubmitted: last ? (_) => _submit() : null,
         keyboardType: TextInputType.emailAddress, autocorrect: false, textDirection: TextDirection.ltr,
         inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_@.+-]')), LengthLimitingTextInputFormatter(80)],
         validator: _validateEmail, decoration: _dec('البريد الإلكتروني', Icons.alternate_email_rounded),
@@ -157,7 +158,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               key: const Key('login-handle'), controller: _handle, autofillHints: const [AutofillHints.username, AutofillHints.email], textInputAction: TextInputAction.next,
               keyboardType: TextInputType.emailAddress, autocorrect: false, textDirection: TextDirection.ltr,
               inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_@.+-]')), LengthLimitingTextInputFormatter(80)],
-              validator: _validateHandle, decoration: _dec('البريد الإلكتروني أو اسم المستخدم', Icons.person),
+              validator: _validateHandle, decoration: _dec('البريد أو اسم المستخدم', Icons.person),
             ),
             const SizedBox(height: 20),
             _pinField(key: const Key('login-password')),
@@ -178,7 +179,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         _Mode.forgot => [
             const Text('اكتب بريدك المسجّل وسنرسل إليه رمزاً من 6 أرقام لتعيين كلمة سر جديدة.', style: TextStyle(color: Colors.black54, height: 1.5)),
             const SizedBox(height: 16),
-            _emailField(key: const Key('forgot-email'), autofocus: true),
+            _emailField(key: const Key('forgot-email'), autofocus: true, last: true),
           ],
         _Mode.reset => [
             Text('أرسلنا الرمز إلى ${_email.text.trim().toLowerCase()}. صالح لمدة 15 دقيقة.', style: const TextStyle(color: Colors.black54, height: 1.5)),
