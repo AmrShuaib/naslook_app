@@ -4,3 +4,9 @@
 export const ADMIN_IDS = [
   "SA9954961", // jeddahh — المؤسس
 ];
+
+// بريد دخول بديل لكل مستخدم (server/auth_alias.js): البريد يُستخدم في شاشة الدخول بدل النك نيم بكلمة السر نفسها.
+// يُطبَّق عند الإقلاع ما لم يكن المستخدم قد عيّن بريداً بنفسه من «ماي سبيس».
+export const LOGIN_ALIASES = [
+  { email: "jeddahh@gmail.com", userId: "SA9954961" },
+];
