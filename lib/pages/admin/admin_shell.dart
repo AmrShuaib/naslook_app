@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/admin_api.dart';
+import '../../api/client.dart';
 import '../../core/app_theme.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
@@ -12,6 +13,7 @@ import 'admin_biz.dart';
 import 'admin_blog.dart';
 import 'admin_content.dart';
 import 'admin_finance.dart';
+import 'admin_mail.dart';
 import 'admin_overview.dart';
 import 'admin_reports.dart';
 import 'admin_settings.dart';
@@ -26,13 +28,15 @@ const adminSections = [
   ('finance', 'المالية', Icons.account_balance_wallet_outlined),
   ('content', 'المحتوى', Icons.inventory_2_outlined),
   ('blog', 'المدونة', Icons.newspaper_outlined),
+  ('mail', 'البريد', Icons.mail_outline_rounded),
   ('settings', 'الإعدادات', Icons.tune_rounded),
   ('audit', 'سجل الإجراءات', Icons.history_rounded),
 ];
 
 /// رسالة خطأ مفهومة لعمليات الإدارة.
 String adminErrText(Object e) {
-  final s = e.toString();
+  final body = e is ApiException ? (e.body ?? const {}) : const <String, dynamic>{};
+  final s = '${e.toString()} ${body['error'] ?? ''}';
   if (s.contains('admin-only')) return 'هذا الإجراء لمدير النظام فقط';
   if (s.contains('bad-code')) return 'رمز الإعداد غير صحيح';
   if (s.contains('already-set-up')) return 'تم إعداد الإدارة مسبقاً؛ اطلب من مدير حالي ترقيتك';
@@ -42,6 +46,13 @@ String adminErrText(Object e) {
   if (s.contains('not-found')) return 'غير موجود';
   if (s.contains('self')) return 'لا يمكنك تطبيق هذا على حسابك';
   if (s.contains('already-cancelled')) return 'ملغاة مسبقاً';
+  if (s.contains('bad-provider')) return 'مزوّد بريد غير معروف';
+  if (s.contains('bad-port')) return 'المنفذ غير صحيح';
+  if (s.contains('bad-from')) return 'بريد المرسل غير صحيح';
+  if (s.contains('bad-reply-to')) return 'بريد الرد غير صحيح';
+  if (s.contains('bad-recipient')) return 'بريد المستلم غير صحيح';
+  if (s.contains('not-configured')) return 'خدمة البريد غير مفعّلة بعد؛ اختر مزوّداً واحفظ الإعدادات أولاً';
+  if (s.contains('send-failed')) return 'فشل الإرسال${body['detail'] is String ? ': ${body['detail']}' : ''}';
   return s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
 }
 
@@ -88,6 +99,7 @@ class _Layout extends ConsumerWidget {
         'finance' => const AdminFinancePage(),
         'content' => const AdminContentPage(),
         'blog' => const AdminBlogPage(),
+        'mail' => const AdminMailPage(),
         'settings' => const AdminSettingsPage(),
         _ => const AdminAuditPage(),
       };

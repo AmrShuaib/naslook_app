@@ -1,6 +1,16 @@
 import 'client.dart';
 import 'models.dart';
 
+/// بريد الدخول وحالة تأكيده (server/auth_alias.js).
+class LoginEmailInfo {
+  final String? email;
+  /// مؤكَّد بالرمز؟ · خدمة البريد مفعّلة على الخادم؟ · يوجد رمز صالح بانتظار الإدخال؟ · أُرسل رمز الآن؟
+  final bool verified, mailConfigured, codePending, codeSent;
+  final String? sendError;
+  const LoginEmailInfo({this.email, this.verified = false, this.mailConfigured = false, this.codePending = false, this.codeSent = false, this.sendError});
+  factory LoginEmailInfo.fromJson(Map m) => LoginEmailInfo(email: m['email']?.toString(), verified: m['verified'] == true, mailConfigured: m['mailConfigured'] == true, codePending: m['codePending'] == true, codeSent: m['codeSent'] == true, sendError: m['sendError']?.toString());
+}
+
 /// واجهة خادم Naslife فوق ApiClient (مسارات فعلية من src/index.js).
 extension NaslifeApi on ApiClient {
   // ---- الحساب والملف
@@ -16,10 +26,14 @@ extension NaslifeApi on ApiClient {
   Future<Person> userByHandle(String handle) async => Person.fromJson(await get('/users/$handle'));
   Future<Map<String, dynamic>> presenceOf(String id) => get('/presence/$id');
   Future<void> patchMe(Map<String, dynamic> patch) => patch_('/me', patch);
-  /// بريد الدخول البديل (server/auth_alias.js): يُستخدم في شاشة الدخول بدل النك نيم بكلمة السر نفسها.
-  Future<String?> loginEmail() async => (await get('/me/login-email'))['email']?.toString();
-  Future<String> setLoginEmail(String email) async => (await put('/me/login-email', {'email': email.trim()}))['email'].toString();
+  /// بريد الدخول البديل (server/auth_alias.js): يُستخدم في شاشة الدخول بدل النك نيم بكلمة السر نفسها،
+  /// ويُؤكَّد برمز من 6 أرقام يصل بالبريد عندما تكون خدمة البريد مفعّلة.
+  Future<LoginEmailInfo> loginEmail() async => LoginEmailInfo.fromJson(await get('/me/login-email'));
+  Future<LoginEmailInfo> setLoginEmail(String email) async => LoginEmailInfo.fromJson(await put('/me/login-email', {'email': email.trim()}));
   Future<void> clearLoginEmail() => delete('/me/login-email');
+  /// يطلب (أو يعيد) إرسال رمز التأكيد؛ يعيد صلاحيته بالثواني.
+  Future<int> sendLoginEmailCode() async { final r = await post('/me/login-email/send-code', const {}); return r['expiresIn'] is num ? (r['expiresIn'] as num).toInt() : 900; }
+  Future<LoginEmailInfo> verifyLoginEmail(String code) async => LoginEmailInfo.fromJson(await post('/me/login-email/verify', {'code': code.trim()}));
 
   // ---- جهات الاتصال والطلبات
   Future<List<Person>> contacts() async => asList(await getList('/contacts')).map(Person.fromJson).toList();

@@ -143,8 +143,9 @@ String clockOf(DateTime? t) {
   return '$h:$m ${t.hour < 12 ? 'ص' : 'م'}';
 }
 
+/// يعرض الرسالة فوراً بدل انتظار انتهاء الرسالة السابقة في الطابور (الأخطاء لا تُحجب خلف رسائل النجاح).
 void toast(BuildContext context, String msg, {bool error = false}) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: error ? Joy.danger : null));
+  ScaffoldMessenger.of(context)..hideCurrentSnackBar()..showSnackBar(SnackBar(content: Text(msg), backgroundColor: error ? Joy.danger : null));
 }
 
 Future<String?> askText(BuildContext context, {required String title, String? hint, String confirm = 'إرسال', int maxLines = 3, String? initial, TextInputType? keyboardType}) {

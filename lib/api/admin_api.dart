@@ -167,6 +167,35 @@ class AdminAudit {
         'biz.update' => 'تعديل دائرة تجارية', 'claim.approve' => 'قبول طلب ملكية', 'claim.reject' => 'رفض طلب ملكية', 'finance.export' => 'تصدير مالي', 'event.cancel' => 'إلغاء فعالية', 'market.hide' => 'إخفاء إعلان', 'settings.update' => 'تعديل الإعدادات', _ => action };
 }
 
+/// إعدادات خدمة البريد (server/mail.js)؛ الأسرار تصل مقنّعة ويُعاد إرسال القناع للإبقاء عليها.
+class AdminMailSettings {
+  final String provider, host, user, pass, apiKey, from, fromName, replyTo;
+  final int port;
+  final bool secure, hasPass, hasApiKey, configured;
+  const AdminMailSettings({this.provider = 'off', this.host = '', this.port = 587, this.secure = false, this.user = '', this.pass = '', this.apiKey = '', this.from = '', this.fromName = '', this.replyTo = '', this.hasPass = false, this.hasApiKey = false, this.configured = false});
+  factory AdminMailSettings.fromJson(Map m) => AdminMailSettings(
+        provider: m['provider']?.toString() ?? 'off', host: m['host']?.toString() ?? '', port: m['port'] == null ? 587 : _i(m['port']), secure: m['secure'] == true, user: m['user']?.toString() ?? '', pass: m['pass']?.toString() ?? '', apiKey: m['apiKey']?.toString() ?? '',
+        from: m['from']?.toString() ?? '', fromName: m['fromName']?.toString() ?? '', replyTo: m['replyTo']?.toString() ?? '', hasPass: m['hasPass'] == true, hasApiKey: m['hasApiKey'] == true, configured: m['configured'] == true,
+      );
+}
+
+/// سطر في سجل الإرسال.
+class AdminMailEntry {
+  final String id, to, subject, status;
+  final String? tag, error, provider;
+  final DateTime? at;
+  const AdminMailEntry({required this.id, required this.to, required this.subject, required this.status, this.tag, this.error, this.provider, this.at});
+  factory AdminMailEntry.fromJson(Map m) => AdminMailEntry(id: m['id'].toString(), to: m['to']?.toString() ?? '', subject: m['subject']?.toString() ?? '', status: m['status']?.toString() ?? '', tag: m['tag']?.toString(), error: m['error']?.toString(), provider: m['provider']?.toString(), at: _t(m['at']));
+  bool get sent => status == 'sent';
+}
+
+class AdminMailLog {
+  final List<AdminMailEntry> entries;
+  final int sent30d, failed30d;
+  const AdminMailLog({this.entries = const [], this.sent30d = 0, this.failed30d = 0});
+  factory AdminMailLog.fromJson(Map m) => AdminMailLog(entries: asList(m['log']).map(AdminMailEntry.fromJson).toList(), sent30d: _i(m['sent30d']), failed30d: _i(m['failed30d']));
+}
+
 /// إعلان عام يظهر للمستخدمين (من الإعدادات).
 class PublicSettings {
   final String announcement, supportHandle;
@@ -201,6 +230,12 @@ extension AdminApi on ApiClient {
   Future<List<AdminAudit>> adminAudit({int limit = 100}) async => asList(await getList('/adminapi/audit', query: {'limit': '$limit'})).map(AdminAudit.fromJson).toList();
   Future<List<({Person user, String grantedBy, DateTime? since})>> adminAdmins() async => [for (final a in asList(await getList('/adminapi/admins'))) (user: Person.fromJson(_m(a['user'])), grantedBy: a['grantedBy']?.toString() ?? '', since: _t(a['since']))];
   Future<PublicSettings> publicSettings() async => PublicSettings.fromJson(await get('/settings/public'));
+  // ---- خدمة البريد (server/mail.js)
+  Future<AdminMailSettings> adminMail() async => AdminMailSettings.fromJson(await get('/adminapi/mail'));
+  Future<AdminMailSettings> adminMailSave(Map<String, dynamic> patch) async => AdminMailSettings.fromJson(await put('/adminapi/mail', patch));
+  /// يرسل رسالة تجريبية ويعيد معرّف الرسالة عند المزوّد إن وُجد.
+  Future<String?> adminMailTest(String to) async => (await post('/adminapi/mail/test', {'to': to.trim()}))['id']?.toString();
+  Future<AdminMailLog> adminMailLog({int limit = 50}) async => AdminMailLog.fromJson(await get('/adminapi/mail/log', query: {'limit': '$limit'}));
 }
 
 // يُبقي الاستيراد مستخدماً للأنواع المشتركة في الواجهة

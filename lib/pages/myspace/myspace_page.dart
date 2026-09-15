@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/chat_tools_api.dart';
+import '../../api/client.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/notify_api.dart';
@@ -456,7 +458,8 @@ class _PushTileState extends ConsumerState<_PushTile> {
 }
 
 
-/// بريد الدخول البديل: يُستخدم في شاشة الدخول بدل النك نيم بكلمة السر نفسها (server/auth_alias.js).
+/// بريد الدخول البديل: يُستخدم في شاشة الدخول بدل النك نيم بكلمة السر نفسها (server/auth_alias.js)،
+/// ويُؤكَّد برمز يصل بالبريد عندما تكون خدمة البريد مفعّلة على الخادم.
 class _LoginEmailTile extends ConsumerStatefulWidget {
   const _LoginEmailTile();
   @override
@@ -464,8 +467,8 @@ class _LoginEmailTile extends ConsumerStatefulWidget {
 }
 
 class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
-  String? _email;
-  var _loaded = false, _unavailable = false;
+  LoginEmailInfo _info = const LoginEmailInfo();
+  var _loaded = false, _unavailable = false, _busy = false;
 
   @override
   void initState() {
@@ -475,26 +478,42 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
 
   Future<void> _load() async {
     try {
-      final e = await ref.read(apiClientProvider).loginEmail();
-      if (mounted) setState(() { _email = e; _loaded = true; });
+      final i = await ref.read(apiClientProvider).loginEmail();
+      if (mounted) setState(() { _info = i; _loaded = true; });
     } catch (_) {
       if (mounted) setState(() { _unavailable = true; _loaded = true; });
     }
   }
 
+  String _err(Object e) {
+    final body = e is ApiException ? (e.body ?? const {}) : const <String, dynamic>{};
+    final s = '${e.toString()} ${body['error'] ?? ''}';
+    if (s.contains('email-taken')) return 'هذا البريد مستخدم لحساب آخر';
+    if (s.contains('bad-email')) return 'صيغة البريد غير صحيحة';
+    if (s.contains('too-many-attempts')) return 'استُنفدت المحاولات؛ اطلب رمزاً جديداً';
+    if (s.contains('code-expired')) return 'انتهت صلاحية الرمز؛ اطلب رمزاً جديداً';
+    if (s.contains('bad-code')) return 'الرمز غير صحيح${body['attemptsLeft'] is num ? ' (بقي ${body['attemptsLeft']} محاولات)' : ''}';
+    if (s.contains('no-code')) return 'اطلب رمزاً أولاً';
+    if (s.contains('too-soon')) return 'انتظر دقيقة قبل إعادة الإرسال';
+    if (s.contains('mail-not-configured')) return 'خدمة البريد غير مفعّلة على الخادم بعد';
+    if (s.contains('send-failed')) return 'تعذّر إرسال الرسالة الآن؛ حاول لاحقاً';
+    if (s.contains('already-verified')) return 'البريد مؤكَّد مسبقاً';
+    return s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
+  }
+
   Future<void> _edit() async {
-    final c = TextEditingController(text: _email ?? '');
+    final c = TextEditingController(text: _info.email ?? '');
     final ok = await showDialog<bool>(
       context: context,
       builder: (d) => AlertDialog(
         title: const Text('بريد الدخول'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('ستدخل بهذا البريد بدل النك نيم، وبالرقم السري نفسه.', style: TextStyle(color: Joy.textMuted, fontSize: 13)),
+          Text(_info.mailConfigured ? 'ستدخل بهذا البريد بدل النك نيم، وبالرقم السري نفسه. سنرسل إليه رمز تأكيد.' : 'ستدخل بهذا البريد بدل النك نيم، وبالرقم السري نفسه.', style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
           const SizedBox(height: 10),
           TextField(key: const Key('login-email-field'), controller: c, autofocus: true, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, autocorrect: false, decoration: const InputDecoration(hintText: 'name@example.com')),
         ]),
         actions: [
-          if (_email != null) TextButton(key: const Key('login-email-clear'), onPressed: () => Navigator.pop(d, false), child: const Text('إزالة البريد', style: TextStyle(color: Joy.danger))),
+          if (_info.email != null) TextButton(key: const Key('login-email-clear'), onPressed: () => Navigator.pop(d, false), child: const Text('إزالة البريد', style: TextStyle(color: Joy.danger))),
           TextButton(onPressed: () => Navigator.pop(d), child: const Text('إلغاء')),
           FilledButton(key: const Key('login-email-save'), onPressed: () => Navigator.pop(d, true), child: const Text('حفظ')),
         ],
@@ -503,26 +522,116 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
     if (ok == null) return;
     try {
       if (ok) {
-        final e = await ref.read(apiClientProvider).setLoginEmail(c.text);
-        setState(() => _email = e);
-        if (mounted) toast(context, 'صار بإمكانك الدخول بـ $e');
+        final i = await ref.read(apiClientProvider).setLoginEmail(c.text);
+        setState(() => _info = i);
+        if (!mounted) return;
+        if (i.codeSent) {
+          toast(context, 'أرسلنا رمز التأكيد إلى ${i.email}');
+          await _verifyDialog();
+        } else if (i.sendError != null) {
+          toast(context, 'حُفظ البريد لكن تعذّر إرسال رمز التأكيد الآن', error: true);
+        } else {
+          toast(context, 'صار بإمكانك الدخول بـ ${i.email}');
+        }
       } else {
         await ref.read(apiClientProvider).clearLoginEmail();
-        setState(() => _email = null);
+        setState(() => _info = LoginEmailInfo(mailConfigured: _info.mailConfigured));
         if (mounted) toast(context, 'أُزيل بريد الدخول');
       }
     } catch (e) {
-      if (mounted) toast(context, e.toString().contains('email-taken') ? 'هذا البريد مستخدم لحساب آخر' : e.toString().contains('bad-email') ? 'صيغة البريد غير صحيحة' : e.toString(), error: true);
+      if (mounted) toast(context, _err(e), error: true);
+    }
+  }
+
+  /// يطلب رمزاً (إن لم يكن هناك رمز صالح) ثم يفتح مربع إدخاله.
+  Future<void> _startVerify() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      if (!_info.codePending) {
+        await ref.read(apiClientProvider).sendLoginEmailCode();
+        if (mounted) toast(context, 'أرسلنا رمز التأكيد إلى ${_info.email}');
+      }
+      if (mounted) await _verifyDialog();
+    } catch (e) {
+      if (mounted && !e.toString().contains('too-soon')) toast(context, _err(e), error: true);
+      if (mounted && e.toString().contains('too-soon')) await _verifyDialog();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _verifyDialog() async {
+    final c = TextEditingController();
+    String? error;
+    var sending = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (d) => StatefulBuilder(builder: (d, setD) => AlertDialog(
+        title: const Text('تأكيد البريد'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('أدخل الرمز المكوّن من 6 أرقام الذي وصل إلى ${_info.email}. الرمز صالح 15 دقيقة.', style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
+          const SizedBox(height: 10),
+          TextField(
+            key: const Key('login-email-code'), controller: c, autofocus: true, keyboardType: TextInputType.number, textDirection: TextDirection.ltr, textAlign: TextAlign.center, maxLength: 6,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly], style: const TextStyle(fontSize: 24, letterSpacing: 8, fontWeight: FontWeight.w700),
+            decoration: InputDecoration(hintText: '000000', counterText: '', errorText: error),
+            onSubmitted: (_) => Navigator.pop(d, true),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            key: const Key('login-email-code-resend'),
+            onPressed: sending ? null : () async {
+              setD(() => sending = true);
+              try { await ref.read(apiClientProvider).sendLoginEmailCode(); setD(() { error = null; sending = false; }); if (d.mounted) toast(d, 'أُعيد إرسال الرمز'); }
+              catch (e) { setD(() { error = _err(e); sending = false; }); }
+            },
+            child: const Text('إعادة الإرسال'),
+          ),
+          TextButton(onPressed: () => Navigator.pop(d), child: const Text('لاحقاً')),
+          FilledButton(key: const Key('login-email-code-ok'), onPressed: () => Navigator.pop(d, true), child: const Text('تأكيد')),
+        ],
+      )),
+    );
+    if (ok != true) return;
+    try {
+      final i = await ref.read(apiClientProvider).verifyLoginEmail(c.text);
+      setState(() => _info = i);
+      if (mounted) toast(context, i.verified ? 'تم تأكيد بريدك' : 'لم يُؤكَّد البريد');
+    } catch (e) {
+      if (!mounted) return;
+      toast(context, _err(e), error: true);
+      if (e.toString().contains('bad-code')) await _verifyDialog();
     }
   }
 
   @override
-  Widget build(BuildContext context) => ListTile(
-        key: const Key('login-email'),
-        leading: const Icon(Icons.alternate_email_rounded, color: Joy.primary),
-        title: const Text('بريد الدخول'),
-        subtitle: Text(!_loaded ? '…' : _unavailable ? 'غير متاح على هذا الخادم' : (_email ?? 'أضف بريداً لتدخل به بدل النك نيم'), textDirection: _email != null ? TextDirection.ltr : null, textAlign: _email != null ? TextAlign.right : null),
-        trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
-        onTap: _unavailable ? null : _edit,
-      );
+  Widget build(BuildContext context) {
+    final email = _info.email;
+    final showVerify = email != null && !_info.verified && _info.mailConfigured;
+    return ListTile(
+      key: const Key('login-email'),
+      leading: const Icon(Icons.alternate_email_rounded, color: Joy.primary),
+      title: const Text('بريد الدخول'),
+      subtitle: !_loaded
+          ? const Text('…')
+          : _unavailable
+              ? const Text('غير متاح على هذا الخادم')
+              : email == null
+                  ? const Text('أضف بريداً لتدخل به بدل النك نيم')
+                  : Row(children: [
+                      Flexible(child: Text(email, textDirection: TextDirection.ltr, textAlign: TextAlign.right, overflow: TextOverflow.ellipsis)),
+                      const SizedBox(width: 6),
+                      if (_info.verified)
+                        const Icon(Icons.verified_rounded, key: Key('login-email-verified'), size: 16, color: Joy.success)
+                      else if (_info.mailConfigured)
+                        const Text('غير مؤكَّد', key: Key('login-email-unverified'), style: TextStyle(color: Joy.warning, fontSize: 12)),
+                    ]),
+      trailing: showVerify
+          ? TextButton(key: const Key('login-email-verify'), onPressed: _busy ? null : _startVerify, child: Text(_busy ? '…' : 'تأكيد'))
+          : const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+      onTap: _unavailable ? null : _edit,
+    );
+  }
 }
