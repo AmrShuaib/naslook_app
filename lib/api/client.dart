@@ -93,18 +93,46 @@ class ApiClient {
   // المصادقة
   // ---------------------------------------------------------------------------
 
-  /// تسجيل حساب جديد بالنك نيم + الرقم السري.
-  Future<Session> register({required String nickname, required String pin}) async {
-    final data = await post('/register', {
-      'nickname': nickname.trim(),
-      'password': pin.trim(),
-    });
+  /// تسجيل حساب جديد بالبريد الإلكتروني + اسم المستخدم + كلمة السر عبر إضافة الحسابات بالبريد (server/auth_alias.js)؛
+  /// وإن لم تكن منشورة على الخادم نرجع إلى مسار النواة /register بالنك نيم فقط.
+  Future<Session> register({required String nickname, required String pin, String? email}) async {
+    Map<String, dynamic> data;
+    if (email != null && email.trim().isNotEmpty) {
+      try {
+        data = await post('/auth/register', {'email': email.trim().toLowerCase(), 'nickname': nickname.trim(), 'password': pin.trim()});
+      } on ApiException catch (e) {
+        if (e.statusCode != 404) rethrow;
+        data = await post('/register', {'nickname': nickname.trim(), 'password': pin.trim()});
+      }
+    } else {
+      data = await post('/register', {'nickname': nickname.trim(), 'password': pin.trim()});
+    }
     final session = Session.fromJson(data);
     if (!session.isValid) {
       throw ApiException(500, 'الخادم لم يُرجع رمز جلسة', body: data);
     }
     token = session.token;
     return session;
+  }
+
+  /// نسيت كلمة السر: يطلب إرسال رمز إلى البريد (الرد عام دائماً كي لا يُكشف وجود الحساب).
+  Future<void> forgotPassword(String email) => post('/auth/forgot', {'email': email.trim().toLowerCase()});
+
+  /// يعيّن كلمة سر جديدة بالرمز الذي وصل بالبريد ويعيد جلسة دخول.
+  Future<Session> resetPassword({required String email, required String code, required String password}) async {
+    final data = await post('/auth/reset', {'email': email.trim().toLowerCase(), 'code': code.trim(), 'password': password});
+    final session = Session.fromJson(data);
+    if (!session.isValid) throw ApiException(500, 'الخادم لم يُرجع رمز جلسة', body: data);
+    token = session.token;
+    return session;
+  }
+
+  /// تغيير كلمة السر للمستخدم الحالي بكلمة السر الحالية؛ يعيد رمز الجلسة الجديد إن أصدرته النواة ويعتمده.
+  Future<String?> changePassword({required String current, required String next}) async {
+    final r = await post('/auth/change-password', {'current': current, 'password': next});
+    final t = r['token']?.toString();
+    if (t != null && t.isNotEmpty) token = t;
+    return t;
   }
 
   /// الدخول بالنك نيم أو البريد + الرقم السري: عبر إضافة الدخول بالبريد (server/auth_alias.js)، وإن لم تكن
@@ -239,6 +267,17 @@ class ApiClient {
     'not-found': 'الحساب غير موجود',
     'deleted': 'هذا الحساب محذوف',
     'too-many': 'محاولات كثيرة، انتظر دقيقة ثم حاول',
+    'too-many-attempts': 'محاولات كثيرة، انتظر دقيقة ثم حاول',
+    'email-taken': 'هذا البريد مسجّل لحساب آخر؛ سجّل الدخول به أو استخدم «نسيت كلمة السر»',
+    'bad-email': 'صيغة البريد الإلكتروني غير صحيحة',
+    'bad-code': 'الرمز غير صحيح',
+    'code-expired': 'انتهت صلاحية الرمز؛ اطلب رمزاً جديداً',
+    'no-code': 'اطلب رمزاً أولاً',
+    'too-soon': 'انتظر دقيقة قبل طلب رمز جديد',
+    'mail-not-configured': 'خدمة البريد غير مفعّلة على الخادم بعد، فلا يمكن إرسال الرمز الآن',
+    'no-recovery': 'لا يمكن استعادة هذا الحساب بالبريد؛ ادخل بكلمة السر أو استخدم عبارة الاسترداد',
+    'bad-password': 'كلمة السر الحالية غير صحيحة',
+    'send-failed': 'تعذّر إرسال الرسالة الآن؛ حاول لاحقاً',
   };
 
   String _errorMessage(int status, Map<String, dynamic> body) {

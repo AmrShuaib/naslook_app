@@ -165,6 +165,10 @@ class MySpacePage extends ConsumerWidget {
               const Divider(indent: 16, endIndent: 16),
               const _LoginEmailTile(),
               const Divider(indent: 16, endIndent: 16),
+              const _PasswordTile(),
+              const Divider(indent: 16, endIndent: 16),
+              const _RecoveryTile(),
+              const Divider(indent: 16, endIndent: 16),
               ListTile(
                 leading: const Icon(Icons.logout_rounded, color: Joy.danger),
                 title: const Text('تسجيل الخروج', style: TextStyle(color: Joy.danger)),
@@ -508,7 +512,7 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
       builder: (d) => AlertDialog(
         title: const Text('بريد الدخول'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(_info.mailConfigured ? 'ستدخل بهذا البريد بدل النك نيم، وبالرقم السري نفسه. سنرسل إليه رمز تأكيد.' : 'ستدخل بهذا البريد بدل النك نيم، وبالرقم السري نفسه.', style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
+          Text(_info.mailConfigured ? 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها، وتصلك عليه رموز التأكيد واستعادة كلمة السر.' : 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها.', style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
           const SizedBox(height: 10),
           TextField(key: const Key('login-email-field'), controller: c, autofocus: true, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, autocorrect: false, decoration: const InputDecoration(hintText: 'name@example.com')),
         ]),
@@ -602,7 +606,7 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
     } catch (e) {
       if (!mounted) return;
       toast(context, _err(e), error: true);
-      if (e.toString().contains('bad-code')) await _verifyDialog();
+      if (e is ApiException && e.body?['error'] == 'bad-code') await _verifyDialog();
     }
   }
 
@@ -632,6 +636,139 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
           ? TextButton(key: const Key('login-email-verify'), onPressed: _busy ? null : _startVerify, child: Text(_busy ? '…' : 'تأكيد'))
           : const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
       onTap: _unavailable ? null : _edit,
+    );
+  }
+}
+
+/// تغيير كلمة السر بكلمة السر الحالية (server/auth_alias.js يعيد التعيين عبر عبارة الاسترداد المحفوظة ويصدر جلسة جديدة).
+class _PasswordTile extends ConsumerWidget {
+  const _PasswordTile();
+
+  static String errText(Object e) {
+    final s = '${e.toString()} ${e is ApiException ? (e.body?['error'] ?? '') : ''}';
+    if (s.contains('bad-password')) return 'كلمة السر الحالية غير صحيحة';
+    if (s.contains('no-recovery')) return 'فعّل «الاستعادة بالبريد» أولاً بإدخال عبارة الاسترداد';
+    if (s.contains('weak-password')) return 'كلمة السر الجديدة يجب أن تكون 8 خانات على الأقل';
+    return s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
+  }
+
+  Future<void> _change(BuildContext context, WidgetRef ref) async {
+    final cur = TextEditingController(), next = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: const Text('تغيير كلمة السر'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(key: const Key('cp-current'), controller: cur, obscureText: true, autofocus: true, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'كلمة السر الحالية')),
+          const SizedBox(height: 10),
+          TextField(key: const Key('cp-new'), controller: next, obscureText: true, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'كلمة السر الجديدة', helperText: '8 خانات على الأقل')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(d), child: const Text('إلغاء')),
+          FilledButton(key: const Key('cp-save'), onPressed: () => Navigator.pop(d, true), child: const Text('تغيير')),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    if (next.text.length < 8) { toast(context, 'كلمة السر الجديدة يجب أن تكون 8 خانات على الأقل', error: true); return; }
+    try {
+      final token = await ref.read(apiClientProvider).changePassword(current: cur.text, next: next.text);
+      await ref.read(appStateProvider.notifier).adoptToken(token);
+      if (context.mounted) toast(context, 'تم تغيير كلمة السر');
+    } catch (e) {
+      if (context.mounted) toast(context, errText(e), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => ListTile(
+        key: const Key('change-password'),
+        leading: const Icon(Icons.password_rounded, color: Joy.primary),
+        title: const Text('تغيير كلمة السر'),
+        subtitle: const Text('بكلمة السر الحالية'),
+        trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+        onTap: () => _change(context, ref),
+      );
+}
+
+/// الاستعادة بالبريد: الحسابات الجديدة مفعّلة تلقائياً، والقديمة تُفعَّل مرة واحدة بإدخال عبارة الاسترداد وكلمة السر.
+class _RecoveryTile extends ConsumerStatefulWidget {
+  const _RecoveryTile();
+  @override
+  ConsumerState<_RecoveryTile> createState() => _RecoveryTileState();
+}
+
+class _RecoveryTileState extends ConsumerState<_RecoveryTile> {
+  RecoveryInfo? _info;
+  var _unavailable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final i = await ref.read(apiClientProvider).recoveryStatus();
+      if (mounted) setState(() => _info = i);
+    } catch (_) {
+      if (mounted) setState(() => _unavailable = true);
+    }
+  }
+
+  Future<void> _enable() async {
+    final phrase = TextEditingController(), pw = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: const Text('تفعيل الاستعادة بالبريد'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('أدخل عبارة الاسترداد التي حصلت عليها عند التسجيل وكلمة سرك الحالية. سنحفظ عبارة جديدة مشفّرة على الخادم لتتمكن من إعادة تعيين كلمة السر برمز يصل إلى بريدك.', style: TextStyle(color: Joy.textMuted, fontSize: 13, height: 1.5)),
+          const SizedBox(height: 10),
+          TextField(key: const Key('recovery-phrase'), controller: phrase, autofocus: true, maxLines: 2, decoration: const InputDecoration(labelText: 'عبارة الاسترداد', hintText: 'ست كلمات مفصولة بمسافات')),
+          const SizedBox(height: 10),
+          TextField(key: const Key('recovery-password'), controller: pw, obscureText: true, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'كلمة السر الحالية')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(d), child: const Text('إلغاء')),
+          FilledButton(key: const Key('recovery-save'), onPressed: () => Navigator.pop(d, true), child: const Text('تفعيل')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final token = await ref.read(apiClientProvider).enableRecovery(phrase: phrase.text, password: pw.text);
+      await ref.read(appStateProvider.notifier).adoptToken(token);
+      if (!mounted) return;
+      setState(() => _info = RecoveryInfo(enabled: true, email: _info?.email, verified: _info?.verified ?? false, mailConfigured: _info?.mailConfigured ?? false));
+      toast(context, 'فُعّلت الاستعادة بالبريد');
+    } catch (e) {
+      if (!mounted) return;
+      final s = '${e.toString()} ${e is ApiException ? (e.body?['error'] ?? '') : ''}';
+      toast(context, s.contains('bad-phrase') ? 'عبارة الاسترداد غير صحيحة' : s.contains('bad-password') ? 'كلمة السر غير صحيحة' : s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), ''), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final i = _info;
+    final subtitle = _unavailable
+        ? 'غير متاحة على هذا الخادم'
+        : i == null
+            ? '…'
+            : !i.enabled
+                ? 'غير مفعّلة: أدخل عبارة الاسترداد مرة واحدة'
+                : i.email == null
+                    ? 'مفعّلة، لكن أضف بريد الدخول لتصلك رموز الاستعادة'
+                    : 'مفعّلة: يصلك رمز على ${i.email} عند نسيان كلمة السر';
+    return ListTile(
+      key: const Key('recovery'),
+      leading: Icon(i?.enabled == true ? Icons.verified_user_rounded : Icons.shield_outlined, color: i?.enabled == true ? Joy.success : Joy.primary),
+      title: const Text('الاستعادة بالبريد'),
+      subtitle: Text(subtitle),
+      trailing: i != null && !i.enabled ? TextButton(key: const Key('recovery-enable'), onPressed: _enable, child: const Text('تفعيل')) : null,
+      onTap: i != null && !i.enabled ? _enable : null,
     );
   }
 }

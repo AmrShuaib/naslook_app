@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/client.dart';
 import '../state/app_state.dart';
 
-/// شاشة الدخول/التسجيل بالنك نيم + الرقم السري (بدون تشفير من جهة العميل).
+enum _Mode { login, register, forgot, reset }
+
+/// شاشة الدخول والتسجيل بالبريد الإلكتروني وكلمة السر (بدون تشفير من جهة العميل)، مع استعادة كلمة السر
+/// برمز يصل بالبريد. الدخول يقبل البريد أو اسم المستخدم للحسابات القديمة.
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
 
@@ -14,69 +18,187 @@ class LoginPage extends ConsumerStatefulWidget {
 
 class _LoginPageState extends ConsumerState<LoginPage> {
   final _formKey = GlobalKey<FormState>();
-  final _nickname = TextEditingController();
-  final _pin = TextEditingController();
-  bool _isRegister = false;
-  bool _showPin = false;
+  final _handle = TextEditingController(), _email = TextEditingController(), _nickname = TextEditingController(), _pin = TextEditingController(), _code = TextEditingController();
+  _Mode _mode = _Mode.login;
+  bool _showPin = false, _localBusy = false;
 
   static const _primary = Color(0xFF1565C0);
 
   @override
   void dispose() {
-    _nickname.dispose();
-    _pin.dispose();
+    for (final c in [_handle, _email, _nickname, _pin, _code]) {
+      c.dispose();
+    }
     super.dispose();
   }
+
+  bool get _isRegister => _mode == _Mode.register;
+
+  void _toast(String msg, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg), backgroundColor: error ? Colors.red[700] : null));
+  }
+
+  void _switch(_Mode m) {
+    ref.read(appStateProvider.notifier).clearError();
+    _formKey.currentState?.reset();
+    setState(() { _mode = m; _showPin = false; });
+  }
+
+  String _err(Object e) => e is ApiException ? e.message : 'حدث خطأ غير متوقع';
 
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final notifier = ref.read(appStateProvider.notifier);
-    final nickname = _nickname.text.trim().toLowerCase();
     final pin = _pin.text.trim();
-    final ok = _isRegister
-        ? await notifier.register(nickname, pin)
-        : await notifier.login(nickname, pin);
-    if (!ok && mounted) {
-      final error = ref.read(appStateProvider).error;
-      if (error != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error), backgroundColor: Colors.red[700]),
-        );
-      }
+    switch (_mode) {
+      case _Mode.login:
+        final ok = await notifier.login(_handle.text.trim().toLowerCase(), pin);
+        if (!ok) _showStateError();
+      case _Mode.register:
+        final ok = await notifier.register(_nickname.text.trim().toLowerCase(), pin, email: _email.text.trim().toLowerCase());
+        if (!ok) _showStateError();
+      case _Mode.forgot:
+        await _sendCode();
+      case _Mode.reset:
+        final ok = await notifier.resetPassword(email: _email.text.trim().toLowerCase(), code: _code.text.trim(), password: pin);
+        if (!ok) _showStateError();
     }
   }
 
-  // قواعد الخادم: النك نيم [a-z0-9_] من 3 إلى 32، والرقم السري 8 خانات على الأقل عند التسجيل
+  void _showStateError() {
+    if (!mounted) return;
+    final error = ref.read(appStateProvider).error;
+    if (error != null) _toast(error, error: true);
+  }
+
+  /// يطلب رمز الاستعادة ثم ينتقل إلى خطوة إدخال الرمز وكلمة السر الجديدة.
+  Future<void> _sendCode() async {
+    setState(() => _localBusy = true);
+    try {
+      await ref.read(apiClientProvider).forgotPassword(_email.text);
+      _toast('إن كان البريد مسجّلاً لدينا فسيصلك رمز خلال دقيقة');
+      if (mounted) setState(() { _mode = _Mode.reset; _code.clear(); _pin.clear(); });
+    } catch (e) {
+      _toast(_err(e), error: true);
+    } finally {
+      if (mounted) setState(() => _localBusy = false);
+    }
+  }
+
+  // قواعد الخادم: اسم المستخدم [a-z0-9_] من 3 إلى 32، وكلمة السر 8 خانات على الأقل عند التسجيل
   static final _nickRe = RegExp(r'^[a-z0-9_]{3,32}$');
   static final _emailRe = RegExp(r'^[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9.-]+\.[a-z]{2,}$');
   static const _pinMin = 8;
 
+  String? _validateHandle(String? v) {
+    final s = (v ?? '').trim().toLowerCase();
+    if (s.isEmpty) return 'أدخل البريد الإلكتروني أو اسم المستخدم';
+    if (s.contains('@')) return _emailRe.hasMatch(s) ? null : 'صيغة البريد غير صحيحة';
+    if (s.length < 3) return 'اسم المستخدم 3 خانات على الأقل';
+    if (!_nickRe.hasMatch(s)) return 'حروف إنجليزية صغيرة وأرقام و _ فقط، بلا مسافات';
+    return null;
+  }
+
+  String? _validateEmail(String? v) {
+    final s = (v ?? '').trim().toLowerCase();
+    if (s.isEmpty) return 'أدخل البريد الإلكتروني';
+    if (!_emailRe.hasMatch(s)) return 'صيغة البريد غير صحيحة';
+    return null;
+  }
+
   String? _validateNickname(String? v) {
     final s = (v ?? '').trim().toLowerCase();
-    if (s.isEmpty) return 'أدخل النك نيم أو البريد';
-    // الدخول بالبريد الإلكتروني (لا يصلح للتسجيل: النك نيم يُنشأ بحروف وأرقام فقط)
-    if (s.contains('@')) return _emailRe.hasMatch(s) ? (_isRegister ? 'التسجيل بالنك نيم فقط، والبريد يُضاف لاحقاً من ماي سبيس' : null) : 'صيغة البريد غير صحيحة';
-    if (s.length < 3) return 'النك نيم يجب أن يكون 3 خانات على الأقل';
-    if (s.length > 32) return 'النك نيم يجب ألا يتجاوز 32 خانة';
-    if (!_nickRe.hasMatch(s)) {
-      return 'حروف إنجليزية صغيرة وأرقام و _ فقط، بلا مسافات';
-    }
+    if (s.isEmpty) return 'أدخل اسم المستخدم';
+    if (s.length < 3) return 'اسم المستخدم يجب أن يكون 3 خانات على الأقل';
+    if (s.length > 32) return 'اسم المستخدم يجب ألا يتجاوز 32 خانة';
+    if (!_nickRe.hasMatch(s)) return 'حروف إنجليزية صغيرة وأرقام و _ فقط، بلا مسافات';
     return null;
   }
 
   String? _validatePin(String? v) {
     final s = (v ?? '').trim();
-    if (s.isEmpty) return 'أدخل الرقم السري';
-    if (_isRegister && s.length < _pinMin) {
-      return 'الرقم السري يجب أن يكون $_pinMin خانات على الأقل';
-    }
-    if (s.length > 64) return 'الرقم السري طويل جداً';
+    if (s.isEmpty) return 'أدخل كلمة السر';
+    if ((_isRegister || _mode == _Mode.reset) && s.length < _pinMin) return 'كلمة السر يجب أن تكون $_pinMin خانات على الأقل';
+    if (s.length > 64) return 'كلمة السر طويلة جداً';
     return null;
   }
 
+  String? _validateCode(String? v) {
+    final s = (v ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+    if (s.length != 6) return 'الرمز مكوّن من 6 أرقام';
+    return null;
+  }
+
+  InputDecoration _dec(String label, IconData icon, {String? helper, Widget? suffix}) => InputDecoration(
+        labelText: label, helperText: helper, helperMaxLines: 2, prefixIcon: Icon(icon), suffixIcon: suffix,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      );
+
+  Widget _emailField({required Key key, bool autofocus = false}) => TextFormField(
+        key: key, controller: _email, autofocus: autofocus, autofillHints: const [AutofillHints.email], textInputAction: TextInputAction.next,
+        keyboardType: TextInputType.emailAddress, autocorrect: false, textDirection: TextDirection.ltr,
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_@.+-]')), LengthLimitingTextInputFormatter(80)],
+        validator: _validateEmail, decoration: _dec('البريد الإلكتروني', Icons.alternate_email_rounded),
+      );
+
+  Widget _pinField({required Key key, String? helper, String label = 'كلمة السر', bool last = true, List<String>? hints}) => TextFormField(
+        key: key, controller: _pin, obscureText: !_showPin, keyboardType: TextInputType.visiblePassword,
+        inputFormatters: [LengthLimitingTextInputFormatter(64)], autofillHints: hints ?? const [AutofillHints.password],
+        textInputAction: last ? TextInputAction.done : TextInputAction.next, onFieldSubmitted: last ? (_) => _submit() : null, validator: _validatePin,
+        decoration: _dec(label, Icons.lock, helper: helper, suffix: IconButton(icon: Icon(_showPin ? Icons.visibility_off : Icons.visibility), onPressed: () => setState(() => _showPin = !_showPin))),
+      );
+
+  List<Widget> _fields() => switch (_mode) {
+        _Mode.login => [
+            TextFormField(
+              key: const Key('login-handle'), controller: _handle, autofillHints: const [AutofillHints.username, AutofillHints.email], textInputAction: TextInputAction.next,
+              keyboardType: TextInputType.emailAddress, autocorrect: false, textDirection: TextDirection.ltr,
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_@.+-]')), LengthLimitingTextInputFormatter(80)],
+              validator: _validateHandle, decoration: _dec('البريد الإلكتروني أو اسم المستخدم', Icons.person),
+            ),
+            const SizedBox(height: 20),
+            _pinField(key: const Key('login-password')),
+            Align(alignment: AlignmentDirectional.centerStart, child: TextButton(key: const Key('login-forgot'), onPressed: () => _switch(_Mode.forgot), child: const Text('نسيت كلمة السر؟', style: TextStyle(color: _primary)))),
+          ],
+        _Mode.register => [
+            _emailField(key: const Key('reg-email')),
+            const SizedBox(height: 16),
+            TextFormField(
+              key: const Key('reg-nickname'), controller: _nickname, autofillHints: const [AutofillHints.newUsername], textInputAction: TextInputAction.next,
+              keyboardType: TextInputType.visiblePassword, autocorrect: false, textDirection: TextDirection.ltr,
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_]')), LengthLimitingTextInputFormatter(32)],
+              validator: _validateNickname, decoration: _dec('اسم المستخدم', Icons.badge_outlined, helper: 'يظهر للآخرين: حروف إنجليزية صغيرة وأرقام و _ (3 إلى 32)'),
+            ),
+            const SizedBox(height: 16),
+            _pinField(key: const Key('reg-password'), helper: '8 خانات على الأقل، حروف أو أرقام أو رموز', hints: const [AutofillHints.newPassword]),
+          ],
+        _Mode.forgot => [
+            const Text('اكتب بريدك المسجّل وسنرسل إليه رمزاً من 6 أرقام لتعيين كلمة سر جديدة.', style: TextStyle(color: Colors.black54, height: 1.5)),
+            const SizedBox(height: 16),
+            _emailField(key: const Key('forgot-email'), autofocus: true),
+          ],
+        _Mode.reset => [
+            Text('أرسلنا الرمز إلى ${_email.text.trim().toLowerCase()}. صالح لمدة 15 دقيقة.', style: const TextStyle(color: Colors.black54, height: 1.5)),
+            const SizedBox(height: 16),
+            TextFormField(
+              key: const Key('reset-code'), controller: _code, autofocus: true, keyboardType: TextInputType.number, textDirection: TextDirection.ltr, textAlign: TextAlign.center,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)], autofillHints: const [AutofillHints.oneTimeCode],
+              style: const TextStyle(fontSize: 22, letterSpacing: 6, fontWeight: FontWeight.w700), validator: _validateCode, decoration: _dec('رمز التأكيد', Icons.pin_outlined),
+            ),
+            const SizedBox(height: 16),
+            _pinField(key: const Key('reset-password'), label: 'كلمة السر الجديدة', helper: '8 خانات على الأقل', hints: const [AutofillHints.newPassword]),
+            Align(alignment: AlignmentDirectional.centerStart, child: TextButton(key: const Key('reset-resend'), onPressed: _localBusy ? null : _sendCode, child: const Text('لم يصلك؟ إعادة الإرسال', style: TextStyle(color: _primary)))),
+          ],
+      };
+
   @override
   Widget build(BuildContext context) {
-    final busy = ref.watch(appStateProvider.select((s) => s.busy));
+    final busy = ref.watch(appStateProvider.select((s) => s.busy)) || _localBusy;
+    final title = switch (_mode) { _Mode.login => 'تسجيل الدخول', _Mode.register => 'إنشاء حساب جديد', _Mode.forgot => 'استعادة كلمة السر', _Mode.reset => 'كلمة سر جديدة' };
+    final action = switch (_mode) { _Mode.login => 'دخول', _Mode.register => 'إنشاء الحساب', _Mode.forgot => 'إرسال الرمز', _Mode.reset => 'تعيين كلمة السر' };
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -91,126 +213,28 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text(
-                      'NASLIFE',
-                      style: TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                        color: _primary,
-                        letterSpacing: 2,
-                      ),
-                    ),
+                    const Text('NASLIFE', style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: _primary, letterSpacing: 2)),
                     const SizedBox(height: 40),
                     Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Colors.black12,
-                            blurRadius: 12,
-                            offset: Offset(0, 6),
-                          ),
-                        ],
-                      ),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 12, offset: Offset(0, 6))]),
                       padding: const EdgeInsets.all(24),
                       child: Form(
                         key: _formKey,
                         child: AutofillGroup(
                           child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Text(
-                                _isRegister ? 'إنشاء حساب جديد' : 'تسجيل الدخول',
-                                style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 20),
-                              TextFormField(
-                                controller: _nickname,
-                                enabled: !busy,
-                                autofillHints: const [AutofillHints.username],
-                                textInputAction: TextInputAction.next,
-                                keyboardType: TextInputType.visiblePassword,
-                                autocorrect: false,
-                                textDirection: TextDirection.ltr,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_@.+-]')),
-                                  LengthLimitingTextInputFormatter(32),
-                                ],
-                                validator: _validateNickname,
-                                decoration: InputDecoration(
-                                  labelText: _isRegister ? 'النك نيم' : 'النك نيم أو البريد',
-                                  helperText: _isRegister
-                                      ? 'حروف إنجليزية صغيرة وأرقام و _ (3 إلى 32)'
-                                      : null,
-                                  prefixIcon: const Icon(Icons.person),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 20),
-                              TextFormField(
-                                controller: _pin,
-                                enabled: !busy,
-                                obscureText: !_showPin,
-                                keyboardType: TextInputType.visiblePassword,
-                                inputFormatters: [
-                                  LengthLimitingTextInputFormatter(64),
-                                ],
-                                autofillHints: const [AutofillHints.password],
-                                textInputAction: TextInputAction.done,
-                                onFieldSubmitted: (_) => _submit(),
-                                validator: _validatePin,
-                                decoration: InputDecoration(
-                                  labelText: 'الرقم السري',
-                                  helperText: _isRegister ? '8 خانات على الأقل، حروف أو أرقام أو رموز' : null,
-                                  prefixIcon: const Icon(Icons.lock),
-                                  suffixIcon: IconButton(
-                                    icon: Icon(_showPin
-                                        ? Icons.visibility_off
-                                        : Icons.visibility),
-                                    onPressed: () =>
-                                        setState(() => _showPin = !_showPin),
-                                  ),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 30),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: _primary,
-                                    foregroundColor: Colors.white,
-                                    padding:
-                                        const EdgeInsets.symmetric(vertical: 16),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  onPressed: busy ? null : _submit,
-                                  child: busy
-                                      ? const SizedBox(
-                                          width: 22,
-                                          height: 22,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.5,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : Text(
-                                          _isRegister ? 'إنشاء الحساب' : 'دخول',
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                ),
+                              ..._fields(),
+                              const SizedBox(height: 24),
+                              ElevatedButton(
+                                key: const Key('auth-submit'),
+                                style: ElevatedButton.styleFrom(backgroundColor: _primary, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                                onPressed: busy ? null : _submit,
+                                child: busy
+                                    ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                                    : Text(action, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                               ),
                             ],
                           ),
@@ -218,20 +242,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    TextButton(
-                      onPressed: busy
-                          ? null
-                          : () {
-                              ref.read(appStateProvider.notifier).clearError();
-                              setState(() => _isRegister = !_isRegister);
-                            },
-                      child: Text(
-                        _isRegister
-                            ? 'لديك حساب؟ تسجيل الدخول'
-                            : 'ليس لديك حساب؟ إنشاء حساب جديد',
-                        style: const TextStyle(color: _primary),
-                      ),
-                    ),
+                    if (_mode == _Mode.login || _mode == _Mode.register)
+                      TextButton(
+                        key: const Key('auth-toggle'),
+                        onPressed: busy ? null : () => _switch(_isRegister ? _Mode.login : _Mode.register),
+                        child: Text(_isRegister ? 'لديك حساب؟ تسجيل الدخول' : 'ليس لديك حساب؟ إنشاء حساب جديد', style: const TextStyle(color: _primary)),
+                      )
+                    else
+                      TextButton(key: const Key('auth-back'), onPressed: busy ? null : () => _switch(_Mode.login), child: const Text('العودة إلى تسجيل الدخول', style: TextStyle(color: _primary))),
                   ],
                 ),
               ),

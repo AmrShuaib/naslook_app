@@ -146,7 +146,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('هذه هي الطريقة الوحيدة لاستعادة حسابك إن نسيت الرقم السري. لن تُعرض مرة أخرى.'),
+            const Text('نسخة احتياطية لاستعادة حسابك إن نسيت كلمة السر ولم تصلك رسائل البريد. لن تُعرض مرة أخرى.'),
             const SizedBox(height: 12),
             SelectableText(phrase, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           ],

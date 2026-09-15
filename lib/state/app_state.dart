@@ -99,8 +99,12 @@ class AppStateNotifier extends StateNotifier<AppState> {
   Future<bool> login(String nickname, String pin) =>
       _authenticate(() => _api.login(nickname: nickname, pin: pin));
 
-  Future<bool> register(String nickname, String pin) =>
-      _authenticate(() => _api.register(nickname: nickname, pin: pin));
+  Future<bool> register(String nickname, String pin, {String? email}) =>
+      _authenticate(() => _api.register(nickname: nickname, pin: pin, email: email));
+
+  /// تعيين كلمة سر جديدة بالرمز الذي وصل بالبريد ثم الدخول مباشرة.
+  Future<bool> resetPassword({required String email, required String code, required String password}) =>
+      _authenticate(() => _api.resetPassword(email: email, code: code, password: password));
 
   Future<bool> _authenticate(Future<Session> Function() action) async {
     if (state.busy) return false;
@@ -149,6 +153,16 @@ class AppStateNotifier extends StateNotifier<AppState> {
     final next = s.copyWith(user: user);
     state = state.copyWith(session: next);
     // الحفظ المحلي لا يوقف الواجهة: إن تعذّر تبقى الجلسة المحدّثة في الذاكرة
+    unawaited(_store.save(next).catchError((_) {}));
+  }
+
+  /// تعتمد رمز جلسة جديداً أصدرته النواة (بعد تغيير كلمة السر مثلاً) وتحفظه محلياً.
+  Future<void> adoptToken(String? token) async {
+    final s = state.session;
+    if (token == null || token.isEmpty || s == null) return;
+    _api.token = token;
+    final next = s.copyWith(token: token, clearRecovery: true);
+    state = state.copyWith(session: next);
     unawaited(_store.save(next).catchError((_) {}));
   }
 

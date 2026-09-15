@@ -11,6 +11,14 @@ class LoginEmailInfo {
   factory LoginEmailInfo.fromJson(Map m) => LoginEmailInfo(email: m['email']?.toString(), verified: m['verified'] == true, mailConfigured: m['mailConfigured'] == true, codePending: m['codePending'] == true, codeSent: m['codeSent'] == true, sendError: m['sendError']?.toString());
 }
 
+/// حالة الاستعادة بالبريد لحساب المستخدم (server/auth_alias.js).
+class RecoveryInfo {
+  final bool enabled, verified, mailConfigured;
+  final String? email;
+  const RecoveryInfo({this.enabled = false, this.email, this.verified = false, this.mailConfigured = false});
+  factory RecoveryInfo.fromJson(Map m) => RecoveryInfo(enabled: m['enabled'] == true, email: m['email']?.toString(), verified: m['verified'] == true, mailConfigured: m['mailConfigured'] == true);
+}
+
 /// واجهة خادم Naslife فوق ApiClient (مسارات فعلية من src/index.js).
 extension NaslifeApi on ApiClient {
   // ---- الحساب والملف
@@ -34,6 +42,15 @@ extension NaslifeApi on ApiClient {
   /// يطلب (أو يعيد) إرسال رمز التأكيد؛ يعيد صلاحيته بالثواني.
   Future<int> sendLoginEmailCode() async { final r = await post('/me/login-email/send-code', const {}); return r['expiresIn'] is num ? (r['expiresIn'] as num).toInt() : 900; }
   Future<LoginEmailInfo> verifyLoginEmail(String code) async => LoginEmailInfo.fromJson(await post('/me/login-email/verify', {'code': code.trim()}));
+  /// الاستعادة بالبريد: هل عبارة الاسترداد محفوظة على الخادم لهذا الحساب؟ وتفعيلها بإدخال العبارة وكلمة السر الحالية.
+  Future<RecoveryInfo> recoveryStatus() async => RecoveryInfo.fromJson(await get('/me/recovery'));
+  /// يعيد رمز الجلسة الجديد إن أصدرته النواة (إعادة التعيين تلغي الجلسات القديمة).
+  Future<String?> enableRecovery({required String phrase, required String password}) async {
+    final r = await put('/me/recovery', {'phrase': phrase.trim(), 'password': password});
+    final t = r['token']?.toString();
+    if (t != null && t.isNotEmpty) token = t;
+    return t;
+  }
 
   // ---- جهات الاتصال والطلبات
   Future<List<Person>> contacts() async => asList(await getList('/contacts')).map(Person.fromJson).toList();
