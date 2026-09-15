@@ -620,13 +620,13 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
               ? const Text('غير متاح على هذا الخادم')
               : email == null
                   ? const Text('أضف بريداً لتدخل به بدل النك نيم')
-                  : Row(children: [
-                      Flexible(child: Text(email, textDirection: TextDirection.ltr, textAlign: TextAlign.right, overflow: TextOverflow.ellipsis)),
-                      const SizedBox(width: 6),
-                      if (_info.verified)
-                        const Icon(Icons.verified_rounded, key: Key('login-email-verified'), size: 16, color: Joy.success)
-                      else if (_info.mailConfigured)
-                        const Text('غير مؤكَّد', key: Key('login-email-unverified'), style: TextStyle(color: Joy.warning, fontSize: 12)),
+                  : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        Flexible(child: Text(email, textDirection: TextDirection.ltr, textAlign: TextAlign.right, overflow: TextOverflow.ellipsis)),
+                        if (_info.verified) ...[const SizedBox(width: 6), const Icon(Icons.verified_rounded, key: Key('login-email-verified'), size: 16, color: Joy.success)],
+                      ]),
+                      if (!_info.verified && _info.mailConfigured)
+                        const Text('غير مؤكَّد · اضغط «تأكيد» لإدخال الرمز الذي وصلك', key: Key('login-email-unverified'), style: TextStyle(color: Joy.warning, fontSize: 12)),
                     ]),
       trailing: showVerify
           ? TextButton(key: const Key('login-email-verify'), onPressed: _busy ? null : _startVerify, child: Text(_busy ? '…' : 'تأكيد'))
