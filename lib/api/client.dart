@@ -107,12 +107,17 @@ class ApiClient {
     return session;
   }
 
-  /// الدخول بالنك نيم + الرقم السري.
+  /// الدخول بالنك نيم أو البريد + الرقم السري: عبر إضافة الدخول بالبريد (server/auth_alias.js)، وإن لم تكن
+  /// منشورة على الخادم نرجع إلى مسار النواة /login بالنك نيم.
   Future<Session> login({required String nickname, required String pin}) async {
-    final data = await post('/login', {
-      'handle': nickname.trim(),
-      'password': pin.trim(),
-    });
+    final body = {'handle': nickname.trim(), 'password': pin.trim()};
+    Map<String, dynamic> data;
+    try {
+      data = await post('/auth/login', body);
+    } on ApiException catch (e) {
+      if (e.statusCode != 404) rethrow;
+      data = await post('/login', body);
+    }
     final session = Session.fromJson(data);
     if (!session.isValid) {
       throw ApiException(500, 'الخادم لم يُرجع رمز جلسة', body: data);

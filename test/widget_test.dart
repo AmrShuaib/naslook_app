@@ -11,7 +11,7 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: MainApp()));
     await tester.pumpAndSettle();
 
-    expect(find.text('النك نيم'), findsOneWidget);
+    expect(find.text('النك نيم أو البريد'), findsOneWidget);
     expect(find.text('الرقم السري'), findsOneWidget);
     expect(find.text('دخول'), findsOneWidget);
   });

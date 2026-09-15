@@ -161,6 +161,8 @@ class MySpacePage extends ConsumerWidget {
             child: Column(children: [
               ListTile(leading: const Icon(Icons.person_outline_rounded, color: Joy.text), title: const Text('النك نيم'), subtitle: Text(me?.nickname ?? ''), trailing: Text(me?.id ?? '', style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
               const Divider(indent: 16, endIndent: 16),
+              const _LoginEmailTile(),
+              const Divider(indent: 16, endIndent: 16),
               ListTile(
                 leading: const Icon(Icons.logout_rounded, color: Joy.danger),
                 title: const Text('تسجيل الخروج', style: TextStyle(color: Joy.danger)),
@@ -451,4 +453,76 @@ class _PushTileState extends ConsumerState<_PushTile> {
       ),
     ]);
   }
+}
+
+
+/// بريد الدخول البديل: يُستخدم في شاشة الدخول بدل النك نيم بكلمة السر نفسها (server/auth_alias.js).
+class _LoginEmailTile extends ConsumerStatefulWidget {
+  const _LoginEmailTile();
+  @override
+  ConsumerState<_LoginEmailTile> createState() => _LoginEmailTileState();
+}
+
+class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
+  String? _email;
+  var _loaded = false, _unavailable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final e = await ref.read(apiClientProvider).loginEmail();
+      if (mounted) setState(() { _email = e; _loaded = true; });
+    } catch (_) {
+      if (mounted) setState(() { _unavailable = true; _loaded = true; });
+    }
+  }
+
+  Future<void> _edit() async {
+    final c = TextEditingController(text: _email ?? '');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: const Text('بريد الدخول'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('ستدخل بهذا البريد بدل النك نيم، وبالرقم السري نفسه.', style: TextStyle(color: Joy.textMuted, fontSize: 13)),
+          const SizedBox(height: 10),
+          TextField(key: const Key('login-email-field'), controller: c, autofocus: true, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, autocorrect: false, decoration: const InputDecoration(hintText: 'name@example.com')),
+        ]),
+        actions: [
+          if (_email != null) TextButton(key: const Key('login-email-clear'), onPressed: () => Navigator.pop(d, false), child: const Text('إزالة البريد', style: TextStyle(color: Joy.danger))),
+          TextButton(onPressed: () => Navigator.pop(d), child: const Text('إلغاء')),
+          FilledButton(key: const Key('login-email-save'), onPressed: () => Navigator.pop(d, true), child: const Text('حفظ')),
+        ],
+      ),
+    );
+    if (ok == null) return;
+    try {
+      if (ok) {
+        final e = await ref.read(apiClientProvider).setLoginEmail(c.text);
+        setState(() => _email = e);
+        if (mounted) toast(context, 'صار بإمكانك الدخول بـ $e');
+      } else {
+        await ref.read(apiClientProvider).clearLoginEmail();
+        setState(() => _email = null);
+        if (mounted) toast(context, 'أُزيل بريد الدخول');
+      }
+    } catch (e) {
+      if (mounted) toast(context, e.toString().contains('email-taken') ? 'هذا البريد مستخدم لحساب آخر' : e.toString().contains('bad-email') ? 'صيغة البريد غير صحيحة' : e.toString(), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+        key: const Key('login-email'),
+        leading: const Icon(Icons.alternate_email_rounded, color: Joy.primary),
+        title: const Text('بريد الدخول'),
+        subtitle: Text(!_loaded ? '…' : _unavailable ? 'غير متاح على هذا الخادم' : (_email ?? 'أضف بريداً لتدخل به بدل النك نيم'), textDirection: _email != null ? TextDirection.ltr : null, textAlign: _email != null ? TextAlign.right : null),
+        trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+        onTap: _unavailable ? null : _edit,
+      );
 }

@@ -16,6 +16,10 @@ extension NaslifeApi on ApiClient {
   Future<Person> userByHandle(String handle) async => Person.fromJson(await get('/users/$handle'));
   Future<Map<String, dynamic>> presenceOf(String id) => get('/presence/$id');
   Future<void> patchMe(Map<String, dynamic> patch) => patch_('/me', patch);
+  /// بريد الدخول البديل (server/auth_alias.js): يُستخدم في شاشة الدخول بدل النك نيم بكلمة السر نفسها.
+  Future<String?> loginEmail() async => (await get('/me/login-email'))['email']?.toString();
+  Future<String> setLoginEmail(String email) async => (await put('/me/login-email', {'email': email.trim()}))['email'].toString();
+  Future<void> clearLoginEmail() => delete('/me/login-email');
 
   // ---- جهات الاتصال والطلبات
   Future<List<Person>> contacts() async => asList(await getList('/contacts')).map(Person.fromJson).toList();

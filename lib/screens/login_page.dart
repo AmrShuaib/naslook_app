@@ -48,11 +48,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
   // قواعد الخادم: النك نيم [a-z0-9_] من 3 إلى 32، والرقم السري 8 خانات على الأقل عند التسجيل
   static final _nickRe = RegExp(r'^[a-z0-9_]{3,32}$');
+  static final _emailRe = RegExp(r'^[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9.-]+\.[a-z]{2,}$');
   static const _pinMin = 8;
 
   String? _validateNickname(String? v) {
     final s = (v ?? '').trim().toLowerCase();
-    if (s.isEmpty) return 'أدخل النك نيم';
+    if (s.isEmpty) return 'أدخل النك نيم أو البريد';
+    // الدخول بالبريد الإلكتروني (لا يصلح للتسجيل: النك نيم يُنشأ بحروف وأرقام فقط)
+    if (s.contains('@')) return _emailRe.hasMatch(s) ? (_isRegister ? 'التسجيل بالنك نيم فقط، والبريد يُضاف لاحقاً من ماي سبيس' : null) : 'صيغة البريد غير صحيحة';
     if (s.length < 3) return 'النك نيم يجب أن يكون 3 خانات على الأقل';
     if (s.length > 32) return 'النك نيم يجب ألا يتجاوز 32 خانة';
     if (!_nickRe.hasMatch(s)) {
@@ -133,12 +136,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 autocorrect: false,
                                 textDirection: TextDirection.ltr,
                                 inputFormatters: [
-                                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_]')),
+                                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_@.+-]')),
                                   LengthLimitingTextInputFormatter(32),
                                 ],
                                 validator: _validateNickname,
                                 decoration: InputDecoration(
-                                  labelText: 'النك نيم',
+                                  labelText: _isRegister ? 'النك نيم' : 'النك نيم أو البريد',
                                   helperText: _isRegister
                                       ? 'حروف إنجليزية صغيرة وأرقام و _ (3 إلى 32)'
                                       : null,
