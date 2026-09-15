@@ -97,6 +97,15 @@ export default async function admin(app, opts) {
     }
   }
   await grantFromOpsFile();
+  // ---- مديرون من المستودع (server/admin_bootstrap.js): يُقرأ الملف إن وُجد فقط
+  try {
+    const { ADMIN_IDS } = await import("./admin_bootstrap.js");
+    for (const raw of Array.isArray(ADMIN_IDS) ? ADMIN_IDS : []) {
+      const id = String(raw ?? "").trim().toUpperCase();
+      if (!ID_RE.test(id)) continue;
+      await pool.query("INSERT INTO admins(user_id, granted_by) VALUES($1,'repo') ON CONFLICT DO NOTHING", [id]);
+    }
+  } catch { /* لا ملف تمهيد */ }
   let setupCode = null;
   async function ensureSetupCode() {
     if ((await adminCount()) > 0) { setupCode = null; return; }
