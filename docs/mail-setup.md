@@ -42,11 +42,18 @@
 
 - **تأكيد بريد الدخول**: عند إضافة بريد أو تغييره من ماي سبيس يصل رمز من 6 أرقام صالح 15 دقيقة (5 محاولات، إعادة إرسال كل دقيقة).
   الدخول بالبريد ممكن قبل التأكيد؛ التأكيد يثبت أن البريد يخص صاحب الحساب. بريد المؤسس المعرَّف في `server/admin_bootstrap.js` يُعدّ مؤكَّداً تلقائياً.
-- **استعادة كلمة السر بالبريد غير متاحة**: كلمات السر في نواة الخادم لا تملك واجهة لإعادة التعيين، فتبقى **عبارة الاستعادة** هي الطريقة المعتمدة.
+- **التسجيل بالبريد**: شاشة التسجيل تطلب البريد واسم المستخدم وكلمة السر (`POST /auth/register`)؛ يُنشأ الحساب في النواة ويُربط بالبريد
+  وتُحفظ عبارة الاسترداد مشفّرة على الخادم (`account_recovery`، مفتاح `OPS/auth-key`).
+- **نسيت كلمة السر**: `POST /auth/forgot {email}` يرسل رمزاً من 6 أرقام، و`POST /auth/reset {email, code, password}` يعيد التعيين عبر
+  `/recover` في النواة بالعبارة المحفوظة ثم يدخل مباشرة. النواة تصدر عبارة جديدة تُحفظ بدل القديمة وتلغي الجلسات القديمة.
+- **الحسابات القديمة** (المسجّلة بالنك نيم قبل هذه الميزة): تُفعَّل الاستعادة مرة واحدة من ماي سبيس ← «الاستعادة بالبريد» بإدخال
+  عبارة الاسترداد وكلمة السر الحالية. قبل ذلك يصل لطالب الاستعادة بريد يشرح أن الاستعادة غير مفعّلة بعد.
+- **تغيير كلمة السر**: ماي سبيس ← «تغيير كلمة السر» بكلمة السر الحالية (`POST /auth/change-password`).
 - لبقية الإضافات: `globalThis.naslifeMail.send({ to, subject, text, html, tag })` و`naslifeMail.template({ title, lines, code })`.
 
 ## المسارات
 
 - عام: `GET /mail/status` → `{ configured, provider }`
 - إدارة: `GET/PUT /adminapi/mail` (الأسرار مقنّعة `••••••••` وتبقى محفوظة إن أُعيد إرسال القناع)، `POST /adminapi/mail/test { to }`، `GET /adminapi/mail/log`
-- المستخدم: `GET/PUT/DELETE /me/login-email`، `POST /me/login-email/send-code`، `POST /me/login-email/verify { code }`
+- المستخدم: `GET/PUT/DELETE /me/login-email`، `POST /me/login-email/send-code`، `POST /me/login-email/verify { code }`، `GET/PUT /me/recovery`
+- الحسابات: `POST /auth/register`، `POST /auth/login`، `POST /auth/forgot`، `POST /auth/reset`، `POST /auth/change-password`
