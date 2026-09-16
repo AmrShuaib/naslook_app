@@ -332,6 +332,8 @@ export default async function mail(app, opts = {}) {
       try {
         const p = await providerDomain(d.provider, settings.apiKey, action, { domain: d.name, id: d.id }, fetchFn());
         next = { ...next, id: p.id ?? next.id, status: p.status, records: withDmarc(next, p.records), error: null };
+        // نطاق وُثّق سابقاً: إعادة فحص المزوّد تُظهر «قيد الفحص» مؤقتاً؛ نبقيه موثّقاً ما لم يعلن المزوّد فشلاً
+        if (d.verifiedAt && p.status !== "failed") next.status = "verified";
       } catch (e) { next.error = String(e.message).slice(0, 200); }
     }
     next.records = await Promise.all((next.records ?? []).map(async (r) => ({ ...r, dnsOk: await dnsMatches(r, next.name, fetchFn()) })));
@@ -379,7 +381,8 @@ export default async function mail(app, opts = {}) {
     const uid = await guard(req, reply); if (!uid) return;
     await load();
     if (!settings.domain) return bad(reply, 404, "no-domain");
-    const out = await refreshDomain("verify");
+    // بعد التوثيق لا نطلب إعادة التحقق من المزوّد (تعيد الحالة إلى قيد الفحص)، بل نقرأ الحالة فقط
+    const out = await refreshDomain(settings.domain.verifiedAt ? "get" : "verify");
     await audit(uid, "mail.domain.verify", { domain: out.name, status: out.status });
     return { domain: out, suggested: suggested(req), providerReady: DOMAIN_PROVIDERS.has(settings.provider) && !!settings.apiKey, provider: settings.provider, from: settings.from };
   });
