@@ -289,6 +289,11 @@ class ApiClient {
     'no-recovery': 'لا يمكن استعادة هذا الحساب بالبريد؛ ادخل بكلمة السر أو استخدم عبارة الاسترداد',
     'bad-password': 'كلمة السر الحالية غير صحيحة',
     'send-failed': 'تعذّر إرسال الرسالة الآن؛ حاول لاحقاً',
+    'provider-required': 'اختر Resend أو Brevo واحفظ مفتاح API أولاً',
+    'bad-domain': 'اكتب اسم نطاق صحيحاً مثل naslife.app',
+    'bad-local': 'اسم البريد قبل @ يحتوي أحرفاً غير مسموحة',
+    'provider-failed': 'رفض المزوّد الطلب؛ تأكد من صحة المفتاح وصلاحياته',
+    'no-domain': 'لم يُربط أي نطاق بعد',
   };
 
   String _errorMessage(int status, Map<String, dynamic> body) {

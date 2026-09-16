@@ -40,10 +40,11 @@ final adminBlogPostProvider = FutureProvider.family<BlogPost, String>((ref, id) 
 /// إعدادات خدمة البريد وسجل الإرسال في لوحة الإدارة.
 final adminMailProvider = FutureProvider<AdminMailSettings>((ref) => ref.watch(apiClientProvider).adminMail());
 final adminMailLogProvider = FutureProvider<AdminMailLog>((ref) => ref.watch(apiClientProvider).adminMailLog());
+final adminMailDomainProvider = FutureProvider<AdminMailDomainInfo>((ref) => ref.watch(apiClientProvider).adminMailDomain());
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
 
 void invalidateAdmin(WidgetRef ref) {
-  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider]) {
+  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider]) {
     ref.invalidate(p);
   }
   ref.invalidate(adminUsersProvider);

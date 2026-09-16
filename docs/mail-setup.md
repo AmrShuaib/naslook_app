@@ -57,3 +57,24 @@
 - إدارة: `GET/PUT /adminapi/mail` (الأسرار مقنّعة `••••••••` وتبقى محفوظة إن أُعيد إرسال القناع)، `POST /adminapi/mail/test { to }`، `GET /adminapi/mail/log`
 - المستخدم: `GET/PUT/DELETE /me/login-email`، `POST /me/login-email/send-code`، `POST /me/login-email/verify { code }`، `GET/PUT /me/recovery`
 - الحسابات: `POST /auth/register`، `POST /auth/login`، `POST /auth/forgot`، `POST /auth/reset`، `POST /auth/change-password`
+
+## بريد رسمي باسم النطاق (admin@naslife.app)
+
+بدل بريد شخصي، تُرسل رسائل التأكيد والاستعادة من بريد رسمي باسم التطبيق. نطاق naslife.app مسجّل في name.com ولا يحمل أي
+سجلات بريد اليوم (لا MX ولا SPF ولا DMARC)، فالطريق الأقصر والمجاني:
+
+1. **حساب Resend** (resend.com، مجاناً 3000 رسالة شهرياً): من API Keys أنشئ مفتاحاً بصلاحية Full access.
+2. **لوحة الإدارة ← البريد**: اختر Resend، الصق المفتاح، واحفظ (اترك المرسل كما هو مؤقتاً).
+3. **قسم «بريد رسمي باسم النطاق»**: الاسم `admin` والنطاق `naslife.app` ثم «ابدأ الربط». تظهر سجلات DNS المطلوبة
+   (MX وTXT للـ SPF على `send`، وTXT للـ DKIM على `resend._domainkey`، وDMARC مقترح على `_dmarc`).
+4. **name.com**: My Domains ← naslife.app ← DNS Records ← Add Record. انسخ كل سجل بزر النسخ: النوع، الـ Host كما هو (بدون
+   اسم النطاق)، القيمة، والأولوية 10 لسجل MX. الانتشار يأخذ من دقائق إلى ساعة.
+5. **«تحقق الآن»**: اللوحة تفحص كل سجل في DNS وتطلب التوثيق من Resend. عند النجاح يتبدّل المرسل تلقائياً إلى
+   `admin@naslife.app`؛ أرسل رسالة تجريبية للتأكد.
+6. **استقبال الردود**: name.com يوفّر Email Forwarding مجاناً؛ حوّل `admin@naslife.app` إلى بريدك الشخصي. البديل ImprovMX.
+7. (اختياري) للرد من Gmail باسم admin@naslife.app: Settings ← Accounts ← Send mail as، الخادم `smtp.resend.com`
+   والمنفذ 465، اسم المستخدم `resend` وكلمة السر مفتاح API.
+
+Brevo مدعوم بالطريقة نفسها (المفتاح xkeysib-…)، وسجلاته: DKIM على `mail._domainkey`، وكود التحقق على النطاق نفسه، وDMARC.
+
+المسارات: `GET/POST/DELETE /adminapi/mail/domain` و`POST /adminapi/mail/domain/verify` (للمديرين فقط).

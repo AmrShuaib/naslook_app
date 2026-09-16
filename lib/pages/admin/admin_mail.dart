@@ -79,6 +79,15 @@ class _AdminMailPageState extends ConsumerState<AdminMailPage> {
     }
   }
 
+  /// بعد توثيق النطاق يتبدّل المرسل على الخادم: نعيد جلب الإعدادات ونملأ الحقول بالقيم الجديدة.
+  Future<void> _reloadSettings() async {
+    try {
+      final s = await ref.refresh(adminMailProvider.future);
+      if (!mounted) return;
+      setState(() { loaded = false; _load(s); });
+    } catch (_) { /* تُعرض عند إعادة البناء */ }
+  }
+
   Future<void> _sendTest() async {
     final to = testTo.text.trim();
     if (to.isEmpty || !to.contains('@')) { toast(context, 'اكتب بريداً صحيحاً لاستلام الرسالة التجريبية', error: true); return; }
@@ -115,7 +124,7 @@ class _AdminMailPageState extends ConsumerState<AdminMailPage> {
             Text(switch (provider) {
               'off' => 'لن تُرسل أي رسالة (تأكيد البريد معطّل). اختر مزوّداً لتفعيل الخدمة.',
               'smtp' => 'أي بريد يدعم SMTP: Gmail أو Outlook أو Zoho أو خادم بريدك الخاص. الأنسب للبداية بلا اشتراك.',
-              'resend' => 'خدمة Resend: مفتاح API من resend.com بعد إثبات ملكية النطاق naslife.app.',
+              'resend' => 'خدمة Resend: 3000 رسالة شهرياً مجاناً. أنشئ مفتاح API بصلاحية كاملة من resend.com ثم اربط النطاق من قسم «بريد رسمي باسم النطاق» أدناه.',
               'brevo' => 'خدمة Brevo: مفتاح API (xkeysib-…) من إعدادات الحساب، مع 300 رسالة يومياً مجاناً.',
               _ => 'خدمة SendGrid: مفتاح API بصلاحية Mail Send من لوحة SendGrid.',
             }, style: const TextStyle(color: Joy.textMuted, fontSize: 13, height: 1.6)),
@@ -163,6 +172,9 @@ class _AdminMailPageState extends ConsumerState<AdminMailPage> {
           ],
           const SizedBox(height: 12),
           FilledButton.icon(key: const Key('mail-save'), onPressed: busy ? null : _save, icon: busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save_outlined), label: Text(provider == 'off' ? 'حفظ (تعطيل البريد)' : 'حفظ الإعدادات')),
+          const SizedBox(height: 18),
+          const SectionTitle('بريد رسمي باسم النطاق'),
+          _DomainCard(onSettingsChanged: _reloadSettings),
           const SizedBox(height: 18),
           const SectionTitle('رسالة تجريبية'),
           JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -251,4 +263,151 @@ class _Stat extends StatelessWidget {
         decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('$value', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color)), Text(label, style: const TextStyle(fontSize: 12, color: Joy.textMuted))]),
       ));
+}
+
+/// بطاقة «بريد رسمي باسم النطاق» (مثل admin@naslife.app): ربط النطاق عند المزوّد، سجلات DNS المطلوبة مع حالة كل سجل،
+/// التحقق، وتعيين المرسل تلقائياً عند التوثيق.
+class _DomainCard extends ConsumerStatefulWidget {
+  final VoidCallback onSettingsChanged;
+  const _DomainCard({required this.onSettingsChanged});
+  @override
+  ConsumerState<_DomainCard> createState() => _DomainCardState();
+}
+
+class _DomainCardState extends ConsumerState<_DomainCard> {
+  final domain = TextEditingController(), local = TextEditingController();
+  bool busy = false, seeded = false;
+
+  Future<void> _run(Future<AdminMailDomainInfo> Function() action, String Function(AdminMailDomainInfo) message) async {
+    setState(() => busy = true);
+    try {
+      final info = await action();
+      ref.invalidate(adminMailDomainProvider);
+      if (info.domain?.fromApplied == true) widget.onSettingsChanged();
+      if (mounted) toast(context, message(info));
+    } catch (e) {
+      if (mounted) toast(context, adminErrText(e), error: true);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _remove(AdminMailDomain d) async {
+    final ok = await showDialog<bool>(context: context, builder: (x) => AlertDialog(title: Text('إلغاء ربط ${d.name}؟'), content: const Text('يُحذف الربط من هنا فقط؛ يبقى النطاق في حساب المزوّد ويمكن إعادة ربطه لاحقاً.'), actions: [TextButton(onPressed: () => Navigator.pop(x, false), child: const Text('تراجع')), FilledButton(key: const Key('mail-domain-remove-confirm'), style: FilledButton.styleFrom(backgroundColor: Joy.danger), onPressed: () => Navigator.pop(x, true), child: const Text('إلغاء الربط'))]));
+    if (ok != true || !mounted) return;
+    setState(() => busy = true);
+    try {
+      await ref.read(apiClientProvider).adminMailDomainRemove();
+      ref.invalidate(adminMailDomainProvider);
+      if (mounted) toast(context, 'أُلغي ربط النطاق');
+    } catch (e) {
+      if (mounted) toast(context, adminErrText(e), error: true);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  void _copy(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    toast(context, 'نُسخ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final info = ref.watch(adminMailDomainProvider);
+    return info.when(
+      loading: () => const JoyCard(child: LinearProgressIndicator()),
+      error: (e, _) => JoyCard(child: ErrorState(e, onRetry: () => ref.invalidate(adminMailDomainProvider))),
+      data: (i) {
+        final d = i.domain;
+        if (d == null) {
+          if (!seeded) { seeded = true; domain.text = i.suggestedName; local.text = i.suggestedLocal; }
+          return JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('بدل بريد شخصي، تُرسل رسائل التأكيد والاستعادة من بريد رسمي باسم التطبيق يوثّقه المزوّد بسجلات DNS في نطاقك.', style: TextStyle(color: Joy.textMuted, fontSize: 13, height: 1.6)),
+            const SizedBox(height: 10),
+            Directionality(textDirection: TextDirection.ltr, child: Row(children: [
+              Expanded(flex: 2, child: TextField(key: const Key('mail-domain-local'), controller: local, autocorrect: false, decoration: const InputDecoration(labelText: 'الاسم', hintText: 'admin'))),
+              const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('@', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700))),
+              Expanded(flex: 3, child: TextField(key: const Key('mail-domain-name'), controller: domain, autocorrect: false, keyboardType: TextInputType.url, decoration: const InputDecoration(labelText: 'النطاق', hintText: 'naslife.app'))),
+            ])),
+            const SizedBox(height: 10),
+            if (!i.providerReady)
+              const Text('يعمل الربط مع Resend أو Brevo: اختر أحدهما أعلاه، احفظ مفتاح API (بصلاحية كاملة)، ثم عد هنا.', key: Key('mail-domain-need-provider'), style: TextStyle(color: Joy.warning, fontSize: 12.5, height: 1.5)),
+            const SizedBox(height: 8),
+            FilledButton.icon(key: const Key('mail-domain-start'), onPressed: busy || !i.providerReady ? null : () => _run(() => ref.read(apiClientProvider).adminMailDomainStart(domain: domain.text, local: local.text), (_) => 'أُنشئ النطاق عند المزوّد؛ أضف السجلات في DNS ثم اضغط «تحقق الآن»'),
+                icon: busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.link_rounded), label: const Text('ابدأ الربط')),
+          ]));
+        }
+        final (label, color) = switch (d.status) { 'verified' => ('موثّق', Joy.success), 'failed' => ('فشل التوثيق', Joy.danger), _ => ('بانتظار DNS', Joy.warning) };
+        return JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(child: Text(d.sender, key: const Key('mail-domain-sender'), textDirection: TextDirection.ltr, textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16))),
+            Container(key: const Key('mail-domain-status'), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: color.withValues(alpha: .12), borderRadius: BorderRadius.circular(999)), child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12.5))),
+          ]),
+          const SizedBox(height: 4),
+          Text('عبر ${d.provider == 'resend' ? 'Resend' : 'Brevo'} · ${d.dnsFound} من ${d.dnsRequired} سجلات ظاهرة في DNS${d.checkedAt != null ? ' · آخر فحص ${timeAgo(d.checkedAt)}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+          if (d.error != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(d.error!, style: const TextStyle(color: Joy.danger, fontSize: 12))),
+          const SizedBox(height: 12),
+          if (d.verified)
+            Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(12)), child: Text('النطاق موثّق والمرسل الرسمي الآن ${d.sender}. أرسل رسالة تجريبية أدناه للتأكد من الوصول.', style: const TextStyle(fontSize: 13, height: 1.6)))
+          else
+            const Text('أضف هذه السجلات في لوحة DNS للنطاق (في name.com: My Domains ← النطاق ← DNS Records ← Add Record). اكتب Host كما هو بدون اسم النطاق، والقيمة كما هي. الانتشار يأخذ من دقائق إلى ساعة.', style: TextStyle(color: Joy.textMuted, fontSize: 13, height: 1.6)),
+          const SizedBox(height: 10),
+          for (final (idx, r) in d.records.indexed) _RecordRow(index: idx, record: r, onCopy: _copy),
+          const SizedBox(height: 10),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            FilledButton.tonalIcon(key: const Key('mail-domain-verify'), onPressed: busy ? null : () => _run(() => ref.read(apiClientProvider).adminMailDomainVerify(), (x) => x.domain?.verified == true ? 'تم التوثيق، المرسل الآن ${x.domain!.sender}' : 'لم تكتمل السجلات بعد: ظاهر ${x.domain?.dnsFound ?? 0} من ${x.domain?.dnsRequired ?? 0}'),
+                icon: busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.verified_outlined), label: Text(d.verified ? 'إعادة الفحص' : 'تحقق الآن')),
+            TextButton.icon(key: const Key('mail-domain-remove'), onPressed: busy ? null : () => _remove(d), icon: const Icon(Icons.link_off_rounded, color: Joy.danger, size: 18), label: const Text('إلغاء الربط', style: TextStyle(color: Joy.danger))),
+          ]),
+          const SizedBox(height: 8),
+          Text('لاستقبال الردود على ${d.sender}: فعّل «Email Forwarding» في name.com إلى بريدك الشخصي (مجاني)، أو استخدم خدمة تحويل مثل ImprovMX.', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.5)),
+        ]));
+      },
+    );
+  }
+}
+
+class _RecordRow extends StatelessWidget {
+  final int index;
+  final AdminDnsRecord record;
+  final void Function(String) onCopy;
+  const _RecordRow({required this.index, required this.record, required this.onCopy});
+  @override
+  Widget build(BuildContext context) {
+    final r = record;
+    final (icon, color, hint) = r.dnsOk == true ? (Icons.check_circle_rounded, Joy.success, 'ظاهر في DNS') : r.dnsOk == false ? (Icons.hourglass_top_rounded, Joy.warning, 'غير ظاهر بعد') : (Icons.help_outline_rounded, Joy.textMuted, 'تعذّر الفحص');
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: Joy.surface, borderRadius: BorderRadius.circular(6)), child: Text(r.type, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12))),
+          const SizedBox(width: 8),
+          Expanded(child: Text(r.optional ? 'اختياري (موصى به)' : r.source.isEmpty ? '' : r.source.toUpperCase(), style: const TextStyle(color: Joy.textMuted, fontSize: 11.5))),
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 4),
+          Text(hint, style: TextStyle(color: color, fontSize: 11.5)),
+        ]),
+        const SizedBox(height: 6),
+        _Kv(label: 'Host', value: r.host, onCopy: () => onCopy(r.host), copyKey: Key('mail-domain-copy-host-$index')),
+        if (r.priority != null) _Kv(label: 'Priority', value: '${r.priority}', onCopy: () => onCopy('${r.priority}'), copyKey: Key('mail-domain-copy-priority-$index')),
+        _Kv(label: 'Value', value: r.value, onCopy: () => onCopy(r.value), copyKey: Key('mail-domain-copy-value-$index')),
+      ]),
+    );
+  }
+}
+
+class _Kv extends StatelessWidget {
+  final String label, value;
+  final VoidCallback onCopy;
+  final Key copyKey;
+  const _Kv({required this.label, required this.value, required this.onCopy, required this.copyKey});
+  @override
+  Widget build(BuildContext context) => Directionality(textDirection: TextDirection.ltr, child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SizedBox(width: 60, child: Text(label, style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
+        Expanded(child: SelectableText(value, style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5, height: 1.4))),
+        IconButton(key: copyKey, tooltip: 'نسخ', visualDensity: VisualDensity.compact, iconSize: 18, onPressed: onCopy, icon: const Icon(Icons.copy_rounded)),
+      ]));
 }

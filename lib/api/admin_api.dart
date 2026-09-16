@@ -179,6 +179,45 @@ class AdminMailSettings {
       );
 }
 
+/// سجل DNS مطلوب لتوثيق نطاق الإرسال.
+class AdminDnsRecord {
+  final String type, host, fqdn, value, status, source;
+  final int? priority;
+  final bool? dnsOk;
+  final bool optional;
+  const AdminDnsRecord({required this.type, required this.host, required this.fqdn, required this.value, this.status = 'pending', this.source = '', this.priority, this.dnsOk, this.optional = false});
+  factory AdminDnsRecord.fromJson(Map m) => AdminDnsRecord(
+        type: m['type']?.toString() ?? 'TXT', host: m['host']?.toString() ?? '@', fqdn: m['fqdn']?.toString() ?? '', value: m['value']?.toString() ?? '', status: m['status']?.toString() ?? 'pending', source: m['source']?.toString() ?? '',
+        priority: m['priority'] == null ? null : _i(m['priority']), dnsOk: m['dnsOk'] is bool ? m['dnsOk'] as bool : null, optional: m['optional'] == true);
+  bool get verified => status == 'verified';
+}
+
+/// نطاق الإرسال الرسمي (مثل admin@naslife.app) وحالته عند المزوّد.
+class AdminMailDomain {
+  final String name, local, sender, provider, status;
+  final bool verified, fromApplied;
+  final String? error;
+  final DateTime? checkedAt, verifiedAt;
+  final List<AdminDnsRecord> records;
+  const AdminMailDomain({required this.name, required this.local, required this.sender, required this.provider, this.status = 'pending', this.verified = false, this.fromApplied = false, this.error, this.checkedAt, this.verifiedAt, this.records = const []});
+  factory AdminMailDomain.fromJson(Map m) => AdminMailDomain(
+        name: m['name']?.toString() ?? '', local: m['local']?.toString() ?? 'admin', sender: m['sender']?.toString() ?? '', provider: m['provider']?.toString() ?? '', status: m['status']?.toString() ?? 'pending',
+        verified: m['verified'] == true, fromApplied: m['fromApplied'] == true, error: m['error']?.toString(), checkedAt: _t(m['checkedAt']), verifiedAt: _t(m['verifiedAt']), records: asList(m['records']).map(AdminDnsRecord.fromJson).toList());
+  int get dnsFound => records.where((r) => r.dnsOk == true).length;
+  int get dnsRequired => records.where((r) => !r.optional).length;
+}
+
+class AdminMailDomainInfo {
+  final AdminMailDomain? domain;
+  final String suggestedName, suggestedLocal, provider, from;
+  final bool providerReady;
+  const AdminMailDomainInfo({this.domain, this.suggestedName = 'naslife.app', this.suggestedLocal = 'admin', this.provider = 'off', this.from = '', this.providerReady = false});
+  factory AdminMailDomainInfo.fromJson(Map m) => AdminMailDomainInfo(
+        domain: m['domain'] is Map ? AdminMailDomain.fromJson(m['domain'] as Map) : null,
+        suggestedName: asMap(m['suggested'])['name']?.toString() ?? 'naslife.app', suggestedLocal: asMap(m['suggested'])['local']?.toString() ?? 'admin',
+        provider: m['provider']?.toString() ?? 'off', from: m['from']?.toString() ?? '', providerReady: m['providerReady'] == true);
+}
+
 /// سطر في سجل الإرسال.
 class AdminMailEntry {
   final String id, to, subject, status;
@@ -235,6 +274,10 @@ extension AdminApi on ApiClient {
   Future<AdminMailSettings> adminMailSave(Map<String, dynamic> patch) async => AdminMailSettings.fromJson(await put('/adminapi/mail', patch));
   /// يرسل رسالة تجريبية ويعيد معرّف الرسالة عند المزوّد إن وُجد.
   Future<String?> adminMailTest(String to) async => (await post('/adminapi/mail/test', {'to': to.trim()}))['id']?.toString();
+  Future<AdminMailDomainInfo> adminMailDomain() async => AdminMailDomainInfo.fromJson(await get('/adminapi/mail/domain'));
+  Future<AdminMailDomainInfo> adminMailDomainStart({required String domain, String local = 'admin'}) async => AdminMailDomainInfo.fromJson(await post('/adminapi/mail/domain', {'domain': domain.trim(), 'local': local.trim()}));
+  Future<AdminMailDomainInfo> adminMailDomainVerify() async => AdminMailDomainInfo.fromJson(await post('/adminapi/mail/domain/verify', const {}));
+  Future<void> adminMailDomainRemove() => delete('/adminapi/mail/domain');
   Future<AdminMailLog> adminMailLog({int limit = 50}) async => AdminMailLog.fromJson(await get('/adminapi/mail/log', query: {'limit': '$limit'}));
 }
 

@@ -28,11 +28,32 @@ void main() {
   Map<String, dynamic>? lastBody;
   var settings = <String, dynamic>{'provider': 'off', 'host': '', 'port': 587, 'secure': false, 'user': '', 'pass': '', 'apiKey': '', 'from': '', 'fromName': 'ناس لايف', 'replyTo': '', 'hasPass': false, 'hasApiKey': false, 'configured': false};
   final log = <Map<String, dynamic>>[];
+  Map<String, dynamic>? domain;
+  var verifyCalls = 0;
+  Map<String, dynamic> domainInfo() => {'domain': domain, 'suggested': {'name': 'naslife.app', 'local': 'admin'}, 'providerReady': ['resend', 'brevo'].contains(settings['provider']) && settings['hasApiKey'] == true, 'provider': settings['provider'], 'from': settings['from']};
 
   Future<http.Response> handle(http.Request req) async {
     final key = '${req.method} ${req.url.path}';
     calls.add(key);
     if (req.body.isNotEmpty) { try { lastBody = jsonDecode(req.body) as Map<String, dynamic>; } catch (_) {} }
+    if (key == 'GET /adminapi/mail/domain') return _json(domainInfo());
+    if (key == 'POST /adminapi/mail/domain') {
+      final b = lastBody!;
+      if (domainInfo()['providerReady'] != true) return _json({'error': 'provider-required'}, 400);
+      final name = (b['domain'] as String).toLowerCase(), local = b['local'] as String;
+      Map<String, dynamic> rec(String type, String host, String value, {int? priority, bool optional = false}) => {'type': type, 'host': host, 'fqdn': '$host.$name', 'value': value, 'priority': priority, 'status': 'pending', 'source': 'x', 'dnsOk': false, 'optional': optional};
+      verifyCalls = 0;
+      domain = {'name': name, 'local': local, 'sender': '$local@$name', 'provider': settings['provider'], 'id': 'dom_1', 'status': 'pending', 'verified': false, 'fromApplied': false, 'records': [rec('MX', 'send', 'feedback-smtp.eu-west-1.amazonses.com', priority: 10), rec('TXT', 'send', 'v=spf1 include:amazonses.com ~all'), rec('TXT', 'resend._domainkey', 'p=MIGfMA0'), rec('TXT', '_dmarc', 'v=DMARC1; p=quarantine; rua=mailto:$local@$name', optional: true)]};
+      return _json(domainInfo());
+    }
+    if (key == 'POST /adminapi/mail/domain/verify') {
+      verifyCalls++;
+      final recs = (domain!['records'] as List).cast<Map<String, dynamic>>();
+      for (final (i, r) in recs.indexed) { r['dnsOk'] = verifyCalls >= 2 || i < 2; r['status'] = r['dnsOk'] == true ? 'verified' : 'pending'; }
+      if (verifyCalls >= 2) { domain!['status'] = 'verified'; domain!['verified'] = true; domain!['fromApplied'] = true; settings = {...settings, 'from': domain!['sender']}; }
+      return _json(domainInfo());
+    }
+    if (key == 'DELETE /adminapi/mail/domain') { domain = null; return _json({'ok': true}); }
     if (key == 'GET /adminapi/mail') return _json(settings);
     if (key == 'PUT /adminapi/mail') {
       final b = lastBody!;
@@ -141,5 +162,67 @@ void main() {
     await scrollTo(tester, const Key('mail-stat-failed'));
     expect(find.byKey(const Key('mail-log-m2')), findsOneWidget);
     expect(find.textContaining('550'), findsWidgets);
+  });
+
+  testWidgets('official domain sender: needs a provider key, creates the domain, shows DNS records, verifies and switches the sender', (tester) async {
+    settings = {...settings, 'provider': 'smtp', 'host': 'smtp.gmail.com', 'from': 'jeddahh@gmail.com', 'configured': true, 'hasApiKey': false};
+    domain = null;
+    await pump(tester);
+    await tester.drag(find.byType(ListView), const Offset(0, -900));
+    await tester.pump();
+    expect(find.byKey(const Key('mail-domain-need-provider')), findsOneWidget, reason: 'SMTP لا يدعم توثيق النطاق');
+    expect(tester.widget<FilledButton>(find.byKey(const Key('mail-domain-start'))).onPressed, isNull);
+    // مزوّد جاهز: Resend بمفتاح محفوظ
+    settings = {...settings, 'provider': 'resend', 'apiKey': '••••••••', 'hasApiKey': true};
+    await pump(tester);
+    await tester.drag(find.byType(ListView), const Offset(0, -900));
+    await tester.pump();
+    expect(find.byKey(const Key('mail-domain-need-provider')), findsNothing);
+    expect(tester.widget<TextField>(find.byKey(const Key('mail-domain-name'))).controller!.text, 'naslife.app');
+    expect(tester.widget<TextField>(find.byKey(const Key('mail-domain-local'))).controller!.text, 'admin');
+    await tester.tap(find.byKey(const Key('mail-domain-start')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(calls, contains('POST /adminapi/mail/domain'));
+    expect(lastBody, {'domain': 'naslife.app', 'local': 'admin'});
+    expect(find.text('admin@naslife.app'), findsWidgets);
+    expect(find.text('بانتظار DNS'), findsOneWidget);
+    expect(find.text('resend._domainkey'), findsOneWidget);
+    expect(find.text('v=spf1 include:amazonses.com ~all'), findsOneWidget);
+    expect(find.text('اختياري (موصى به)'), findsOneWidget, reason: 'سجل DMARC مقترح');
+    expect(find.textContaining('0 من 3 سجلات'), findsOneWidget);
+    // تحقق أول: سجلان ظاهران
+    await tester.drag(find.byType(ListView), const Offset(0, -700));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('mail-domain-verify')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.textContaining('2 من 3 سجلات'), findsOneWidget);
+    expect(find.text('بانتظار DNS'), findsOneWidget);
+    expect(find.textContaining('لم تكتمل السجلات بعد'), findsOneWidget);
+    // تحقق ثانٍ: موثّق والمرسل تبدّل
+    await tester.tap(find.byKey(const Key('mail-domain-verify')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('موثّق'), findsOneWidget);
+    expect(find.textContaining('المرسل الرسمي الآن admin@naslife.app'), findsOneWidget);
+    expect(calls, contains('GET /adminapi/mail'), reason: 'أُعيد تحميل الإعدادات بعد تبديل المرسل');
+    await tester.drag(find.byType(ListView), const Offset(0, 1400));
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byKey(const Key('mail-from'))).controller!.text, 'admin@naslife.app');
+    await tester.drag(find.byType(ListView), const Offset(0, -1600));
+    await tester.pump();
+    // إلغاء الربط
+    await tester.tap(find.byKey(const Key('mail-domain-remove')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('mail-domain-remove-confirm')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(calls, contains('DELETE /adminapi/mail/domain'));
+    expect(find.byKey(const Key('mail-domain-start')), findsOneWidget);
   });
 }

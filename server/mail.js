@@ -12,7 +12,10 @@ import tls from "node:tls";
 const PROVIDERS = new Set(["off", "smtp", "resend", "brevo", "sendgrid"]);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MASK = "••••••••";
-const DEFAULTS = { provider: "off", host: "", port: 587, secure: false, user: "", pass: "", apiKey: "", from: "", fromName: "ناس لايف", replyTo: "" };
+const DEFAULTS = { provider: "off", host: "", port: 587, secure: false, user: "", pass: "", apiKey: "", from: "", fromName: "ناس لايف", replyTo: "", domain: null };
+const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9-]+\.)+[a-z]{2,}$/i;
+const LOCAL_RE = /^[a-z0-9._-]{1,64}$/i;
+const DOMAIN_PROVIDERS = new Set(["resend", "brevo"]);
 
 const b64 = (s) => Buffer.from(String(s), "utf8").toString("base64");
 /// عنوان بريد مع اسم عرض مرمّز (RFC 2047) للأحرف العربية.
@@ -114,6 +117,85 @@ export async function smtpSend({ host, port = 587, secure = false, user, pass, f
 }
 
 /// إرسال عبر واجهات HTTP للمزوّدين.
+// ---- توثيق نطاق الإرسال (admin@naslife.app) عند المزوّد: إنشاء النطاق، جلب سجلات DNS المطلوبة، وطلب التحقق.
+const providerError = async (r, what) => { const t = await r.text().catch(() => ""); throw new Error(`${what}: HTTP ${r.status} ${t.slice(0, 200)}`); };
+const relHost = (host, domain) => {
+  let h = String(host ?? "").trim().replace(/\.$/, "");
+  const d = domain.toLowerCase();
+  if (h.toLowerCase() === d) return "@";
+  if (h.toLowerCase().endsWith("." + d)) h = h.slice(0, -(d.length + 1));
+  return h || "@";
+};
+const normStatus = (s) => { s = String(s ?? "").toLowerCase(); return s === "verified" || s === "success" || s === "true" ? "verified" : /fail|error/.test(s) ? "failed" : "pending"; };
+/// طلب واحد إلى واجهة المزوّد (action: create | get | verify)، يعيد {id, status, records:[{type,host,value,priority,status}]}
+export async function providerDomain(provider, apiKey, action, { domain, id } = {}, fetchFn = globalThis.fetch) {
+  const dom = String(domain ?? "").trim().toLowerCase();
+  if (provider === "resend") {
+    const H = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
+    const parse = (j) => ({ id: j.id, status: normStatus(j.status), records: (j.records ?? []).map((x) => ({ type: String(x.type ?? "").toUpperCase(), host: relHost(x.name, dom), value: String(x.value ?? ""), priority: x.priority ?? null, status: normStatus(x.status), source: String(x.record ?? "").toLowerCase() })) });
+    if (action === "create") {
+      let r = await fetchFn("https://api.resend.com/domains", { method: "POST", headers: H, body: JSON.stringify({ name: dom }) });
+      if (r.ok) return parse(JSON.parse(await r.text()));
+      // موجود مسبقاً في الحساب: نبحث عنه في القائمة
+      const list = await fetchFn("https://api.resend.com/domains", { headers: H });
+      if (!list.ok) return providerError(r, "resend create");
+      const found = (JSON.parse(await list.text()).data ?? []).find((d) => String(d.name).toLowerCase() === dom);
+      if (!found) return providerError(r, "resend create");
+      return providerDomain(provider, apiKey, "get", { domain: dom, id: found.id }, fetchFn);
+    }
+    if (action === "verify") {
+      const v = await fetchFn(`https://api.resend.com/domains/${encodeURIComponent(id)}/verify`, { method: "POST", headers: H });
+      if (!v.ok) return providerError(v, "resend verify");
+    }
+    const g = await fetchFn(`https://api.resend.com/domains/${encodeURIComponent(id)}`, { headers: H });
+    if (!g.ok) return providerError(g, "resend get");
+    return parse(JSON.parse(await g.text()));
+  }
+  if (provider === "brevo") {
+    const H = { "api-key": apiKey, "content-type": "application/json", accept: "application/json" };
+    const parse = (j) => {
+      const recs = j.dns_records ?? {};
+      const out = [];
+      for (const [k, x] of Object.entries(recs)) if (x && typeof x === "object") out.push({ type: String(x.type ?? "TXT").toUpperCase(), host: relHost(x.host_name ?? x.hostName ?? "", dom), value: String(x.value ?? ""), priority: null, status: normStatus(x.status), source: k.replace(/_record$/, "") });
+      return { id: j.id ?? id ?? null, status: j.authenticated === true || j.verified === true ? "verified" : "pending", records: out };
+    };
+    if (action === "create") {
+      const r = await fetchFn("https://api.brevo.com/v3/senders/domains", { method: "POST", headers: H, body: JSON.stringify({ name: dom }) });
+      if (r.ok) return parse(JSON.parse(await r.text()));
+      const g = await fetchFn(`https://api.brevo.com/v3/senders/domains/${encodeURIComponent(dom)}`, { headers: H });
+      if (!g.ok) return providerError(r, "brevo create");
+      return parse(JSON.parse(await g.text()));
+    }
+    if (action === "verify") {
+      const v = await fetchFn(`https://api.brevo.com/v3/senders/domains/${encodeURIComponent(dom)}/authenticate`, { method: "PUT", headers: H });
+      if (!v.ok && v.status !== 400) return providerError(v, "brevo authenticate");
+    }
+    const g = await fetchFn(`https://api.brevo.com/v3/senders/domains/${encodeURIComponent(dom)}`, { headers: H });
+    if (!g.ok) return providerError(g, "brevo get");
+    return parse(JSON.parse(await g.text()));
+  }
+  throw new Error("domain: unsupported provider");
+}
+/// قراءة سجل DNS عبر DNS-over-HTTPS (Cloudflare) → قيم السجل كنصوص
+export async function dohLookup(name, type, fetchFn = globalThis.fetch) {
+  const r = await fetchFn(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`, { headers: { accept: "application/dns-json" } });
+  if (!r.ok) throw new Error("doh: HTTP " + r.status);
+  const j = JSON.parse(await r.text());
+  return (j.Answer ?? []).map((a) => String(a.data ?? ""));
+}
+const normTxt = (v) => String(v ?? "").replace(/"\s*"/g, "").replace(/^"|"$/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+const normHost = (v) => String(v ?? "").trim().replace(/\.$/, "").toLowerCase();
+/// هل السجل موجود في DNS بالقيمة المطلوبة؟ true/false، أو null إن تعذّر الفحص
+export async function dnsMatches(rec, domain, fetchFn = globalThis.fetch) {
+  const fqdn = rec.host === "@" ? domain : `${rec.host}.${domain}`;
+  try {
+    const answers = await dohLookup(fqdn, rec.type, fetchFn);
+    if (rec.type === "TXT") return answers.some((a) => normTxt(a) === normTxt(rec.value));
+    if (rec.type === "MX") return answers.some((a) => { const [p, h] = a.trim().split(/\s+/); return normHost(h) === normHost(rec.value) && (rec.priority == null || Number(p) === Number(rec.priority)); });
+    return answers.some((a) => normHost(a) === normHost(rec.value));
+  } catch { return null; }
+}
+
 export async function httpSend(provider, { apiKey, from, fromName, replyTo, to, subject, text, html }, fetchFn = globalThis.fetch) {
   let url, headers, body;
   if (provider === "resend") {
@@ -232,6 +314,75 @@ export default async function mail(app, opts = {}) {
       await audit(uid, "mail.test", { to, ok: false, error: String(e.message) });
       return bad(reply, 502, "send-failed", { detail: String(e.message).slice(0, 300) });
     }
+  });
+  // ---- بريد رسمي باسم النطاق: الربط عند المزوّد، سجلات DNS، التحقق، وتعيين المرسل تلقائياً
+  const fetchFn = () => opts.fetchFn ?? globalThis.fetch;
+  const domainOut = (d) => d ? { ...d, sender: `${d.local}@${d.name}`, verified: d.status === "verified" } : null;
+  const suggested = (req) => { const h = String(req.headers?.host ?? "").split(":")[0].replace(/^www\./, "").toLowerCase(); return { name: DOMAIN_RE.test(h) && !/localhost|^\d/.test(h) ? h : "naslife.app", local: "admin" }; };
+  const saveSettings = async (next) => { await pool.query("INSERT INTO mail_settings(id, data, updated_at) VALUES(1,$1,now()) ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()", [JSON.stringify(next)]); settings = next; };
+  const withDmarc = (d, recs) => {
+    const out = recs.map((r) => ({ ...r, fqdn: r.host === "@" ? d.name : `${r.host}.${d.name}` }));
+    if (!out.some((r) => r.host.toLowerCase() === "_dmarc")) out.push({ type: "TXT", host: "_dmarc", fqdn: `_dmarc.${d.name}`, value: `v=DMARC1; p=quarantine; rua=mailto:${d.local}@${d.name}`, priority: null, status: "pending", source: "dmarc", optional: true });
+    return out;
+  };
+  async function refreshDomain(action) {
+    const d = settings.domain; if (!d) return null;
+    let next = { ...d };
+    if (settings.provider === d.provider && settings.apiKey) {
+      try {
+        const p = await providerDomain(d.provider, settings.apiKey, action, { domain: d.name, id: d.id }, fetchFn());
+        next = { ...next, id: p.id ?? next.id, status: p.status, records: withDmarc(next, p.records), error: null };
+      } catch (e) { next.error = String(e.message).slice(0, 200); }
+    }
+    next.records = await Promise.all((next.records ?? []).map(async (r) => ({ ...r, dnsOk: await dnsMatches(r, next.name, fetchFn()) })));
+    if (next.status !== "verified" && next.records.length && next.records.filter((r) => !r.optional).every((r) => r.dnsOk === true) && next.records.every((r) => r.status === "verified")) next.status = "verified";
+    next.checkedAt = new Date().toISOString();
+    if (next.status === "verified" && !next.verifiedAt) next.verifiedAt = next.checkedAt;
+    const s = { ...settings, domain: next };
+    // عند التوثيق: المرسل يصبح بريد النطاق ما لم يكن المرسل الحالي على النطاق نفسه
+    if (next.status === "verified" && !String(s.from).toLowerCase().endsWith("@" + next.name)) { s.from = `${next.local}@${next.name}`; next.fromApplied = true; }
+    await saveSettings(s);
+    return domainOut(next);
+  }
+  app.get("/adminapi/mail/domain", async (req, reply) => {
+    if (!(await guard(req, reply))) return;
+    await load();
+    const d = settings.domain ? await refreshDomain("get") : null;
+    return { domain: d, suggested: suggested(req), providerReady: DOMAIN_PROVIDERS.has(settings.provider) && !!settings.apiKey, provider: settings.provider, from: settings.from };
+  });
+  app.post("/adminapi/mail/domain", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    await load();
+    const name = String(req.body?.domain ?? "").trim().toLowerCase().replace(/^www\./, "");
+    const local = String(req.body?.local ?? "admin").trim().toLowerCase() || "admin";
+    if (!DOMAIN_RE.test(name)) return bad(reply, 400, "bad-domain");
+    if (!LOCAL_RE.test(local)) return bad(reply, 400, "bad-local");
+    if (!DOMAIN_PROVIDERS.has(settings.provider) || !settings.apiKey) return bad(reply, 400, "provider-required");
+    let p;
+    try { p = await providerDomain(settings.provider, settings.apiKey, "create", { domain: name }, fetchFn()); }
+    catch (e) { await audit(uid, "mail.domain", { domain: name, ok: false, error: String(e.message) }); return bad(reply, 502, "provider-failed", { detail: String(e.message).slice(0, 300) }); }
+    const d = { name, local, provider: settings.provider, id: p.id ?? null, status: p.status, records: [], createdAt: new Date().toISOString(), verifiedAt: null, checkedAt: null, error: null, fromApplied: false };
+    d.records = withDmarc(d, p.records);
+    await saveSettings({ ...settings, domain: d });
+    await audit(uid, "mail.domain", { domain: name, local, provider: settings.provider, ok: true });
+    const out = await refreshDomain("get");
+    return { domain: out, suggested: suggested(req), providerReady: true, provider: settings.provider, from: settings.from };
+  });
+  app.post("/adminapi/mail/domain/verify", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    await load();
+    if (!settings.domain) return bad(reply, 404, "no-domain");
+    const out = await refreshDomain("verify");
+    await audit(uid, "mail.domain.verify", { domain: out.name, status: out.status });
+    return { domain: out, suggested: suggested(req), providerReady: DOMAIN_PROVIDERS.has(settings.provider) && !!settings.apiKey, provider: settings.provider, from: settings.from };
+  });
+  app.delete("/adminapi/mail/domain", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    await load();
+    const name = settings.domain?.name ?? null;
+    await saveSettings({ ...settings, domain: null });
+    await audit(uid, "mail.domain.remove", { domain: name });
+    return { ok: true };
   });
   app.get("/adminapi/mail/log", async (req, reply) => {
     if (!(await guard(req, reply))) return;
