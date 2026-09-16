@@ -354,7 +354,7 @@ class _DomainCardState extends ConsumerState<_DomainCard> {
           if (d.verified)
             Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(12)), child: Text('النطاق موثّق والمرسل الرسمي الآن ${d.sender}. أرسل رسالة تجريبية أدناه للتأكد من الوصول.', style: const TextStyle(fontSize: 13, height: 1.6)))
           else
-            const Text('أضف هذه السجلات في لوحة DNS للنطاق (في name.com: My Domains ← النطاق ← DNS Records ← Add Record). اكتب Host كما هو بدون اسم النطاق، والقيمة كما هي. الانتشار يأخذ من دقائق إلى ساعة.', style: TextStyle(color: Joy.textMuted, fontSize: 13, height: 1.6)),
+            const Text('أضف هذه السجلات في لوحة DNS للنطاق (في name.com: My Domains ثم النطاق ثم DNS Records ثم Add Record). اكتب Host كما هو بدون اسم النطاق، والقيمة كما هي. الانتشار يأخذ من دقائق إلى ساعة.', style: TextStyle(color: Joy.textMuted, fontSize: 13, height: 1.6)),
           const SizedBox(height: 10),
           for (final (idx, r) in d.records.indexed) _RecordRow(index: idx, record: r, onCopy: _copy),
           const SizedBox(height: 10),
@@ -410,7 +410,7 @@ class _Kv extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Directionality(textDirection: TextDirection.ltr, child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SizedBox(width: 60, child: Text(label, style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
-        Expanded(child: SelectableText(value, style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5, height: 1.4))),
+        Expanded(child: SelectableText(value, style: const TextStyle(fontSize: 13, height: 1.4, fontWeight: FontWeight.w600))),
         IconButton(key: copyKey, tooltip: 'نسخ', visualDensity: VisualDensity.compact, iconSize: 18, onPressed: onCopy, icon: const Icon(Icons.copy_rounded)),
       ]));
 }
