@@ -132,6 +132,10 @@ void main() {
     expect(lastBody!['secure'], isTrue);
     expect(lastBody!['pass'], 'abcd efgh ijkl mnop');
     expect(lastBody!['from'], 'founder@gmail.com');
+    expect(find.byKey(const Key('mail-host')), findsOneWidget, reason: 'النموذج يبقى على SMTP بعد الحفظ');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.drag(find.byType(ListView), const Offset(0, 3000));
+    await tester.pump();
     expect(find.text('خدمة البريد مفعّلة'), findsOneWidget, reason: 'الشارة تتحدث بعد الحفظ');
   });
 
@@ -187,7 +191,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 400));
     expect(lastBody!['apiKey'], 're_test_key');
-    await tester.drag(find.byType(ListView), const Offset(0, -900));
+    await tester.drag(find.byType(ListView), const Offset(0, 2000));
+    await tester.pump();
+    expect(find.byKey(const Key('mail-apikey')), findsOneWidget, reason: 'النموذج يبقى على Resend بعد الحفظ ولا يعود إلى معطّل');
+    expect(tester.widget<ChoiceChip>(find.byKey(const Key('mail-provider-resend'))).selected, isTrue);
+    await tester.drag(find.byType(ListView), const Offset(0, -1400));
     await tester.pump();
     expect(find.byKey(const Key('mail-domain-need-provider')), findsNothing, reason: 'الحفظ يعيد فحص جاهزية المزوّد');
     expect(tester.widget<TextField>(find.byKey(const Key('mail-domain-name'))).controller!.text, 'naslife.app');

@@ -64,12 +64,14 @@ class _AdminMailPageState extends ConsumerState<AdminMailPage> {
   Future<void> _save() async {
     setState(() => busy = true);
     try {
-      await ref.read(apiClientProvider).adminMailSave({
+      final saved = await ref.read(apiClientProvider).adminMailSave({
         'provider': provider,
         'host': host.text.trim(), 'port': int.tryParse(port.text.trim()) ?? (secure ? 465 : 587), 'secure': secure, 'user': user.text.trim(), 'pass': pass.text,
         'apiKey': apiKey.text.trim(), 'from': from.text.trim(), 'fromName': fromName.text.trim(), 'replyTo': replyTo.text.trim(),
       });
+      // نملأ الحقول من ردّ الحفظ مباشرة: أثناء إعادة الجلب يمرّ Riverpod بالقيمة القديمة ولا نريدها أن تعيد ضبط النموذج
       loaded = false;
+      _load(saved);
       ref.invalidate(adminMailProvider);
       ref.invalidate(adminMailDomainProvider); // جاهزية الربط تعتمد على المزوّد والمفتاح المحفوظين
       if (mounted) toast(context, provider == 'off' ? 'عُطّلت خدمة البريد' : 'حُفظت إعدادات البريد');
