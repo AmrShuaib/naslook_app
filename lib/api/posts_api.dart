@@ -109,8 +109,10 @@ String distanceText(double? km) => km == null ? '' : km < 1 ? '${(km * 1000).rou
 
 extension PostsApi on ApiClient {
   /// البث العمودي: مرتّب بالقرب والحداثة حول (lat, lng)، مع ترقيم بالمؤشر وتصفية اختيارية بمفتاح مكان.
-  Future<FeedSlice> postsFeed({double? lat, double? lng, int? cursor, int limit = 20, String? place, String? tag, double radiusKm = 30}) async => FeedSlice.fromJson(await get('/mapposts/feed', query: {
-        if (lat != null && lng != null) ...{'lat': '$lat', 'lng': '$lng'}, if (cursor != null) 'cursor': '$cursor', 'limit': '$limit', 'radiusKm': '$radiusKm', if (place != null) 'place': place, if (tag != null) 'tag': tag,
+  /// `authors`: قصر البث على ناشرين محددين (أصدقائي فقط: التطبيق يمرّر معرّفات جهات اتصاله؛ قائمة فارغة تعني لا نتائج).
+  Future<FeedSlice> postsFeed({double? lat, double? lng, int? cursor, int limit = 20, String? place, String? tag, double radiusKm = 30, List<String>? authors}) async => FeedSlice.fromJson(await get('/mapposts/feed', query: {
+        if (lat != null && lng != null) ...{'lat': '$lat', 'lng': '$lng'}, if (cursor != null) 'cursor': '$cursor', 'limit': '$limit', 'radiusKm': '${radiusKm.round()}', if (place != null) 'place': place, if (tag != null && tag.isNotEmpty) 'tag': tag,
+        if (authors != null) 'authors': authors.join(','),
       }));
   Future<List<TrendingPlace>> trendingPlaces({double? lat, double? lng, int hours = 24, int limit = 10}) async =>
       asList((await get('/mapposts/trending', query: {if (lat != null && lng != null) ...{'lat': '$lat', 'lng': '$lng'}, 'hours': '$hours', 'limit': '$limit'}))['places']).map(TrendingPlace.fromJson).toList();

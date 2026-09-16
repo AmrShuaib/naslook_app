@@ -2,7 +2,7 @@
 // فوق الوسائط عند العرض، وحقول احترافية للمسوّقين والمستثمرين (نوع المنشور، عنوان، سعر، زر إجراء)، ومدة ظهور (يوم/3 أيام/أسبوع)،
 // وإعجابات ومشاهدات. الوسائط تُرفع عبر /chat/upload ثم يُمرَّر رابطها هنا.
 // المسارات تحت /mapposts (النواة تستخدم /posts لمنشورات الدوائر) والملف map_posts.js (النواة تملك posts.js).
-// البث العمودي: GET /mapposts/feed?lat&lng&radiusKm&cursor&limit&place (مرتّب بالقرب والحداثة) وGET /mapposts/trending?lat&lng&hours
+// البث العمودي: GET /mapposts/feed?lat&lng&radiusKm&cursor&limit&place&tag&authors (مرتّب بالقرب والحداثة) وGET /mapposts/trending?lat&lng&hours
 // (الأماكن الأكثر لحظاتٍ: دائرة تجارية قريبة أو اسم المكان المكتوب).
 // التسجيل في src/index.js:
 //   await app.register((await import("./map_posts.js")).default, { pool, auth });
@@ -184,14 +184,18 @@ export default async function posts(app, opts) {
     const offset = Math.round(clamp(req.query?.cursor, 0, 100000, 0));
     const place = str(req.query?.place, 120) || null;
     const tag = TAGS.has(req.query?.tag) ? req.query.tag : null;
+    // «أصدقائي فقط»: التطبيق يمرّر معرّفات جهات اتصاله (النواة تملك جدول الأصدقاء)؛ قائمة فارغة تعني لا نتائج
+    const authorsRaw = req.query?.authors;
+    const authors = authorsRaw == null ? null : String(authorsRaw).split(",").map((v) => v.trim().toUpperCase()).filter((v) => /^[A-Z]{2}\d{7}$/.test(v)).slice(0, 300);
     const blocked = uid ? await (globalThis.naslifeBlockedIds?.(uid) ?? []) : [];
     const run = () => pool.query(`SELECT * FROM (${SELECT.replace("FROM map_posts p", "")}, (CASE WHEN $2::float8 IS NULL OR $3::float8 IS NULL THEN NULL ELSE ${DIST_P} END) AS dist,
         ${PLACE_KEY} AS place_key, ${PLACE_NAME} AS place_name_r, nb.id AS nb_id, nb.category AS nb_category, nb.logo_url AS nb_logo
         FROM map_posts p ${bizJoin()}
-        WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($4::text[])) AND ($5::text IS NULL OR p.tag=$5)) x
+        WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($4::text[])) AND ($5::text IS NULL OR p.tag=$5)
+          AND ($10::text[] IS NULL OR p.user_id = ANY($10::text[]))) x
       WHERE (x.dist IS NULL OR x.dist <= $6) AND ($7::text IS NULL OR x.place_key = $7)
       ORDER BY (EXTRACT(EPOCH FROM (now() - x.created_at)) / 3600.0) + COALESCE(x.dist, 0) * 1.5 ASC, x.created_at DESC
-      LIMIT $8 OFFSET $9`, [uid, has ? lat : null, has ? lng : null, blocked, tag, radius, place, limit + 1, offset]);
+      LIMIT $8 OFFSET $9`, [uid, has ? lat : null, has ? lng : null, blocked, tag, radius, place, limit + 1, offset, authors]);
     let rows;
     try { rows = (await run()).rows; } catch (e) { if (hasBiz) { hasBiz = false; rows = (await run()).rows; } else throw e; }
     const more = rows.length > limit;

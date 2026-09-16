@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:naslook/api/client.dart';
 import 'package:naslook/api/session.dart';
@@ -51,6 +52,8 @@ class _Srv {
         return _json({'hours': 24, 'places': [{'key': 'biz:biz-cafe', 'name': 'مقهى البث', 'bizId': 'biz-cafe', 'category': 'cafe', 'lat': 21.55, 'lng': 39.16, 'distanceKm': 0.3, 'posts': 4, 'authors': 3}, {'key': 'name:كورنيش جدة', 'name': 'كورنيش جدة', 'lat': 21.6, 'lng': 39.1, 'distanceKm': 5.2, 'posts': 2, 'authors': 2}]});
       case 'GET /mapposts':
         return _json([_post(0), _post(1)]);
+      case 'GET /contacts':
+        return _json([{'id': 'SA0000002', 'nickname': 'sara'}, {'id': 'SA0000007', 'nickname': 'fahad'}]);
       case 'POST /mapposts/aaaaaaaa-0000-4000-8000-000000000001/like':
         liked = !liked;
         return _json({'ok': true, 'liked': liked, 'likes': liked ? 6 : 5});
@@ -66,6 +69,7 @@ class _Srv {
 }
 
 Future<_Srv> _pump(WidgetTester tester, Widget home, {double height = 900}) async {
+  SharedPreferences.setMockInitialValues({});
   tester.view.physicalSize = Size(420, height);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -109,6 +113,33 @@ void main() {
     expect(find.text('لحظة رقم 3'), findsOneWidget);
     expect(find.text('3 / 3'), findsOneWidget);
     await tester.pump(const Duration(seconds: 15)); // مهلة طلب موقع الجهاز في الخلفية
+  });
+
+  testWidgets('quick filters: type, radius and friends-only change the request and persist', (tester) async {
+    final srv = await _pump(tester, const FeedPage());
+    expect(srv.queries['GET /mapposts/feed']!['radiusKm'], '30');
+    expect(srv.queries['GET /mapposts/feed']!.containsKey('tag'), isFalse);
+    await tester.tap(find.byKey(const Key('feed-tag-offer')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(srv.queries['GET /mapposts/feed']!['tag'], 'offer');
+    await tester.tap(find.byKey(const Key('feed-radius-2')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(srv.queries['GET /mapposts/feed']!['radiusKm'], '2');
+    await tester.ensureVisible(find.byKey(const Key('feed-friends')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('feed-friends')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(srv.calls, contains('GET /contacts'));
+    expect(srv.queries['GET /mapposts/feed']!['authors'], 'SA0000002,SA0000007', reason: 'أصدقائي فقط يمرّر معرّفات جهات الاتصال');
+    await tester.pump(const Duration(seconds: 15));
+    // فتح البث من جديد يستعيد النطاق و«أصدقائي فقط» المحفوظين
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getDouble('feed_radius'), 2);
+    expect(prefs.getBool('feed_friends'), isTrue);
   });
 
   testWidgets('home shows the feed card and trending places; a place opens the feed filtered by it', (tester) async {

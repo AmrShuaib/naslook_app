@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../api/commerce_models.dart';
 import '../../api/naslife_api.dart';
@@ -13,6 +14,7 @@ import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
+import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
@@ -46,11 +48,47 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   Object? error;
   LatLng? origin;
   final _viewed = <String>{};
+  // المرشّحات السريعة: نوع اللحظة ('' = الكل)، نصف القطر بالكيلومتر، أصدقائي فقط (تُحفظ محلياً)
+  String tag = '';
+  double radius = 30;
+  bool friends = false;
+  List<String>? _friendIds;
+
+  static const tagChips = [('', 'الكل'), ('moment', 'لحظات'), ('offer', 'عروض'), ('event', 'فعاليات'), ('job', 'وظائف'), ('ad', 'إعلانات'), ('invest', 'استثمار')];
+  static const radiusChips = [(2.0, 'قريب جداً'), (30.0, 'حولي'), (150.0, 'المدينة كلها')];
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _restore().then((_) => _load());
+  }
+
+  Future<void> _restore() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      radius = sp.getDouble('feed_radius') ?? 30;
+      friends = sp.getBool('feed_friends') ?? false;
+      if (!radiusChips.any((c) => c.$1 == radius)) radius = 30;
+    } catch (_) { /* لا تخزين محلي */ }
+  }
+
+  Future<void> _persist() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setDouble('feed_radius', radius);
+      await sp.setBool('feed_friends', friends);
+    } catch (_) { /* تجاهل */ }
+  }
+
+  void _setTag(String v) { if (tag == v) return; setState(() => tag = v); _load(); }
+  void _setRadius(double v) { if (radius == v) return; setState(() => radius = v); _persist(); _load(); }
+  void _toggleFriends() { setState(() => friends = !friends); _persist(); _load(); }
+
+  /// معرّفات أصدقائي (جهات الاتصال) عند تفعيل «أصدقائي فقط».
+  Future<List<String>?> _authors() async {
+    if (!friends) return null;
+    _friendIds ??= (await ref.read(contactsProvider.future)).map((p) => p.id).toList();
+    return _friendIds;
   }
 
   @override
@@ -75,7 +113,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     try {
       origin = DeviceLocation.last ?? ref.read(feedOriginProvider);
       _refineOrigin();
-      final s = await ref.read(apiClientProvider).postsFeed(lat: origin!.latitude, lng: origin!.longitude, place: widget.placeKey);
+      final s = await ref.read(apiClientProvider).postsFeed(lat: origin!.latitude, lng: origin!.longitude, place: widget.placeKey, tag: tag, radiusKm: widget.placeKey != null ? 200 : radius, authors: await _authors());
       if (!mounted) return;
       setState(() { items = s.items; next = s.nextCursor; located = s.located; loading = false; index = 0; });
       if (items.isNotEmpty) _markViewed(0);
@@ -88,7 +126,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
     if (next == null || more || origin == null) return;
     more = true;
     try {
-      final s = await ref.read(apiClientProvider).postsFeed(lat: origin!.latitude, lng: origin!.longitude, place: widget.placeKey, cursor: next);
+      final s = await ref.read(apiClientProvider).postsFeed(lat: origin!.latitude, lng: origin!.longitude, place: widget.placeKey, cursor: next, tag: tag, radiusKm: widget.placeKey != null ? 200 : radius, authors: await _authors());
       if (!mounted) return;
       final seen = items.map((p) => p.id).toSet();
       setState(() { items.addAll(s.items.where((p) => !seen.contains(p.id))); next = s.nextCursor; });
@@ -179,8 +217,8 @@ class _FeedPageState extends ConsumerState<FeedPage> {
             else if (items.isEmpty)
               _Message(
                 icon: Icons.auto_awesome_outlined,
-                title: widget.placeKey != null ? 'لا لحظات في هذا المكان الآن' : 'لا لحظات حولك الآن',
-                body: 'كن أول من يشارك ما يحدث من حولك',
+                title: widget.placeKey != null ? 'لا لحظات في هذا المكان الآن' : friends ? 'لا لحظات من أصدقائك الآن' : tag.isNotEmpty ? 'لا شيء من هذا النوع حولك الآن' : 'لا لحظات حولك الآن',
+                body: friends ? 'أوقف «أصدقائي فقط» لترى الجميع، أو شارك لحظتك' : radius < 30 && widget.placeKey == null ? 'وسّع النطاق إلى «حولي» أو «المدينة كلها»، أو شارك لحظتك' : 'كن أول من يشارك ما يحدث من حولك',
                 action: 'لحظتك',
                 onAction: () async { await composePostHere(context, ref); if (mounted) _load(); },
               )
@@ -215,6 +253,27 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                 ])),
                 if (items.isNotEmpty)
                   Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(999)), child: Text('${index + 1} / ${items.length}${next != null ? '+' : ''}', textDirection: TextDirection.ltr, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600))),
+              ]),
+            ),
+            // المرشّحات السريعة: النوع، ثم النطاق و«أصدقائي فقط» (لا نطاق عند تصفية مكان واحد)
+            Positioned(
+              top: 54, left: 0, right: 0,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(children: [for (final c in tagChips) Padding(padding: const EdgeInsetsDirectional.only(end: 6), child: _Chip(key: Key('feed-tag-${c.$1.isEmpty ? 'all' : c.$1}'), label: c.$2, selected: tag == c.$1, onTap: () => _setTag(c.$1)))]),
+                ),
+                if (widget.placeKey == null)
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+                    child: Row(children: [
+                      for (final c in radiusChips) Padding(padding: const EdgeInsetsDirectional.only(end: 6), child: _Chip(key: Key('feed-radius-${c.$1.round()}'), label: c.$2, icon: Icons.radar_rounded, selected: radius == c.$1, onTap: () => _setRadius(c.$1))),
+                      const SizedBox(width: 6),
+                      _Chip(key: const Key('feed-friends'), label: 'أصدقائي فقط', icon: Icons.people_alt_rounded, selected: friends, onTap: _toggleFriends),
+                    ]),
+                  ),
               ]),
             ),
           ]),
@@ -390,4 +449,29 @@ class _Rail extends StatelessWidget {
         ),
         if (label.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 3), child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700, shadows: [Shadow(color: Colors.black54, blurRadius: 6)]))),
       ]);
+}
+
+/// شريحة مرشّح فوق الوسائط: شفافة داكنة، وبيضاء عند الاختيار.
+class _Chip extends StatelessWidget {
+  final String label;
+  final IconData? icon;
+  final bool selected;
+  final VoidCallback onTap;
+  const _Chip({super.key, required this.label, this.icon, required this.selected, required this.onTap});
+  @override
+  Widget build(BuildContext context) => Material(
+        color: selected ? Colors.white : Colors.black45,
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(999),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (icon != null) ...[Icon(icon, size: 15, color: selected ? Joy.text : Colors.white), const SizedBox(width: 5)],
+              Text(label, style: TextStyle(color: selected ? Joy.text : Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700)),
+            ]),
+          ),
+        ),
+      );
 }
