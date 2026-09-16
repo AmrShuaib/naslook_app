@@ -58,6 +58,15 @@ String adminErrText(Object e) {
   if (s.contains('bad-name')) return 'اكتب اسماً للقاعدة';
   if (s.contains('away-text-required')) return 'اكتب نص رد الغياب قبل تفعيله';
   if (s.contains('bad-date')) return 'التاريخ غير صالح';
+  if (s.contains('ai-not-configured')) return 'المساعد الذكي غير مفعّل؛ أضف مفتاح Anthropic في إعدادات البريد الوارد';
+  if (s.contains('ai-key-invalid')) return 'مفتاح Anthropic غير صالح أو منتهٍ';
+  if (s.contains('ai-refused')) return 'رفض المساعد هذا الطلب';
+  if (s.contains('ai-failed')) return 'تعذّر الاتصال بالمساعد الذكي الآن';
+  if (s.contains('bad-ai-key')) return 'المفتاح يجب أن يبدأ بـ sk-ant-';
+  if (s.contains('bad-ai-model')) return 'نموذج غير مدعوم';
+  if (s.contains('bad-send-at')) return 'اختر وقتاً بعد دقيقة على الأقل وخلال 90 يوماً';
+  if (s.contains('bad-pattern')) return 'اكتب بريداً كاملاً أو نطاقاً بصيغة @example.com';
+  if (s.contains('not-queued')) return 'هذه الرسالة أُرسلت بالفعل أو أُلغيت';
   if (s.contains('bad-port')) return 'المنفذ غير صحيح';
   if (s.contains('bad-from')) return 'بريد المرسل غير صحيح';
   if (s.contains('bad-reply-to')) return 'بريد الرد غير صحيح';

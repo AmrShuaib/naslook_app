@@ -64,6 +64,11 @@ final adminInboxRulesProvider = FutureProvider<InboxRules>((ref) => ref.watch(ap
 final adminInboxTagsProvider = FutureProvider.family<List<(String, int)>, String>((ref, mailbox) => ref.watch(apiClientProvider).adminInboxTags(mailbox));
 /// فاصل نبضة التواجد داخل المحادثة (null يعطّلها في الاختبارات).
 final inboxPresenceIntervalProvider = Provider<Duration?>((_) => const Duration(seconds: 10));
+/// مهلة الحفظ التلقائي للمسودات بعد آخر كتابة.
+final inboxDraftDebounceProvider = Provider<Duration>((_) => const Duration(milliseconds: 1500));
+final adminInboxStatsProvider = FutureProvider.family<InboxStats, int>((ref, days) => ref.watch(apiClientProvider).adminInboxStats(days: days));
+final adminInboxOutboxProvider = FutureProvider<List<InboxOutboxItem>>((ref) => ref.watch(apiClientProvider).adminInboxOutbox());
+final adminInboxBlockedProvider = FutureProvider<List<InboxBlocked>>((ref) => ref.watch(apiClientProvider).adminInboxBlocked());
 /// فاصل تحديث عدّاد البريد الوارد (null يعطّل التحديث التلقائي في الاختبارات).
 final inboxPollIntervalProvider = Provider<Duration?>((_) => const Duration(seconds: 30));
 /// إجمالي غير المقروء في صناديق العضو: يُحدَّث دورياً، ويقرع الجرس عند الزيادة، ويظهر في شارة القسم وعنوان التبويب.
@@ -98,7 +103,7 @@ final adminTeamPermissionsProvider = FutureProvider<List<TeamPermission>>((ref) 
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
 
 void invalidateAdmin(WidgetRef ref) {
-  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider, adminTasksProvider, adminTasksSummaryProvider, adminInboxMailboxesProvider, adminInboxProvider, adminInboxTemplatesProvider, adminInboxMeProvider, adminInboxRulesProvider, adminInboxTagsProvider]) {
+  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider, adminTasksProvider, adminTasksSummaryProvider, adminInboxMailboxesProvider, adminInboxProvider, adminInboxTemplatesProvider, adminInboxMeProvider, adminInboxRulesProvider, adminInboxTagsProvider, adminInboxStatsProvider, adminInboxOutboxProvider, adminInboxBlockedProvider]) {
     ref.invalidate(p);
   }
   ref.invalidate(adminUsersProvider);

@@ -41,16 +41,22 @@ void main() {
   final rules = <Map<String, dynamic>>[];
   Map<String, dynamic> me = {'signature': '', 'away': false, 'awayText': '', 'awayUntil': null, 'mailbox': 'amr', 'address': 'amr@naslife.app'};
   final linkedTasks = <Map<String, dynamic>>[];
+  var aiEnabled = false;
+  Map<String, dynamic>? draft;
+  final scheduled = <Map<String, dynamic>>[];
+  final blocked = <Map<String, dynamic>>[];
+  final draftBodies = <Map<String, dynamic>>[];
   Map<String, dynamic> settings = {'provider': 'generic', 'hasSecret': false, 'token': 'tok_1', 'resendUrl': 'https://naslife.app/inbox/webhook/resend', 'genericUrl': 'https://naslife.app/inbox/webhook/generic?token=tok_1', 'domain': 'naslife.app', 'shared': 'admin@naslife.app', 'received': 2, 'rejected': 0, 'lastReceivedAt': '2026-09-16T10:00:00Z'};
 
   Future<http.Response> handle(http.Request req) async {
     final key = '${req.method} ${req.url.path}';
     calls.add(key + (req.url.query.isNotEmpty ? '?${Uri.decodeQueryComponent(req.url.query)}' : ''));
     // نبضات التواجد تعمل في الخلفية ولا تُحتسب كآخر جسم مُرسل
-    if (req.body.isNotEmpty && !req.url.path.endsWith('/presence')) { try { lastBody = jsonDecode(req.body) as Map<String, dynamic>; } catch (_) {} }
+    if (req.body.isNotEmpty && !req.url.path.endsWith('/presence') && !req.url.path.endsWith('/drafts')) { try { lastBody = jsonDecode(req.body) as Map<String, dynamic>; } catch (_) {} }
+    if (req.url.path.endsWith('/drafts') && req.method == 'PUT') { try { draftBodies.add(jsonDecode(req.body) as Map<String, dynamic>); } catch (_) {} }
     switch (key) {
       case 'GET /adminapi/inbox/mailboxes':
-        return _json({'mailboxes': [{'alias': 'amr', 'address': 'amr@naslife.app', 'kind': 'own', 'label': 'صندوقي', 'ownerId': 'SA0000001', 'unread': 0}, {'alias': 'admin', 'address': 'admin@naslife.app', 'kind': 'shared', 'label': 'الصندوق المشترك', 'ownerId': null, 'unread': unread}], 'totalUnread': unread, 'domain': 'naslife.app', 'domainVerified': true, 'canReply': true, 'canManage': true, 'myMailbox': 'amr', 'receiving': {'provider': 'generic', 'configured': true, 'lastReceivedAt': '2026-09-16T10:00:00Z', 'received': received}});
+        return _json({'mailboxes': [{'alias': 'amr', 'address': 'amr@naslife.app', 'kind': 'own', 'label': 'صندوقي', 'ownerId': 'SA0000001', 'unread': 0}, {'alias': 'admin', 'address': 'admin@naslife.app', 'kind': 'shared', 'label': 'الصندوق المشترك', 'ownerId': null, 'unread': unread}], 'totalUnread': unread, 'aiEnabled': aiEnabled, 'csat': true, 'domain': 'naslife.app', 'domainVerified': true, 'canReply': true, 'canManage': true, 'myMailbox': 'amr', 'receiving': {'provider': 'generic', 'configured': true, 'lastReceivedAt': '2026-09-16T10:00:00Z', 'received': received}});
       case 'GET /adminapi/inbox':
         final mb = req.url.queryParameters['mailbox'], folder = req.url.queryParameters['folder'];
         var l = threads.where((t) => t['mailbox'] == mb).toList();
@@ -59,7 +65,7 @@ void main() {
         if (tag != null) l = l.where((t) => (t['tags'] as List).contains(tag)).toList();
         return _json({'threads': [for (final t in l) {...t}..remove('messageList')], 'mailbox': mb, 'folder': folder, 'tags': [for (final t in threads.where((t) => t['mailbox'] == mb)) for (final g in t['tags'] as List) {'tag': g, 'n': 1}]});
       case 'GET /adminapi/inbox/threads/$_th':
-        return _json({...threads[0], 'address': 'admin@naslife.app', 'customer': {'email': 'ahmed@client.com', 'userId': 'SA0000003', 'nickname': 'khalid', 'verified': true, 'suspended': false, 'memberSince': '2026-01-01T00:00:00Z', 'threads': 2, 'since': '2026-08-01T00:00:00Z', 'lastAt': '2026-09-16T10:00:00Z'}, 'tasks': linkedTasks, 'viewers': others, 'signature': me['signature']});
+        return _json({...threads[0], 'address': 'admin@naslife.app', 'customer': {'email': 'ahmed@client.com', 'userId': 'SA0000003', 'nickname': 'khalid', 'verified': true, 'suspended': false, 'memberSince': '2026-01-01T00:00:00Z', 'threads': 2, 'since': '2026-08-01T00:00:00Z', 'lastAt': '2026-09-16T10:00:00Z'}, 'tasks': linkedTasks, 'viewers': others, 'signature': me['signature'], 'draft': draft, 'scheduled': scheduled});
       case 'POST /adminapi/inbox/threads/$_th/presence':
         return _json({'others': others});
       case 'GET /adminapi/tasks':
@@ -102,6 +108,10 @@ void main() {
       case 'POST /adminapi/inbox/templates/cccccccc-8000-4000-8000-000000000001/render':
         return _json({'text': 'أهلاً Ahmed Client، شكراً لتواصلك.'});
       case 'POST /adminapi/inbox/threads/$_th/reply':
+        if (lastBody!['sendAt'] != null) {
+          scheduled.add({'id': 'eeeeeeee-8000-4000-8000-000000000001', 'threadId': _th, 'mailbox': 'admin', 'to': 'ahmed@client.com', 'subject': 'Re: استفسار عن الاشتراك', 'text': lastBody!['text'], 'sendAt': lastBody!['sendAt'], 'status': 'queued'});
+          return _json({'ok': true, 'scheduled': true, 'outboxId': 'eeeeeeee-8000-4000-8000-000000000001', 'sendAt': lastBody!['sendAt'], 'threadId': _th});
+        }
         (threads[0]['messageList'] as List).add({'id': 'm9', 'direction': 'out', 'from': {'email': 'admin@naslife.app', 'name': 'ناس لايف'}, 'to': [{'email': 'ahmed@client.com', 'name': ''}], 'cc': [], 'subject': 'Re: استفسار عن الاشتراك', 'text': lastBody!['text'], 'html': null, 'attachments': [], 'read': true, 'sentBy': 'SA0000001', 'sentByName': 'amr', 'createdAt': '2026-09-16T11:00:00Z'});
         threads[0]['status'] = 'waiting';
         return _json({'ok': true, 'threadId': _th, 'messageId': 'm9'});
@@ -110,13 +120,38 @@ void main() {
       case 'GET /adminapi/inbox/settings':
         return _json(settings);
       case 'PUT /adminapi/inbox/settings':
-        settings = {...settings, if (lastBody!['provider'] != null) 'provider': lastBody!['provider'], if (lastBody!['webhookSecret'] != null) 'hasSecret': true};
+        settings = {...settings, ...lastBody!, if (lastBody!['webhookSecret'] != null) 'hasSecret': true, if (lastBody!['aiKey'] != null) 'hasAiKey': (lastBody!['aiKey'] as String).isNotEmpty};
+        settings.remove('webhookSecret'); settings.remove('aiKey');
         return _json(settings);
+      case 'POST /adminapi/inbox/threads/$_th/spam':
+        threads[0] = {...threads[0], 'spam': lastBody!['undo'] != true};
+        if (lastBody!['undo'] != true && lastBody!['block'] != false) blocked.add({'pattern': lastBody!['domain'] == true ? '@client.com' : 'ahmed@client.com', 'reason': 'من محادثة', 'hits': 0, 'createdByName': 'amr'});
+        return _json({...threads[0], 'blocked': lastBody!['domain'] == true ? '@client.com' : 'ahmed@client.com'});
+      case 'GET /adminapi/inbox/blocked':
+        return _json({'blocked': blocked});
+      case 'POST /adminapi/inbox/blocked':
+        blocked.add({'pattern': (lastBody!['pattern'] as String).toLowerCase(), 'reason': lastBody!['reason'], 'hits': 0, 'createdByName': 'amr'});
+        return _json({'ok': true, 'pattern': lastBody!['pattern']});
+      case 'GET /adminapi/inbox/search':
+        final q = req.url.queryParameters['q'] ?? '';
+        return _json({'threads': [for (final t in threads) if ((t['messageList'] as List).any((m) => (m['text'] as String).contains(q))) {...t, 'match': {'messageId': 'm1', 'direction': 'in', 'at': '2026-09-16T10:00:00Z', 'excerpt': 'هل يوجد اشتراك سنوي للدوائر التجارية؟'}}], 'q': q});
+      case 'GET /adminapi/inbox/outbox':
+        return _json({'items': scheduled});
+      case 'GET /adminapi/inbox/drafts':
+        return _json({'drafts': [if (draft != null) {'threadId': null, ...draft!}]});
+      case 'PUT /adminapi/inbox/drafts':
+        return _json({'ok': true});
+      case 'POST /adminapi/inbox/threads/$_th/ai':
+        return _json({'kind': lastBody!['kind'], 'text': lastBody!['kind'] == 'summary' ? '- العميل يسأل عن الاشتراك السنوي\nالحالة: تحتاج رداً' : 'مرحباً Ahmed،\nنعم يوجد اشتراك سنوي. [أضف التفاصيل هنا]'});
+      case 'GET /adminapi/inbox/stats':
+        return _json({'days': int.parse(req.url.queryParameters['days'] ?? '30'), 'totals': {'received': 42, 'sent': 31, 'threads': 27, 'closed': 19, 'openUnanswered': 2, 'spam': 3, 'firstResponseMin': 48, 'firstResponseMedianMin': 22, 'resolutionHours': 6.4, 'csat': 4.6, 'ratings': 9, 'ratingsSent': 19}, 'agents': [{'id': 'SA0000001', 'name': 'amr', 'replies': 18, 'closed': 11, 'firstResponseMin': 35, 'csat': 4.7, 'ratings': 6}], 'mailboxes': [{'mailbox': 'admin', 'received': 30, 'sent': 20}], 'daily': [{'day': '2026-09-15', 'received': 3, 'sent': 2}, {'day': '2026-09-16', 'received': 5, 'sent': 1}]});
       case 'GET /notify/unread':
         return _json({'unread': 0});
       case 'GET /adminapi/status':
         return _json({'hasAdmin': true, 'setupRequired': false, 'isAdmin': true, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'admins': 1, 'role': 'owner', 'roleName': 'المالك', 'level': 100, 'permissions': ['*'], 'title': 'المؤسس', 'department': 'الإدارة'});
     }
+    if (key.startsWith('DELETE /adminapi/inbox/blocked/')) { blocked.removeWhere((b) => b['pattern'] == Uri.decodeComponent(key.split('/').last)); return _json({'ok': true}); }
+    if (key.startsWith('DELETE /adminapi/inbox/outbox/')) { scheduled.removeWhere((o) => o['id'] == key.split('/').last); return _json({'ok': true}); }
     if (req.method == 'GET') return _json([]);
     return _json({'ok': true});
   }
@@ -129,7 +164,7 @@ void main() {
     addTearDown(tester.view.reset);
     final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(handle));
     await tester.pumpWidget(ProviderScope(
-      overrides: [apiClientProvider.overrideWithValue(api), socketProvider.overrideWithValue(null), appStateProvider.overrideWith((ref) => _SignedIn(api, SessionStore())), notifyPollIntervalProvider.overrideWithValue(null), inboxPollIntervalProvider.overrideWithValue(null), inboxPresenceIntervalProvider.overrideWithValue(null)],
+      overrides: [apiClientProvider.overrideWithValue(api), socketProvider.overrideWithValue(null), appStateProvider.overrideWith((ref) => _SignedIn(api, SessionStore())), notifyPollIntervalProvider.overrideWithValue(null), inboxPollIntervalProvider.overrideWithValue(null), inboxPresenceIntervalProvider.overrideWithValue(null), inboxDraftDebounceProvider.overrideWithValue(Duration.zero)],
       child: MaterialApp(locale: const Locale('ar'), home: home),
     ));
     await tester.pump();
@@ -397,6 +432,141 @@ void main() {
     expect(find.text('لا قواعد بعد.'), findsOneWidget);
   });
 
+  Future<void> openAdminThread(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('inbox-mailbox')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('admin@naslife.app').last);
+    await settle(tester);
+    await tester.tap(find.byKey(const Key('inbox-thread-$_th')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+  }
+
+  testWidgets('spam: mark a thread and block the sender domain, then undo', (tester) async {
+    threads[0] = {...threads[0], 'spam': false};
+    await pump(tester);
+    await openAdminThread(tester);
+    await tester.tap(find.byKey(const Key('thread-spam')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('spam-domain')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('spam-domain')));
+    await settle(tester);
+    expect(calls, contains('POST /adminapi/inbox/threads/$_th/spam'));
+    expect(lastBody, {'domain': true});
+    expect(find.text('نُقلت إلى المزعج وحُظر المرسل'), findsOneWidget);
+    expect(find.byKey(const Key('thread-spam-note')), findsOneWidget);
+    expect(find.byKey(const Key('thread-unspam')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('thread-unspam')));
+    await settle(tester);
+    expect(lastBody, {'undo': true});
+    expect(find.byKey(const Key('thread-spam')), findsOneWidget);
+    blocked.clear();
+  });
+
+  testWidgets('ai assistant: summary dialog and reply suggestion inserted in the field', (tester) async {
+    aiEnabled = true;
+    await pump(tester);
+    await openAdminThread(tester);
+    await tester.tap(find.byKey(const Key('thread-ai-summary')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+    expect(calls, contains('POST /adminapi/inbox/threads/$_th/ai'));
+    expect(lastBody, {'kind': 'summary'});
+    expect(find.byKey(const Key('ai-summary')), findsOneWidget);
+    expect(find.textContaining('الحالة: تحتاج رداً'), findsOneWidget);
+    await tester.tap(find.text('حسناً'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('thread-ai-reply')));
+    await settle(tester);
+    expect(lastBody, {'kind': 'reply'});
+    expect(tester.widget<TextField>(find.byKey(const Key('thread-reply-field'))).controller!.text, startsWith('مرحباً Ahmed'));
+    expect(find.text('أُدرجت مسودة الرد؛ راجعها قبل الإرسال'), findsOneWidget);
+    aiEnabled = false;
+  });
+
+  testWidgets('drafts autosave and restore; schedule a reply and cancel it', (tester) async {
+    draft = null;
+    await pump(tester);
+    await openAdminThread(tester);
+    await tester.enterText(find.byKey(const Key('thread-reply-field')), 'أكتب رداً طويلاً');
+    await settle(tester);
+    expect(draftBodies.last, {'threadId': _th, 'text': 'أكتب رداً طويلاً'});
+    // استعادة مسودة محفوظة عند فتح المحادثة من جديد
+    draft = {'text': 'مسودة قديمة'};
+    await tester.tapAt(const Offset(450, 20));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('inbox-thread-$_th')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+    expect(tester.widget<TextField>(find.byKey(const Key('thread-reply-field'))).controller!.text, 'مسودة قديمة');
+    expect(find.text('استُعيدت مسودتك المحفوظة'), findsOneWidget);
+    draft = null;
+    // جدولة الإرسال
+    await tester.tap(find.byKey(const Key('thread-schedule')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('schedule-hour')));
+    await settle(tester);
+    expect(calls, contains('POST /adminapi/inbox/threads/$_th/reply'));
+    expect(lastBody!['text'], 'مسودة قديمة');
+    expect(DateTime.parse(lastBody!['sendAt'] as String).isAfter(DateTime.now().toUtc().add(const Duration(minutes: 50))), isTrue);
+    expect(find.textContaining('ستُرسل'), findsOneWidget);
+    expect(find.byKey(const Key('scheduled-eeeeeeee-8000-4000-8000-000000000001')), findsOneWidget);
+    await tester.tap(find.descendant(of: find.byKey(const Key('scheduled-eeeeeeee-8000-4000-8000-000000000001')), matching: find.byTooltip('إلغاء')));
+    await settle(tester);
+    expect(calls, contains('DELETE /adminapi/inbox/outbox/eeeeeeee-8000-4000-8000-000000000001'));
+    expect(find.byKey(const Key('scheduled-eeeeeeee-8000-4000-8000-000000000001')), findsNothing);
+  });
+
+  testWidgets('stats sheet shows totals and per-agent rows; period chips refetch', (tester) async {
+    await pump(tester);
+    await tester.tap(find.byKey(const Key('inbox-stats')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+    expect(calls, contains('GET /adminapi/inbox/stats?days=30'));
+    expect(find.descendant(of: find.byKey(const Key('stats-received')), matching: find.text('42')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('stats-csat')), matching: find.text('4.60 / 5')), findsOneWidget);
+    expect(find.byKey(const Key('stats-agent-SA0000001')), findsOneWidget);
+    expect(find.textContaining('18 رد · 11 إغلاق'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('stats-days-7')));
+    await settle(tester);
+    expect(calls, contains('GET /adminapi/inbox/stats?days=7'));
+  });
+
+  testWidgets('blocked senders sheet: add a domain and remove it', (tester) async {
+    await pump(tester);
+    await tester.tap(find.byKey(const Key('inbox-blocked')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+    expect(find.text('لا محظورين.'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('blocked-add-pattern')), '@Spam.biz');
+    await tester.enterText(find.byKey(const Key('blocked-add-reason')), 'إعلانات');
+    await tester.tap(find.byKey(const Key('blocked-add')));
+    await settle(tester);
+    expect(calls, contains('POST /adminapi/inbox/blocked'));
+    expect(lastBody, {'pattern': '@Spam.biz', 'reason': 'إعلانات'});
+    expect(find.byKey(const Key('blocked-@spam.biz')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('blocked-delete-@spam.biz')));
+    await settle(tester);
+    expect(calls, contains('DELETE /adminapi/inbox/blocked/%40spam.biz'));
+    expect(find.byKey(const Key('blocked-@spam.biz')), findsNothing);
+  });
+
+  testWidgets('search across all mailboxes opens a results sheet with excerpts', (tester) async {
+    await pump(tester);
+    await tester.enterText(find.byKey(const Key('inbox-search')), 'اشتراك سنوي');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('inbox-search-all')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+    expect(calls, contains('GET /adminapi/inbox/search?q=اشتراك سنوي'));
+    expect(find.byKey(const Key('search-hit-$_th')), findsOneWidget);
+    expect(find.textContaining('هل يوجد اشتراك سنوي للدوائر التجارية؟'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('search-hit-$_th')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+    expect(find.byKey(const Key('thread-subject')), findsOneWidget);
+  });
+
   testWidgets('compose a new message from a chosen mailbox', (tester) async {
     await pump(tester);
     await tester.tap(find.byKey(const Key('inbox-compose')));
@@ -445,5 +615,15 @@ void main() {
     await tester.tap(find.byKey(const Key('inbox-settings-save')));
     await settle(tester);
     expect(lastBody, {'provider': 'resend', 'sharedSignature': 'فريق ناس لايف', 'sharedAway': true, 'sharedAwayText': 'وصلتنا رسالتك وسنرد خلال يوم عمل.'});
+    // التقييم والمساعد الذكي
+    await tester.drag(find.byType(SingleChildScrollView).last, const Offset(0, -600));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('inbox-csat')));
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('inbox-ai-key')), 'sk-ant-abc');
+    await tester.tap(find.byKey(const Key('inbox-settings-save')));
+    await settle(tester);
+    expect(lastBody, {'provider': 'resend', 'csat': false, 'aiKey': 'sk-ant-abc'});
+    expect(find.textContaining('محفوظ؛ اتركه فارغاً للإبقاء عليه'), findsNWidgets(2), reason: 'سر الويبهوك ومفتاح المساعد كلاهما محفوظ');
   });
 }

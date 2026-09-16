@@ -19,7 +19,7 @@ import 'admin_shell.dart';
 import 'admin_tasks.dart';
 import 'admin_users.dart';
 
-const inboxFolders = [('inbox', 'الوارد'), ('unread', 'غير المقروء'), ('waiting', 'بانتظار العميل'), ('snoozed', 'مؤجلة'), ('starred', 'المميز'), ('closed', 'مغلقة'), ('archived', 'المؤرشف')];
+const inboxFolders = [('inbox', 'الوارد'), ('unread', 'غير المقروء'), ('waiting', 'بانتظار العميل'), ('snoozed', 'مؤجلة'), ('starred', 'المميز'), ('closed', 'مغلقة'), ('archived', 'المؤرشف'), ('spam', 'المزعج')];
 const threadStatuses = [('open', 'مفتوحة', Icons.mark_email_unread_outlined), ('waiting', 'بانتظار العميل', Icons.hourglass_bottom_rounded), ('closed', 'مغلقة', Icons.check_circle_outline)];
 String threadStatusName(String s) => threadStatuses.firstWhere((x) => x.$1 == s, orElse: () => threadStatuses.first).$2;
 Color threadStatusColor(String s) => switch (s) { 'closed' => Joy.success, 'waiting' => Joy.sunText, _ => Joy.primary };
@@ -73,13 +73,20 @@ class _AdminInboxPageState extends ConsumerState<AdminInboxPage> {
             )),
             const SizedBox(width: 8),
             if (i.canReply) FilledButton.icon(key: const Key('inbox-compose'), onPressed: () => _compose(context, i, current), icon: const Icon(Icons.edit_outlined), label: const Text('رسالة')),
+          ]),
+          const SizedBox(height: 4),
+          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
             if (i.canReply) IconButton(key: const Key('inbox-templates'), tooltip: 'الردود الجاهزة', onPressed: () => showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (_) => TemplatesSheet(canShare: i.canManage)), icon: const Icon(Icons.article_outlined)),
             if (i.canReply) IconButton(key: const Key('inbox-me'), tooltip: 'توقيعي ورد الغياب', onPressed: () => showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (_) => const InboxMeSheet()), icon: const Icon(Icons.draw_outlined)),
+            if (i.canReply) IconButton(key: const Key('inbox-outbox'), tooltip: 'الرسائل المجدولة', onPressed: () => showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => const OutboxSheet()), icon: const Icon(Icons.schedule_send_outlined)),
+            IconButton(key: const Key('inbox-stats'), tooltip: 'المؤشرات', onPressed: () => showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => const InboxStatsSheet()), icon: const Icon(Icons.insights_outlined)),
             if (i.canManage) IconButton(key: const Key('inbox-rules'), tooltip: 'القواعد التلقائية', onPressed: () => showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => const InboxRulesSheet()), icon: const Icon(Icons.auto_fix_high_outlined)),
+            if (i.canManage) IconButton(key: const Key('inbox-blocked'), tooltip: 'المرسلون المحظورون', onPressed: () => showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => const BlockedSheet()), icon: const Icon(Icons.block_outlined)),
             if (i.canManage) IconButton(key: const Key('inbox-settings'), tooltip: 'إعدادات الاستقبال', onPressed: () => _settings(context), icon: const Icon(Icons.settings_outlined)),
-          ]),
-          const SizedBox(height: 10),
+          ])),
+          const SizedBox(height: 6),
           TextField(key: const Key('inbox-search'), onChanged: (v) => setState(() => query = v), decoration: const InputDecoration(isDense: true, prefixIcon: Icon(Icons.search_rounded), hintText: 'ابحث بالاسم أو الموضوع')),
+          if (query.trim().length >= 2) Align(alignment: AlignmentDirectional.centerStart, child: TextButton.icon(key: const Key('inbox-search-all'), onPressed: () => showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => SearchResultsSheet(q: query.trim(), info: i)).then((_) => _refresh()), icon: const Icon(Icons.manage_search_rounded, size: 18), label: Text('ابحث عن «${query.trim()}» في نصوص الرسائل في كل صناديقك'))),
           const SizedBox(height: 8),
           SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [for (final f in inboxFolders) Padding(padding: const EdgeInsetsDirectional.only(end: 6), child: ChoiceChip(key: Key('inbox-folder-${f.$1}'), label: Text(f.$2), selected: folder == f.$1, onSelected: (_) => setState(() => folder = f.$1)))])),
           if (tags.isNotEmpty || tag != null) Padding(padding: const EdgeInsets.only(top: 6), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
@@ -112,7 +119,7 @@ class _AdminInboxPageState extends ConsumerState<AdminInboxPage> {
                     ]),
                     subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text('${t.subject}\n${t.snippet}', maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12.5, color: t.unread > 0 ? Joy.text : Joy.textMuted, fontWeight: t.unread > 0 ? FontWeight.w600 : null)),
-                      if (t.status != 'open' || t.tags.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Wrap(spacing: 4, children: [if (t.status != 'open') _pill(threadStatusName(t.status), threadStatusColor(t.status)), for (final g in t.tags) _pill('#$g', Joy.textMuted)])),
+                      if (t.status != 'open' || t.tags.isNotEmpty || t.spam) Padding(padding: const EdgeInsets.only(top: 4), child: Wrap(spacing: 4, children: [if (t.spam) _pill('مزعج', Joy.danger), if (t.status != 'open') _pill(threadStatusName(t.status), threadStatusColor(t.status)), for (final g in t.tags) _pill('#$g', Joy.textMuted)])),
                     ]),
                     trailing: t.assignedName.isNotEmpty ? Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)), child: Text(t.assignedName, style: const TextStyle(fontSize: 11, color: Joy.primary, fontWeight: FontWeight.w700))) : null,
                     onTap: () => _open(context, t.id, i),
@@ -135,9 +142,11 @@ class _AdminInboxPageState extends ConsumerState<AdminInboxPage> {
     final body = await showModalBottomSheet<Map<String, dynamic>>(context: context, isScrollControlled: true, builder: (_) => _ComposeSheet(mailboxes: i.mailboxes, initial: current));
     if (body == null || !context.mounted) return;
     try {
-      await ref.read(apiClientProvider).adminInboxCompose(mailbox: body['mailbox'] as String, to: body['to'] as String, subject: body['subject'] as String, text: body['text'] as String, attachments: (body['attachments'] as List<InboxAttachment>?) ?? const []);
+      final sendAt = body['sendAt'] as DateTime?;
+      await ref.read(apiClientProvider).adminInboxCompose(mailbox: body['mailbox'] as String, to: body['to'] as String, subject: body['subject'] as String, text: body['text'] as String, attachments: (body['attachments'] as List<InboxAttachment>?) ?? const [], sendAt: sendAt);
       _refresh();
-      if (context.mounted) toast(context, 'أُرسلت الرسالة من ${body['mailbox']}@${i.domain}');
+      ref.invalidate(adminInboxOutboxProvider);
+      if (context.mounted) toast(context, sendAt == null ? 'أُرسلت الرسالة من ${body['mailbox']}@${i.domain}' : 'ستُرسل الرسالة ${dueText(sendAt)}');
     } catch (e) {
       if (context.mounted) toast(context, adminErrText(e), error: true);
     }
@@ -180,23 +189,107 @@ class InboxThreadSheet extends ConsumerStatefulWidget {
 class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
   final reply = TextEditingController();
   final attachments = <InboxAttachment>[];
-  bool busy = false, noteMode = false, _typingSent = false;
+  bool busy = false, noteMode = false, _typingSent = false, _draftLoaded = false, _needsFresh = true;
   List<InboxViewer> others = const [];
-  Timer? _presence;
+  Timer? _presence, _draftTimer;
+  String _lastSavedDraft = '';
   late final ApiClient _api;
 
   @override
   void initState() {
     super.initState();
     _api = ref.read(apiClientProvider);
+    // تحديث المحادثة عند كل فتح (المسودة والمجدول والزوار تتغير بين فتح وآخر)؛ بعد اكتمال البناء الحالي
+    Future.microtask(() { if (mounted) ref.invalidate(adminInboxThreadProvider(widget.threadId)); });
     final every = ref.read(inboxPresenceIntervalProvider);
     if (every != null) _presence = Timer.periodic(every, (_) => _heartbeat());
-    reply.addListener(() { final typing = reply.text.trim().isNotEmpty; if (typing != _typingSent) _heartbeat(); });
+    reply.addListener(() {
+      final typing = reply.text.trim().isNotEmpty;
+      if (typing != _typingSent) _heartbeat();
+      if (!noteMode) { _draftTimer?.cancel(); _draftTimer = Timer(ref.read(inboxDraftDebounceProvider), _saveDraft); }
+    });
+  }
+
+  /// حفظ تلقائي للمسودة بعد توقف الكتابة (لا يُحفظ ما لم يتغير)
+  Future<void> _saveDraft() async {
+    final text = reply.text.trim();
+    if (noteMode || text == _lastSavedDraft) return;
+    _lastSavedDraft = text;
+    try { await _api.adminInboxDraftSave(threadId: widget.threadId, text: text); } catch (_) { /* تُحاول لاحقاً */ }
+  }
+
+  void _restoreDraft(InboxThreadDetail d) {
+    if (_draftLoaded) return;
+    _draftLoaded = true;
+    final text = d.draftText;
+    if (text.isEmpty || reply.text.isNotEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (!mounted) return; _lastSavedDraft = text; reply.text = text; toast(context, 'استُعيدت مسودتك المحفوظة'); });
+  }
+
+  Future<void> _ai(String kind) async {
+    setState(() => busy = true);
+    try {
+      final text = await _api.adminInboxAi(widget.threadId, kind);
+      if (!mounted) return;
+      setState(() => busy = false);
+      if (kind == 'reply') {
+        setState(() { noteMode = false; reply.text = reply.text.trim().isEmpty ? text : '${reply.text.trim()}\n\n$text'; });
+        toast(context, 'أُدرجت مسودة الرد؛ راجعها قبل الإرسال');
+      } else {
+        await showDialog<void>(context: context, builder: (d) => AlertDialog(
+          title: const Row(children: [Icon(Icons.auto_awesome_outlined, color: Joy.primary), SizedBox(width: 8), Text('ملخص المحادثة')]),
+          content: SingleChildScrollView(child: SelectableText(text, key: const Key('ai-summary'), style: const TextStyle(height: 1.7))),
+          actions: [TextButton(onPressed: () { Clipboard.setData(ClipboardData(text: text)); Navigator.pop(d); }, child: const Text('نسخ')), FilledButton(onPressed: () => Navigator.pop(d), child: const Text('حسناً'))],
+        ));
+      }
+    } catch (e) {
+      if (mounted) toast(context, adminErrText(e), error: true);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _spam(InboxThread t) async {
+    if (t.spam) {
+      try { await _api.adminInboxSpam(widget.threadId, undo: true); ref.invalidate(adminInboxThreadProvider(widget.threadId)); if (mounted) toast(context, 'أُعيدت المحادثة وأُلغي الحظر'); } catch (e) { if (mounted) toast(context, adminErrText(e), error: true); }
+      return;
+    }
+    final domain = t.counterpart.contains('@') ? t.counterpart.split('@').last : '';
+    final choice = await showDialog<String>(context: context, builder: (d) => AlertDialog(
+      title: const Text('تعليم كمزعج'),
+      content: Text('تُنقل هذه المحادثة (وكل محادثات ${t.counterpart}) إلى مجلد المزعج بلا إشعارات. هل تحظر المرسل أيضاً؟', style: const TextStyle(height: 1.6)),
+      actions: [
+        TextButton(key: const Key('spam-cancel'), onPressed: () => Navigator.pop(d), child: const Text('تراجع')),
+        TextButton(key: const Key('spam-only'), onPressed: () => Navigator.pop(d, 'only'), child: const Text('نقل فقط')),
+        if (domain.isNotEmpty) TextButton(key: const Key('spam-domain'), onPressed: () => Navigator.pop(d, 'domain'), child: Text('حظر @$domain')),
+        FilledButton(key: const Key('spam-sender'), style: FilledButton.styleFrom(backgroundColor: Joy.danger), onPressed: () => Navigator.pop(d, 'sender'), child: const Text('حظر المرسل')),
+      ],
+    ));
+    if (choice == null || !mounted) return;
+    try {
+      await _api.adminInboxSpam(widget.threadId, domain: choice == 'domain', block: choice != 'only');
+      ref.invalidate(adminInboxThreadProvider(widget.threadId));
+      ref.invalidate(adminInboxBlockedProvider);
+      if (mounted) toast(context, choice == 'only' ? 'نُقلت إلى المزعج' : 'نُقلت إلى المزعج وحُظر المرسل');
+    } catch (e) {
+      if (mounted) toast(context, adminErrText(e), error: true);
+    }
+  }
+
+  Future<void> _schedule() async {
+    final when = await pickSendTime(context);
+    if (when == null) return;
+    await _send(sendAt: when);
+  }
+
+  Future<void> _cancelScheduled(InboxOutboxItem o) async {
+    try { await _api.adminInboxOutboxCancel(o.id); ref.invalidate(adminInboxThreadProvider(widget.threadId)); ref.invalidate(adminInboxOutboxProvider); if (mounted) toast(context, 'أُلغي الإرسال المجدول'); } catch (e) { if (mounted) toast(context, adminErrText(e), error: true); }
   }
 
   @override
   void dispose() {
     _presence?.cancel();
+    _draftTimer?.cancel();
     // مغادرة المحادثة: يُقرأ العميل مسبقاً لأن ref لا يُستخدم بعد التخلص
     _api.adminInboxPresence(widget.threadId, leave: true).catchError((_) => const <InboxViewer>[]);
     reply.dispose();
@@ -239,9 +332,9 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
   Future<void> _patch(Map<String, dynamic> body, String ok) async {
     setState(() => busy = true);
     try {
-      await ref.read(apiClientProvider).adminInboxUpdate(widget.threadId, body);
+      final r = await ref.read(apiClientProvider).adminInboxUpdate(widget.threadId, body);
       ref.invalidate(adminInboxThreadProvider(widget.threadId));
-      if (mounted) toast(context, ok);
+      if (mounted) toast(context, r.ratingSent ? '$ok وأُرسل للعميل طلب تقييم' : ok);
     } catch (e) {
       if (mounted) toast(context, adminErrText(e), error: true);
     } finally {
@@ -249,7 +342,7 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
     }
   }
 
-  Future<void> _send() async {
+  Future<void> _send({DateTime? sendAt}) async {
     final text = reply.text.trim();
     if (text.isEmpty && attachments.isEmpty) return;
     setState(() => busy = true);
@@ -258,8 +351,11 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
         await ref.read(apiClientProvider).adminInboxNote(widget.threadId, text);
         if (mounted) toast(context, 'حُفظت الملاحظة الداخلية');
       } else {
-        await ref.read(apiClientProvider).adminInboxReply(widget.threadId, text: text.isEmpty ? 'مرفق' : text, attachments: List.of(attachments));
-        if (mounted) toast(context, 'أُرسل الرد');
+        await ref.read(apiClientProvider).adminInboxReply(widget.threadId, text: text.isEmpty ? 'مرفق' : text, attachments: List.of(attachments), sendAt: sendAt);
+        _draftTimer?.cancel();
+        _lastSavedDraft = '';
+        ref.invalidate(adminInboxOutboxProvider);
+        if (mounted) toast(context, sendAt == null ? 'أُرسل الرد' : 'ستُرسل ${dueText(sendAt)}');
       }
       reply.clear();
       attachments.clear();
@@ -331,10 +427,12 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
     return Padding(
       padding: EdgeInsets.fromLTRB(16, 12, 16, MediaQuery.of(context).viewInsets.bottom + 12),
       child: detail.when(
-        loading: () => const SizedBox(height: 240, child: Center(child: CircularProgressIndicator())),
+        loading: () { _needsFresh = false; return const SizedBox(height: 240, child: Center(child: CircularProgressIndicator())); },
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(adminInboxThreadProvider(widget.threadId))),
         data: (d) {
           final t = d.thread;
+          // لا تُستعاد المسودة من نسخة مخزّنة قديمة؛ ننتظر التحديث الطازج
+          if (detail.isRefreshing) { _needsFresh = false; } else if (!_needsFresh) { _restoreDraft(d); }
           final present = others.isNotEmpty ? others : d.viewers;
           final typingNames = present.where((v) => v.typing).map((v) => v.name).toList();
           final c = d.customer;
@@ -362,6 +460,11 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
                 IconButton(key: const Key('thread-tags'), tooltip: 'وسوم', onPressed: busy ? null : () => _tags(t), icon: const Icon(Icons.label_outline_rounded, color: Joy.textMuted)),
                 IconButton(key: const Key('thread-archive'), tooltip: t.archived ? 'إخراج من الأرشيف' : 'أرشفة', onPressed: busy ? null : () => _patch({'archived': !t.archived}, t.archived ? 'أُعيدت إلى الوارد' : 'أُرشفت'), icon: Icon(t.archived ? Icons.unarchive_outlined : Icons.archive_outlined, color: Joy.textMuted)),
                 IconButton(key: const Key('thread-assign'), tooltip: 'إسناد', onPressed: busy ? null : () => _assign(d), icon: const Icon(Icons.person_add_alt_outlined, color: Joy.textMuted)),
+                IconButton(key: Key(t.spam ? 'thread-unspam' : 'thread-spam'), tooltip: t.spam ? 'ليس مزعجاً' : 'مزعج', onPressed: busy ? null : () => _spam(t), icon: Icon(t.spam ? Icons.restore_from_trash_outlined : Icons.report_gmailerrorred_outlined, color: t.spam ? Joy.danger : Joy.textMuted)),
+              ]),
+              if (t.spam) Padding(padding: const EdgeInsets.only(bottom: 6), child: Text('في مجلد المزعج: لا إشعارات ولا ردود تلقائية لهذا المرسل.', key: const Key('thread-spam-note'), style: const TextStyle(color: Joy.danger, fontSize: 12, fontWeight: FontWeight.w700))),
+              if (d.scheduled.isNotEmpty) Wrap(spacing: 6, runSpacing: 4, children: [
+                for (final o in d.scheduled) InputChip(key: Key('scheduled-${o.id}'), avatar: const Icon(Icons.schedule_send_outlined, size: 15, color: Joy.primary), label: Text('مجدولة: ${dueText(o.sendAt)}', style: const TextStyle(fontSize: 12)), visualDensity: VisualDensity.compact, deleteButtonTooltipMessage: 'إلغاء', onDeleted: busy ? null : () => _cancelScheduled(o)),
               ]),
               if (c != null)
                 Container(
@@ -431,8 +534,11 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
                   const SizedBox(width: 6),
                   ChoiceChip(key: const Key('thread-mode-note'), label: const Text('ملاحظة داخلية', style: TextStyle(fontSize: 12)), selected: noteMode, selectedColor: Joy.sunSoft, visualDensity: VisualDensity.compact, onSelected: (_) => setState(() => noteMode = true)),
                   const Spacer(),
+                  if (widget.info.aiEnabled) IconButton(key: const Key('thread-ai-summary'), tooltip: 'ملخص ذكي', onPressed: busy ? null : () => _ai('summary'), icon: const Icon(Icons.auto_awesome_outlined, size: 20, color: Joy.primary)),
+                  if (widget.info.aiEnabled && !noteMode) IconButton(key: const Key('thread-ai-reply'), tooltip: 'اقترح رداً', onPressed: busy ? null : () => _ai('reply'), icon: const Icon(Icons.auto_fix_high_outlined, size: 20, color: Joy.primary)),
                   if (!noteMode) IconButton(key: const Key('thread-template'), tooltip: 'رد جاهز', onPressed: busy ? null : _template, icon: const Icon(Icons.article_outlined, size: 20, color: Joy.textMuted)),
                   if (!noteMode) IconButton(key: const Key('thread-attach'), tooltip: 'إرفاق ملف', onPressed: busy ? null : _attach, icon: const Icon(Icons.attach_file_rounded, size: 20, color: Joy.textMuted)),
+                  if (!noteMode) IconButton(key: const Key('thread-schedule'), tooltip: 'إرسال لاحقاً', onPressed: busy ? null : _schedule, icon: const Icon(Icons.schedule_send_outlined, size: 20, color: Joy.textMuted)),
                 ]),
                 Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                   Expanded(child: TextField(key: const Key('thread-reply-field'), controller: reply, minLines: 1, maxLines: 6, decoration: InputDecoration(hintText: noteMode ? 'ملاحظة يراها الفريق فقط…' : 'اكتب ردّك… يُرسل من ${d.address}', helperText: !noteMode && d.signature.isNotEmpty ? 'سيُضاف توقيعك تلقائياً في نهاية الرد' : null, isDense: true, filled: noteMode, fillColor: noteMode ? Joy.sunSoft : null))),
@@ -540,6 +646,46 @@ class _ComposeSheetState extends ConsumerState<_ComposeSheet> {
   final to = TextEditingController(), subject = TextEditingController(), text = TextEditingController();
   final attachments = <InboxAttachment>[];
   late String mailbox = widget.initial;
+  Timer? _draftTimer;
+  String _saved = '';
+
+  @override
+  void initState() {
+    super.initState();
+    for (final c in [to, subject, text]) { c.addListener(() { _draftTimer?.cancel(); _draftTimer = Timer(ref.read(inboxDraftDebounceProvider), _saveDraft); }); }
+    _restore();
+  }
+
+  Future<void> _restore() async {
+    try {
+      final drafts = await ref.read(apiClientProvider).adminInboxDrafts();
+      final d = drafts.where((x) => x['threadId'] == null).firstOrNull;
+      if (d == null || !mounted) return;
+      to.text = d['to']?.toString() ?? ''; subject.text = d['subject']?.toString() ?? ''; text.text = d['text']?.toString() ?? '';
+      final mb = d['mailbox']?.toString() ?? '';
+      if (widget.mailboxes.any((b) => b.alias == mb)) setState(() => mailbox = mb);
+      _saved = '${to.text}|${subject.text}|${text.text}';
+      if (mounted) toast(context, 'استُعيدت مسودة رسالتك');
+    } catch (_) { /* بلا مسودة */ }
+  }
+
+  Future<void> _saveDraft() async {
+    final sig = '${to.text}|${subject.text}|${text.text}';
+    if (sig == _saved) return;
+    _saved = sig;
+    try { await ref.read(apiClientProvider).adminInboxDraftSave(text: text.text.trim(), to: to.text.trim(), subject: subject.text.trim(), mailbox: mailbox); } catch (_) { /* تُحاول لاحقاً */ }
+  }
+
+  @override
+  void dispose() { _draftTimer?.cancel(); super.dispose(); }
+
+  Map<String, dynamic>? _body(BuildContext context) {
+    if (!to.text.contains('@')) { toast(context, 'اكتب بريد المستلم', error: true); return null; }
+    if (subject.text.trim().isEmpty || text.text.trim().isEmpty) { toast(context, 'الموضوع والنص مطلوبان', error: true); return null; }
+    _draftTimer?.cancel();
+    return <String, dynamic>{'mailbox': mailbox, 'to': to.text.trim(), 'subject': subject.text.trim(), 'text': text.text.trim(), 'attachments': List<InboxAttachment>.of(attachments)};
+  }
+
   @override
   Widget build(BuildContext context) => Padding(
         padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 20),
@@ -564,11 +710,11 @@ class _ComposeSheetState extends ConsumerState<_ComposeSheet> {
           ]),
           if (attachments.isNotEmpty) Wrap(spacing: 6, children: [for (final a in attachments) InputChip(avatar: const Icon(Icons.attach_file_rounded, size: 14), label: Text(a.name, style: const TextStyle(fontSize: 11)), onDeleted: () => setState(() => attachments.remove(a)))]),
           const SizedBox(height: 14),
-          FilledButton.icon(key: const Key('compose-send'), onPressed: () {
-            if (!to.text.contains('@')) { toast(context, 'اكتب بريد المستلم', error: true); return; }
-            if (subject.text.trim().isEmpty || text.text.trim().isEmpty) { toast(context, 'الموضوع والنص مطلوبان', error: true); return; }
-            Navigator.pop(context, <String, dynamic>{'mailbox': mailbox, 'to': to.text.trim(), 'subject': subject.text.trim(), 'text': text.text.trim(), 'attachments': List<InboxAttachment>.of(attachments)});
-          }, icon: const Icon(Icons.send_rounded), label: const Text('إرسال')),
+          Row(children: [
+            Expanded(child: FilledButton.icon(key: const Key('compose-send'), onPressed: () { final b = _body(context); if (b != null) Navigator.pop(context, b); }, icon: const Icon(Icons.send_rounded), label: const Text('إرسال'))),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(key: const Key('compose-schedule'), onPressed: () async { final b = _body(context); if (b == null) return; final when = await pickSendTime(context); if (when == null || !context.mounted) return; Navigator.pop(context, {...b, 'sendAt': when}); }, icon: const Icon(Icons.schedule_send_outlined, size: 18), label: const Text('لاحقاً')),
+          ]),
         ])),
       );
 }
@@ -581,9 +727,9 @@ class InboxSettingsSheet extends ConsumerStatefulWidget {
 }
 
 class _InboxSettingsSheetState extends ConsumerState<InboxSettingsSheet> {
-  final secret = TextEditingController(), sharedSig = TextEditingController(), sharedAwayText = TextEditingController();
-  String? provider;
-  bool? sharedAway;
+  final secret = TextEditingController(), sharedSig = TextEditingController(), sharedAwayText = TextEditingController(), aiKey = TextEditingController();
+  String? provider, aiModel;
+  bool? sharedAway, csat;
   bool busy = false, seeded = false;
 
   void _copy(String v) { Clipboard.setData(ClipboardData(text: v)); toast(context, 'نُسخ'); }
@@ -610,7 +756,12 @@ class _InboxSettingsSheetState extends ConsumerState<InboxSettingsSheet> {
         if (sharedSig.text.trim() != s.sharedSignature) 'sharedSignature': sharedSig.text.trim(),
         if ((sharedAway ?? s.sharedAway) != s.sharedAway) 'sharedAway': sharedAway,
         if (sharedAwayText.text.trim() != s.sharedAwayText) 'sharedAwayText': sharedAwayText.text.trim(),
+        if (csat != null && csat != s.csat) 'csat': csat,
+        if (aiKey.text.trim().isNotEmpty) 'aiKey': aiKey.text.trim(),
+        if (aiModel != null && aiModel != s.aiModel) 'aiModel': aiModel,
       });
+      aiKey.clear();
+      ref.invalidate(adminInboxMailboxesProvider);
       secret.clear();
       ref.invalidate(adminInboxSettingsProvider);
       if (mounted) toast(context, 'حُفظت إعدادات الاستقبال');
@@ -661,6 +812,15 @@ class _InboxSettingsSheetState extends ConsumerState<InboxSettingsSheet> {
             TextField(key: const Key('inbox-shared-signature'), controller: sharedSig, minLines: 1, maxLines: 4, decoration: const InputDecoration(labelText: 'توقيع الصندوق المشترك', hintText: 'فريق ناس لايف\nnaslife.app', helperText: 'يُضاف في نهاية كل رسالة تُرسل من الصندوق المشترك')),
             SwitchListTile(key: const Key('inbox-shared-away'), contentPadding: EdgeInsets.zero, value: away, onChanged: (v) => setState(() => sharedAway = v), title: const Text('رد تلقائي على الوارد للصندوق المشترك', style: TextStyle(fontSize: 13.5)), subtitle: const Text('مرة واحدة لكل مُرسِل كل 24 ساعة، ولا يُرسل للرسائل الآلية', style: TextStyle(fontSize: 11.5))),
             if (away) TextField(key: const Key('inbox-shared-away-text'), controller: sharedAwayText, minLines: 2, maxLines: 5, decoration: const InputDecoration(labelText: 'نص الرد التلقائي', hintText: 'وصلتنا رسالتك وسنرد خلال يوم عمل.')),
+            const Divider(height: 24),
+            const Text('جودة الخدمة', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+            SwitchListTile(key: const Key('inbox-csat'), contentPadding: EdgeInsets.zero, value: csat ?? s.csat, onChanged: (v) => setState(() => csat = v), title: const Text('طلب تقييم من العميل عند إغلاق المحادثة', style: TextStyle(fontSize: 13.5)), subtitle: const Text('رسالة واحدة بنجوم من 1 إلى 5 وتعليق اختياري؛ تظهر النتائج في المؤشرات', style: TextStyle(fontSize: 11.5))),
+            const Divider(height: 24),
+            const Text('المساعد الذكي (Claude)', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+            const SizedBox(height: 4),
+            const Text('يلخّص المحادثة ويقترح مسودة رد داخل المحادثة. يحتاج مفتاح API من console.anthropic.com؛ يُحفظ على الخادم ولا يُعرض مجدداً.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.6)),
+            TextField(key: const Key('inbox-ai-key'), controller: aiKey, obscureText: true, textDirection: TextDirection.ltr, autocorrect: false, decoration: InputDecoration(labelText: 'مفتاح Anthropic (sk-ant-…)', helperText: s.hasAiKey ? 'محفوظ؛ اتركه فارغاً للإبقاء عليه' : 'غير مضبوط بعد', suffixIcon: s.hasAiKey ? IconButton(key: const Key('inbox-ai-clear'), tooltip: 'إزالة المفتاح', onPressed: busy ? null : () async { try { await ref.read(apiClientProvider).adminInboxSettingsSave({'aiKey': ''}); ref.invalidate(adminInboxSettingsProvider); ref.invalidate(adminInboxMailboxesProvider); if (context.mounted) toast(context, 'أُزيل المفتاح'); } catch (e) { if (context.mounted) toast(context, adminErrText(e), error: true); } }, icon: const Icon(Icons.delete_outline_rounded)) : null)),
+            DropdownButtonFormField<String>(key: const Key('inbox-ai-model'), initialValue: s.aiModels.contains(aiModel ?? s.aiModel) ? (aiModel ?? s.aiModel) : s.aiModels.first, decoration: const InputDecoration(labelText: 'النموذج'), items: [for (final m in s.aiModels) DropdownMenuItem(value: m, child: Text(m, textDirection: TextDirection.ltr))], onChanged: (v) => setState(() => aiModel = v)),
             const SizedBox(height: 12),
             Row(children: [
               Expanded(child: FilledButton.icon(key: const Key('inbox-settings-save'), onPressed: busy ? null : () => _save(s), icon: const Icon(Icons.save_outlined), label: const Text('حفظ'))),
@@ -932,4 +1092,235 @@ class _RuleEditorState extends State<_RuleEditor> {
       ])),
     );
   }
+}
+
+
+/// اختيار وقت الإرسال المجدول: خيارات سريعة أو تاريخ ووقت.
+Future<DateTime?> pickSendTime(BuildContext context) async {
+  final now = DateTime.now();
+  final choice = await showModalBottomSheet<String>(context: context, builder: (ctx) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+    const Padding(padding: EdgeInsets.fromLTRB(20, 14, 20, 4), child: Align(alignment: AlignmentDirectional.centerStart, child: Text('إرسال لاحقاً', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)))),
+    ListTile(key: const Key('schedule-hour'), leading: const Icon(Icons.hourglass_top_rounded), title: const Text('بعد ساعة'), onTap: () => Navigator.pop(ctx, 'hour')),
+    ListTile(key: const Key('schedule-tomorrow'), leading: const Icon(Icons.wb_sunny_outlined), title: const Text('غداً صباحاً (9:00)'), onTap: () => Navigator.pop(ctx, 'tomorrow')),
+    ListTile(key: const Key('schedule-pick'), leading: const Icon(Icons.event_rounded), title: const Text('اختر التاريخ والوقت'), onTap: () => Navigator.pop(ctx, 'pick')),
+    const SizedBox(height: 8),
+  ])));
+  if (choice == null || !context.mounted) return null;
+  switch (choice) {
+    case 'hour': return now.add(const Duration(hours: 1));
+    case 'tomorrow': return DateTime(now.year, now.month, now.day + 1, 9);
+  }
+  final d = await showDatePicker(context: context, firstDate: now, lastDate: now.add(const Duration(days: 90)), initialDate: now, helpText: 'تاريخ الإرسال');
+  if (d == null || !context.mounted) return null;
+  final tm = await showTimePicker(context: context, initialTime: TimeOfDay(hour: (now.hour + 1) % 24, minute: 0));
+  if (tm == null) return null;
+  final when = DateTime(d.year, d.month, d.day, tm.hour, tm.minute);
+  if (when.isBefore(now.add(const Duration(minutes: 1)))) { if (context.mounted) toast(context, 'اختر وقتاً لاحقاً', error: true); return null; }
+  return when;
+}
+
+/// نتائج البحث الشامل في نصوص الرسائل عبر كل الصناديق المرئية.
+class SearchResultsSheet extends ConsumerStatefulWidget {
+  final String q;
+  final InboxInfo info;
+  const SearchResultsSheet({super.key, required this.q, required this.info});
+  @override
+  ConsumerState<SearchResultsSheet> createState() => _SearchResultsSheetState();
+}
+
+class _SearchResultsSheetState extends ConsumerState<SearchResultsSheet> {
+  late Future<List<InboxSearchHit>> hits = ref.read(apiClientProvider).adminInboxSearch(widget.q);
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('نتائج «${widget.q}» في نصوص الرسائل', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+          const SizedBox(height: 8),
+          Flexible(child: FutureBuilder<List<InboxSearchHit>>(
+            future: hits,
+            builder: (context, snap) {
+              if (snap.hasError) return ErrorState(snap.error!, onRetry: () => setState(() => hits = ref.read(apiClientProvider).adminInboxSearch(widget.q)));
+              if (!snap.hasData) return const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()));
+              final items = snap.data!;
+              if (items.isEmpty) return const Padding(padding: EdgeInsets.all(16), child: Text('لا نتائج.', style: TextStyle(color: Joy.textMuted)));
+              return ListView(shrinkWrap: true, children: [
+                for (final h in items)
+                  ListTile(
+                    key: Key('search-hit-${h.thread.id}'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(h.direction == 'in' ? Icons.mail_outline_rounded : Icons.reply_rounded, color: Joy.textMuted),
+                    title: Text('${h.thread.who} · ${h.thread.subject}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                    subtitle: Text('${h.excerpt}\n${h.thread.mailbox}@${widget.info.domain} · ${timeAgo(h.at)}', maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                    onTap: () => showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => InboxThreadSheet(threadId: h.thread.id, info: widget.info)),
+                  ),
+              ]);
+            },
+          )),
+        ]),
+      );
+}
+
+/// الرسائل المجدولة: ما ينتظر الإرسال، وما أُرسل أو فشل مؤخراً.
+class OutboxSheet extends ConsumerWidget {
+  const OutboxSheet({super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final list = ref.watch(adminInboxOutboxProvider);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('الرسائل المجدولة', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+        const SizedBox(height: 8),
+        Flexible(child: list.when(
+          loading: () => const LinearProgressIndicator(),
+          error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(adminInboxOutboxProvider)),
+          data: (items) => items.isEmpty
+              ? const Padding(padding: EdgeInsets.all(16), child: Text('لا رسائل مجدولة. من أي رد اختر «إرسال لاحقاً».', style: TextStyle(color: Joy.textMuted)))
+              : ListView(shrinkWrap: true, children: [
+                  for (final o in items)
+                    ListTile(
+                      key: Key('outbox-${o.id}'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(switch (o.status) { 'sent' => Icons.check_circle_outline, 'failed' => Icons.error_outline, 'cancelled' => Icons.cancel_outlined, _ => Icons.schedule_send_outlined }, color: switch (o.status) { 'sent' => Joy.success, 'failed' => Joy.danger, _ => Joy.textMuted }),
+                      title: Text('${o.subject} · إلى ${o.to}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                      subtitle: Text(switch (o.status) { 'queued' => 'ستُرسل ${dueText(o.sendAt)} من ${o.mailbox}', 'sent' => 'أُرسلت ${timeAgo(o.sentAt)}', 'failed' => 'فشلت: ${o.error ?? ''}', _ => 'أُلغيت' }, style: const TextStyle(fontSize: 12)),
+                      trailing: o.status == 'queued' ? IconButton(key: Key('outbox-cancel-${o.id}'), tooltip: 'إلغاء', onPressed: () async { try { await ref.read(apiClientProvider).adminInboxOutboxCancel(o.id); ref.invalidate(adminInboxOutboxProvider); if (context.mounted) toast(context, 'أُلغيت'); } catch (e) { if (context.mounted) toast(context, adminErrText(e), error: true); } }, icon: const Icon(Icons.close_rounded, color: Joy.danger)) : null,
+                    ),
+                ]),
+        )),
+      ]),
+    );
+  }
+}
+
+/// المرسلون المحظورون: بريد كامل أو @نطاق؛ الوارد منهم يذهب للمزعج بصمت.
+class BlockedSheet extends ConsumerStatefulWidget {
+  const BlockedSheet({super.key});
+  @override
+  ConsumerState<BlockedSheet> createState() => _BlockedSheetState();
+}
+
+class _BlockedSheetState extends ConsumerState<BlockedSheet> {
+  final pattern = TextEditingController(), reason = TextEditingController();
+  Future<void> _add() async {
+    try { await ref.read(apiClientProvider).adminInboxBlock(pattern.text, reason: reason.text.trim()); pattern.clear(); reason.clear(); ref.invalidate(adminInboxBlockedProvider); if (mounted) toast(context, 'أُضيف إلى المحظورين'); } catch (e) { if (mounted) toast(context, adminErrText(e), error: true); }
+  }
+  @override
+  Widget build(BuildContext context) {
+    final list = ref.watch(adminInboxBlockedProvider);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 20),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('المرسلون المحظورون', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+        const Text('بريد كامل (someone@x.com) أو نطاق كامل (@x.com). الوارد منهم يُحفظ في مجلد المزعج بلا إشعار.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.5)),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(flex: 3, child: TextField(key: const Key('blocked-add-pattern'), controller: pattern, textDirection: TextDirection.ltr, autocorrect: false, decoration: const InputDecoration(isDense: true, labelText: 'بريد أو @نطاق'))),
+          const SizedBox(width: 6),
+          Expanded(flex: 2, child: TextField(key: const Key('blocked-add-reason'), controller: reason, decoration: const InputDecoration(isDense: true, labelText: 'السبب'))),
+          IconButton.filled(key: const Key('blocked-add'), onPressed: _add, icon: const Icon(Icons.add_rounded)),
+        ]),
+        const SizedBox(height: 8),
+        Flexible(child: list.when(
+          loading: () => const LinearProgressIndicator(),
+          error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(adminInboxBlockedProvider)),
+          data: (items) => items.isEmpty
+              ? const Padding(padding: EdgeInsets.all(16), child: Text('لا محظورين.', style: TextStyle(color: Joy.textMuted)))
+              : ListView(shrinkWrap: true, children: [
+                  for (final b in items)
+                    ListTile(
+                      key: Key('blocked-${b.pattern}'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.block_outlined, color: Joy.danger),
+                      title: Text(b.pattern, textDirection: TextDirection.ltr, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                      subtitle: Text('${b.reason.isNotEmpty ? '${b.reason} · ' : ''}صُدّ ${b.hits} مرة${b.createdByName.isNotEmpty ? ' · بواسطة ${b.createdByName}' : ''}', style: const TextStyle(fontSize: 12)),
+                      trailing: IconButton(key: Key('blocked-delete-${b.pattern}'), tooltip: 'إلغاء الحظر', onPressed: () async { try { await ref.read(apiClientProvider).adminInboxUnblock(b.pattern); ref.invalidate(adminInboxBlockedProvider); } catch (e) { if (context.mounted) toast(context, adminErrText(e), error: true); } }, icon: const Icon(Icons.delete_outline_rounded, color: Joy.danger)),
+                    ),
+                ]),
+        )),
+      ]),
+    );
+  }
+}
+
+/// المؤشرات: الحجم، زمن أول رد، الإغلاق، التقييم، ولكل موظف وصندوق ويوم.
+class InboxStatsSheet extends ConsumerStatefulWidget {
+  const InboxStatsSheet({super.key});
+  @override
+  ConsumerState<InboxStatsSheet> createState() => _InboxStatsSheetState();
+}
+
+class _InboxStatsSheetState extends ConsumerState<InboxStatsSheet> {
+  int days = 30;
+  static String _mins(int m) => m <= 0 ? '—' : m < 60 ? '$m د' : m < 1440 ? '${(m / 60).toStringAsFixed(1)} س' : '${(m / 1440).toStringAsFixed(1)} ي';
+  @override
+  Widget build(BuildContext context) {
+    final st = ref.watch(adminInboxStatsProvider(days));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Expanded(child: Text('مؤشرات البريد', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17))),
+          for (final n in const [7, 30, 90]) Padding(padding: const EdgeInsetsDirectional.only(start: 4), child: ChoiceChip(key: Key('stats-days-$n'), label: Text('$n يوم'), selected: days == n, visualDensity: VisualDensity.compact, onSelected: (_) => setState(() => days = n))),
+        ]),
+        const SizedBox(height: 8),
+        Flexible(child: st.when(
+          loading: () => const LinearProgressIndicator(),
+          error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(adminInboxStatsProvider(days))),
+          data: (x) {
+            final maxDay = x.daily.fold<int>(1, (m, d) => [m, (d['received'] as num? ?? 0).toInt(), (d['sent'] as num? ?? 0).toInt()].reduce((a, b) => a > b ? a : b));
+            return ListView(shrinkWrap: true, children: [
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                _StatBox(keyName: 'stats-received', label: 'وارد', value: '${x.n('received')}', sub: '${x.n('threads')} محادثة'),
+                _StatBox(keyName: 'stats-sent', label: 'ردود الفريق', value: '${x.n('sent')}', sub: '${x.n('openUnanswered')} بلا رد الآن'),
+                _StatBox(keyName: 'stats-first', label: 'أول رد', value: _mins(x.n('firstResponseMin')), sub: 'الوسيط ${_mins(x.n('firstResponseMedianMin'))}'),
+                _StatBox(keyName: 'stats-closed', label: 'أُغلقت', value: '${x.n('closed')}', sub: x.d('resolutionHours') != null ? 'الحل خلال ${x.d('resolutionHours')!.toStringAsFixed(1)} س' : ''),
+                _StatBox(keyName: 'stats-csat', label: 'رضا العملاء', value: x.d('csat') != null ? '${x.d('csat')!.toStringAsFixed(2)} / 5' : '—', sub: '${x.n('ratings')} تقييم من ${x.n('ratingsSent')} طلب'),
+                _StatBox(keyName: 'stats-spam', label: 'مزعج', value: '${x.n('spam')}', sub: 'محادثة صُدّت'),
+              ]),
+              if (x.daily.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('يومياً · وارد وردود', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                const SizedBox(height: 4),
+                SizedBox(height: 70, child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  for (final d in x.daily.length > 31 ? x.daily.sublist(x.daily.length - 31) : x.daily)
+                    Expanded(child: Tooltip(message: '${d['day']}: وارد ${d['received']} · ردود ${d['sent']}', child: Padding(padding: const EdgeInsets.symmetric(horizontal: 1), child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
+                      Container(height: 60 * ((d['received'] as num? ?? 0).toInt() / maxDay), decoration: BoxDecoration(color: Joy.primary, borderRadius: BorderRadius.circular(2))),
+                      const SizedBox(height: 1),
+                      Container(height: 60 * ((d['sent'] as num? ?? 0).toInt() / maxDay) * .5, decoration: BoxDecoration(color: Joy.success, borderRadius: BorderRadius.circular(2))),
+                    ])))),
+                ])),
+              ],
+              if (x.agents.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('لكل موظف', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                for (final a in x.agents)
+                  ListTile(key: Key('stats-agent-${a.id}'), contentPadding: EdgeInsets.zero, dense: true, leading: const Icon(Icons.person_outline, color: Joy.textMuted), title: Text(a.name, style: const TextStyle(fontWeight: FontWeight.w700)), subtitle: Text('${a.replies} رد · ${a.closed} إغلاق · أول رد ${_mins(a.firstResponseMin)}${a.csat != null ? ' · رضا ${a.csat!.toStringAsFixed(2)} (${a.ratings})' : ''}', style: const TextStyle(fontSize: 12))),
+              ],
+              if (x.mailboxes.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                const Text('لكل صندوق', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                for (final m in x.mailboxes) Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: Text('${m['mailbox']}: وارد ${m['received']} · ردود ${m['sent']}', style: const TextStyle(fontSize: 12.5))),
+              ],
+            ]);
+          },
+        )),
+      ]),
+    );
+  }
+}
+
+class _StatBox extends StatelessWidget {
+  final String keyName, label, value, sub;
+  const _StatBox({required this.keyName, required this.label, required this.value, this.sub = ''});
+  @override
+  Widget build(BuildContext context) => Container(
+        key: Key(keyName), width: 150, padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: const TextStyle(fontSize: 11.5, color: Joy.textMuted)),
+          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Joy.primary)),
+          if (sub.isNotEmpty) Text(sub, style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
+        ]),
+      );
 }

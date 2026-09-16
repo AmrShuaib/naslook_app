@@ -182,11 +182,11 @@ class InboxMailbox {
 class InboxInfo {
   final List<InboxMailbox> mailboxes;
   final String domain, myMailbox, receivingProvider;
-  final bool domainVerified, canReply, canManage, receivingConfigured;
+  final bool domainVerified, canReply, canManage, receivingConfigured, aiEnabled, csat;
   final int received, totalUnread;
   final DateTime? lastReceivedAt;
-  const InboxInfo({this.mailboxes = const [], this.domain = '', this.myMailbox = '', this.receivingProvider = 'generic', this.domainVerified = false, this.canReply = false, this.canManage = false, this.receivingConfigured = false, this.received = 0, this.totalUnread = 0, this.lastReceivedAt});
-  factory InboxInfo.fromJson(Map m) { final r = _m(m['receiving']); return InboxInfo(mailboxes: asList(m['mailboxes']).map(InboxMailbox.fromJson).toList(), domain: m['domain']?.toString() ?? '', myMailbox: m['myMailbox']?.toString() ?? '', receivingProvider: r['provider']?.toString() ?? 'generic', domainVerified: m['domainVerified'] == true, canReply: m['canReply'] == true, canManage: m['canManage'] == true, receivingConfigured: r['configured'] == true, received: _i(r['received']), totalUnread: m['totalUnread'] == null ? asList(m['mailboxes']).fold(0, (s, b) => s + _i(b['unread'])) : _i(m['totalUnread']), lastReceivedAt: _t(r['lastReceivedAt'])); }
+  const InboxInfo({this.mailboxes = const [], this.domain = '', this.myMailbox = '', this.receivingProvider = 'generic', this.domainVerified = false, this.canReply = false, this.canManage = false, this.receivingConfigured = false, this.aiEnabled = false, this.csat = true, this.received = 0, this.totalUnread = 0, this.lastReceivedAt});
+  factory InboxInfo.fromJson(Map m) { final r = _m(m['receiving']); return InboxInfo(mailboxes: asList(m['mailboxes']).map(InboxMailbox.fromJson).toList(), domain: m['domain']?.toString() ?? '', myMailbox: m['myMailbox']?.toString() ?? '', receivingProvider: r['provider']?.toString() ?? 'generic', aiEnabled: m['aiEnabled'] == true, csat: m['csat'] != false, domainVerified: m['domainVerified'] == true, canReply: m['canReply'] == true, canManage: m['canManage'] == true, receivingConfigured: r['configured'] == true, received: _i(r['received']), totalUnread: m['totalUnread'] == null ? asList(m['mailboxes']).fold(0, (s, b) => s + _i(b['unread'])) : _i(m['totalUnread']), lastReceivedAt: _t(r['lastReceivedAt'])); }
 }
 
 /// قالب رد جاهز.
@@ -203,9 +203,10 @@ class InboxThread {
   final List<String> participants, tags;
   final DateTime? lastAt, snoozeUntil, closedAt;
   final int unread, messages;
-  final bool archived, starred, snoozed;
-  const InboxThread({required this.id, required this.mailbox, this.subject = '', this.snippet = '', this.counterpart = '', this.counterpartName = '', this.lastDirection = 'in', this.assignedName = '', this.status = 'open', this.assignedTo, this.participants = const [], this.tags = const [], this.lastAt, this.snoozeUntil, this.closedAt, this.unread = 0, this.messages = 0, this.archived = false, this.starred = false, this.snoozed = false});
-  factory InboxThread.fromJson(Map m) => InboxThread(id: m['id'].toString(), mailbox: m['mailbox']?.toString() ?? '', subject: m['subject']?.toString() ?? '', snippet: m['snippet']?.toString() ?? '', counterpart: m['counterpart']?.toString() ?? '', counterpartName: m['counterpartName']?.toString() ?? '', lastDirection: m['lastDirection']?.toString() ?? 'in', assignedName: m['assignedName']?.toString() ?? '', status: m['status']?.toString() ?? 'open', assignedTo: m['assignedTo']?.toString(), participants: (m['participants'] as List? ?? const []).map((e) => e.toString()).toList(), tags: (m['tags'] as List? ?? const []).map((e) => e.toString()).toList(), lastAt: _t(m['lastAt']), snoozeUntil: _t(m['snoozeUntil']), closedAt: _t(m['closedAt']), unread: _i(m['unread']), messages: _i(m['messages']), archived: m['archived'] == true, starred: m['starred'] == true, snoozed: m['snoozed'] == true);
+  final bool archived, starred, snoozed, spam, ratingSent;
+  final DateTime? ratingSentAt;
+  const InboxThread({this.spam = false, this.ratingSent = false, this.ratingSentAt, required this.id, required this.mailbox, this.subject = '', this.snippet = '', this.counterpart = '', this.counterpartName = '', this.lastDirection = 'in', this.assignedName = '', this.status = 'open', this.assignedTo, this.participants = const [], this.tags = const [], this.lastAt, this.snoozeUntil, this.closedAt, this.unread = 0, this.messages = 0, this.archived = false, this.starred = false, this.snoozed = false});
+  factory InboxThread.fromJson(Map m) => InboxThread(spam: m['spam'] == true, ratingSent: m['ratingSent'] == true, ratingSentAt: _t(m['ratingSentAt']), id: m['id'].toString(), mailbox: m['mailbox']?.toString() ?? '', subject: m['subject']?.toString() ?? '', snippet: m['snippet']?.toString() ?? '', counterpart: m['counterpart']?.toString() ?? '', counterpartName: m['counterpartName']?.toString() ?? '', lastDirection: m['lastDirection']?.toString() ?? 'in', assignedName: m['assignedName']?.toString() ?? '', status: m['status']?.toString() ?? 'open', assignedTo: m['assignedTo']?.toString(), participants: (m['participants'] as List? ?? const []).map((e) => e.toString()).toList(), tags: (m['tags'] as List? ?? const []).map((e) => e.toString()).toList(), lastAt: _t(m['lastAt']), snoozeUntil: _t(m['snoozeUntil']), closedAt: _t(m['closedAt']), unread: _i(m['unread']), messages: _i(m['messages']), archived: m['archived'] == true, starred: m['starred'] == true, snoozed: m['snoozed'] == true);
   String get who => counterpartName.isNotEmpty ? counterpartName : counterpart;
 }
 
@@ -246,17 +247,69 @@ class InboxThreadDetail {
   final InboxCustomer? customer;
   final List<InboxLinkedTask> tasks;
   final List<InboxViewer> viewers;
-  const InboxThreadDetail({required this.thread, this.address = '', this.signature = '', this.messages = const [], this.customer, this.tasks = const [], this.viewers = const []});
-  factory InboxThreadDetail.fromJson(Map m) => InboxThreadDetail(thread: InboxThread.fromJson(m), address: m['address']?.toString() ?? '', signature: m['signature']?.toString() ?? '', messages: asList(m['messageList']).map(InboxMessage.fromJson).toList(), customer: m['customer'] is Map ? InboxCustomer.fromJson(m['customer'] as Map) : null, tasks: asList(m['tasks']).map(InboxLinkedTask.fromJson).toList(), viewers: asList(m['viewers']).map(InboxViewer.fromJson).toList());
+  /// مسودتي المحفوظة لهذه المحادثة (إن وُجدت)
+  final Map<String, dynamic>? draft;
+  final List<InboxOutboxItem> scheduled;
+  const InboxThreadDetail({required this.thread, this.address = '', this.signature = '', this.messages = const [], this.customer, this.tasks = const [], this.viewers = const [], this.draft, this.scheduled = const []});
+  factory InboxThreadDetail.fromJson(Map m) => InboxThreadDetail(thread: InboxThread.fromJson(m), address: m['address']?.toString() ?? '', signature: m['signature']?.toString() ?? '', messages: asList(m['messageList']).map(InboxMessage.fromJson).toList(), customer: m['customer'] is Map ? InboxCustomer.fromJson(m['customer'] as Map) : null, tasks: asList(m['tasks']).map(InboxLinkedTask.fromJson).toList(), viewers: asList(m['viewers']).map(InboxViewer.fromJson).toList(), draft: m['draft'] is Map ? _m(m['draft']) : null, scheduled: asList(m['scheduled']).map(InboxOutboxItem.fromJson).toList());
+  String get draftText => draft?['text']?.toString() ?? '';
+}
+
+/// رسالة مجدولة في صندوق الصادر.
+class InboxOutboxItem {
+  final String id, mailbox, to, subject, text, status;
+  final String? threadId, error;
+  final DateTime? sendAt, sentAt, createdAt;
+  const InboxOutboxItem({required this.id, this.mailbox = '', this.to = '', this.subject = '', this.text = '', this.status = 'queued', this.threadId, this.error, this.sendAt, this.sentAt, this.createdAt});
+  factory InboxOutboxItem.fromJson(Map m) => InboxOutboxItem(id: m['id'].toString(), mailbox: m['mailbox']?.toString() ?? '', to: m['to']?.toString() ?? '', subject: m['subject']?.toString() ?? '', text: m['text']?.toString() ?? '', status: m['status']?.toString() ?? 'queued', threadId: m['threadId']?.toString(), error: m['error']?.toString(), sendAt: _t(m['sendAt']), sentAt: _t(m['sentAt']), createdAt: _t(m['createdAt']));
+}
+
+/// نتيجة بحث شامل: المحادثة ومقتطف من الرسالة المطابقة.
+class InboxSearchHit {
+  final InboxThread thread;
+  final String excerpt, direction, messageId;
+  final DateTime? at;
+  const InboxSearchHit({required this.thread, this.excerpt = '', this.direction = 'in', this.messageId = '', this.at});
+  factory InboxSearchHit.fromJson(Map m) { final x = m['match'] is Map ? _m(m['match']) : const <String, dynamic>{}; return InboxSearchHit(thread: InboxThread.fromJson(m), excerpt: x['excerpt']?.toString() ?? '', direction: x['direction']?.toString() ?? 'in', messageId: x['messageId']?.toString() ?? '', at: _t(x['at'])); }
+}
+
+/// مرسل محظور (بريد كامل أو @نطاق).
+class InboxBlocked {
+  final String pattern, reason, createdByName;
+  final int hits;
+  final DateTime? createdAt;
+  const InboxBlocked({required this.pattern, this.reason = '', this.createdByName = '', this.hits = 0, this.createdAt});
+  factory InboxBlocked.fromJson(Map m) => InboxBlocked(pattern: m['pattern'].toString(), reason: m['reason']?.toString() ?? '', createdByName: m['createdByName']?.toString() ?? '', hits: _i(m['hits']), createdAt: _t(m['createdAt']));
+}
+
+/// مؤشرات البريد: الإجمالي، لكل موظف، لكل صندوق، ويومياً.
+class InboxAgentStat {
+  final String id, name;
+  final int replies, closed, firstResponseMin, ratings;
+  final double? csat;
+  const InboxAgentStat({required this.id, this.name = '', this.replies = 0, this.closed = 0, this.firstResponseMin = 0, this.ratings = 0, this.csat});
+  factory InboxAgentStat.fromJson(Map m) => InboxAgentStat(id: m['id'].toString(), name: m['name']?.toString() ?? '', replies: _i(m['replies']), closed: _i(m['closed']), firstResponseMin: _i(m['firstResponseMin']), ratings: _i(m['ratings']), csat: (m['csat'] as num?)?.toDouble());
+}
+
+class InboxStats {
+  final int days;
+  final Map<String, dynamic> totals;
+  final List<InboxAgentStat> agents;
+  final List<Map<String, dynamic>> mailboxes, daily;
+  const InboxStats({this.days = 30, this.totals = const {}, this.agents = const [], this.mailboxes = const [], this.daily = const []});
+  factory InboxStats.fromJson(Map m) => InboxStats(days: _i(m['days']), totals: m['totals'] is Map ? _m(m['totals']) : const {}, agents: asList(m['agents']).map(InboxAgentStat.fromJson).toList(), mailboxes: asList(m['mailboxes']).map(_m).toList(), daily: asList(m['daily']).map(_m).toList());
+  int n(String k) => _i(totals[k]);
+  double? d(String k) => (totals[k] as num?)?.toDouble();
 }
 
 class InboxSettings {
-  final String provider, token, resendUrl, genericUrl, domain, shared, sharedSignature, sharedAwayText;
-  final bool hasSecret, sharedAway;
+  final String provider, token, resendUrl, genericUrl, domain, shared, sharedSignature, sharedAwayText, aiModel;
+  final bool hasSecret, sharedAway, csat, hasAiKey;
   final int received, rejected;
   final DateTime? lastReceivedAt, sharedAwayUntil;
-  const InboxSettings({this.provider = 'generic', this.token = '', this.resendUrl = '', this.genericUrl = '', this.domain = '', this.shared = '', this.sharedSignature = '', this.sharedAwayText = '', this.hasSecret = false, this.sharedAway = false, this.received = 0, this.rejected = 0, this.lastReceivedAt, this.sharedAwayUntil});
-  factory InboxSettings.fromJson(Map m) => InboxSettings(provider: m['provider']?.toString() ?? 'generic', token: m['token']?.toString() ?? '', resendUrl: m['resendUrl']?.toString() ?? '', genericUrl: m['genericUrl']?.toString() ?? '', domain: m['domain']?.toString() ?? '', shared: m['shared']?.toString() ?? '', sharedSignature: m['sharedSignature']?.toString() ?? '', sharedAwayText: m['sharedAwayText']?.toString() ?? '', hasSecret: m['hasSecret'] == true, sharedAway: m['sharedAway'] == true, received: _i(m['received']), rejected: _i(m['rejected']), lastReceivedAt: _t(m['lastReceivedAt']), sharedAwayUntil: _t(m['sharedAwayUntil']));
+  final List<String> aiModels;
+  const InboxSettings({this.provider = 'generic', this.token = '', this.resendUrl = '', this.genericUrl = '', this.domain = '', this.shared = '', this.sharedSignature = '', this.sharedAwayText = '', this.aiModel = 'claude-opus-5', this.hasSecret = false, this.sharedAway = false, this.csat = true, this.hasAiKey = false, this.received = 0, this.rejected = 0, this.lastReceivedAt, this.sharedAwayUntil, this.aiModels = const ['claude-opus-5']});
+  factory InboxSettings.fromJson(Map m) => InboxSettings(aiModel: m['aiModel']?.toString() ?? 'claude-opus-5', csat: m['csat'] != false, hasAiKey: m['hasAiKey'] == true, aiModels: (m['aiModels'] as List? ?? const ['claude-opus-5']).map((e) => e.toString()).toList(), provider: m['provider']?.toString() ?? 'generic', token: m['token']?.toString() ?? '', resendUrl: m['resendUrl']?.toString() ?? '', genericUrl: m['genericUrl']?.toString() ?? '', domain: m['domain']?.toString() ?? '', shared: m['shared']?.toString() ?? '', sharedSignature: m['sharedSignature']?.toString() ?? '', sharedAwayText: m['sharedAwayText']?.toString() ?? '', hasSecret: m['hasSecret'] == true, sharedAway: m['sharedAway'] == true, received: _i(m['received']), rejected: _i(m['rejected']), lastReceivedAt: _t(m['lastReceivedAt']), sharedAwayUntil: _t(m['sharedAwayUntil']));
 }
 
 /// إعدادات العضو في البريد: توقيعه ورد الغياب لصندوقه.
@@ -619,8 +672,21 @@ extension AdminApi on ApiClient {
   Future<List<InboxRule>> adminInboxRuleTest({required String from, required String subject, String text = '', String? mailbox}) async => asList((await post('/adminapi/inbox/rules/test', {'from': from, 'subject': subject, 'text': text, if (mailbox != null) 'mailbox': mailbox}))['matches']).map(InboxRule.fromJson).toList();
   Future<InboxThreadDetail> adminInboxThread(String id) async => InboxThreadDetail.fromJson(await get('/adminapi/inbox/threads/$id'));
   Future<InboxThread> adminInboxUpdate(String id, Map<String, dynamic> body) async => InboxThread.fromJson(await patch('/adminapi/inbox/threads/$id', body));
-  Future<void> adminInboxReply(String id, {required String text, String? to, String? subject, List<InboxAttachment> attachments = const []}) => post('/adminapi/inbox/threads/$id/reply', {'text': text.trim(), if (to != null) 'to': to, if (subject != null) 'subject': subject, if (attachments.isNotEmpty) 'attachments': attachments.map((a) => a.toJson()).toList()});
-  Future<void> adminInboxCompose({required String mailbox, required String to, required String subject, required String text, List<InboxAttachment> attachments = const []}) => post('/adminapi/inbox/compose', {'mailbox': mailbox, 'to': to.trim(), 'subject': subject.trim(), 'text': text.trim(), if (attachments.isNotEmpty) 'attachments': attachments.map((a) => a.toJson()).toList()});
+  Future<Map<String, dynamic>> adminInboxReply(String id, {required String text, String? to, String? subject, List<InboxAttachment> attachments = const [], DateTime? sendAt}) => post('/adminapi/inbox/threads/$id/reply', {'text': text.trim(), if (to != null) 'to': to, if (subject != null) 'subject': subject, if (attachments.isNotEmpty) 'attachments': attachments.map((a) => a.toJson()).toList(), if (sendAt != null) 'sendAt': sendAt.toUtc().toIso8601String()});
+  Future<Map<String, dynamic>> adminInboxCompose({required String mailbox, required String to, required String subject, required String text, List<InboxAttachment> attachments = const [], DateTime? sendAt}) => post('/adminapi/inbox/compose', {'mailbox': mailbox, 'to': to.trim(), 'subject': subject.trim(), 'text': text.trim(), if (attachments.isNotEmpty) 'attachments': attachments.map((a) => a.toJson()).toList(), if (sendAt != null) 'sendAt': sendAt.toUtc().toIso8601String()});
+  Future<List<InboxSearchHit>> adminInboxSearch(String q) async => asList((await get('/adminapi/inbox/search', query: {'q': q.trim()}))['threads']).map(InboxSearchHit.fromJson).toList();
+  Future<InboxThread> adminInboxSpam(String id, {bool undo = false, bool domain = false, bool block = true, String? reason}) async => InboxThread.fromJson(await post('/adminapi/inbox/threads/$id/spam', {if (undo) 'undo': true, if (domain) 'domain': true, if (!block) 'block': false, if (reason != null && reason.isNotEmpty) 'reason': reason}));
+  Future<List<InboxBlocked>> adminInboxBlocked() async => asList((await get('/adminapi/inbox/blocked'))['blocked']).map(InboxBlocked.fromJson).toList();
+  Future<void> adminInboxBlock(String pattern, {String reason = ''}) => post('/adminapi/inbox/blocked', {'pattern': pattern.trim(), 'reason': reason});
+  Future<void> adminInboxUnblock(String pattern) => delete('/adminapi/inbox/blocked/${Uri.encodeComponent(pattern)}');
+  Future<List<InboxOutboxItem>> adminInboxOutbox() async => asList((await get('/adminapi/inbox/outbox'))['items']).map(InboxOutboxItem.fromJson).toList();
+  Future<void> adminInboxOutboxCancel(String id) => delete('/adminapi/inbox/outbox/$id');
+  Future<List<Map<String, dynamic>>> adminInboxDrafts() async => asList((await get('/adminapi/inbox/drafts'))['drafts']).map(_m).toList();
+  Future<void> adminInboxDraftSave({String? threadId, String text = '', String to = '', String subject = '', String mailbox = '', List<InboxAttachment> attachments = const []}) => put('/adminapi/inbox/drafts', {if (threadId != null) 'threadId': threadId, 'text': text, if (to.isNotEmpty) 'to': to, if (subject.isNotEmpty) 'subject': subject, if (mailbox.isNotEmpty) 'mailbox': mailbox, if (attachments.isNotEmpty) 'attachments': attachments.map((a) => a.toJson()).toList()});
+  Future<void> adminInboxDraftDelete({String? threadId}) => delete('/adminapi/inbox/drafts${threadId != null ? '?threadId=$threadId' : ''}');
+  /// المساعد الذكي: kind = summary | reply
+  Future<String> adminInboxAi(String id, String kind) async => (await post('/adminapi/inbox/threads/$id/ai', {'kind': kind}))['text']?.toString() ?? '';
+  Future<InboxStats> adminInboxStats({int days = 30}) async => InboxStats.fromJson(await get('/adminapi/inbox/stats', query: {'days': '$days'}));
   Future<InboxMessage> adminInboxNote(String id, String text) async => InboxMessage.fromJson({...await post('/adminapi/inbox/threads/$id/notes', {'text': text.trim()}), 'from': const {}});
   Future<List<InboxTemplate>> adminInboxTemplates() async => asList((await get('/adminapi/inbox/templates'))['templates']).map(InboxTemplate.fromJson).toList();
   Future<InboxTemplate> adminInboxTemplateCreate({required String title, required String body, bool shared = true}) async => InboxTemplate.fromJson(await post('/adminapi/inbox/templates', {'title': title.trim(), 'body': body.trim(), 'shared': shared}));
