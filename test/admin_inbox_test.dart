@@ -11,6 +11,8 @@ import 'package:http/testing.dart';
 import 'package:naslook/api/client.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/pages/admin/admin_inbox.dart';
+import 'package:naslook/pages/admin/admin_shell.dart';
+import 'package:naslook/state/admin_providers.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
 import 'package:naslook/state/providers.dart';
@@ -29,10 +31,12 @@ void main() {
   Map<String, dynamic>? lastBody;
   var received = 2;
   final threads = <Map<String, dynamic>>[
-    {'id': _th, 'mailbox': 'admin', 'subject': 'استفسار عن الاشتراك', 'snippet': 'هل يوجد اشتراك سنوي؟', 'counterpart': 'ahmed@client.com', 'counterpartName': 'Ahmed Client', 'participants': [], 'lastAt': '2026-09-16T10:00:00Z', 'lastDirection': 'in', 'unread': 1, 'messages': 1, 'archived': false, 'starred': false, 'assignedTo': null, 'assignedName': '',
+    {'id': _th, 'mailbox': 'admin', 'subject': 'استفسار عن الاشتراك', 'snippet': 'هل يوجد اشتراك سنوي؟', 'counterpart': 'ahmed@client.com', 'counterpartName': 'Ahmed Client', 'participants': [], 'lastAt': '2026-09-16T10:00:00Z', 'lastDirection': 'in', 'unread': 1, 'messages': 1, 'archived': false, 'starred': false, 'assignedTo': null, 'assignedName': '', 'status': 'open', 'snoozeUntil': null, 'snoozed': false, 'tags': ['اشتراك'],
       'messageList': <dynamic>[{'id': 'm1', 'direction': 'in', 'from': {'email': 'ahmed@client.com', 'name': 'Ahmed Client'}, 'to': [{'email': 'admin@naslife.app', 'name': ''}], 'cc': [], 'subject': 'استفسار عن الاشتراك', 'text': 'هل يوجد اشتراك سنوي للدوائر التجارية؟', 'html': null, 'attachments': [], 'read': false, 'sentBy': null, 'sentByName': '', 'createdAt': '2026-09-16T10:00:00Z'}]},
-    {'id': _th2, 'mailbox': 'amr', 'subject': 'عرض شراكة', 'snippet': 'نود عرض شراكة', 'counterpart': 'lina@partner.com', 'counterpartName': 'Lina', 'participants': [], 'lastAt': '2026-09-16T09:00:00Z', 'lastDirection': 'out', 'unread': 0, 'messages': 2, 'archived': false, 'starred': true, 'assignedTo': 'SA0000002', 'assignedName': 'sara', 'messageList': <dynamic>[]},
+    {'id': _th2, 'mailbox': 'amr', 'subject': 'عرض شراكة', 'snippet': 'نود عرض شراكة', 'counterpart': 'lina@partner.com', 'counterpartName': 'Lina', 'participants': [], 'lastAt': '2026-09-16T09:00:00Z', 'lastDirection': 'out', 'unread': 0, 'messages': 2, 'archived': false, 'starred': true, 'assignedTo': 'SA0000002', 'assignedName': 'sara', 'status': 'waiting', 'snoozeUntil': null, 'snoozed': false, 'tags': [], 'messageList': <dynamic>[]},
   ];
+  final templates = <Map<String, dynamic>>[{'id': 'cccccccc-8000-4000-8000-000000000001', 'title': 'ترحيب', 'body': 'أهلاً {{name}}، شكراً لتواصلك.', 'shared': true, 'ownerId': 'SA0000001'}];
+  var unread = 1;
   Map<String, dynamic> settings = {'provider': 'generic', 'hasSecret': false, 'token': 'tok_1', 'resendUrl': 'https://naslife.app/inbox/webhook/resend', 'genericUrl': 'https://naslife.app/inbox/webhook/generic?token=tok_1', 'domain': 'naslife.app', 'shared': 'admin@naslife.app', 'received': 2, 'rejected': 0, 'lastReceivedAt': '2026-09-16T10:00:00Z'};
 
   Future<http.Response> handle(http.Request req) async {
@@ -41,7 +45,7 @@ void main() {
     if (req.body.isNotEmpty) { try { lastBody = jsonDecode(req.body) as Map<String, dynamic>; } catch (_) {} }
     switch (key) {
       case 'GET /adminapi/inbox/mailboxes':
-        return _json({'mailboxes': [{'alias': 'amr', 'address': 'amr@naslife.app', 'kind': 'own', 'label': 'صندوقي', 'ownerId': 'SA0000001', 'unread': 0}, {'alias': 'admin', 'address': 'admin@naslife.app', 'kind': 'shared', 'label': 'الصندوق المشترك', 'ownerId': null, 'unread': 1}], 'domain': 'naslife.app', 'domainVerified': true, 'canReply': true, 'canManage': true, 'myMailbox': 'amr', 'receiving': {'provider': 'generic', 'configured': true, 'lastReceivedAt': '2026-09-16T10:00:00Z', 'received': received}});
+        return _json({'mailboxes': [{'alias': 'amr', 'address': 'amr@naslife.app', 'kind': 'own', 'label': 'صندوقي', 'ownerId': 'SA0000001', 'unread': 0}, {'alias': 'admin', 'address': 'admin@naslife.app', 'kind': 'shared', 'label': 'الصندوق المشترك', 'ownerId': null, 'unread': unread}], 'totalUnread': unread, 'domain': 'naslife.app', 'domainVerified': true, 'canReply': true, 'canManage': true, 'myMailbox': 'amr', 'receiving': {'provider': 'generic', 'configured': true, 'lastReceivedAt': '2026-09-16T10:00:00Z', 'received': received}});
       case 'GET /adminapi/inbox':
         final mb = req.url.queryParameters['mailbox'], folder = req.url.queryParameters['folder'];
         var l = threads.where((t) => t['mailbox'] == mb).toList();
@@ -50,10 +54,24 @@ void main() {
       case 'GET /adminapi/inbox/threads/$_th':
         return _json({...threads[0], 'address': 'admin@naslife.app'});
       case 'PATCH /adminapi/inbox/threads/$_th':
-        threads[0] = {...threads[0], ...lastBody!};
+        threads[0] = {...threads[0], ...lastBody!, if (lastBody!['snoozeUntil'] != null) 'snoozed': true};
         return _json(threads[0]);
+      case 'POST /adminapi/inbox/threads/$_th/notes':
+        (threads[0]['messageList'] as List).add({'id': 'n1', 'direction': 'note', 'from': {'email': '', 'name': 'amr'}, 'to': [], 'cc': [], 'subject': '', 'text': lastBody!['text'], 'html': null, 'attachments': [], 'read': true, 'sentBy': 'SA0000001', 'sentByName': 'amr', 'createdAt': '2026-09-16T11:30:00Z'});
+        return _json({'id': 'n1', 'direction': 'note', 'text': lastBody!['text'], 'createdAt': '2026-09-16T11:30:00Z'});
+      case 'GET /adminapi/inbox/templates':
+        return _json({'templates': templates});
+      case 'POST /adminapi/inbox/templates':
+        templates.add({'id': 'cccccccc-8000-4000-8000-000000000002', 'title': lastBody!['title'], 'body': lastBody!['body'], 'shared': lastBody!['shared'], 'ownerId': 'SA0000001'});
+        return _json(templates.last);
+      case 'DELETE /adminapi/inbox/templates/cccccccc-8000-4000-8000-000000000002':
+        templates.removeWhere((t) => t['id'] == 'cccccccc-8000-4000-8000-000000000002');
+        return _json({'ok': true});
+      case 'POST /adminapi/inbox/templates/cccccccc-8000-4000-8000-000000000001/render':
+        return _json({'text': 'أهلاً Ahmed Client، شكراً لتواصلك.'});
       case 'POST /adminapi/inbox/threads/$_th/reply':
         (threads[0]['messageList'] as List).add({'id': 'm9', 'direction': 'out', 'from': {'email': 'admin@naslife.app', 'name': 'ناس لايف'}, 'to': [{'email': 'ahmed@client.com', 'name': ''}], 'cc': [], 'subject': 'Re: استفسار عن الاشتراك', 'text': lastBody!['text'], 'html': null, 'attachments': [], 'read': true, 'sentBy': 'SA0000001', 'sentByName': 'amr', 'createdAt': '2026-09-16T11:00:00Z'});
+        threads[0]['status'] = 'waiting';
         return _json({'ok': true, 'threadId': _th, 'messageId': 'm9'});
       case 'POST /adminapi/inbox/compose':
         return _json({'ok': true, 'threadId': 'x'});
@@ -64,12 +82,14 @@ void main() {
         return _json(settings);
       case 'GET /notify/unread':
         return _json({'unread': 0});
+      case 'GET /adminapi/status':
+        return _json({'hasAdmin': true, 'setupRequired': false, 'isAdmin': true, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'admins': 1, 'role': 'owner', 'roleName': 'المالك', 'level': 100, 'permissions': ['*'], 'title': 'المؤسس', 'department': 'الإدارة'});
     }
     if (req.method == 'GET') return _json([]);
     return _json({'ok': true});
   }
 
-  Future<void> pump(WidgetTester tester) async {
+  Future<void> pump(WidgetTester tester, {Widget home = const Scaffold(body: AdminInboxPage())}) async {
     calls.clear();
     lastBody = null;
     tester.view.physicalSize = const Size(900, 1400);
@@ -77,8 +97,8 @@ void main() {
     addTearDown(tester.view.reset);
     final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(handle));
     await tester.pumpWidget(ProviderScope(
-      overrides: [apiClientProvider.overrideWithValue(api), socketProvider.overrideWithValue(null), appStateProvider.overrideWith((ref) => _SignedIn(api, SessionStore())), notifyPollIntervalProvider.overrideWithValue(null)],
-      child: const MaterialApp(locale: Locale('ar'), home: Scaffold(body: AdminInboxPage())),
+      overrides: [apiClientProvider.overrideWithValue(api), socketProvider.overrideWithValue(null), appStateProvider.overrideWith((ref) => _SignedIn(api, SessionStore())), notifyPollIntervalProvider.overrideWithValue(null), inboxPollIntervalProvider.overrideWithValue(null)],
+      child: MaterialApp(locale: const Locale('ar'), home: home),
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -129,6 +149,98 @@ void main() {
     await tester.tap(find.byKey(const Key('thread-star')));
     await settle(tester);
     expect(lastBody, {'starred': true});
+  });
+
+  testWidgets('status chips, snooze, tags, internal note and canned reply inside a thread', (tester) async {
+    threads[0] = {...threads[0], 'status': 'open', 'snoozeUntil': null, 'snoozed': false, 'tags': ['اشتراك']};
+    await pump(tester);
+    await tester.tap(find.byKey(const Key('inbox-mailbox')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('admin@naslife.app').last);
+    await settle(tester);
+    await tester.tap(find.byKey(const Key('inbox-thread-$_th')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+    expect(find.text('#اشتراك'), findsAtLeastNWidgets(1), reason: 'الوسوم تظهر في رأس المحادثة');
+    // الحالة
+    await tester.tap(find.byKey(const Key('thread-status-waiting')));
+    await settle(tester);
+    expect(calls, contains('PATCH /adminapi/inbox/threads/$_th'));
+    expect(lastBody, {'status': 'waiting'});
+    expect(find.text('المحادثة الآن بانتظار العميل'), findsOneWidget);
+    // تأجيل
+    await tester.tap(find.byKey(const Key('thread-snooze')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('snooze-hours')));
+    await settle(tester);
+    expect(lastBody!.keys.toList(), ['snoozeUntil']);
+    expect(DateTime.parse(lastBody!['snoozeUntil'] as String).isAfter(DateTime.now().toUtc().add(const Duration(hours: 2))), isTrue);
+    expect(find.text('أُجّلت المحادثة'), findsOneWidget);
+    expect(find.textContaining('مؤجلة حتى'), findsOneWidget);
+    // الوسوم
+    await tester.tap(find.byKey(const Key('thread-tags')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'اشتراك، vip');
+    await tester.tap(find.text('حفظ'));
+    await settle(tester);
+    expect(lastBody, {'tags': ['اشتراك', 'vip']});
+    expect(find.text('#vip'), findsAtLeastNWidgets(1));
+    // ملاحظة داخلية
+    await tester.tap(find.byKey(const Key('thread-mode-note')));
+    await tester.pump();
+    expect(find.byKey(const Key('thread-template')), findsNothing, reason: 'القوالب للرد فقط');
+    await tester.enterText(find.byKey(const Key('thread-reply-field')), 'العميل مهم، راجعوا العرض');
+    await tester.tap(find.byKey(const Key('thread-reply-send')));
+    await settle(tester);
+    expect(calls, contains('POST /adminapi/inbox/threads/$_th/notes'));
+    expect(lastBody, {'text': 'العميل مهم، راجعوا العرض'});
+    expect(find.byKey(const Key('msg-n1')), findsOneWidget);
+    expect(find.textContaining('ملاحظة داخلية · amr'), findsOneWidget);
+    expect(calls.where((c) => c.contains('/reply')), isEmpty, reason: 'الملاحظة لا تُرسل للعميل');
+    // رد جاهز
+    await tester.tap(find.byKey(const Key('thread-mode-reply')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('thread-template')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+    await tester.tap(find.byKey(const Key('template-cccccccc-8000-4000-8000-000000000001')));
+    await settle(tester);
+    expect(calls, contains('POST /adminapi/inbox/templates/cccccccc-8000-4000-8000-000000000001/render'));
+    expect(lastBody, {'threadId': _th});
+    expect(tester.widget<TextField>(find.byKey(const Key('thread-reply-field'))).controller!.text, 'أهلاً Ahmed Client، شكراً لتواصلك.');
+  });
+
+  testWidgets('templates sheet: create a shared template and delete it', (tester) async {
+    await pump(tester);
+    await tester.tap(find.byKey(const Key('inbox-templates')));
+    await tester.pumpAndSettle();
+    await settle(tester);
+    expect(find.byKey(const Key('template-cccccccc-8000-4000-8000-000000000001')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('template-new')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('template-title')), 'تم الاستلام');
+    await tester.enterText(find.byKey(const Key('template-body')), 'وصل طلبك يا {{name}} وسنرد خلال يوم عمل.');
+    await tester.tap(find.byKey(const Key('template-save')));
+    await settle(tester);
+    expect(calls, contains('POST /adminapi/inbox/templates'));
+    expect(lastBody, {'title': 'تم الاستلام', 'body': 'وصل طلبك يا {{name}} وسنرد خلال يوم عمل.', 'shared': true});
+    expect(find.byKey(const Key('template-cccccccc-8000-4000-8000-000000000002')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('template-delete-cccccccc-8000-4000-8000-000000000002')));
+    await settle(tester);
+    expect(calls, contains('DELETE /adminapi/inbox/templates/cccccccc-8000-4000-8000-000000000002'));
+    expect(find.byKey(const Key('template-cccccccc-8000-4000-8000-000000000002')), findsNothing);
+  });
+
+  testWidgets('admin shell shows the unread badge on the inbox section and hides it at zero', (tester) async {
+    unread = 3;
+    await pump(tester, home: const AdminShell());
+    await settle(tester);
+    expect(find.byKey(const Key('inbox-badge')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('inbox-badge')), matching: find.text('3')), findsOneWidget);
+    unread = 0;
+    await pump(tester, home: const AdminShell());
+    await settle(tester);
+    expect(find.byKey(const Key('inbox-badge')), findsNothing);
   });
 
   testWidgets('compose a new message from a chosen mailbox', (tester) async {

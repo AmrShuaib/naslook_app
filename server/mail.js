@@ -25,8 +25,10 @@ const encHeader = (s) => (/^[\x20-\x7e]*$/.test(String(s)) ? String(s) : `=?UTF-
 const b64Lines = (s) => b64(s).replace(/(.{76})/g, "$1\r\n");
 
 /// يبني رسالة MIME كاملة (نص + HTML) بترميز base64 للأجزاء.
-export function buildMime({ from, fromName, to, subject, text, html, replyTo, messageId, headers = {} }) {
+export function buildMime({ from, fromName, to, subject, text, html, replyTo, messageId, headers = {}, attachments = [] }) {
   const boundary = "nl-" + crypto.randomBytes(9).toString("hex");
+  const mixed = "nlm-" + crypto.randomBytes(9).toString("hex");
+  const files = (attachments || []).filter((a) => a && a.content);
   const lines = [
     `From: ${addr(from, fromName)}`,
     `To: ${to}`,
@@ -36,6 +38,7 @@ export function buildMime({ from, fromName, to, subject, text, html, replyTo, me
     `Date: ${new Date().toUTCString()}`,
     `Message-ID: <${messageId}>`,
     "MIME-Version: 1.0",
+    ...(files.length ? [`Content-Type: multipart/mixed; boundary="${mixed}"`, "", `--${mixed}`] : []),
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
     "",
     `--${boundary}`,
@@ -49,6 +52,8 @@ export function buildMime({ from, fromName, to, subject, text, html, replyTo, me
     "",
     b64Lines(html || `<pre>${String(text || "")}</pre>`),
     `--${boundary}--`,
+    ...files.flatMap((a) => [`--${mixed}`, `Content-Type: ${a.contentType || "application/octet-stream"}; name="${String(a.filename || "file").replace(/"/g, "")}"`, "Content-Transfer-Encoding: base64", `Content-Disposition: attachment; filename="${String(a.filename || "file").replace(/"/g, "")}"`, "", String(a.content).replace(/(.{76})/g, "$1\r\n")]),
+    ...(files.length ? [`--${mixed}--`] : []),
     "",
   ].filter((l) => l !== null);
   return lines.join("\r\n");
@@ -197,17 +202,18 @@ export async function dnsMatches(rec, domain, fetchFn = globalThis.fetch) {
   } catch { return null; }
 }
 
-export async function httpSend(provider, { apiKey, from, fromName, replyTo, to, subject, text, html, headers: extra = {} }, fetchFn = globalThis.fetch) {
+export async function httpSend(provider, { apiKey, from, fromName, replyTo, to, subject, text, html, headers: extra = {}, attachments = [] }, fetchFn = globalThis.fetch) {
+  const files = (attachments || []).filter((a) => a && (a.content || a.path));
   let url, headers, body;
   if (provider === "resend") {
     url = "https://api.resend.com/emails"; headers = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
-    body = { from: fromName ? `${fromName} <${from}>` : from, to: [to], subject, text, html, ...(replyTo ? { reply_to: replyTo } : {}), ...(Object.keys(extra).length ? { headers: extra } : {}) };
+    body = { from: fromName ? `${fromName} <${from}>` : from, to: [to], subject, text, html, ...(replyTo ? { reply_to: replyTo } : {}), ...(Object.keys(extra).length ? { headers: extra } : {}), ...(files.length ? { attachments: files.map((a) => (a.content ? { filename: a.filename, content: a.content } : { filename: a.filename, path: a.path })) } : {}) };
   } else if (provider === "brevo") {
     url = "https://api.brevo.com/v3/smtp/email"; headers = { "api-key": apiKey, "content-type": "application/json" };
-    body = { sender: { email: from, name: fromName || undefined }, to: [{ email: to }], subject, textContent: text, htmlContent: html, ...(replyTo ? { replyTo: { email: replyTo } } : {}), ...(Object.keys(extra).length ? { headers: extra } : {}) };
+    body = { sender: { email: from, name: fromName || undefined }, to: [{ email: to }], subject, textContent: text, htmlContent: html, ...(replyTo ? { replyTo: { email: replyTo } } : {}), ...(Object.keys(extra).length ? { headers: extra } : {}), ...(files.length ? { attachment: files.map((a) => (a.content ? { name: a.filename, content: a.content } : { name: a.filename, url: a.path })) } : {}) };
   } else if (provider === "sendgrid") {
     url = "https://api.sendgrid.com/v3/mail/send"; headers = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
-    body = { personalizations: [{ to: [{ email: to }] }], from: { email: from, name: fromName || undefined }, subject, content: [{ type: "text/plain", value: text || " " }, { type: "text/html", value: html || `<pre>${text || ""}</pre>` }], ...(replyTo ? { reply_to: { email: replyTo } } : {}), ...(Object.keys(extra).length ? { headers: extra } : {}) };
+    body = { personalizations: [{ to: [{ email: to }] }], from: { email: from, name: fromName || undefined }, subject, content: [{ type: "text/plain", value: text || " " }, { type: "text/html", value: html || `<pre>${text || ""}</pre>` }], ...(replyTo ? { reply_to: { email: replyTo } } : {}), ...(Object.keys(extra).length ? { headers: extra } : {}), ...(files.filter((a) => a.content).length ? { attachments: files.filter((a) => a.content).map((a) => ({ content: a.content, filename: a.filename, type: a.contentType || "application/octet-stream" })) } : {}) };
   } else throw new Error("mail: unknown provider");
   const r = await fetchFn(url, { method: "POST", headers, body: JSON.stringify(body) });
   const t = await r.text();
@@ -251,7 +257,12 @@ export default async function mail(app, opts = {}) {
   const masked = () => ({ ...settings, pass: settings.pass ? MASK : "", apiKey: settings.apiKey ? MASK : "", hasPass: !!settings.pass, hasApiKey: !!settings.apiKey, configured: configured() });
 
   /// إرسال رسالة. الحقول الاختيارية from/fromName/replyTo/headers تتجاوز الإعدادات (لصناديق الفريق مثل sara@naslife.app).
-  async function send({ to, subject, text, html, tag = null, from = null, fromName = null, replyTo = null, headers = {} }) {
+  /// يجلب مرفقاً برابط إلى base64 (للمزوّدات التي لا تقبل الروابط)
+  async function inlineAttachment(a) {
+    if (a.content || !a.path) return a;
+    try { const r = await (opts.fetchFn ?? globalThis.fetch)(a.path); if (!r.ok) return null; const buf = Buffer.from(await r.arrayBuffer()); return { ...a, content: buf.toString("base64"), contentType: a.contentType || r.headers?.get?.("content-type") || "application/octet-stream" }; } catch { return null; }
+  }
+  async function send({ to, subject, text, html, tag = null, from = null, fromName = null, replyTo = null, headers = {}, attachments = [] }) {
     const rcpt = String(to ?? "").trim().toLowerCase();
     if (!EMAIL_RE.test(rcpt)) throw new Error("mail: bad recipient");
     if (!configured()) throw new Error("mail: not configured");
@@ -261,13 +272,15 @@ export default async function mail(app, opts = {}) {
     const senderName = fromName ?? settings.fromName;
     const reply = replyTo ?? (from && p === "smtp" ? from : settings.replyTo);
     const messageId = `${id}@${(settings.domain?.name) || "naslife.app"}`;
+    let files = (attachments || []).filter((a) => a && (a.content || a.path)).slice(0, 10).map((a) => ({ filename: String(a.filename || a.name || "file").slice(0, 120), contentType: a.contentType || a.type || "", content: a.content || null, path: a.path || a.url || null }));
+    if (p === "smtp" || p === "sendgrid") files = (await Promise.all(files.map(inlineAttachment))).filter(Boolean);
     try {
       let res;
       if (p === "smtp") {
-        const mime = buildMime({ from: sender, fromName: senderName, to: rcpt, subject, text, html, replyTo: reply, messageId, headers });
+        const mime = buildMime({ from: sender, fromName: senderName, to: rcpt, subject, text, html, replyTo: reply, messageId, headers, attachments: files });
         res = await smtpSend({ host: settings.host, port: Number(settings.port) || (settings.secure ? 465 : 587), secure: settings.secure === true, user: settings.user, pass: settings.pass, from: sender, to: rcpt, mime });
       } else {
-        res = await httpSend(p, { apiKey: settings.apiKey, from: sender, fromName: senderName, replyTo: reply, to: rcpt, subject, text, html, headers });
+        res = await httpSend(p, { apiKey: settings.apiKey, from: sender, fromName: senderName, replyTo: reply, to: rcpt, subject, text, html, headers, attachments: files });
       }
       await pool.query("INSERT INTO mail_log(id, recipient, subject, tag, status, provider) VALUES($1,$2,$3,$4,'sent',$5)", [id, rcpt, subject, tag, p]).catch(() => {});
       return { ok: true, id: res?.id ?? id, messageId, from: sender };

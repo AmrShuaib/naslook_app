@@ -1,5 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../core/notify/message_sound.dart';
+import 'notify_providers.dart';
 
 import '../api/admin_api.dart';
 import '../api/admin_blog_api.dart';
@@ -51,12 +57,42 @@ final adminInboxMailboxesProvider = FutureProvider<InboxInfo>((ref) => ref.watch
 final adminInboxProvider = FutureProvider.family<List<InboxThread>, String>((ref, key) { final parts = key.split('|'); return ref.watch(apiClientProvider).adminInbox(mailbox: parts[0], folder: parts.length > 1 ? parts[1] : 'inbox'); });
 final adminInboxThreadProvider = FutureProvider.family<InboxThreadDetail, String>((ref, id) => ref.watch(apiClientProvider).adminInboxThread(id));
 final adminInboxSettingsProvider = FutureProvider<InboxSettings>((ref) => ref.watch(apiClientProvider).adminInboxSettings());
+final adminInboxTemplatesProvider = FutureProvider<List<InboxTemplate>>((ref) => ref.watch(apiClientProvider).adminInboxTemplates());
+/// فاصل تحديث عدّاد البريد الوارد (null يعطّل التحديث التلقائي في الاختبارات).
+final inboxPollIntervalProvider = Provider<Duration?>((_) => const Duration(seconds: 30));
+/// إجمالي غير المقروء في صناديق العضو: يُحدَّث دورياً، ويقرع الجرس عند الزيادة، ويظهر في شارة القسم وعنوان التبويب.
+final inboxUnreadProvider = StateNotifierProvider.autoDispose<InboxUnreadNotifier, int>((ref) => InboxUnreadNotifier(ref));
+
+class InboxUnreadNotifier extends StateNotifier<int> {
+  final Ref ref;
+  Timer? _timer;
+  bool _primed = false;
+  InboxUnreadNotifier(this.ref) : super(0) {
+    refresh();
+    final every = ref.read(inboxPollIntervalProvider);
+    if (every != null) _timer = Timer.periodic(every, (_) => refresh());
+    ref.onDispose(() => _timer?.cancel());
+  }
+  Future<void> refresh() async {
+    try {
+      final info = await ref.read(apiClientProvider).adminInboxMailboxes();
+      if (!mounted) return;
+      final n = info.totalUnread;
+      if (_primed && n > state && ref.read(messageSoundProvider)) MessageSound.play();
+      _primed = true;
+      state = n;
+      SystemChrome.setApplicationSwitcherDescription(ApplicationSwitcherDescription(label: n > 0 ? '($n) إدارة ناس لايف' : 'إدارة ناس لايف', primaryColor: 0xFF0A6E78));
+    } catch (_) {
+      // بلا شبكة أو بلا صلاحية: نُبقي القيمة الحالية
+    }
+  }
+}
 final adminTeamTreeProvider = FutureProvider<List<TeamNode>>((ref) => ref.watch(apiClientProvider).adminTeamTree());
 final adminTeamPermissionsProvider = FutureProvider<List<TeamPermission>>((ref) => ref.watch(apiClientProvider).adminTeamPermissions());
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
 
 void invalidateAdmin(WidgetRef ref) {
-  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider, adminTasksProvider, adminTasksSummaryProvider, adminInboxMailboxesProvider, adminInboxProvider]) {
+  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider, adminTasksProvider, adminTasksSummaryProvider, adminInboxMailboxesProvider, adminInboxProvider, adminInboxTemplatesProvider]) {
     ref.invalidate(p);
   }
   ref.invalidate(adminUsersProvider);

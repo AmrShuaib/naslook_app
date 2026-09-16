@@ -54,6 +54,15 @@ export default async function inbox(app, opts = {}) {
     CREATE INDEX IF NOT EXISTS inbox_messages_thread ON inbox_messages(thread_id, created_at);
     CREATE INDEX IF NOT EXISTS inbox_messages_mid ON inbox_messages(message_id);
     CREATE UNIQUE INDEX IF NOT EXISTS inbox_messages_provider ON inbox_messages(provider_id) WHERE provider_id IS NOT NULL;
+    ALTER TABLE inbox_threads ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open';
+    ALTER TABLE inbox_threads ADD COLUMN IF NOT EXISTS snooze_until TIMESTAMPTZ;
+    ALTER TABLE inbox_threads ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE inbox_threads ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
+    ALTER TABLE inbox_threads ADD COLUMN IF NOT EXISTS first_reply_at TIMESTAMPTZ;
+    ALTER TABLE inbox_threads ADD COLUMN IF NOT EXISTS first_in_at TIMESTAMPTZ;
+    CREATE TABLE IF NOT EXISTS inbox_templates (
+      id UUID PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, shared BOOLEAN NOT NULL DEFAULT true, owner_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
   `);
   let settings = { provider: "generic", webhookSecret: "", token: "", lastReceivedAt: null, received: 0, rejected: 0 };
   async function load() { try { const r = await pool.query("SELECT data FROM inbox_settings WHERE id=1"); settings = { ...settings, ...(r.rows[0]?.data ?? {}) }; } catch { /* ignore */ } }
@@ -83,7 +92,7 @@ export default async function inbox(app, opts = {}) {
     if (has(info, "inbox.reply") || manage) push(sharedLocal(), "shared", null, "الصندوق المشترك");
     for (const m of members) if (m.mailbox && m.user_id !== uid && (manage || s.all || s.ids.has(m.user_id))) push(m.mailbox, "team", m.user_id, pmap.get(m.user_id)?.nickname || m.user_id);
     if (out.length) {
-      const counts = (await pool.query("SELECT mailbox, sum(unread)::int AS unread FROM inbox_threads WHERE NOT archived AND mailbox = ANY($1) GROUP BY mailbox", [out.map((x) => x.alias)])).rows;
+      const counts = (await pool.query("SELECT mailbox, sum(unread)::int AS unread FROM inbox_threads WHERE NOT archived AND (snooze_until IS NULL OR snooze_until <= now()) AND mailbox = ANY($1) GROUP BY mailbox", [out.map((x) => x.alias)])).rows;
       for (const x of out) x.unread = counts.find((c) => c.mailbox === x.alias)?.unread ?? 0;
     }
     return out;
@@ -103,8 +112,12 @@ export default async function inbox(app, opts = {}) {
     }
     return members.filter((m) => m.mailbox === alias).map((m) => m.user_id);
   }
-  const threadOut = (t, amap) => ({ id: t.id, mailbox: t.mailbox, subject: t.subject, snippet: t.snippet, counterpart: t.counterpart, counterpartName: t.counterpart_name, participants: t.participants, lastAt: t.last_at, lastDirection: t.last_direction, unread: t.unread, messages: t.message_count, archived: t.archived, starred: t.starred, assignedTo: t.assigned_to, assignedName: t.assigned_to ? (amap?.get(t.assigned_to)?.nickname ?? "") : "" });
-  const messageOut = (m) => ({ id: m.id, direction: m.direction, from: { email: m.from_addr, name: m.from_name }, to: m.to_addrs, cc: m.cc_addrs, subject: m.subject, text: m.text, html: m.html ?? null, attachments: m.attachments, read: m.read, sentBy: m.sent_by, messageId: m.message_id, createdAt: m.created_at });
+  const STATUSES = ["open", "waiting", "closed"];
+  const threadOut = (t, amap) => ({ id: t.id, mailbox: t.mailbox, subject: t.subject, snippet: t.snippet, counterpart: t.counterpart, counterpartName: t.counterpart_name, participants: t.participants, lastAt: t.last_at, lastDirection: t.last_direction, unread: t.unread, messages: t.message_count, archived: t.archived, starred: t.starred, assignedTo: t.assigned_to, assignedName: t.assigned_to ? (amap?.get(t.assigned_to)?.nickname ?? "") : "",
+    status: t.status ?? "open", snoozeUntil: t.snooze_until ?? null, snoozed: !!t.snooze_until && new Date(t.snooze_until) > new Date(), tags: t.tags ?? [], closedAt: t.closed_at ?? null });
+  const messageOut = (m) => ({ id: m.id, direction: m.direction, from: { email: m.from_addr, name: m.from_name }, to: m.to_addrs, cc: m.cc_addrs, subject: m.subject, text: m.text, html: m.html ?? null, attachments: (m.attachments ?? []).map((a, i) => ({ ...a, index: i, downloadUrl: a.url ? a.url : (m.provider_id && a.id ? `/adminapi/inbox/attachments/${m.id}/${i}` : null) })), read: m.read, sentBy: m.sent_by, messageId: m.message_id, createdAt: m.created_at });
+  /// قالب رد بمتغيرات {{name}} {{email}} {{agent}} {{mailbox}}
+  const renderTemplate = (body, vars) => String(body ?? "").replace(/\{\{\s*(name|email|agent|mailbox)\s*\}\}/g, (_, k) => vars[k] ?? "");
 
   /// إدخال رسالة واردة: ربط بمحادثة قائمة (In-Reply-To/References ثم الموضوع والطرف خلال 30 يوماً) أو إنشاء جديدة
   async function ingest(msg) {
@@ -116,7 +129,7 @@ export default async function inbox(app, opts = {}) {
     const subject = str(msg.subject, 300); const norm = normSubject(subject);
     const text = str(msg.text, 200000) || stripHtml(msg.html).slice(0, 200000);
     const html = msg.html ? String(msg.html).slice(0, 500000) : null;
-    const attachments = Array.isArray(msg.attachments) ? msg.attachments.slice(0, 20).map((a) => ({ name: str(a?.name ?? a?.filename, 200), size: Number(a?.size) || 0, type: str(a?.type ?? a?.contentType ?? a?.content_type, 100), url: str(a?.url ?? a?.download_url, 1000) || null })) : [];
+    const attachments = Array.isArray(msg.attachments) ? msg.attachments.slice(0, 20).map((a) => ({ id: str(a?.id, 120) || null, name: str(a?.name ?? a?.filename, 200), size: Number(a?.size) || 0, type: str(a?.type ?? a?.contentType ?? a?.content_type, 100), url: str(a?.url ?? a?.download_url, 1000) || null })) : [];
     const providerId = str(msg.providerId, 120) || null;
     if (providerId && (await pool.query("SELECT 1 FROM inbox_messages WHERE provider_id=$1", [providerId])).rowCount) return { duplicate: true };
     if (messageId && (await pool.query("SELECT 1 FROM inbox_messages WHERE message_id=$1 AND mailbox=$2", [messageId, mailbox])).rowCount) return { duplicate: true };
@@ -129,10 +142,10 @@ export default async function inbox(app, opts = {}) {
     if (!thread) {
       const id = crypto.randomUUID();
       const participants = [...new Set([from.email, ...to.map((a) => a.email), ...cc.map((a) => a.email)])];
-      await pool.query("INSERT INTO inbox_threads(id,mailbox,subject,norm_subject,snippet,counterpart,counterpart_name,participants,last_at,last_direction,unread,message_count) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'in',1,1)", [id, mailbox, subject || "(بلا موضوع)", norm, snippet, from.email, from.name, JSON.stringify(participants), now]);
+      await pool.query("INSERT INTO inbox_threads(id,mailbox,subject,norm_subject,snippet,counterpart,counterpart_name,participants,last_at,last_direction,unread,message_count,first_in_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'in',1,1,$9)", [id, mailbox, subject || "(بلا موضوع)", norm, snippet, from.email, from.name, JSON.stringify(participants), now]);
       thread = { id, mailbox };
     } else {
-      await pool.query("UPDATE inbox_threads SET snippet=$2, last_at=$3, last_direction='in', unread=unread+1, message_count=message_count+1, archived=false, counterpart_name=CASE WHEN $4<>'' THEN $4 ELSE counterpart_name END WHERE id=$1", [thread.id, snippet, now, from.name]);
+      await pool.query("UPDATE inbox_threads SET snippet=$2, last_at=$3, last_direction='in', unread=unread+1, message_count=message_count+1, archived=false, status='open', snooze_until=NULL, closed_at=NULL, first_in_at=COALESCE(first_in_at,$3), counterpart_name=CASE WHEN $4<>'' THEN $4 ELSE counterpart_name END WHERE id=$1", [thread.id, snippet, now, from.name]);
     }
     const mid = crypto.randomUUID();
     await pool.query("INSERT INTO inbox_messages(id,thread_id,mailbox,direction,message_id,in_reply_to,provider_id,from_addr,from_name,to_addrs,cc_addrs,subject,text,html,attachments,read,created_at) VALUES($1,$2,$3,'in',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,false,$15)",
@@ -190,7 +203,8 @@ export default async function inbox(app, opts = {}) {
     const uid = await guard(req, reply); if (!uid) return;
     const boxes = await mailboxes(uid);
     const cfg = mailCfg();
-    return { mailboxes: boxes, domain: domainName(), domainVerified: !!cfg?.domain?.verified, canReply: has(req.teamInfo, "inbox.reply") || has(req.teamInfo, "inbox.manage"), canManage: has(req.teamInfo, "inbox.manage"), myMailbox: req.teamInfo.mailbox || "", receiving: { provider: settings.provider, configured: !!(settings.webhookSecret || settings.token), lastReceivedAt: settings.lastReceivedAt, received: settings.received ?? 0 } };
+    const totalUnread = boxes.reduce((s, b) => s + (b.unread ?? 0), 0);
+    return { mailboxes: boxes, totalUnread, domain: domainName(), domainVerified: !!cfg?.domain?.verified, canReply: has(req.teamInfo, "inbox.reply") || has(req.teamInfo, "inbox.manage"), canManage: has(req.teamInfo, "inbox.manage"), myMailbox: req.teamInfo.mailbox || "", receiving: { provider: settings.provider, configured: !!(settings.webhookSecret || settings.token), lastReceivedAt: settings.lastReceivedAt, received: settings.received ?? 0 } };
   });
   app.get("/adminapi/inbox", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;
@@ -199,7 +213,14 @@ export default async function inbox(app, opts = {}) {
     if (!mailbox || !boxes.some((b) => b.alias === mailbox)) return { threads: [], mailbox, folder: "inbox" };
     const folder = str(req.query?.folder, 10) || "inbox"; const term = str(req.query?.q, 80);
     const where = ["mailbox=$1"]; const params = [mailbox];
-    if (folder === "inbox") where.push("NOT archived"); else if (folder === "archived") where.push("archived"); else if (folder === "starred") where.push("starred"); else if (folder === "unread") where.push("unread > 0 AND NOT archived");
+    const live = "(snooze_until IS NULL OR snooze_until <= now())";
+    if (folder === "inbox") where.push(`NOT archived AND status<>'closed' AND ${live}`);
+    else if (folder === "unread") where.push(`unread > 0 AND NOT archived AND ${live}`);
+    else if (folder === "starred") where.push("starred");
+    else if (folder === "waiting") where.push(`status='waiting' AND NOT archived AND ${live}`);
+    else if (folder === "closed") where.push("status='closed' AND NOT archived");
+    else if (folder === "snoozed") where.push("snooze_until IS NOT NULL AND snooze_until > now()");
+    else if (folder === "archived") where.push("archived");
     if (term) { params.push(`%${term}%`); where.push(`(subject ILIKE $${params.length} OR counterpart ILIKE $${params.length} OR counterpart_name ILIKE $${params.length} OR snippet ILIKE $${params.length})`); }
     const rows = (await pool.query(`SELECT * FROM inbox_threads WHERE ${where.join(" AND ")} ORDER BY last_at DESC LIMIT 200`, params)).rows;
     const amap = await people(rows.map((r) => r.assigned_to));
@@ -224,6 +245,9 @@ export default async function inbox(app, opts = {}) {
     const set = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
     if (b.archived !== undefined) set("archived", b.archived === true);
     if (b.starred !== undefined) set("starred", b.starred === true);
+    if (b.status !== undefined) { const s = str(b.status, 10); if (!STATUSES.includes(s)) return bad(reply, 400, "bad-status"); set("status", s); set("closed_at", s === "closed" ? new Date().toISOString() : null); if (s !== "open") set("snooze_until", null); }
+    if (b.snoozeUntil !== undefined) { if (b.snoozeUntil === null || b.snoozeUntil === "") set("snooze_until", null); else { const d = new Date(b.snoozeUntil); if (Number.isNaN(d.getTime()) || d < new Date()) return bad(reply, 400, "bad-snooze"); set("snooze_until", d.toISOString()); } }
+    if (b.tags !== undefined) { if (!Array.isArray(b.tags)) return bad(reply, 400, "bad-tags"); set("tags", JSON.stringify([...new Set(b.tags.map((x) => str(x, 30)).filter(Boolean))].slice(0, 10))); }
     if (b.read !== undefined) { set("unread", b.read === true ? 0 : Math.max(1, t.unread)); if (b.read === true) await pool.query("UPDATE inbox_messages SET read=true WHERE thread_id=$1", [id]); }
     if (b.assignedTo !== undefined) {
       const a = b.assignedTo ? str(b.assignedTo, 12).toUpperCase() : null;
@@ -237,7 +261,8 @@ export default async function inbox(app, opts = {}) {
     return threadOut(n, await people([n.assigned_to]));
   });
   /// إرسال من صندوق: رد على محادثة أو رسالة جديدة
-  async function sendFrom({ uid, mailbox, to, cc, subject, text, html, thread }) {
+  const cleanAttachments = (v) => Array.isArray(v) ? v.slice(0, 10).map((a) => ({ name: str(a?.name ?? a?.filename, 120) || "file", url: str(a?.url ?? a?.path, 1000), type: str(a?.type ?? a?.contentType, 100), size: Number(a?.size) || 0 })).filter((a) => /^https?:\/\//.test(a.url)) : [];
+  async function sendFrom({ uid, mailbox, to, cc, subject, text, html, thread, attachments = [] }) {
     const mail = globalThis.naslifeMail; if (!mail?.configured?.()) throw Object.assign(new Error("mail-not-configured"), { code: 400 });
     const info = await teamInfo(uid); const pmap = await people([uid]);
     const fromAddr = `${mailbox}@${domainName()}`; const fromName = mailbox === sharedLocal() ? (mailCfg()?.fromName || "ناس لايف") : `${pmap.get(uid)?.nickname || info?.title || "فريق"} · ناس لايف`;
@@ -246,7 +271,7 @@ export default async function inbox(app, opts = {}) {
     let inReplyTo = null;
     if (thread) { const last = (await pool.query("SELECT message_id FROM inbox_messages WHERE thread_id=$1 AND direction='in' AND message_id IS NOT NULL ORDER BY created_at DESC LIMIT 1", [thread.id])).rows[0]; if (last?.message_id) { inReplyTo = last.message_id; headers["In-Reply-To"] = last.message_id.startsWith("<") ? last.message_id : `<${last.message_id}>`; headers.References = headers["In-Reply-To"]; } }
     const bodyHtml = html || `<div dir="auto" style="font-family:Segoe UI,Tahoma,sans-serif;white-space:pre-wrap;line-height:1.7">${String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</div>`;
-    const res = await mail.send({ to, subject, text, html: bodyHtml, tag: "inbox", from: fromAddr, fromName, replyTo: fromAddr, headers });
+    const res = await mail.send({ to, subject, text, html: bodyHtml, tag: "inbox", from: fromAddr, fromName, replyTo: fromAddr, headers, attachments: attachments.map((a) => ({ filename: a.name, path: a.url, contentType: a.type })) });
     const now = new Date().toISOString();
     let t = thread;
     if (!t) {
@@ -255,9 +280,10 @@ export default async function inbox(app, opts = {}) {
       t = { id, mailbox };
     }
     const mid = crypto.randomUUID();
-    await pool.query("INSERT INTO inbox_messages(id,thread_id,mailbox,direction,message_id,in_reply_to,provider_id,from_addr,from_name,to_addrs,cc_addrs,subject,text,html,attachments,read,sent_by,created_at) VALUES($1,$2,$3,'out',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'[]',true,$14,$15)",
-      [mid, t.id, mailbox, messageId, inReplyTo, res?.id ?? null, fromAddr, fromName, JSON.stringify([{ email: to, name: "" }]), JSON.stringify(cc.map((e) => ({ email: e, name: "" }))), subject, text, bodyHtml, uid, now]);
-    await pool.query("UPDATE inbox_threads SET snippet=$2, last_at=$3, last_direction='out', message_count=message_count+1 WHERE id=$1", [t.id, text.replace(/\s+/g, " ").slice(0, 160), now]);
+    await pool.query("INSERT INTO inbox_messages(id,thread_id,mailbox,direction,message_id,in_reply_to,provider_id,from_addr,from_name,to_addrs,cc_addrs,subject,text,html,attachments,read,sent_by,created_at) VALUES($1,$2,$3,'out',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,true,$15,$16)",
+      [mid, t.id, mailbox, messageId, inReplyTo, res?.id ?? null, fromAddr, fromName, JSON.stringify([{ email: to, name: "" }]), JSON.stringify(cc.map((e) => ({ email: e, name: "" }))), subject, text, bodyHtml, JSON.stringify(attachments), uid, now]);
+    // بعد ردّ الفريق تصبح المحادثة بانتظار العميل (ما لم تكن مغلقة)، ويُسجّل أول رد
+    await pool.query("UPDATE inbox_threads SET snippet=$2, last_at=$3, last_direction='out', message_count=message_count+1, status=CASE WHEN status='closed' THEN 'closed' ELSE 'waiting' END, snooze_until=NULL, first_reply_at=COALESCE(first_reply_at, CASE WHEN first_in_at IS NOT NULL THEN $3::timestamptz END) WHERE id=$1", [t.id, text.replace(/\s+/g, " ").slice(0, 160), now]);
     return { threadId: t.id, messageId: mid };
   }
   app.post("/adminapi/inbox/threads/:id/reply", async (req, reply) => {
@@ -269,7 +295,7 @@ export default async function inbox(app, opts = {}) {
     const to = lower(req.body?.to) || t.counterpart; if (!EMAIL_RE.test(to)) return bad(reply, 400, "bad-recipient");
     const cc = addrList(req.body?.cc).map((a) => a.email);
     const subject = str(req.body?.subject, 300) || (/^(re|رد)\s*:/i.test(t.subject) ? t.subject : `Re: ${t.subject}`);
-    try { return { ok: true, ...(await sendFrom({ uid, mailbox: t.mailbox, to, cc, subject, text, html: null, thread: t })) }; }
+    try { return { ok: true, ...(await sendFrom({ uid, mailbox: t.mailbox, to, cc, subject, text, html: null, thread: t, attachments: cleanAttachments(req.body?.attachments) })) }; }
     catch (e) { return bad(reply, e.code ?? 502, e.code ? e.message : "send-failed", { detail: String(e.message).slice(0, 300) }); }
   });
   app.post("/adminapi/inbox/compose", async (req, reply) => {
@@ -281,9 +307,99 @@ export default async function inbox(app, opts = {}) {
     const subject = str(req.body?.subject, 300); if (!subject) return bad(reply, 400, "bad-subject");
     const text = str(req.body?.text, 50000); if (!text) return bad(reply, 400, "bad-text");
     const cc = addrList(req.body?.cc).map((a) => a.email);
-    try { return { ok: true, ...(await sendFrom({ uid, mailbox, to, cc, subject, text, html: null, thread: null })) }; }
+    try { return { ok: true, ...(await sendFrom({ uid, mailbox, to, cc, subject, text, html: null, thread: null, attachments: cleanAttachments(req.body?.attachments) })) }; }
     catch (e) { return bad(reply, e.code ?? 502, e.code ? e.message : "send-failed", { detail: String(e.message).slice(0, 300) }); }
   });
+  // ---- ملاحظة داخلية: تُحفظ في المحادثة ولا تُرسل للعميل
+  app.post("/adminapi/inbox/threads/:id/notes", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    const id = str(req.params.id, 36); if (!UUID_RE.test(id)) return bad(reply, 404, "not-found");
+    const t = (await pool.query("SELECT * FROM inbox_threads WHERE id=$1", [id])).rows[0]; if (!t) return bad(reply, 404, "not-found");
+    if (!(await canSee(uid, t.mailbox))) return bad(reply, 403, "forbidden");
+    const text = str(req.body?.text, 10000); if (!text) return bad(reply, 400, "bad-text");
+    const mid = crypto.randomUUID(); const now = new Date().toISOString(); const pmap = await people([uid]);
+    await pool.query("INSERT INTO inbox_messages(id,thread_id,mailbox,direction,from_addr,from_name,to_addrs,cc_addrs,subject,text,attachments,read,sent_by,created_at) VALUES($1,$2,$3,'note','', $4,'[]','[]','',$5,'[]',true,$6,$7)", [mid, id, t.mailbox, pmap.get(uid)?.nickname ?? "", text, uid, now]);
+    await pool.query("UPDATE inbox_threads SET message_count=message_count+1 WHERE id=$1", [id]);
+    const others = [t.assigned_to, ...(await ownersOf(t.mailbox))].filter((x) => x && x !== uid);
+    await notify(others, { kind: "inbox_note", title: `ملاحظة داخلية على «${t.subject}»`, body: text.slice(0, 120), data: { threadId: id, mailbox: t.mailbox, section: "inbox" } });
+    return { id, direction: "note", text, sentBy: uid, sentByName: pmap.get(uid)?.nickname ?? "", createdAt: now };
+  });
+  // ---- القوالب (الردود الجاهزة): مشتركة أو خاصة بصاحبها
+  const templateOut = (r, pmap) => ({ id: r.id, title: r.title, body: r.body, shared: r.shared, ownerId: r.owner_id, ownerName: pmap?.get(r.owner_id)?.nickname ?? "", updatedAt: r.updated_at });
+  app.get("/adminapi/inbox/templates", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    const rows = (await pool.query("SELECT * FROM inbox_templates WHERE shared OR owner_id=$1 ORDER BY shared DESC, title", [uid])).rows;
+    const pmap = await people(rows.map((r) => r.owner_id));
+    return { templates: rows.map((r) => templateOut(r, pmap)), variables: ["name", "email", "agent", "mailbox"] };
+  });
+  app.post("/adminapi/inbox/templates", async (req, reply) => {
+    const uid = await guard(req, reply, "inbox.reply"); if (!uid) return;
+    const title = str(req.body?.title, 80); const body = str(req.body?.body, 10000);
+    if (!title || !body) return bad(reply, 400, "bad-template");
+    const shared = req.body?.shared !== false;
+    if (shared && !has(req.teamInfo, "inbox.manage") && !has(req.teamInfo, "*")) return bad(reply, 403, "forbidden");
+    const id = crypto.randomUUID();
+    await pool.query("INSERT INTO inbox_templates(id,title,body,shared,owner_id) VALUES($1,$2,$3,$4,$5)", [id, title, body, shared, uid]);
+    return templateOut((await pool.query("SELECT * FROM inbox_templates WHERE id=$1", [id])).rows[0], await people([uid]));
+  });
+  app.patch("/adminapi/inbox/templates/:id", async (req, reply) => {
+    const uid = await guard(req, reply, "inbox.reply"); if (!uid) return;
+    const id = str(req.params.id, 36); const r = UUID_RE.test(id) ? (await pool.query("SELECT * FROM inbox_templates WHERE id=$1", [id])).rows[0] : null;
+    if (!r) return bad(reply, 404, "not-found");
+    if (r.owner_id !== uid && !has(req.teamInfo, "inbox.manage")) return bad(reply, 403, "forbidden");
+    const b = req.body ?? {}; const sets = []; const params = [id];
+    const set = (c, v) => { params.push(v); sets.push(`${c}=$${params.length}`); };
+    if (b.title !== undefined) { const t = str(b.title, 80); if (!t) return bad(reply, 400, "bad-template"); set("title", t); }
+    if (b.body !== undefined) { const t = str(b.body, 10000); if (!t) return bad(reply, 400, "bad-template"); set("body", t); }
+    if (b.shared !== undefined) { if (b.shared === true && !has(req.teamInfo, "inbox.manage")) return bad(reply, 403, "forbidden"); set("shared", b.shared === true); }
+    if (!sets.length) return bad(reply, 400, "nothing-to-update");
+    await pool.query(`UPDATE inbox_templates SET ${sets.join(", ")}, updated_at=now() WHERE id=$1`, params);
+    return templateOut((await pool.query("SELECT * FROM inbox_templates WHERE id=$1", [id])).rows[0], await people([r.owner_id]));
+  });
+  app.delete("/adminapi/inbox/templates/:id", async (req, reply) => {
+    const uid = await guard(req, reply, "inbox.reply"); if (!uid) return;
+    const id = str(req.params.id, 36); const r = UUID_RE.test(id) ? (await pool.query("SELECT * FROM inbox_templates WHERE id=$1", [id])).rows[0] : null;
+    if (!r) return bad(reply, 404, "not-found");
+    if (r.owner_id !== uid && !has(req.teamInfo, "inbox.manage")) return bad(reply, 403, "forbidden");
+    await pool.query("DELETE FROM inbox_templates WHERE id=$1", [id]);
+    return { ok: true };
+  });
+  /// تطبيق قالب على محادثة: يعيد النص بعد تعويض المتغيرات
+  app.post("/adminapi/inbox/templates/:id/render", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    const id = str(req.params.id, 36); const r = UUID_RE.test(id) ? (await pool.query("SELECT * FROM inbox_templates WHERE id=$1 AND (shared OR owner_id=$2)", [id, uid])).rows[0] : null;
+    if (!r) return bad(reply, 404, "not-found");
+    const tid = str(req.body?.threadId, 36); const t = UUID_RE.test(tid) ? (await pool.query("SELECT * FROM inbox_threads WHERE id=$1", [tid])).rows[0] : null;
+    const pmap = await people([uid]);
+    const name = t ? (t.counterpart_name || t.counterpart.split("@")[0]) : str(req.body?.name, 80);
+    return { text: renderTemplate(r.body, { name, email: t?.counterpart ?? str(req.body?.email, 120), agent: pmap.get(uid)?.nickname ?? "", mailbox: `${t?.mailbox ?? req.teamInfo.mailbox ?? sharedLocal()}@${domainName()}` }) };
+  });
+  // ---- تنزيل مرفق وارد (Resend): يعيد التوجيه إلى رابط التنزيل
+  app.get("/adminapi/inbox/attachments/:messageId/:index", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    const mid = str(req.params.messageId, 36); if (!UUID_RE.test(mid)) return bad(reply, 404, "not-found");
+    const m = (await pool.query("SELECT * FROM inbox_messages WHERE id=$1", [mid])).rows[0]; if (!m) return bad(reply, 404, "not-found");
+    if (!(await canSee(uid, m.mailbox))) return bad(reply, 403, "forbidden");
+    const a = (m.attachments ?? [])[Number(req.params.index)]; if (!a) return bad(reply, 404, "not-found");
+    if (a.url) return reply.redirect(a.url);
+    const apiKey = opts.apiKey ?? globalThis.naslifeMailApiKey?.() ?? null;
+    if (m.provider_id && a.id && apiKey) {
+      try {
+        const r = await fetchFn()(`https://api.resend.com/emails/receiving/${encodeURIComponent(m.provider_id)}/attachments/${encodeURIComponent(a.id)}`, { headers: { authorization: `Bearer ${apiKey}` } });
+        if (r.ok) { const j = JSON.parse(await r.text()); const url = j.download_url ?? j.url; if (url) return reply.redirect(url); }
+      } catch { /* غير متاح */ }
+    }
+    return bad(reply, 404, "attachment-unavailable");
+  });
+  // ---- كنس التأجيل: المحادثات التي انتهى تأجيلها تعود للوارد مع إشعار
+  async function sweep() {
+    const rows = (await pool.query("UPDATE inbox_threads SET snooze_until=NULL, unread=GREATEST(unread,1) WHERE snooze_until IS NOT NULL AND snooze_until <= now() RETURNING id, subject, mailbox, assigned_to")).rows;
+    for (const t of rows) await notify(t.assigned_to ? [t.assigned_to] : await ownersOf(t.mailbox), { kind: "inbox_unsnoozed", title: `عادت المحادثة المؤجلة «${t.subject}»`, body: "", data: { threadId: t.id, mailbox: t.mailbox, section: "inbox" } });
+    return { unsnoozed: rows.length };
+  }
+  globalThis.naslifeInboxSweep = sweep;
+  const sweepMs = opts.sweepMs ?? 60000;
+  if (sweepMs > 0) { const timer = setInterval(() => sweep().catch(() => {}), sweepMs); timer.unref?.(); app.addHook("onClose", async () => clearInterval(timer)); }
   // ---- إعدادات الاستقبال (inbox.manage)
   const publicOrigin = (req) => { const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim(); const proto = String(req.headers["x-forwarded-proto"] ?? "https").split(",")[0].trim(); return `${proto}://${host}`; };
   const settingsOut = (req) => ({ provider: settings.provider, hasSecret: !!settings.webhookSecret, token: settings.token, resendUrl: `${publicOrigin(req)}/inbox/webhook/resend`, genericUrl: `${publicOrigin(req)}/inbox/webhook/generic?token=${settings.token}`, lastReceivedAt: settings.lastReceivedAt, received: settings.received ?? 0, rejected: settings.rejected ?? 0, domain: domainName(), shared: `${sharedLocal()}@${domainName()}` });

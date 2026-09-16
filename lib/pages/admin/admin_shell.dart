@@ -165,6 +165,7 @@ class _Layout extends ConsumerWidget {
             selectedColor: Joy.primary,
             leading: Icon(adminSections[i].$3),
             title: Text(adminSections[i].$2, style: TextStyle(fontWeight: i == current ? FontWeight.w700 : FontWeight.w500)),
+            trailing: adminSections[i].$1 == 'inbox' ? const _InboxBadge() : null,
             onTap: () { onSelect(i); if (!wide) Navigator.of(context).maybePop(); },
           ),
         if (status.roleName != null) Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), child: Text('${status.roleName}${status.title.isNotEmpty ? ' · ${status.title}' : ''}', key: const Key('admin-role'), style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
@@ -322,3 +323,15 @@ Widget kvRow(String k, String v) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [SizedBox(width: 120, child: Text(k, style: const TextStyle(color: Joy.textMuted, fontSize: 13))), Expanded(child: SelectableText(v, style: const TextStyle(fontSize: 13.5)))]),
     );
+
+
+/// شارة عدد الرسائل غير المقروءة في البريد الوارد (تُحدَّث تلقائياً).
+class _InboxBadge extends ConsumerWidget {
+  const _InboxBadge();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final n = ref.watch(inboxUnreadProvider);
+    if (n <= 0) return const SizedBox.shrink();
+    return Container(key: const Key('inbox-badge'), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: Joy.accent, borderRadius: BorderRadius.circular(999)), child: Text('$n', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)));
+  }
+}

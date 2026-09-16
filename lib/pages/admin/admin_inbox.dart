@@ -1,17 +1,26 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/admin_api.dart';
+import '../../api/chat_tools_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/media/media.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../ui/widgets.dart';
 import 'admin_shell.dart';
 
-const inboxFolders = [('inbox', 'الوارد'), ('unread', 'غير المقروء'), ('starred', 'المميز'), ('archived', 'المؤرشف')];
+const inboxFolders = [('inbox', 'الوارد'), ('unread', 'غير المقروء'), ('waiting', 'بانتظار العميل'), ('snoozed', 'مؤجلة'), ('starred', 'المميز'), ('closed', 'مغلقة'), ('archived', 'المؤرشف')];
+const threadStatuses = [('open', 'مفتوحة', Icons.mark_email_unread_outlined), ('waiting', 'بانتظار العميل', Icons.hourglass_bottom_rounded), ('closed', 'مغلقة', Icons.check_circle_outline)];
+String threadStatusName(String s) => threadStatuses.firstWhere((x) => x.$1 == s, orElse: () => threadStatuses.first).$2;
+Color threadStatusColor(String s) => switch (s) { 'closed' => Joy.success, 'waiting' => Joy.sunText, _ => Joy.primary };
 
-/// البريد الوارد: صندوق لكل عضو باسمه على النطاق وصندوق مشترك؛ محادثات، رد وإنشاء، تمييز وأرشفة وإسناد، وإعدادات الاستقبال.
+/// البريد الوارد: صندوق لكل عضو باسمه على النطاق وصندوق مشترك؛ محادثات بحالة وتأجيل ووسوم، رد بقوالب ومرفقات،
+/// ملاحظات داخلية، تمييز وأرشفة وإسناد، وإعدادات الاستقبال.
 class AdminInboxPage extends ConsumerStatefulWidget {
   const AdminInboxPage({super.key});
   @override
@@ -22,7 +31,7 @@ class _AdminInboxPageState extends ConsumerState<AdminInboxPage> {
   String? mailbox;
   String folder = 'inbox', query = '';
 
-  void _refresh() { ref.invalidate(adminInboxMailboxesProvider); ref.invalidate(adminInboxProvider); }
+  void _refresh() { ref.invalidate(adminInboxMailboxesProvider); ref.invalidate(adminInboxProvider); ref.read(inboxUnreadProvider.notifier).refresh(); }
 
   @override
   Widget build(BuildContext context) {
@@ -58,21 +67,20 @@ class _AdminInboxPageState extends ConsumerState<AdminInboxPage> {
             )),
             const SizedBox(width: 8),
             if (i.canReply) FilledButton.icon(key: const Key('inbox-compose'), onPressed: () => _compose(context, i, current), icon: const Icon(Icons.edit_outlined), label: const Text('رسالة')),
+            if (i.canReply) IconButton(key: const Key('inbox-templates'), tooltip: 'الردود الجاهزة', onPressed: () => showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (_) => TemplatesSheet(canShare: i.canManage)), icon: const Icon(Icons.article_outlined)),
             if (i.canManage) IconButton(key: const Key('inbox-settings'), tooltip: 'إعدادات الاستقبال', onPressed: () => _settings(context), icon: const Icon(Icons.settings_outlined)),
           ]),
           const SizedBox(height: 10),
-          Row(children: [
-            Expanded(child: TextField(key: const Key('inbox-search'), onChanged: (v) => setState(() => query = v), decoration: const InputDecoration(isDense: true, prefixIcon: Icon(Icons.search_rounded), hintText: 'ابحث بالاسم أو الموضوع'))),
-          ]),
+          TextField(key: const Key('inbox-search'), onChanged: (v) => setState(() => query = v), decoration: const InputDecoration(isDense: true, prefixIcon: Icon(Icons.search_rounded), hintText: 'ابحث بالاسم أو الموضوع')),
           const SizedBox(height: 8),
-          Wrap(spacing: 6, children: [for (final f in inboxFolders) ChoiceChip(key: Key('inbox-folder-${f.$1}'), label: Text(f.$2), selected: folder == f.$1, onSelected: (_) => setState(() => folder = f.$1))]),
+          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [for (final f in inboxFolders) Padding(padding: const EdgeInsetsDirectional.only(end: 6), child: ChoiceChip(key: Key('inbox-folder-${f.$1}'), label: Text(f.$2), selected: folder == f.$1, onSelected: (_) => setState(() => folder = f.$1)))])),
           const SizedBox(height: 10),
           threads.when(
             loading: () => const LinearProgressIndicator(),
             error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(adminInboxProvider(key))),
             data: (list) {
               final q = query.trim().toLowerCase();
-              final items = q.isEmpty ? list : list.where((t) => t.subject.toLowerCase().contains(q) || t.who.toLowerCase().contains(q) || t.snippet.toLowerCase().contains(q)).toList();
+              final items = q.isEmpty ? list : list.where((t) => t.subject.toLowerCase().contains(q) || t.who.toLowerCase().contains(q) || t.snippet.toLowerCase().contains(q) || t.tags.any((x) => x.toLowerCase().contains(q))).toList();
               if (items.isEmpty) return EmptyState(icon: Icons.inbox_outlined, title: 'لا رسائل', subtitle: 'صندوق ${box.address} فارغ في هذا المجلد.');
               return JoyCard(padding: EdgeInsets.zero, child: Column(children: [
                 for (final (idx, t) in items.indexed)
@@ -85,9 +93,13 @@ class _AdminInboxPageState extends ConsumerState<AdminInboxPage> {
                     title: Row(children: [
                       Expanded(child: Text(t.who, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: t.unread > 0 ? FontWeight.w800 : FontWeight.w600))),
                       if (t.starred) const Icon(Icons.star_rounded, size: 16, color: Joy.sunText),
+                      if (t.snoozed) const Icon(Icons.snooze_rounded, size: 16, color: Joy.textMuted),
                       Text(timeAgo(t.lastAt), style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
                     ]),
-                    subtitle: Text('${t.subject}\n${t.snippet}', maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12.5, color: t.unread > 0 ? Joy.text : Joy.textMuted, fontWeight: t.unread > 0 ? FontWeight.w600 : null)),
+                    subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('${t.subject}\n${t.snippet}', maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12.5, color: t.unread > 0 ? Joy.text : Joy.textMuted, fontWeight: t.unread > 0 ? FontWeight.w600 : null)),
+                      if (t.status != 'open' || t.tags.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Wrap(spacing: 4, children: [if (t.status != 'open') _pill(threadStatusName(t.status), threadStatusColor(t.status)), for (final g in t.tags) _pill('#$g', Joy.textMuted)])),
+                    ]),
                     trailing: t.assignedName.isNotEmpty ? Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)), child: Text(t.assignedName, style: const TextStyle(fontSize: 11, color: Joy.primary, fontWeight: FontWeight.w700))) : null,
                     onTap: () => _open(context, t.id, i),
                     divider: idx < items.length - 1,
@@ -106,10 +118,10 @@ class _AdminInboxPageState extends ConsumerState<AdminInboxPage> {
   }
 
   Future<void> _compose(BuildContext context, InboxInfo i, String current) async {
-    final body = await showModalBottomSheet<Map<String, String>>(context: context, isScrollControlled: true, builder: (_) => _ComposeSheet(mailboxes: i.mailboxes, initial: current));
+    final body = await showModalBottomSheet<Map<String, dynamic>>(context: context, isScrollControlled: true, builder: (_) => _ComposeSheet(mailboxes: i.mailboxes, initial: current));
     if (body == null || !context.mounted) return;
     try {
-      await ref.read(apiClientProvider).adminInboxCompose(mailbox: body['mailbox']!, to: body['to']!, subject: body['subject']!, text: body['text']!);
+      await ref.read(apiClientProvider).adminInboxCompose(mailbox: body['mailbox'] as String, to: body['to'] as String, subject: body['subject'] as String, text: body['text'] as String, attachments: (body['attachments'] as List<InboxAttachment>?) ?? const []);
       _refresh();
       if (context.mounted) toast(context, 'أُرسلت الرسالة من ${body['mailbox']}@${i.domain}');
     } catch (e) {
@@ -123,7 +135,26 @@ class _AdminInboxPageState extends ConsumerState<AdminInboxPage> {
   }
 }
 
-/// محادثة: الرسائل الواردة والصادرة، تمييز/أرشفة/إسناد، والرد بعنوان الصندوق.
+Widget _pill(String text, Color color) => Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: color.withValues(alpha: .12), borderRadius: BorderRadius.circular(999)), child: Text(text, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)));
+
+/// اختيار ملف مرفق ورفعه إلى الخادم؛ يعيد null عند الإلغاء.
+Future<InboxAttachment?> pickAttachment(BuildContext context, WidgetRef ref) async {
+  Uint8List? bytes; String mime = 'application/octet-stream'; String name = 'file';
+  if (kIsWeb && WebMedia.available) {
+    final m = await WebMedia.pick('file');
+    if (m == null) return null;
+    bytes = m.bytes; mime = m.mime; name = m.name;
+  } else {
+    final x = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 2000, maxHeight: 2000, imageQuality: 85);
+    if (x == null) return null;
+    bytes = await x.readAsBytes(); mime = x.mimeType ?? 'image/jpeg'; name = x.name;
+  }
+  if (bytes.length > 25 * 1024 * 1024) { if (context.mounted) toast(context, 'الملف أكبر من 25 ميغابايت', error: true); return null; }
+  final up = await ref.read(apiClientProvider).uploadMedia(bytes, contentType: mime, fileName: name);
+  return InboxAttachment(name: name, type: up.type, downloadUrl: up.url, size: up.size);
+}
+
+/// محادثة: الرسائل والملاحظات، الحالة والتأجيل والوسوم، تمييز/أرشفة/إسناد، الرد بقالب ومرفقات أو ملاحظة داخلية.
 class InboxThreadSheet extends ConsumerStatefulWidget {
   final String threadId;
   final InboxInfo info;
@@ -134,7 +165,8 @@ class InboxThreadSheet extends ConsumerStatefulWidget {
 
 class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
   final reply = TextEditingController();
-  bool busy = false;
+  final attachments = <InboxAttachment>[];
+  bool busy = false, noteMode = false;
 
   Future<void> _patch(Map<String, dynamic> body, String ok) async {
     setState(() => busy = true);
@@ -151,18 +183,65 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
 
   Future<void> _send() async {
     final text = reply.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty && attachments.isEmpty) return;
     setState(() => busy = true);
     try {
-      await ref.read(apiClientProvider).adminInboxReply(widget.threadId, text: text);
+      if (noteMode) {
+        await ref.read(apiClientProvider).adminInboxNote(widget.threadId, text);
+        if (mounted) toast(context, 'حُفظت الملاحظة الداخلية');
+      } else {
+        await ref.read(apiClientProvider).adminInboxReply(widget.threadId, text: text.isEmpty ? 'مرفق' : text, attachments: List.of(attachments));
+        if (mounted) toast(context, 'أُرسل الرد');
+      }
       reply.clear();
+      attachments.clear();
       ref.invalidate(adminInboxThreadProvider(widget.threadId));
-      if (mounted) toast(context, 'أُرسل الرد');
     } catch (e) {
       if (mounted) toast(context, adminErrText(e), error: true);
     } finally {
       if (mounted) setState(() => busy = false);
     }
+  }
+
+  Future<void> _attach() async {
+    try {
+      final a = await pickAttachment(context, ref);
+      if (a != null && mounted) setState(() => attachments.add(a));
+    } catch (e) {
+      if (mounted) toast(context, adminErrText(e), error: true);
+    }
+  }
+
+  Future<void> _template() async {
+    final picked = await showModalBottomSheet<InboxTemplate>(context: context, isScrollControlled: true, builder: (_) => TemplatesSheet(canShare: widget.info.canManage, pick: true));
+    if (picked == null || !mounted) return;
+    try {
+      final text = await ref.read(apiClientProvider).adminInboxTemplateRender(picked.id, threadId: widget.threadId);
+      if (!mounted) return;
+      setState(() { noteMode = false; reply.text = reply.text.trim().isEmpty ? text : '${reply.text.trim()}\n$text'; });
+    } catch (e) {
+      if (mounted) toast(context, adminErrText(e), error: true);
+    }
+  }
+
+  Future<void> _snooze(InboxThread t) async {
+    final now = DateTime.now();
+    final choice = await showModalBottomSheet<String>(context: context, builder: (ctx) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      ListTile(key: const Key('snooze-hours'), leading: const Icon(Icons.snooze_rounded), title: const Text('بعد 3 ساعات'), onTap: () => Navigator.pop(ctx, 'h3')),
+      ListTile(key: const Key('snooze-tomorrow'), leading: const Icon(Icons.wb_sunny_outlined), title: const Text('غداً صباحاً (9:00)'), onTap: () => Navigator.pop(ctx, 'tomorrow')),
+      ListTile(key: const Key('snooze-week'), leading: const Icon(Icons.date_range_outlined), title: const Text('بعد أسبوع'), onTap: () => Navigator.pop(ctx, 'week')),
+      if (t.snoozed) ListTile(key: const Key('snooze-cancel'), leading: const Icon(Icons.alarm_off_rounded), title: const Text('إلغاء التأجيل'), onTap: () => Navigator.pop(ctx, 'cancel')),
+      const SizedBox(height: 8),
+    ])));
+    if (choice == null) return;
+    final until = switch (choice) { 'h3' => now.add(const Duration(hours: 3)), 'tomorrow' => DateTime(now.year, now.month, now.day + 1, 9), 'week' => now.add(const Duration(days: 7)), _ => null };
+    await _patch({'snoozeUntil': until?.toUtc().toIso8601String()}, until == null ? 'أُلغي التأجيل' : 'أُجّلت المحادثة');
+  }
+
+  Future<void> _tags(InboxThread t) async {
+    final v = await askText(context, title: 'الوسوم', hint: 'مثال: vip، شكوى، شراكة', initial: t.tags.join('، '), confirm: 'حفظ');
+    if (v == null) return;
+    await _patch({'tags': v.split(RegExp(r'[،,]')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList()}, 'حُفظت الوسوم');
   }
 
   Future<void> _assign(InboxThreadDetail d) async {
@@ -189,47 +268,72 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
         data: (d) {
           final t = d.thread;
           return SizedBox(
-            height: MediaQuery.of(context).size.height * .85,
+            height: MediaQuery.of(context).size.height * .88,
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(t.subject, key: const Key('thread-subject'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16), maxLines: 2, overflow: TextOverflow.ellipsis),
-                  Text('${t.who} · عبر ${d.address}${t.assignedName.isNotEmpty ? ' · مسندة إلى ${t.assignedName}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+                  Text('${t.who} · عبر ${d.address}${t.assignedName.isNotEmpty ? ' · مسندة إلى ${t.assignedName}' : ''}${t.snoozed ? ' · مؤجلة حتى ${timeAgo(t.snoozeUntil)}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
                 ])),
                 IconButton(key: const Key('thread-star'), tooltip: 'تمييز', onPressed: busy ? null : () => _patch({'starred': !t.starred}, t.starred ? 'أُزيل التمييز' : 'مُيّزت'), icon: Icon(t.starred ? Icons.star_rounded : Icons.star_border_rounded, color: t.starred ? Joy.sunText : Joy.textMuted)),
+                IconButton(key: const Key('thread-snooze'), tooltip: 'تأجيل', onPressed: busy ? null : () => _snooze(t), icon: Icon(Icons.snooze_rounded, color: t.snoozed ? Joy.primary : Joy.textMuted)),
+                IconButton(key: const Key('thread-tags'), tooltip: 'وسوم', onPressed: busy ? null : () => _tags(t), icon: const Icon(Icons.label_outline_rounded, color: Joy.textMuted)),
                 IconButton(key: const Key('thread-archive'), tooltip: t.archived ? 'إخراج من الأرشيف' : 'أرشفة', onPressed: busy ? null : () => _patch({'archived': !t.archived}, t.archived ? 'أُعيدت إلى الوارد' : 'أُرشفت'), icon: Icon(t.archived ? Icons.unarchive_outlined : Icons.archive_outlined, color: Joy.textMuted)),
                 IconButton(key: const Key('thread-assign'), tooltip: 'إسناد', onPressed: busy ? null : () => _assign(d), icon: const Icon(Icons.person_add_alt_outlined, color: Joy.textMuted)),
+              ]),
+              Wrap(spacing: 6, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                for (final s in threadStatuses) ChoiceChip(key: Key('thread-status-${s.$1}'), avatar: Icon(s.$3, size: 15), label: Text(s.$2, style: const TextStyle(fontSize: 12)), selected: t.status == s.$1, selectedColor: threadStatusColor(s.$1).withValues(alpha: .18), visualDensity: VisualDensity.compact, onSelected: busy || t.status == s.$1 ? null : (_) => _patch({'status': s.$1}, 'المحادثة الآن ${s.$2}')),
+                for (final g in t.tags) _pill('#$g', Joy.textMuted),
               ]),
               const Divider(),
               Expanded(child: ListView(children: [
                 for (final m in d.messages)
                   Align(
-                    alignment: m.outgoing ? AlignmentDirectional.centerStart : AlignmentDirectional.centerEnd,
+                    alignment: m.outgoing || m.note ? AlignmentDirectional.centerStart : AlignmentDirectional.centerEnd,
                     child: Container(
                       key: Key('msg-${m.id}'),
                       margin: const EdgeInsets.symmetric(vertical: 5),
                       padding: const EdgeInsets.all(12),
                       constraints: const BoxConstraints(maxWidth: 640),
-                      decoration: BoxDecoration(color: m.outgoing ? Joy.primarySoft : Joy.surface2, borderRadius: BorderRadius.circular(14)),
+                      decoration: BoxDecoration(color: m.note ? Joy.sunSoft : m.outgoing ? Joy.primarySoft : Joy.surface2, borderRadius: BorderRadius.circular(14), border: m.note ? Border.all(color: Joy.sunText.withValues(alpha: .4)) : null),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Row(children: [
-                          Expanded(child: Text(m.outgoing ? '${m.sentByName.isNotEmpty ? m.sentByName : 'الفريق'} إلى ${m.to.map((a) => a.email).join('، ')}' : '${m.from.name.isNotEmpty ? m.from.name : m.from.email}${m.from.name.isNotEmpty ? ' <${m.from.email}>' : ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5), overflow: TextOverflow.ellipsis)),
+                          if (m.note) const Padding(padding: EdgeInsetsDirectional.only(end: 6), child: Icon(Icons.sticky_note_2_outlined, size: 15, color: Joy.sunText)),
+                          Expanded(child: Text(m.note ? 'ملاحظة داخلية · ${m.sentByName.isNotEmpty ? m.sentByName : m.from.name}' : m.outgoing ? '${m.sentByName.isNotEmpty ? m.sentByName : 'الفريق'} إلى ${m.to.map((a) => a.email).join('، ')}' : '${m.from.name.isNotEmpty ? m.from.name : m.from.email}${m.from.name.isNotEmpty ? ' <${m.from.email}>' : ''}', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: m.note ? Joy.sunText : null), overflow: TextOverflow.ellipsis)),
                           Text(timeAgo(m.createdAt), style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
                         ]),
                         if (m.cc.isNotEmpty) Text('نسخة: ${m.cc.map((a) => a.email).join('، ')}', style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
                         const SizedBox(height: 6),
                         SelectableText(m.text.isEmpty ? '(بلا نص)' : m.text, style: const TextStyle(height: 1.6, fontSize: 13.5)),
-                        if (m.attachments.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Wrap(spacing: 6, children: [for (final a in m.attachments) Chip(avatar: const Icon(Icons.attach_file_rounded, size: 14), label: Text('${a['name'] ?? 'مرفق'}', style: const TextStyle(fontSize: 11)), visualDensity: VisualDensity.compact)])),
+                        if (m.attachments.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Wrap(spacing: 6, runSpacing: 4, children: [
+                          for (final a in m.attachments)
+                            ActionChip(
+                              key: Key('att-${m.id}-${a.name}'),
+                              avatar: const Icon(Icons.attach_file_rounded, size: 14),
+                              label: Text('${a.name}${a.size > 0 ? ' · ${(a.size / 1024).ceil()} ك.ب' : ''}', style: const TextStyle(fontSize: 11)),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: a.downloadUrl == null ? null : () => _openAttachment(a.downloadUrl!),
+                            ),
+                        ])),
                       ]),
                     ),
                   ),
               ])),
               if (widget.info.canReply) ...[
                 const Divider(),
-                Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  Expanded(child: TextField(key: const Key('thread-reply-field'), controller: reply, minLines: 1, maxLines: 6, decoration: InputDecoration(hintText: 'اكتب ردّك… يُرسل من ${d.address}', isDense: true))),
+                if (attachments.isNotEmpty) Wrap(spacing: 6, children: [for (final a in attachments) InputChip(key: Key('pending-att-${a.name}'), avatar: const Icon(Icons.attach_file_rounded, size: 14), label: Text(a.name, style: const TextStyle(fontSize: 11)), onDeleted: () => setState(() => attachments.remove(a)))]),
+                Row(children: [
+                  ChoiceChip(key: const Key('thread-mode-reply'), label: const Text('رد للعميل', style: TextStyle(fontSize: 12)), selected: !noteMode, visualDensity: VisualDensity.compact, onSelected: (_) => setState(() => noteMode = false)),
                   const SizedBox(width: 6),
-                  IconButton.filled(key: const Key('thread-reply-send'), onPressed: busy ? null : _send, icon: busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.send_rounded)),
+                  ChoiceChip(key: const Key('thread-mode-note'), label: const Text('ملاحظة داخلية', style: TextStyle(fontSize: 12)), selected: noteMode, selectedColor: Joy.sunSoft, visualDensity: VisualDensity.compact, onSelected: (_) => setState(() => noteMode = true)),
+                  const Spacer(),
+                  if (!noteMode) IconButton(key: const Key('thread-template'), tooltip: 'رد جاهز', onPressed: busy ? null : _template, icon: const Icon(Icons.article_outlined, size: 20, color: Joy.textMuted)),
+                  if (!noteMode) IconButton(key: const Key('thread-attach'), tooltip: 'إرفاق ملف', onPressed: busy ? null : _attach, icon: const Icon(Icons.attach_file_rounded, size: 20, color: Joy.textMuted)),
+                ]),
+                Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Expanded(child: TextField(key: const Key('thread-reply-field'), controller: reply, minLines: 1, maxLines: 6, decoration: InputDecoration(hintText: noteMode ? 'ملاحظة يراها الفريق فقط…' : 'اكتب ردّك… يُرسل من ${d.address}', isDense: true, filled: noteMode, fillColor: noteMode ? Joy.sunSoft : null))),
+                  const SizedBox(width: 6),
+                  IconButton.filled(key: const Key('thread-reply-send'), style: noteMode ? IconButton.styleFrom(backgroundColor: Joy.sunText) : null, onPressed: busy ? null : _send, icon: busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : Icon(noteMode ? Icons.sticky_note_2_outlined : Icons.send_rounded)),
                 ]),
               ],
             ]),
@@ -238,18 +342,99 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
       ),
     );
   }
+
+  Future<void> _openAttachment(String url) async {
+    final api = ref.read(apiClientProvider);
+    final full = url.startsWith('http') ? url : '${api.baseUrl}$url${url.contains('?') ? '&' : '?'}token=${api.token ?? ''}';
+    await launchUrl(Uri.parse(full), mode: LaunchMode.externalApplication);
+  }
 }
 
-class _ComposeSheet extends StatefulWidget {
+/// الردود الجاهزة: قائمة القوالب المشتركة والخاصة، إنشاء وتعديل وحذف، أو اختيار قالب لإدراجه.
+class TemplatesSheet extends ConsumerStatefulWidget {
+  final bool canShare, pick;
+  const TemplatesSheet({super.key, required this.canShare, this.pick = false});
+  @override
+  ConsumerState<TemplatesSheet> createState() => _TemplatesSheetState();
+}
+
+class _TemplatesSheetState extends ConsumerState<TemplatesSheet> {
+  Future<void> _edit(InboxTemplate? t) async {
+    final title = TextEditingController(text: t?.title ?? ''), body = TextEditingController(text: t?.body ?? '');
+    var shared = t?.shared ?? widget.canShare;
+    final ok = await showDialog<bool>(context: context, builder: (d) => StatefulBuilder(builder: (d, setD) => AlertDialog(
+      title: Text(t == null ? 'قالب جديد' : 'تعديل القالب'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(key: const Key('template-title'), controller: title, decoration: const InputDecoration(labelText: 'الاسم', hintText: 'ترحيب')),
+        const SizedBox(height: 8),
+        TextField(key: const Key('template-body'), controller: body, minLines: 3, maxLines: 8, decoration: const InputDecoration(labelText: 'النص', helperText: 'متغيرات: {{name}} {{email}} {{agent}} {{mailbox}}', helperMaxLines: 2)),
+        if (widget.canShare) SwitchListTile(key: const Key('template-shared'), contentPadding: EdgeInsets.zero, value: shared, onChanged: (v) => setD(() => shared = v), title: const Text('مشترك لكل الفريق', style: TextStyle(fontSize: 13))),
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('إلغاء')), FilledButton(key: const Key('template-save'), onPressed: () => Navigator.pop(d, true), child: const Text('حفظ'))],
+    )));
+    if (ok != true || !mounted) return;
+    try {
+      final api = ref.read(apiClientProvider);
+      if (t == null) {
+        await api.adminInboxTemplateCreate(title: title.text, body: body.text, shared: shared);
+      } else {
+        await api.adminInboxTemplateUpdate(t.id, {'title': title.text.trim(), 'body': body.text.trim(), if (widget.canShare) 'shared': shared});
+      }
+      ref.invalidate(adminInboxTemplatesProvider);
+      if (mounted) toast(context, 'حُفظ القالب');
+    } catch (e) {
+      if (mounted) toast(context, adminErrText(e), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final list = ref.watch(adminInboxTemplatesProvider);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 20),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(child: Text(widget.pick ? 'اختر رداً جاهزاً' : 'الردود الجاهزة', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17))),
+          TextButton.icon(key: const Key('template-new'), onPressed: () => _edit(null), icon: const Icon(Icons.add_rounded, size: 18), label: const Text('قالب جديد')),
+        ]),
+        const SizedBox(height: 8),
+        Flexible(child: list.when(
+          loading: () => const LinearProgressIndicator(),
+          error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(adminInboxTemplatesProvider)),
+          data: (items) => items.isEmpty
+              ? const Padding(padding: EdgeInsets.all(16), child: Text('لا قوالب بعد. أنشئ قالباً مثل «ترحيب» أو «تم استلام طلبك».', style: TextStyle(color: Joy.textMuted)))
+              : ListView(shrinkWrap: true, children: [
+                  for (final t in items)
+                    ListTile(
+                      key: Key('template-${t.id}'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(t.shared ? Icons.groups_outlined : Icons.lock_outline, color: Joy.textMuted),
+                      title: Text(t.title),
+                      subtitle: Text(t.body, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                      trailing: widget.pick ? const Icon(Icons.add_circle_outline, color: Joy.primary) : Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(tooltip: 'تعديل', onPressed: () => _edit(t), icon: const Icon(Icons.edit_outlined, size: 18)),
+                        IconButton(key: Key('template-delete-${t.id}'), tooltip: 'حذف', onPressed: () async { try { await ref.read(apiClientProvider).adminInboxTemplateDelete(t.id); ref.invalidate(adminInboxTemplatesProvider); } catch (e) { if (context.mounted) toast(context, adminErrText(e), error: true); } }, icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Joy.danger)),
+                      ]),
+                      onTap: widget.pick ? () => Navigator.pop(context, t) : () => _edit(t),
+                    ),
+                ]),
+        )),
+      ]),
+    );
+  }
+}
+
+class _ComposeSheet extends ConsumerStatefulWidget {
   final List<InboxMailbox> mailboxes;
   final String initial;
   const _ComposeSheet({required this.mailboxes, required this.initial});
   @override
-  State<_ComposeSheet> createState() => _ComposeSheetState();
+  ConsumerState<_ComposeSheet> createState() => _ComposeSheetState();
 }
 
-class _ComposeSheetState extends State<_ComposeSheet> {
+class _ComposeSheetState extends ConsumerState<_ComposeSheet> {
   final to = TextEditingController(), subject = TextEditingController(), text = TextEditingController();
+  final attachments = <InboxAttachment>[];
   late String mailbox = widget.initial;
   @override
   Widget build(BuildContext context) => Padding(
@@ -264,11 +449,21 @@ class _ComposeSheetState extends State<_ComposeSheet> {
           TextField(key: const Key('compose-subject'), controller: subject, decoration: const InputDecoration(labelText: 'الموضوع')),
           const SizedBox(height: 8),
           TextField(key: const Key('compose-text'), controller: text, minLines: 4, maxLines: 10, decoration: const InputDecoration(labelText: 'النص')),
+          const SizedBox(height: 8),
+          Row(children: [
+            TextButton.icon(key: const Key('compose-template'), onPressed: () async {
+              final t = await showModalBottomSheet<InboxTemplate>(context: context, isScrollControlled: true, builder: (_) => const TemplatesSheet(canShare: false, pick: true));
+              if (t == null || !context.mounted) return;
+              try { final r = await ref.read(apiClientProvider).adminInboxTemplateRender(t.id); setState(() => text.text = text.text.trim().isEmpty ? r : '${text.text.trim()}\n$r'); } catch (e) { if (context.mounted) toast(context, adminErrText(e), error: true); }
+            }, icon: const Icon(Icons.article_outlined, size: 18), label: const Text('رد جاهز')),
+            TextButton.icon(key: const Key('compose-attach'), onPressed: () async { try { final a = await pickAttachment(context, ref); if (a != null) setState(() => attachments.add(a)); } catch (e) { if (context.mounted) toast(context, adminErrText(e), error: true); } }, icon: const Icon(Icons.attach_file_rounded, size: 18), label: const Text('إرفاق')),
+          ]),
+          if (attachments.isNotEmpty) Wrap(spacing: 6, children: [for (final a in attachments) InputChip(avatar: const Icon(Icons.attach_file_rounded, size: 14), label: Text(a.name, style: const TextStyle(fontSize: 11)), onDeleted: () => setState(() => attachments.remove(a)))]),
           const SizedBox(height: 14),
           FilledButton.icon(key: const Key('compose-send'), onPressed: () {
             if (!to.text.contains('@')) { toast(context, 'اكتب بريد المستلم', error: true); return; }
             if (subject.text.trim().isEmpty || text.text.trim().isEmpty) { toast(context, 'الموضوع والنص مطلوبان', error: true); return; }
-            Navigator.pop(context, {'mailbox': mailbox, 'to': to.text.trim(), 'subject': subject.text.trim(), 'text': text.text.trim()});
+            Navigator.pop(context, <String, dynamic>{'mailbox': mailbox, 'to': to.text.trim(), 'subject': subject.text.trim(), 'text': text.text.trim(), 'attachments': List<InboxAttachment>.of(attachments)});
           }, icon: const Icon(Icons.send_rounded), label: const Text('إرسال')),
         ])),
       );
@@ -330,9 +525,7 @@ class _InboxSettingsSheetState extends ConsumerState<InboxSettingsSheet> {
             const SizedBox(height: 4),
             Text('الإرسال يعمل عبر قسم البريد. الاستقبال يحتاج خدمة تستلم رسائل ${s.domain} وتدفعها إلى الخادم عبر Webhook. الرسائل إلى اسم عضو (sara@) تصل لصندوقه، والباقي إلى ${s.shared}.', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.6)),
             const SizedBox(height: 10),
-            Row(children: [
-              Expanded(child: Text('وصل حتى الآن: ${s.received} · مرفوض: ${s.rejected}${s.lastReceivedAt != null ? ' · آخر رسالة ${timeAgo(s.lastReceivedAt)}' : ''}', key: const Key('inbox-stats'), style: const TextStyle(fontSize: 12.5))),
-            ]),
+            Text('وصل حتى الآن: ${s.received} · مرفوض: ${s.rejected}${s.lastReceivedAt != null ? ' · آخر رسالة ${timeAgo(s.lastReceivedAt)}' : ''}', key: const Key('inbox-stats'), style: const TextStyle(fontSize: 12.5)),
             const SizedBox(height: 10),
             Wrap(spacing: 8, children: [
               ChoiceChip(key: const Key('inbox-provider-resend'), label: const Text('Resend Receiving'), selected: p == 'resend', onSelected: (_) => setState(() => provider = 'resend')),
