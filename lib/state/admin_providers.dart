@@ -54,10 +54,16 @@ final adminTaskProvider = FutureProvider.family<WorkTask, String>((ref, id) => r
 final adminTasksSummaryProvider = FutureProvider<List<TaskSummaryRow>>((ref) => ref.watch(apiClientProvider).adminTasksSummary());
 final adminInboxMailboxesProvider = FutureProvider<InboxInfo>((ref) => ref.watch(apiClientProvider).adminInboxMailboxes());
 /// محادثات صندوق: المفتاح "mailbox|folder".
-final adminInboxProvider = FutureProvider.family<List<InboxThread>, String>((ref, key) { final parts = key.split('|'); return ref.watch(apiClientProvider).adminInbox(mailbox: parts[0], folder: parts.length > 1 ? parts[1] : 'inbox'); });
+final adminInboxProvider = FutureProvider.family<List<InboxThread>, String>((ref, key) { final parts = key.split('|'); return ref.watch(apiClientProvider).adminInbox(mailbox: parts[0], folder: parts.length > 1 ? parts[1] : 'inbox', tag: parts.length > 2 && parts[2].isNotEmpty ? parts[2] : null); });
 final adminInboxThreadProvider = FutureProvider.family<InboxThreadDetail, String>((ref, id) => ref.watch(apiClientProvider).adminInboxThread(id));
 final adminInboxSettingsProvider = FutureProvider<InboxSettings>((ref) => ref.watch(apiClientProvider).adminInboxSettings());
 final adminInboxTemplatesProvider = FutureProvider<List<InboxTemplate>>((ref) => ref.watch(apiClientProvider).adminInboxTemplates());
+final adminInboxMeProvider = FutureProvider<InboxMe>((ref) => ref.watch(apiClientProvider).adminInboxMe());
+final adminInboxRulesProvider = FutureProvider<InboxRules>((ref) => ref.watch(apiClientProvider).adminInboxRules());
+/// وسوم الصندوق (للتصفية) حسب الصندوق.
+final adminInboxTagsProvider = FutureProvider.family<List<(String, int)>, String>((ref, mailbox) => ref.watch(apiClientProvider).adminInboxTags(mailbox));
+/// فاصل نبضة التواجد داخل المحادثة (null يعطّلها في الاختبارات).
+final inboxPresenceIntervalProvider = Provider<Duration?>((_) => const Duration(seconds: 10));
 /// فاصل تحديث عدّاد البريد الوارد (null يعطّل التحديث التلقائي في الاختبارات).
 final inboxPollIntervalProvider = Provider<Duration?>((_) => const Duration(seconds: 30));
 /// إجمالي غير المقروء في صناديق العضو: يُحدَّث دورياً، ويقرع الجرس عند الزيادة، ويظهر في شارة القسم وعنوان التبويب.
@@ -92,7 +98,7 @@ final adminTeamPermissionsProvider = FutureProvider<List<TeamPermission>>((ref) 
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
 
 void invalidateAdmin(WidgetRef ref) {
-  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider, adminTasksProvider, adminTasksSummaryProvider, adminInboxMailboxesProvider, adminInboxProvider, adminInboxTemplatesProvider]) {
+  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider, adminTasksProvider, adminTasksSummaryProvider, adminInboxMailboxesProvider, adminInboxProvider, adminInboxTemplatesProvider, adminInboxMeProvider, adminInboxRulesProvider, adminInboxTagsProvider]) {
     ref.invalidate(p);
   }
   ref.invalidate(adminUsersProvider);

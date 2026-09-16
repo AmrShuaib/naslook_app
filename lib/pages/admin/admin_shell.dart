@@ -53,6 +53,11 @@ String adminErrText(Object e) {
   if (s.contains('self')) return 'لا يمكنك تطبيق هذا على حسابك';
   if (s.contains('already-cancelled')) return 'ملغاة مسبقاً';
   if (s.contains('bad-provider')) return 'مزوّد بريد غير معروف';
+  if (s.contains('no-conditions')) return 'أضف شرطاً واحداً على الأقل للقاعدة';
+  if (s.contains('no-actions')) return 'أضف إجراءً واحداً على الأقل للقاعدة';
+  if (s.contains('bad-name')) return 'اكتب اسماً للقاعدة';
+  if (s.contains('away-text-required')) return 'اكتب نص رد الغياب قبل تفعيله';
+  if (s.contains('bad-date')) return 'التاريخ غير صالح';
   if (s.contains('bad-port')) return 'المنفذ غير صحيح';
   if (s.contains('bad-from')) return 'بريد المرسل غير صحيح';
   if (s.contains('bad-reply-to')) return 'بريد الرد غير صحيح';

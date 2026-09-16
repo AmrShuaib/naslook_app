@@ -7,6 +7,7 @@ import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import 'admin_inbox.dart';
 import 'admin_shell.dart';
 
 const taskStatuses = [('todo', 'جديدة', Icons.radio_button_unchecked), ('doing', 'قيد التنفيذ', Icons.play_circle_outline), ('review', 'للمراجعة', Icons.rate_review_outlined), ('blocked', 'معلّقة', Icons.pause_circle_outline), ('done', 'منجزة', Icons.check_circle_outline)];
@@ -194,7 +195,10 @@ class TaskEditorSheet extends StatefulWidget {
   final List<TaskAssignee> assignees;
   final bool canAssign;
   final WorkTask? task;
-  const TaskEditorSheet({super.key, required this.assignees, required this.canAssign, this.task});
+  final String? initialTitle, initialDescription;
+  /// ربط المهمة بعنصر آخر (مثل محادثة بريد): {type, id, label}
+  final Map<String, dynamic>? related;
+  const TaskEditorSheet({super.key, required this.assignees, required this.canAssign, this.task, this.initialTitle, this.initialDescription, this.related});
   @override
   State<TaskEditorSheet> createState() => _TaskEditorSheetState();
 }
@@ -212,8 +216,10 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
     if (t != null) {
       title.text = t.title; desc.text = t.description; tags.text = t.tags.join('، '); checklist.text = t.checklist.map((c) => c.text).join('\n'); dept.text = t.department;
       priority = t.priority; assigneeId = t.assignee?.id; due = t.dueAt;
-    } else if (widget.assignees.length == 1) {
-      assigneeId = widget.assignees.first.id;
+    } else {
+      title.text = widget.initialTitle ?? '';
+      desc.text = widget.initialDescription ?? '';
+      if (widget.assignees.length == 1) assigneeId = widget.assignees.first.id;
     }
   }
 
@@ -232,6 +238,7 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
       padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(context).viewInsets.bottom + 20),
       child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(editing ? 'تعديل المهمة' : 'مهمة جديدة', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+        if (widget.related != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text('مرتبطة بـ${widget.related!['type'] == 'inbox' ? 'بريد' : 'عنصر'}: ${widget.related!['label'] ?? ''}', key: const Key('task-related'), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5))),
         const SizedBox(height: 12),
         TextField(key: const Key('task-title'), controller: title, autofocus: !editing, decoration: const InputDecoration(labelText: 'العنوان', hintText: 'ماذا يجب إنجازه؟')),
         const SizedBox(height: 8),
@@ -275,6 +282,7 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
               'tags': tags.text.split(RegExp(r'[،,]')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList(),
               'checklist': [for (final line in checklist.text.split('\n')) if (line.trim().isNotEmpty) {'text': line.trim(), 'done': widget.task?.checklist.any((c) => c.text == line.trim() && c.done) ?? false}],
               'department': dept.text.trim(),
+              if (widget.related != null) 'related': widget.related,
             });
           },
           icon: Icon(editing ? Icons.save_outlined : Icons.add_task_rounded), label: Text(editing ? 'حفظ' : 'إنشاء المهمة'),
@@ -367,6 +375,18 @@ class _TaskDetailSheetState extends ConsumerState<TaskDetailSheet> {
             if (t.department.isNotEmpty) Text('القسم: ${t.department}', style: const TextStyle(fontSize: 12.5, color: Joy.textMuted)),
             for (final tag in t.tags) _pill('#$tag', Joy.textMuted),
           ]),
+          if (t.related?['type'] == 'inbox' && t.related?['id'] != null)
+            Padding(padding: const EdgeInsets.only(top: 6), child: ActionChip(
+              key: const Key('task-related-inbox'),
+              avatar: const Icon(Icons.mail_outline_rounded, size: 15, color: Joy.primary),
+              label: Text('من البريد: ${t.related!['label'] ?? ''}', style: const TextStyle(fontSize: 12)),
+              visualDensity: VisualDensity.compact,
+              onPressed: () async {
+                final info = await ref.read(adminInboxMailboxesProvider.future).catchError((_) => const InboxInfo());
+                if (!context.mounted) return;
+                await showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => InboxThreadSheet(threadId: t.related!['id'].toString(), info: info));
+              },
+            )),
           if (t.description.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: Text(t.description, style: const TextStyle(height: 1.6))),
           if (t.checklist.isNotEmpty) ...[
             const SizedBox(height: 10),

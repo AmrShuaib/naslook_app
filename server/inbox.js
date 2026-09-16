@@ -2,6 +2,8 @@
 // استقبال عبر Webhook (Resend Receiving بتوقيع Svix، أو Webhook عام برمز سري لأي خدمة تحويل)، محادثات مترابطة
 // بالمعرّفات والموضوع، قراءة/أرشفة/تمييز/إسناد، والرد والإنشاء من اللوحة بعنوان الصندوق نفسه عبر server/mail.js.
 // الرؤية: صندوقك دائماً؛ الصندوق المشترك لمن يملك inbox.reply؛ صناديق من تحتك في التسلسل؛ والكل مع inbox.manage.
+// كذلك: حالة وتأجيل ووسوم، ملاحظات داخلية، قوالب ومرفقات، بطاقة العميل، مهام مرتبطة، قواعد تلقائية عند الوصول،
+// تواجد الزملاء على المحادثة، توقيع لكل عضو ورد غياب مرة كل 24 ساعة لكل مرسل.
 // التسجيل في src/index.js بعد mail.js وteam.js:
 //   await app.register((await import("./inbox.js")).default, { pool, auth });
 import crypto from "node:crypto";
@@ -60,6 +62,12 @@ export default async function inbox(app, opts = {}) {
     ALTER TABLE inbox_threads ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
     ALTER TABLE inbox_threads ADD COLUMN IF NOT EXISTS first_reply_at TIMESTAMPTZ;
     ALTER TABLE inbox_threads ADD COLUMN IF NOT EXISTS first_in_at TIMESTAMPTZ;
+    CREATE TABLE IF NOT EXISTS inbox_rules (
+      id UUID PRIMARY KEY, name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT true, position INT NOT NULL DEFAULT 0,
+      conditions JSONB NOT NULL DEFAULT '{}', actions JSONB NOT NULL DEFAULT '{}', hits INT NOT NULL DEFAULT 0, created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS inbox_member_settings (user_id TEXT PRIMARY KEY, signature TEXT NOT NULL DEFAULT '', away BOOLEAN NOT NULL DEFAULT false, away_text TEXT NOT NULL DEFAULT '', away_until TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS inbox_autoreplies (mailbox TEXT NOT NULL, counterpart TEXT NOT NULL, sent_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(mailbox, counterpart));
     CREATE TABLE IF NOT EXISTS inbox_templates (
       id UUID PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, shared BOOLEAN NOT NULL DEFAULT true, owner_id TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -119,6 +127,110 @@ export default async function inbox(app, opts = {}) {
   /// قالب رد بمتغيرات {{name}} {{email}} {{agent}} {{mailbox}}
   const renderTemplate = (body, vars) => String(body ?? "").replace(/\{\{\s*(name|email|agent|mailbox)\s*\}\}/g, (_, k) => vars[k] ?? "");
 
+  // ---- إعدادات العضو: التوقيع ورد الغياب
+  async function memberSettings(uid) {
+    const r = (await pool.query("SELECT * FROM inbox_member_settings WHERE user_id=$1", [uid])).rows[0];
+    return { signature: r?.signature ?? "", away: !!r?.away, awayText: r?.away_text ?? "", awayUntil: r?.away_until ?? null };
+  }
+  /// توقيع المرسل: توقيع الصندوق المشترك من الإعدادات، وإلا توقيع العضو نفسه
+  async function signatureFor(uid, mailbox) { return mailbox === sharedLocal() ? str(settings.sharedSignature, 1000) : (await memberSettings(uid)).signature; }
+  const withSignature = (text, sig) => sig && !text.includes(sig) ? `${text}\n\n-- \n${sig}` : text;
+  /// رد الغياب الفعّال لصندوق (إن وُجد ولم تنتهِ مدته)
+  async function awayFor(mailbox) {
+    let cfg = null;
+    if (mailbox === sharedLocal()) cfg = settings.sharedAway ? { text: str(settings.sharedAwayText, 2000), until: settings.sharedAwayUntil ?? null } : null;
+    else { const m = (await teamMembers()).find((x) => x.mailbox === mailbox); if (m) { const ms = await memberSettings(m.user_id); cfg = ms.away ? { text: ms.awayText, until: ms.awayUntil } : null; } }
+    if (!cfg || !cfg.text) return null;
+    if (cfg.until && new Date(cfg.until) < new Date()) return null;
+    return cfg;
+  }
+  const AUTO_FROM_RE = /^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|bounces?|notifications?|alerts?|newsletter|auto-?reply|auto-?responder)/i;
+  const AUTO_SUBJECT_RE = /^(auto(matic)?[- ]?(reply|response)|out of office|delivery status|undeliverable|رد تلقائي)/i;
+  const isAutomated = (from, subject, headers) => {
+    const h = {}; for (const [k, v] of Object.entries(headers && typeof headers === "object" ? headers : {})) h[String(k).toLowerCase()] = String(v ?? "");
+    if (h["auto-submitted"] && !/^no$/i.test(h["auto-submitted"].trim())) return true;
+    if (h["x-auto-response-suppress"] || /^(bulk|list|junk|auto_reply)$/i.test((h.precedence ?? "").trim())) return true;
+    return AUTO_FROM_RE.test(from.email.split("@")[0]) || AUTO_SUBJECT_RE.test(subject);
+  };
+  /// رد الغياب: مرة واحدة لكل مُرسِل كل 24 ساعة، ولا يُرسل للرسائل الآلية
+  async function maybeAutoReply({ mailbox, from, subject, threadId, headers }) {
+    try {
+      if (isAutomated(from, subject, headers)) return false;
+      const cfg = await awayFor(mailbox); if (!cfg) return false;
+      if ((await pool.query("SELECT 1 FROM inbox_autoreplies WHERE mailbox=$1 AND counterpart=$2 AND sent_at > now() - interval '24 hours'", [mailbox, from.email])).rowCount) return false;
+      const mail = globalThis.naslifeMail; if (!mail?.configured?.()) return false;
+      const fromAddr = `${mailbox}@${domainName()}`; const fromName = mailCfg()?.fromName || "ناس لايف";
+      const subj = /^(re|رد)\s*:/i.test(subject) ? subject : `Re: ${subject || "رسالتك"}`;
+      const html = `<div dir="auto" style="font-family:Segoe UI,Tahoma,sans-serif;white-space:pre-wrap;line-height:1.7">${cfg.text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</div>`;
+      const res = await mail.send({ to: from.email, subject: subj, text: cfg.text, html, tag: "inbox-auto", from: fromAddr, fromName, replyTo: fromAddr, headers: { "Auto-Submitted": "auto-replied", "X-Auto-Response-Suppress": "All", Precedence: "auto_reply" } });
+      await pool.query("INSERT INTO inbox_autoreplies(mailbox,counterpart,sent_at) VALUES($1,$2,now()) ON CONFLICT (mailbox,counterpart) DO UPDATE SET sent_at=now()", [mailbox, from.email]);
+      const now = new Date().toISOString();
+      await pool.query("INSERT INTO inbox_messages(id,thread_id,mailbox,direction,provider_id,from_addr,from_name,to_addrs,cc_addrs,subject,text,html,attachments,read,sent_by,created_at) VALUES($1,$2,$3,'out',$4,$5,'رد تلقائي',$6,'[]',$7,$8,$9,'[]',true,NULL,$10)",
+        [crypto.randomUUID(), threadId, mailbox, res?.id ?? null, fromAddr, JSON.stringify([{ email: from.email, name: from.name }]), subj, cfg.text, html, now]);
+      await pool.query("UPDATE inbox_threads SET message_count=message_count+1 WHERE id=$1", [threadId]);
+      return true;
+    } catch { return false; }
+  }
+
+  // ---- القواعد: شروط على الصندوق/المرسل/الموضوع/النص، وإجراءات وسم/إسناد/تمييز/حالة/أرشفة عند الوصول
+  const cleanConditions = (c) => { const o = {}; if (!c || typeof c !== "object") return o; if (str(c.mailbox, 64)) o.mailbox = lower(c.mailbox); for (const k of ["fromContains", "subjectContains", "textContains"]) if (str(c[k], 120)) o[k] = str(c[k], 120); return o; };
+  const cleanActions = async (a) => {
+    const o = {}; if (!a || typeof a !== "object") return o;
+    if (Array.isArray(a.tags)) { const t = [...new Set(a.tags.map((x) => str(x, 30)).filter(Boolean))].slice(0, 10); if (t.length) o.tags = t; }
+    if (a.assignTo) { const id = str(a.assignTo, 12).toUpperCase(); if (!ID_RE.test(id) || !(await teamInfo(id))) throw Object.assign(new Error("bad-assignee"), { code: 400 }); o.assignTo = id; }
+    if (a.star === true) o.star = true;
+    if (a.archive === true) o.archive = true;
+    if (a.status) { const st = str(a.status, 10); if (!STATUSES.includes(st)) throw Object.assign(new Error("bad-status"), { code: 400 }); o.status = st; }
+    return o;
+  };
+  const ruleMatches = (r, ctx) => {
+    const c = r.conditions ?? {}; const inc = (h, n) => String(h ?? "").toLowerCase().includes(String(n).toLowerCase()); let any = false;
+    if (c.mailbox) { any = true; if (c.mailbox !== ctx.mailbox) return false; }
+    if (c.fromContains) { any = true; if (!inc(ctx.from, c.fromContains) && !inc(ctx.fromName, c.fromContains)) return false; }
+    if (c.subjectContains) { any = true; if (!inc(ctx.subject, c.subjectContains)) return false; }
+    if (c.textContains) { any = true; if (!inc(String(ctx.text ?? "").slice(0, 20000), c.textContains)) return false; }
+    return any;
+  };
+  const loadRules = async () => (await pool.query("SELECT * FROM inbox_rules WHERE enabled ORDER BY position, created_at")).rows;
+  async function applyRules(threadId, ctx) {
+    const hit = (await loadRules()).filter((r) => ruleMatches(r, ctx)); if (!hit.length) return [];
+    const t = (await pool.query("SELECT * FROM inbox_threads WHERE id=$1", [threadId])).rows[0]; if (!t) return [];
+    const tags = new Set(t.tags ?? []); let assign = t.assigned_to; let star = t.starred; let status = null; let archive = null;
+    for (const r of hit) { const a = r.actions ?? {}; for (const g of a.tags ?? []) tags.add(g); if (a.assignTo && !assign) assign = a.assignTo; if (a.star) star = true; if (a.status) status = a.status; if (a.archive) archive = true; }
+    await pool.query("UPDATE inbox_threads SET tags=$2, assigned_to=$3, starred=$4, status=COALESCE($5,status), closed_at=CASE WHEN $5='closed' THEN now() ELSE closed_at END, archived=COALESCE($6,archived) WHERE id=$1", [threadId, JSON.stringify([...tags].slice(0, 10)), assign, star, status, archive]);
+    await pool.query("UPDATE inbox_rules SET hits=hits+1 WHERE id = ANY($1)", [hit.map((r) => r.id)]);
+    if (assign && assign !== t.assigned_to) await notify([assign], { kind: "inbox_assigned", title: "أُسندت إليك محادثة بريد (قاعدة تلقائية)", body: t.subject, data: { threadId, mailbox: t.mailbox, section: "inbox" } });
+    return hit.map((r) => r.name);
+  }
+  const ruleOut = (r) => ({ id: r.id, name: r.name, enabled: r.enabled, position: r.position, conditions: r.conditions ?? {}, actions: r.actions ?? {}, hits: r.hits ?? 0, createdBy: r.created_by, updatedAt: r.updated_at });
+
+  // ---- التواجد: من يفتح المحادثة أو يكتب فيها الآن (في الذاكرة، ينتهي بعد 30 ثانية)
+  const presence = new Map();
+  const PRESENCE_TTL = 30000;
+  function touchPresence(threadId, uid, name, typing) {
+    const m = presence.get(threadId) ?? new Map(); m.set(uid, { name, typing: !!typing, at: Date.now() }); presence.set(threadId, m);
+  }
+  function othersOn(threadId, uid, now = Date.now()) {
+    const m = presence.get(threadId); if (!m) return [];
+    for (const [k, v] of m) if (now - v.at > PRESENCE_TTL) m.delete(k);
+    if (!m.size) presence.delete(threadId);
+    return [...m.entries()].filter(([k]) => k !== uid).map(([k, v]) => ({ id: k, name: v.name, typing: v.typing }));
+  }
+  /// بطاقة العميل: هل البريد مربوط بحساب في ناس لايف، وسجل مراسلاته
+  async function customerOf(email) {
+    if (!email) return null;
+    const stats = (await pool.query("SELECT count(*)::int AS threads, min(created_at) AS since, max(last_at) AS last FROM inbox_threads WHERE counterpart=$1", [email])).rows[0];
+    let alias = null; try { alias = (await pool.query("SELECT user_id, nickname, verified, created_at FROM login_aliases WHERE alias=$1", [email])).rows[0] ?? null; } catch { alias = null; }
+    const out = { email, userId: null, nickname: "", avatarUrl: null, verified: false, suspended: false, memberSince: null, threads: stats.threads, since: stats.since, lastAt: stats.last };
+    if (!alias) return out;
+    const p = (await people([alias.user_id])).get(alias.user_id);
+    let suspended = false; try { suspended = !!(await pool.query("SELECT suspended FROM user_flags WHERE user_id=$1", [alias.user_id])).rows[0]?.suspended; } catch { suspended = false; }
+    return { ...out, userId: alias.user_id, nickname: p?.nickname || alias.nickname || "", avatarUrl: p?.avatarUrl ?? null, verified: !!alias.verified, suspended, memberSince: alias.created_at };
+  }
+  async function tasksOf(threadId) {
+    try { return (await pool.query("SELECT id, title, status, priority, assignee_id FROM work_tasks WHERE related->>'type'='inbox' AND related->>'id'=$1 ORDER BY created_at DESC LIMIT 20", [threadId])).rows.map((r) => ({ id: r.id, title: r.title, status: r.status, priority: r.priority, assigneeId: r.assignee_id })); } catch { return []; }
+  }
+
   /// إدخال رسالة واردة: ربط بمحادثة قائمة (In-Reply-To/References ثم الموضوع والطرف خلال 30 يوماً) أو إنشاء جديدة
   async function ingest(msg) {
     const from = parseAddress(msg.from); if (!EMAIL_RE.test(from.email)) throw new Error("bad-from");
@@ -151,10 +263,12 @@ export default async function inbox(app, opts = {}) {
     await pool.query("INSERT INTO inbox_messages(id,thread_id,mailbox,direction,message_id,in_reply_to,provider_id,from_addr,from_name,to_addrs,cc_addrs,subject,text,html,attachments,read,created_at) VALUES($1,$2,$3,'in',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,false,$15)",
       [mid, thread.id, mailbox, messageId, inReplyTo, providerId, from.email, from.name, JSON.stringify(to), JSON.stringify(cc), subject, text, html, JSON.stringify(attachments), now]);
     await saveSettings({ ...settings, lastReceivedAt: now, received: (settings.received ?? 0) + 1 });
-    const t = (await pool.query("SELECT assigned_to FROM inbox_threads WHERE id=$1", [thread.id])).rows[0];
+    const rules = await applyRules(thread.id, { mailbox, from: from.email, fromName: from.name, subject, text });
+    const t = (await pool.query("SELECT assigned_to, archived FROM inbox_threads WHERE id=$1", [thread.id])).rows[0];
     const targets = t?.assigned_to ? [t.assigned_to] : await ownersOf(mailbox);
-    await notify(targets, { kind: "inbox_message", title: `بريد جديد إلى ${mailbox}@${domainName()}`, body: `${from.name || from.email}: ${subject || snippet}`.slice(0, 140), data: { threadId: thread.id, mailbox, section: "inbox" } });
-    return { threadId: thread.id, messageId: mid, mailbox };
+    if (!t?.archived) await notify(targets, { kind: "inbox_message", title: `بريد جديد إلى ${mailbox}@${domainName()}`, body: `${from.name || from.email}: ${subject || snippet}`.slice(0, 140), data: { threadId: thread.id, mailbox, section: "inbox" } });
+    const autoReplied = await maybeAutoReply({ mailbox, from, subject, threadId: thread.id, headers: msg.headers });
+    return { threadId: thread.id, messageId: mid, mailbox, rules, autoReplied };
   }
   globalThis.naslifeInboxIngest = ingest;
 
@@ -221,10 +335,13 @@ export default async function inbox(app, opts = {}) {
     else if (folder === "closed") where.push("status='closed' AND NOT archived");
     else if (folder === "snoozed") where.push("snooze_until IS NOT NULL AND snooze_until > now()");
     else if (folder === "archived") where.push("archived");
-    if (term) { params.push(`%${term}%`); where.push(`(subject ILIKE $${params.length} OR counterpart ILIKE $${params.length} OR counterpart_name ILIKE $${params.length} OR snippet ILIKE $${params.length})`); }
+    const tag = str(req.query?.tag, 30) || (term.startsWith("#") ? term.slice(1).trim() : "");
+    if (tag) { params.push(JSON.stringify([tag])); where.push(`tags @> $${params.length}::jsonb`); }
+    else if (term) { params.push(`%${term}%`); where.push(`(subject ILIKE $${params.length} OR counterpart ILIKE $${params.length} OR counterpart_name ILIKE $${params.length} OR snippet ILIKE $${params.length})`); }
     const rows = (await pool.query(`SELECT * FROM inbox_threads WHERE ${where.join(" AND ")} ORDER BY last_at DESC LIMIT 200`, params)).rows;
     const amap = await people(rows.map((r) => r.assigned_to));
-    return { threads: rows.map((t) => threadOut(t, amap)), mailbox, folder };
+    const tags = (await pool.query("SELECT g AS tag, count(*)::int AS n FROM inbox_threads, jsonb_array_elements_text(tags) g WHERE mailbox=$1 AND NOT archived GROUP BY g ORDER BY n DESC, g LIMIT 30", [mailbox])).rows;
+    return { threads: rows.map((t) => threadOut(t, amap)), mailbox, folder, tag, tags };
   });
   app.get("/adminapi/inbox/threads/:id", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;
@@ -233,8 +350,81 @@ export default async function inbox(app, opts = {}) {
     if (!(await canSee(uid, t.mailbox))) return bad(reply, 403, "forbidden");
     const msgs = (await pool.query("SELECT * FROM inbox_messages WHERE thread_id=$1 ORDER BY created_at", [id])).rows;
     if (t.unread > 0 && req.query?.markRead !== "0") { await pool.query("UPDATE inbox_threads SET unread=0 WHERE id=$1", [id]); await pool.query("UPDATE inbox_messages SET read=true WHERE thread_id=$1", [id]); t.unread = 0; }
-    const amap = await people([t.assigned_to, ...msgs.map((m) => m.sent_by)]);
-    return { ...threadOut(t, amap), address: `${t.mailbox}@${domainName()}`, messageList: msgs.map((m) => ({ ...messageOut(m), sentByName: m.sent_by ? (amap.get(m.sent_by)?.nickname ?? "") : "" })) };
+    const amap = await people([t.assigned_to, ...msgs.map((m) => m.sent_by), uid]);
+    touchPresence(id, uid, amap.get(uid)?.nickname || req.teamInfo?.title || uid, false);
+    return { ...threadOut(t, amap), address: `${t.mailbox}@${domainName()}`, messageList: msgs.map((m) => ({ ...messageOut(m), sentByName: m.sent_by ? (amap.get(m.sent_by)?.nickname ?? "") : "" })), customer: await customerOf(t.counterpart), tasks: await tasksOf(id), viewers: othersOn(id, uid), signature: has(req.teamInfo, "inbox.reply") || has(req.teamInfo, "inbox.manage") ? await signatureFor(uid, t.mailbox) : "" };
+  });
+  /// نبضة تواجد: أفتح المحادثة الآن (وأكتب؟) وتعود بمن سواي عليها
+  app.post("/adminapi/inbox/threads/:id/presence", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    const id = str(req.params.id, 36); if (!UUID_RE.test(id)) return bad(reply, 404, "not-found");
+    const t = (await pool.query("SELECT mailbox FROM inbox_threads WHERE id=$1", [id])).rows[0]; if (!t) return bad(reply, 404, "not-found");
+    if (!(await canSee(uid, t.mailbox))) return bad(reply, 403, "forbidden");
+    if (req.body?.leave === true) { presence.get(id)?.delete(uid); return { others: othersOn(id, uid) }; }
+    const pmap = await people([uid]);
+    touchPresence(id, uid, pmap.get(uid)?.nickname || req.teamInfo?.title || uid, req.body?.typing === true);
+    return { others: othersOn(id, uid) };
+  });
+  // ---- إعداداتي: التوقيع ورد الغياب لصندوقي
+  const meOut = async (uid, info) => ({ ...(await memberSettings(uid)), mailbox: info?.mailbox || "", address: info?.mailbox ? `${info.mailbox}@${domainName()}` : "" });
+  app.get("/adminapi/inbox/me", async (req, reply) => { const uid = await guard(req, reply); if (!uid) return; return meOut(uid, req.teamInfo); });
+  app.put("/adminapi/inbox/me", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    const b = req.body ?? {}; const cur = await memberSettings(uid);
+    const signature = b.signature !== undefined ? str(b.signature, 1000) : cur.signature;
+    const away = b.away !== undefined ? b.away === true : cur.away;
+    const awayText = b.awayText !== undefined ? str(b.awayText, 2000) : cur.awayText;
+    let awayUntil = cur.awayUntil;
+    if (b.awayUntil !== undefined) { if (b.awayUntil === null || b.awayUntil === "") awayUntil = null; else { const d = new Date(b.awayUntil); if (Number.isNaN(d.getTime())) return bad(reply, 400, "bad-date"); awayUntil = d.toISOString(); } }
+    if (away && !awayText) return bad(reply, 400, "away-text-required");
+    await pool.query("INSERT INTO inbox_member_settings(user_id,signature,away,away_text,away_until,updated_at) VALUES($1,$2,$3,$4,$5,now()) ON CONFLICT (user_id) DO UPDATE SET signature=EXCLUDED.signature, away=EXCLUDED.away, away_text=EXCLUDED.away_text, away_until=EXCLUDED.away_until, updated_at=now()", [uid, signature, away, awayText, awayUntil]);
+    return meOut(uid, req.teamInfo);
+  });
+  // ---- القواعد (inbox.manage)
+  app.get("/adminapi/inbox/rules", async (req, reply) => {
+    if (!(await guard(req, reply, "inbox.manage"))) return;
+    const rows = (await pool.query("SELECT * FROM inbox_rules ORDER BY position, created_at")).rows;
+    const members = await teamMembers(); const pmap = await people(members.map((m) => m.user_id));
+    return { rules: rows.map(ruleOut), assignees: members.filter((m) => m.active !== false).map((m) => ({ id: m.user_id, name: pmap.get(m.user_id)?.nickname || m.user_id, mailbox: m.mailbox || "" })), mailboxes: [sharedLocal(), ...members.map((m) => m.mailbox).filter(Boolean)] };
+  });
+  async function readRule(req, reply, cur) {
+    const b = req.body ?? {};
+    const name = b.name !== undefined ? str(b.name, 80) : cur?.name; if (!name) { bad(reply, 400, "bad-name"); return null; }
+    const conditions = b.conditions !== undefined ? cleanConditions(b.conditions) : (cur?.conditions ?? {});
+    let actions; try { actions = b.actions !== undefined ? await cleanActions(b.actions) : (cur?.actions ?? {}); } catch (e) { bad(reply, 400, e.message); return null; }
+    if (!Object.keys(conditions).length) { bad(reply, 400, "no-conditions"); return null; }
+    if (!Object.keys(actions).length) { bad(reply, 400, "no-actions"); return null; }
+    const enabled = b.enabled !== undefined ? b.enabled !== false : (cur?.enabled ?? true);
+    const position = b.position !== undefined ? Math.max(0, Math.min(999, Number(b.position) || 0)) : (cur?.position ?? 0);
+    return { name, conditions, actions, enabled, position };
+  }
+  app.post("/adminapi/inbox/rules", async (req, reply) => {
+    const uid = await guard(req, reply, "inbox.manage"); if (!uid) return;
+    const r = await readRule(req, reply, null); if (!r) return;
+    const id = crypto.randomUUID();
+    await pool.query("INSERT INTO inbox_rules(id,name,enabled,position,conditions,actions,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)", [id, r.name, r.enabled, r.position, JSON.stringify(r.conditions), JSON.stringify(r.actions), uid]);
+    return ruleOut((await pool.query("SELECT * FROM inbox_rules WHERE id=$1", [id])).rows[0]);
+  });
+  app.patch("/adminapi/inbox/rules/:id", async (req, reply) => {
+    const uid = await guard(req, reply, "inbox.manage"); if (!uid) return;
+    const id = str(req.params.id, 36); if (!UUID_RE.test(id)) return bad(reply, 404, "not-found");
+    const cur = (await pool.query("SELECT * FROM inbox_rules WHERE id=$1", [id])).rows[0]; if (!cur) return bad(reply, 404, "not-found");
+    const r = await readRule(req, reply, cur); if (!r) return;
+    await pool.query("UPDATE inbox_rules SET name=$2, enabled=$3, position=$4, conditions=$5, actions=$6, updated_at=now() WHERE id=$1", [id, r.name, r.enabled, r.position, JSON.stringify(r.conditions), JSON.stringify(r.actions)]);
+    return ruleOut((await pool.query("SELECT * FROM inbox_rules WHERE id=$1", [id])).rows[0]);
+  });
+  app.delete("/adminapi/inbox/rules/:id", async (req, reply) => {
+    const uid = await guard(req, reply, "inbox.manage"); if (!uid) return;
+    const id = str(req.params.id, 36); if (!UUID_RE.test(id)) return bad(reply, 404, "not-found");
+    const r = await pool.query("DELETE FROM inbox_rules WHERE id=$1", [id]); if (!r.rowCount) return bad(reply, 404, "not-found");
+    return { ok: true };
+  });
+  /// تجربة القواعد على رسالة افتراضية
+  app.post("/adminapi/inbox/rules/test", async (req, reply) => {
+    const uid = await guard(req, reply, "inbox.manage"); if (!uid) return;
+    const b = req.body ?? {}; const from = parseAddress(b.from ?? "");
+    const ctx = { mailbox: lower(b.mailbox) || sharedLocal(), from: from.email, fromName: from.name, subject: str(b.subject, 300), text: str(b.text, 20000) };
+    return { matches: (await loadRules()).filter((r) => ruleMatches(r, ctx)).map((r) => ({ id: r.id, name: r.name, actions: r.actions ?? {} })) };
   });
   app.patch("/adminapi/inbox/threads/:id", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;
@@ -270,8 +460,9 @@ export default async function inbox(app, opts = {}) {
     const headers = { "Message-ID": `<${messageId}>` };
     let inReplyTo = null;
     if (thread) { const last = (await pool.query("SELECT message_id FROM inbox_messages WHERE thread_id=$1 AND direction='in' AND message_id IS NOT NULL ORDER BY created_at DESC LIMIT 1", [thread.id])).rows[0]; if (last?.message_id) { inReplyTo = last.message_id; headers["In-Reply-To"] = last.message_id.startsWith("<") ? last.message_id : `<${last.message_id}>`; headers.References = headers["In-Reply-To"]; } }
-    const bodyHtml = html || `<div dir="auto" style="font-family:Segoe UI,Tahoma,sans-serif;white-space:pre-wrap;line-height:1.7">${String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</div>`;
-    const res = await mail.send({ to, subject, text, html: bodyHtml, tag: "inbox", from: fromAddr, fromName, replyTo: fromAddr, headers, attachments: attachments.map((a) => ({ filename: a.name, path: a.url, contentType: a.type })) });
+    const signed = withSignature(text, await signatureFor(uid, mailbox));
+    const bodyHtml = html || `<div dir="auto" style="font-family:Segoe UI,Tahoma,sans-serif;white-space:pre-wrap;line-height:1.7">${String(signed).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</div>`;
+    const res = await mail.send({ to, subject, text: signed, html: bodyHtml, tag: "inbox", from: fromAddr, fromName, replyTo: fromAddr, headers, attachments: attachments.map((a) => ({ filename: a.name, path: a.url, contentType: a.type })) });
     const now = new Date().toISOString();
     let t = thread;
     if (!t) {
@@ -281,7 +472,7 @@ export default async function inbox(app, opts = {}) {
     }
     const mid = crypto.randomUUID();
     await pool.query("INSERT INTO inbox_messages(id,thread_id,mailbox,direction,message_id,in_reply_to,provider_id,from_addr,from_name,to_addrs,cc_addrs,subject,text,html,attachments,read,sent_by,created_at) VALUES($1,$2,$3,'out',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,true,$15,$16)",
-      [mid, t.id, mailbox, messageId, inReplyTo, res?.id ?? null, fromAddr, fromName, JSON.stringify([{ email: to, name: "" }]), JSON.stringify(cc.map((e) => ({ email: e, name: "" }))), subject, text, bodyHtml, JSON.stringify(attachments), uid, now]);
+      [mid, t.id, mailbox, messageId, inReplyTo, res?.id ?? null, fromAddr, fromName, JSON.stringify([{ email: to, name: "" }]), JSON.stringify(cc.map((e) => ({ email: e, name: "" }))), subject, signed, bodyHtml, JSON.stringify(attachments), uid, now]);
     // بعد ردّ الفريق تصبح المحادثة بانتظار العميل (ما لم تكن مغلقة)، ويُسجّل أول رد
     await pool.query("UPDATE inbox_threads SET snippet=$2, last_at=$3, last_direction='out', message_count=message_count+1, status=CASE WHEN status='closed' THEN 'closed' ELSE 'waiting' END, snooze_until=NULL, first_reply_at=COALESCE(first_reply_at, CASE WHEN first_in_at IS NOT NULL THEN $3::timestamptz END) WHERE id=$1", [t.id, text.replace(/\s+/g, " ").slice(0, 160), now]);
     return { threadId: t.id, messageId: mid };
@@ -322,7 +513,7 @@ export default async function inbox(app, opts = {}) {
     await pool.query("UPDATE inbox_threads SET message_count=message_count+1 WHERE id=$1", [id]);
     const others = [t.assigned_to, ...(await ownersOf(t.mailbox))].filter((x) => x && x !== uid);
     await notify(others, { kind: "inbox_note", title: `ملاحظة داخلية على «${t.subject}»`, body: text.slice(0, 120), data: { threadId: id, mailbox: t.mailbox, section: "inbox" } });
-    return { id, direction: "note", text, sentBy: uid, sentByName: pmap.get(uid)?.nickname ?? "", createdAt: now };
+    return { id: mid, threadId: id, direction: "note", text, sentBy: uid, sentByName: pmap.get(uid)?.nickname ?? "", createdAt: now };
   });
   // ---- القوالب (الردود الجاهزة): مشتركة أو خاصة بصاحبها
   const templateOut = (r, pmap) => ({ id: r.id, title: r.title, body: r.body, shared: r.shared, ownerId: r.owner_id, ownerName: pmap?.get(r.owner_id)?.nickname ?? "", updatedAt: r.updated_at });
@@ -402,7 +593,7 @@ export default async function inbox(app, opts = {}) {
   if (sweepMs > 0) { const timer = setInterval(() => sweep().catch(() => {}), sweepMs); timer.unref?.(); app.addHook("onClose", async () => clearInterval(timer)); }
   // ---- إعدادات الاستقبال (inbox.manage)
   const publicOrigin = (req) => { const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim(); const proto = String(req.headers["x-forwarded-proto"] ?? "https").split(",")[0].trim(); return `${proto}://${host}`; };
-  const settingsOut = (req) => ({ provider: settings.provider, hasSecret: !!settings.webhookSecret, token: settings.token, resendUrl: `${publicOrigin(req)}/inbox/webhook/resend`, genericUrl: `${publicOrigin(req)}/inbox/webhook/generic?token=${settings.token}`, lastReceivedAt: settings.lastReceivedAt, received: settings.received ?? 0, rejected: settings.rejected ?? 0, domain: domainName(), shared: `${sharedLocal()}@${domainName()}` });
+  const settingsOut = (req) => ({ provider: settings.provider, hasSecret: !!settings.webhookSecret, token: settings.token, resendUrl: `${publicOrigin(req)}/inbox/webhook/resend`, genericUrl: `${publicOrigin(req)}/inbox/webhook/generic?token=${settings.token}`, lastReceivedAt: settings.lastReceivedAt, received: settings.received ?? 0, rejected: settings.rejected ?? 0, domain: domainName(), shared: `${sharedLocal()}@${domainName()}`, sharedSignature: settings.sharedSignature ?? "", sharedAway: !!settings.sharedAway, sharedAwayText: settings.sharedAwayText ?? "", sharedAwayUntil: settings.sharedAwayUntil ?? null });
   app.get("/adminapi/inbox/settings", async (req, reply) => { if (!(await guard(req, reply, "inbox.manage"))) return; await load(); return settingsOut(req); });
   app.put("/adminapi/inbox/settings", async (req, reply) => {
     if (!(await guard(req, reply, "inbox.manage"))) return;
@@ -410,6 +601,11 @@ export default async function inbox(app, opts = {}) {
     if (b.provider !== undefined) { if (!["resend", "generic"].includes(String(b.provider))) return bad(reply, 400, "bad-provider"); next.provider = String(b.provider); }
     if (b.webhookSecret !== undefined) next.webhookSecret = str(b.webhookSecret, 200);
     if (b.rotateToken === true) next.token = crypto.randomBytes(18).toString("base64url");
+    if (b.sharedSignature !== undefined) next.sharedSignature = str(b.sharedSignature, 1000);
+    if (b.sharedAway !== undefined) next.sharedAway = b.sharedAway === true;
+    if (b.sharedAwayText !== undefined) next.sharedAwayText = str(b.sharedAwayText, 2000);
+    if (b.sharedAwayUntil !== undefined) { if (b.sharedAwayUntil === null || b.sharedAwayUntil === "") next.sharedAwayUntil = null; else { const d = new Date(b.sharedAwayUntil); if (Number.isNaN(d.getTime())) return bad(reply, 400, "bad-date"); next.sharedAwayUntil = d.toISOString(); } }
+    if (next.sharedAway && !next.sharedAwayText) return bad(reply, 400, "away-text-required");
     await saveSettings(next);
     return settingsOut(req);
   });
