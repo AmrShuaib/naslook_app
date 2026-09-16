@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
@@ -184,19 +185,23 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                 onAction: () async { await composePostHere(context, ref); if (mounted) _load(); },
               )
             else
-              PageView.builder(
-                key: const Key('feed-pages'),
-                controller: _ctl,
-                scrollDirection: Axis.vertical,
-                itemCount: items.length,
-                onPageChanged: _onPage,
-                itemBuilder: (_, i) => FeedItemView(
-                  key: ValueKey(items[i].id),
-                  post: items[i],
-                  active: i == index,
-                  filteredPlace: widget.placeKey,
-                  onLike: () => _like(i),
-                  onMenu: () => _menu(i),
+              // السحب بالفأرة أيضاً (الويب على الحاسوب) لا باللمس فقط
+              ScrollConfiguration(
+                behavior: ScrollConfiguration.of(context).copyWith(dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse, PointerDeviceKind.stylus, PointerDeviceKind.trackpad}),
+                child: PageView.builder(
+                  key: const Key('feed-pages'),
+                  controller: _ctl,
+                  scrollDirection: Axis.vertical,
+                  itemCount: items.length,
+                  onPageChanged: _onPage,
+                  itemBuilder: (_, i) => FeedItemView(
+                    key: ValueKey(items[i].id),
+                    post: items[i],
+                    active: i == index,
+                    filteredPlace: widget.placeKey,
+                    onLike: () => _like(i),
+                    onMenu: () => _menu(i),
+                  ),
                 ),
               ),
             // الشريط العلوي: إغلاق، العنوان، الموضع
@@ -209,7 +214,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
                   Text(subtitle, style: const TextStyle(color: Colors.white70, fontSize: 11.5, shadows: [Shadow(color: Colors.black54, blurRadius: 6)])),
                 ])),
                 if (items.isNotEmpty)
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(999)), child: Text('${index + 1} / ${items.length}${next != null ? '+' : ''}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600))),
+                  Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(999)), child: Text('${index + 1} / ${items.length}${next != null ? '+' : ''}', textDirection: TextDirection.ltr, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600))),
               ]),
             ),
           ]),
