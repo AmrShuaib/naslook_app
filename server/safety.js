@@ -9,7 +9,7 @@ import { normQ } from "./business.js";
 
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const ID_RE = /^[A-Z]{2}\d{7}$/i;
-const TARGETS = new Set(["post", "listing", "community"]);
+const TARGETS = new Set(["post", "listing", "community", "vessel-post"]);
 const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
 const str = (v, max) => String(v ?? "").trim().slice(0, max);
 
@@ -65,6 +65,7 @@ export default async function safety(app, opts) {
   const notifyAdmins = async (payload) => { try { await globalThis.naslifeNotifyAdmins?.(payload); } catch { /* ignore */ } };
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
+  const typeName = (type) => type === "post" ? "منشور" : type === "community" ? "منشور مجتمع" : type === "vessel-post" ? "منشور دائرة" : "عرض";
 
   app.get("/safety/status", async () => ({ ok: true, blocks: blocksOk, blocksTable, words: words().length, threshold: threshold() }));
 
@@ -121,6 +122,16 @@ export default async function safety(app, opts) {
         return r.rows[0] ?? null;
       } catch { return null; }
     }
+    if (type === "vessel-post") {
+      // منشورات الدوائر (المجموعات): المعلومات من vessel_mod.js إن وُجد، وإلا يُقبل البلاغ بلا تفاصيل
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return null;
+      try {
+        const r = await globalThis.naslifeVesselPostInfo?.(id);
+        if (r === null) return null;
+        if (r) return r;
+      } catch { /* ignore */ }
+      return { owner: null, title: "منشور في دائرة", status: "active" };
+    }
     return null;
   }
   async function autoHide(type, id, info, n) {
@@ -128,6 +139,10 @@ export default async function safety(app, opts) {
       const r = await pool.query("UPDATE map_posts SET status='blocked', updated_at=now() WHERE id=$1 AND status<>'blocked' RETURNING id", [id]);
       if (!r.rowCount) return false;
       await notify([info.owner], { kind: "post_blocked", title: "أُخفي منشورك بعد عدة بلاغات", body: `«${info.title}» قيد مراجعة الإدارة`, data: { postId: id, reason: "reports", reports: n } });
+    } else if (type === "vessel-post") {
+      const r = await globalThis.naslifeVesselPostHide?.(id, { vesselId: info.vessel_id ?? "", by: "reports", reason: `${n} بلاغات` });
+      if (!r) return false;
+      if (info.owner) await notify([info.owner], { kind: "vessel_post_hidden", title: "أُخفي منشورك في الدائرة بعد عدة بلاغات", body: `«${info.title}» قيد مراجعة الإدارة`, data: { vesselId: info.vessel_id, postId: id, reason: "reports", reports: n } });
     } else if (type === "community") {
       const r = await globalThis.naslifeCommunityHide?.(id);
       if (!r) return false;
@@ -137,7 +152,7 @@ export default async function safety(app, opts) {
       if (!r.rowCount) return false;
       await notify([info.owner], { kind: "listing_hidden", title: "أُخفي عرضك بعد عدة بلاغات", body: `«${info.title}» قيد مراجعة الإدارة`, data: { listingId: id, reason: "reports", reports: n } });
     }
-    await notifyAdmins({ kind: "content_autohidden", title: `أُخفي ${type === "post" ? "منشور" : type === "community" ? "منشور مجتمع" : "عرض"} تلقائياً بعد ${n} بلاغات`, body: `«${info.title}» — راجعه في قسم المحتوى`, data: { targetType: type, targetId: id, reports: n } });
+    await notifyAdmins({ kind: "content_autohidden", title: `أُخفي ${typeName(type)} تلقائياً بعد ${n} بلاغات`, body: `«${info.title}» — راجعه في قسم المحتوى`, data: { targetType: type, targetId: id, reports: n } });
     return true;
   }
   app.post("/safety/report", async (req, reply) => {
@@ -151,7 +166,7 @@ export default async function safety(app, opts) {
     const n = (await pool.query("SELECT count(DISTINCT reporter_id)::int AS n FROM content_reports WHERE target_type=$1 AND target_id=$2", [type, id])).rows[0].n;
     let hidden = false;
     if (n >= threshold() && info.status !== "blocked") hidden = await autoHide(type, id, info, n);
-    else if (n === 1) await notifyAdmins({ kind: "report_new", title: `بلاغ على ${type === "post" ? "منشور" : type === "community" ? "منشور مجتمع" : "عرض"}`, body: `«${info.title}»${reason ? ` — ${reason}` : ""}`, data: { targetType: type, targetId: id, reports: n }, push: false });
+    else if (n === 1) await notifyAdmins({ kind: "report_new", title: `بلاغ على ${typeName(type)}`, body: `«${info.title}»${reason ? ` — ${reason}` : ""}`, data: { targetType: type, targetId: id, reports: n }, push: false });
     return { ok: true, reports: n, hidden, threshold: threshold() };
   });
   // بلاغات عنصر (للإدارة)

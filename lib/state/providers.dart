@@ -22,7 +22,14 @@ final requestsProvider = FutureProvider<List<FriendRequest>>((ref) => ref.watch(
 final chatsProvider = FutureProvider<List<Chat>>((ref) => ref.watch(apiClientProvider).chats());
 final myVesselsProvider = FutureProvider<List<Vessel>>((ref) => ref.watch(apiClientProvider).myVessels());
 final discoverVesselsProvider = FutureProvider.family<List<Vessel>, String>((ref, q) => ref.watch(apiClientProvider).vessels(q: q));
-final feedProvider = FutureProvider<List<Post>>((ref) => ref.watch(apiClientProvider).feed());
+/// المنشورات المخفية بقرار مشرفي الدوائر أو البلاغات؛ تُصفّى من البث وصفحات الدوائر.
+final hiddenPostsProvider = FutureProvider<Set<String>>((ref) => ref.watch(apiClientProvider).hiddenPosts());
+final feedProvider = FutureProvider<List<Post>>((ref) async {
+  final api = ref.watch(apiClientProvider);
+  final hidden = await ref.watch(hiddenPostsProvider.future);
+  final posts = await api.feed();
+  return hidden.isEmpty ? posts : posts.where((p) => !hidden.contains(p.id)).toList();
+});
 final myPresenceProvider = FutureProvider<MyPresence>((ref) => ref.watch(apiClientProvider).myPresence());
 
 /// الحدود الجغرافية الحالية للخريطة (تبدأ بجدة).

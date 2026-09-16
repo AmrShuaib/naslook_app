@@ -25,6 +25,7 @@ import '../posts/post_viewer.dart';
 import '../search/search_page.dart';
 import '../wallet/wallet_page.dart';
 import '../../api/client.dart';
+import '../../api/safety_api.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -350,11 +351,15 @@ class _VesselTile extends StatelessWidget {
 class PostCard extends ConsumerWidget {
   final Post post;
   final bool showVessel;
-  const PostCard(this.post, {super.key, this.showVessel = true});
+  /// المشاهد مالك الدائرة أو مشرف فيها: يستطيع إزالة منشورات الآخرين.
+  final bool moderator;
+  const PostCard(this.post, {super.key, this.showVessel = true, this.moderator = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isAnnouncement = post.kind == 'announcement';
+    final myId = ref.watch(appStateProvider.select((s) => s.user?.id));
+    final mine = myId != null && myId == post.author.id;
     return JoyCard(
       color: isAnnouncement ? Joy.sunSoft : null,
       onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleDetailPage(vesselId: post.vesselId, focusPostId: post.id))),
@@ -372,6 +377,22 @@ class PostCard extends ConsumerWidget {
             ]),
           ),
           if (isAnnouncement) const Icon(Icons.campaign_rounded, color: Joy.sunText, size: 20),
+          if (myId != null)
+            PopupMenuButton<String>(
+              key: Key('post-menu-${post.id}'),
+              tooltip: 'خيارات',
+              padding: EdgeInsets.zero,
+              icon: const Icon(Icons.more_horiz_rounded, color: Joy.textMuted, size: 20),
+              onSelected: (v) => _action(context, ref, v),
+              itemBuilder: (_) => [
+                if (mine)
+                  PopupMenuItem(key: Key('post-delete-${post.id}'), value: 'delete', child: const ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.delete_outline_rounded, color: Joy.danger), title: Text('حذف المنشور', style: TextStyle(color: Joy.danger)))),
+                if (!mine && moderator)
+                  PopupMenuItem(key: Key('post-remove-${post.id}'), value: 'remove', child: const ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.remove_circle_outline_rounded, color: Joy.danger), title: Text('إزالة من الدائرة', style: TextStyle(color: Joy.danger)))),
+                if (!mine)
+                  PopupMenuItem(key: Key('post-report-${post.id}'), value: 'report', child: const ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.flag_outlined), title: Text('إبلاغ عن المنشور'))),
+              ],
+            ),
         ]),
         const SizedBox(height: 10),
         if (post.type == 'text') PostMarkup(post.content, fontSize: 14.5, collapsed: showVessel, onMore: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleDetailPage(vesselId: post.vesselId, focusPostId: post.id))))
@@ -395,6 +416,50 @@ class PostCard extends ConsumerWidget {
         ]),
       ]),
     );
+  }
+
+  void _refresh(WidgetRef ref) {
+    ref.invalidate(hiddenPostsProvider);
+    ref.invalidate(feedProvider);
+    ref.invalidate(vesselDetailProvider(post.vesselId));
+  }
+
+  Future<void> _action(BuildContext context, WidgetRef ref, String action) async {
+    final api = ref.read(apiClientProvider);
+    try {
+      switch (action) {
+        case 'delete':
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (d) => AlertDialog(
+              title: const Text('حذف المنشور؟'),
+              content: const Text('يُحذف المنشور وتعليقاته نهائياً ولا يمكن التراجع.'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('إلغاء')),
+                FilledButton(key: const Key('post-delete-confirm'), style: FilledButton.styleFrom(backgroundColor: Joy.danger), onPressed: () => Navigator.pop(d, true), child: const Text('حذف')),
+              ],
+            ),
+          );
+          if (ok != true) return;
+          await api.deleteVesselPost(post.id);
+          _refresh(ref);
+          if (context.mounted) toast(context, 'حُذف المنشور');
+        case 'remove':
+          final reason = await askText(context, title: 'إزالة منشور ${post.author.nickname}', hint: 'سبب الإزالة (اختياري، يصل لصاحب المنشور)', confirm: 'إزالة');
+          if (reason == null || !context.mounted) return;
+          final r = await api.removeVesselPost(post.id, vesselId: post.vesselId, reason: reason);
+          _refresh(ref);
+          if (context.mounted) toast(context, r.deleted ? 'حُذف المنشور من الدائرة' : 'أُخفي المنشور عن أعضاء الدائرة');
+        case 'report':
+          final reason = await askText(context, title: 'إبلاغ عن المنشور', hint: 'ما المشكلة؟ (مسيء، احتيال، مضلل…)', confirm: 'إرسال البلاغ');
+          if (reason == null || reason.isEmpty || !context.mounted) return;
+          final r = await api.reportContent(type: 'vessel-post', id: post.id, reason: reason);
+          if (r.hidden) _refresh(ref);
+          if (context.mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفي المنشور للمراجعة' : 'وصل بلاغك وسنراجعه');
+      }
+    } catch (e) {
+      if (context.mounted) toast(context, e.toString(), error: true);
+    }
   }
 }
 

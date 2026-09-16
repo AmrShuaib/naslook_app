@@ -155,4 +155,24 @@ extension NaslifeApi on ApiClient {
   Future<List<Comment>> comments(String postId) async => asList(await getList('/posts/$postId/comments')).map(Comment.fromJson).toList();
   Future<Comment> addComment(String postId, String text) async => Comment.fromJson(await post('/posts/$postId/comments', {'text': text, 'content': text}));
   Future<void> supportPost(String postId) => post('/posts/$postId/support', const {});
+
+  // ---- حذف/إخفاء منشورات الدوائر
+  /// حذف منشورك في دائرة (النواة تسمح لصاحب المنشور فقط).
+  Future<void> deleteVesselPost(String postId) => delete('/posts/$postId');
+  /// إزالة منشور من دائرة بصلاحية المالك/المشرف: يُحذف إن سمحت النواة وإلا يُخفى.
+  Future<({bool deleted, bool hidden})> removeVesselPost(String postId, {required String vesselId, String reason = ''}) async {
+    final r = await post('/posts/$postId/remove', {'vesselId': vesselId, if (reason.isNotEmpty) 'reason': reason});
+    return (deleted: r['deleted'] == true, hidden: r['hidden'] == true);
+  }
+  Future<void> unhideVesselPost(String postId) => post('/posts/$postId/unhide', const {});
+  /// معرّفات المنشورات المخفية بقرار المشرفين أو البلاغات (فارغة إن لم تتوفر الخدمة).
+  Future<Set<String>> hiddenPosts() async {
+    try {
+      final r = await get('/posts/hidden');
+      final ids = r['ids'];
+      return ids is List ? ids.map((e) => e.toString()).toSet() : const <String>{};
+    } catch (_) {
+      return const <String>{};
+    }
+  }
 }

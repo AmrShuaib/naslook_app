@@ -11,7 +11,11 @@ import '../../ui/widgets.dart';
 import 'post_editor_page.dart';
 import '../home/home_page.dart';
 
-final vesselDetailProvider = FutureProvider.family<(Vessel, List<Post>), String>((ref, id) => ref.watch(apiClientProvider).vessel(id));
+final vesselDetailProvider = FutureProvider.family<(Vessel, List<Post>), String>((ref, id) async {
+  final hidden = await ref.watch(hiddenPostsProvider.future);
+  final (v, posts) = await ref.watch(apiClientProvider).vessel(id);
+  return (v, hidden.isEmpty ? posts : posts.where((p) => !hidden.contains(p.id)).toList());
+});
 final vesselMembersProvider = FutureProvider.family<List<Person>, String>((ref, id) => ref.watch(apiClientProvider).vesselMembers(id));
 final commentsProvider = FutureProvider.family<List<Comment>, String>((ref, id) => ref.watch(apiClientProvider).comments(id));
 
@@ -78,7 +82,7 @@ class _CircleDetailPageState extends ConsumerState<CircleDetailPage> {
                 for (final p in posts)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),
-                    child: _PostWithComments(p, expanded: p.id == widget.focusPostId),
+                    child: _PostWithComments(p, expanded: p.id == widget.focusPostId, moderator: _canModerate(vessel.role)),
                   ),
               ],
             ),
@@ -90,6 +94,7 @@ class _CircleDetailPageState extends ConsumerState<CircleDetailPage> {
     );
   }
 
+  bool _canModerate(String? role) => role == 'owner' || role == 'moderator' || role == 'admin';
   String _roleName(String r) => switch (r) { 'owner' => 'المالك', 'moderator' => 'مشرف', 'admin' => 'مشرف', _ => 'عضو' };
 
   Future<void> _join(Vessel v) async {
@@ -157,7 +162,8 @@ class _CircleDetailPageState extends ConsumerState<CircleDetailPage> {
 class _PostWithComments extends ConsumerStatefulWidget {
   final Post post;
   final bool expanded;
-  const _PostWithComments(this.post, {this.expanded = false});
+  final bool moderator;
+  const _PostWithComments(this.post, {this.expanded = false, this.moderator = false});
   @override
   ConsumerState<_PostWithComments> createState() => _PostWithCommentsState();
 }
@@ -167,7 +173,7 @@ class _PostWithCommentsState extends ConsumerState<_PostWithComments> {
   @override
   Widget build(BuildContext context) {
     return Column(children: [
-      PostCard(widget.post, showVessel: false),
+      PostCard(widget.post, showVessel: false, moderator: widget.moderator),
       Align(
         alignment: AlignmentDirectional.centerStart,
         child: TextButton.icon(
