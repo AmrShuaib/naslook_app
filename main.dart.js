@@ -141652,7 +141652,7 @@ h=new A.aI(14,14)
 if(m){m=k.e
 m=m.length!==0?m:"\u0627\u0644\u0641\u0631\u064a\u0642"
 g=k.x
-g=m+" \u2190 "+new A.M(g,new A.bn5(),A.a2(g).i("M<1,n>")).bH(0,"\u060c ")
+g=m+" \u0625\u0644\u0649 "+new A.M(g,new A.bn5(),A.a2(g).i("M<1,n>")).bH(0,"\u060c ")
 m=g}else{m=k.w
 g=m.b
 f=g.length!==0
