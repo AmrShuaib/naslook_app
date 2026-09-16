@@ -102,7 +102,7 @@ void main() {
     expect(find.byKey(const Key('task-$_t1')), findsOneWidget);
     expect(find.byKey(const Key('task-$_t2')), findsNothing, reason: 'مهامي فقط');
     expect(find.text('قيد التنفيذ'), findsWidgets);
-    expect(find.text('1/2 ✓'), findsOneWidget);
+    expect(find.text('1/2'), findsOneWidget);
     // فريقي: تظهر مهمة فهد المتأخرة
     await tester.tap(find.text('فريقي'));
     await settle(tester);

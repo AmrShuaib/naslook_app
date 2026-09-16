@@ -166,7 +166,7 @@ class _TaskCard extends StatelessWidget {
                 if (t.assignee != null) Row(mainAxisSize: MainAxisSize.min, children: [ProfileAvatar(person: t.assignee!, size: 20), const SizedBox(width: 4), Text(t.assignee!.nickname, style: const TextStyle(fontSize: 12))]) else const Text('بلا مسند', style: TextStyle(fontSize: 12, color: Joy.textMuted)),
                 if (t.dueAt != null) Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.schedule_rounded, size: 14, color: t.overdue ? Joy.danger : Joy.textMuted), const SizedBox(width: 3), Text(dueText(t.dueAt), style: TextStyle(fontSize: 12, color: t.overdue ? Joy.danger : Joy.textMuted, fontWeight: t.overdue ? FontWeight.w700 : null))]),
                 Text(priorityName(t.priority), style: TextStyle(fontSize: 12, color: priorityColor(t.priority), fontWeight: FontWeight.w600)),
-                if (t.checklist.isNotEmpty) Text('${t.checksDone}/${t.checklist.length} ✓', style: const TextStyle(fontSize: 12, color: Joy.textMuted)),
+                if (t.checklist.isNotEmpty) Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.checklist_rounded, size: 14, color: Joy.textMuted), const SizedBox(width: 3), Text('${t.checksDone}/${t.checklist.length}', style: const TextStyle(fontSize: 12, color: Joy.textMuted))]),
                 if (t.comments > 0) Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.mode_comment_outlined, size: 14, color: Joy.textMuted), const SizedBox(width: 3), Text('${t.comments}', style: const TextStyle(fontSize: 12, color: Joy.textMuted))]),
               ]),
               if (t.canUpdateStatus && !t.done) Padding(
