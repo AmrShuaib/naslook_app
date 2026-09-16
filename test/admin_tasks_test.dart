@@ -42,7 +42,11 @@ void main() {
       final view = req.url.queryParameters['view'] ?? 'mine';
       final st = req.url.queryParameters['status'] ?? '';
       var l = tasks.where((t) => view != 'mine' || (t['assignee'] as Map?)?['id'] == 'SA0000001').toList();
-      if (st == 'open') l = l.where((t) => t['status'] != 'done').toList(); else if (st.isNotEmpty) l = l.where((t) => t['status'] == st).toList();
+      if (st == 'open') {
+        l = l.where((t) => t['status'] != 'done').toList();
+      } else if (st.isNotEmpty) {
+        l = l.where((t) => t['status'] == st).toList();
+      }
       return _json({'items': l, 'counts': counts(l), 'view': view, 'assignees': [{'id': 'SA0000001', 'nickname': 'amr', 'roleName': 'المالك', 'title': ''}, {'id': 'SA0000005', 'nickname': 'fahad', 'roleName': 'محرر', 'title': 'محرر المدونة'}], 'canAssign': true, 'canManage': true});
     }
     if (key == 'GET /adminapi/tasks/summary') return _json({'members': [{'id': 'SA0000005', 'nickname': 'fahad', 'roleName': 'محرر', 'title': '', 'department': 'المحتوى', 'open': 1, 'overdue': 1, 'review': 0, 'done30': 3}]});
