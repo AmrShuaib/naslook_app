@@ -20,6 +20,7 @@ import '../business/business_list.dart';
 import '../business/business_page.dart';
 import '../market/market_page.dart';
 import '../posts/my_posts_page.dart';
+import '../posts/feed_page.dart';
 import '../posts/post_viewer.dart';
 import '../search/search_page.dart';
 import '../wallet/wallet_page.dart';
@@ -71,6 +72,9 @@ class HomePage extends ConsumerWidget {
           ),
           const SizedBox(height: 14),
           _StoriesRail(stories: stories, posts: ref.watch(recentPostsProvider), me: me?.nickname ?? ''),
+          const SizedBox(height: 14),
+          const _FeedCard(),
+          const _TrendingRail(),
           const SizedBox(height: 16),
           JoyCard(
             padding: EdgeInsets.zero,
@@ -306,7 +310,7 @@ class _Quick extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Expanded(child: InkWell(
         onTap: onTap, borderRadius: BorderRadius.circular(18),
-        child: Container(height: 64, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: fg), const SizedBox(width: 6), Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 13))])),
+        child: Container(height: 64, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: fg), const SizedBox(width: 6), Flexible(child: Text(label, overflow: TextOverflow.ellipsis, style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 13)))])),
       ));
 }
 
@@ -410,6 +414,100 @@ class _Meta extends StatelessWidget {
             Icon(icon, size: 18, color: active ? Joy.accent : Joy.textMuted),
             const SizedBox(width: 4),
             Text(label, style: TextStyle(fontSize: 12.5, color: active ? Joy.accent : Joy.textMuted, fontWeight: FontWeight.w600)),
+          ]),
+        ),
+      );
+}
+
+
+/// بطاقة البث العمودي «الآن حولك»: تفتح لحظات المدينة بالتمرير الرأسي، الأقرب والأحدث أولاً.
+class _FeedCard extends ConsumerWidget {
+  const _FeedCard();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final recent = ref.watch(recentPostsProvider).valueOrNull ?? const <MapPost>[];
+    final faces = recent.take(3).toList();
+    return JoyCard(
+      key: const Key('feed-open'),
+      padding: const EdgeInsets.all(12),
+      color: const Color(0xFF0F2D30),
+      onTap: () => FeedPage.open(context),
+      child: Row(children: [
+        SizedBox(
+          width: 64, height: 44,
+          child: Stack(children: [
+            for (final (i, p) in faces.indexed)
+              PositionedDirectional(start: i * 14.0, top: 0, child: Container(decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: const Color(0xFF0F2D30), width: 2)), child: Avatar(name: p.user.nickname, url: p.user.avatarUrl, size: 40))),
+            if (faces.isEmpty) Container(width: 44, height: 44, decoration: const BoxDecoration(color: Colors.white12, shape: BoxShape.circle), child: const Icon(Icons.auto_awesome_rounded, color: Joy.sun)),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('الآن حولك', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+          Text('لحظات المدينة بالفيديو والصورة، الأقرب والأحدث أولاً', style: TextStyle(color: Colors.white70, fontSize: 12.5)),
+        ])),
+        Container(width: 40, height: 40, decoration: const BoxDecoration(color: Joy.sun, shape: BoxShape.circle), child: const Icon(Icons.play_arrow_rounded, color: Joy.sunText)),
+      ]),
+    );
+  }
+}
+
+/// الأماكن الرائجة: الأكثر لحظاتٍ خلال 24 ساعة حولك؛ كل بطاقة تفتح البث مصفّى بذلك المكان.
+class _TrendingRail extends ConsumerWidget {
+  const _TrendingRail();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final places = ref.watch(trendingPlacesProvider).valueOrNull ?? const <TrendingPlace>[];
+    if (places.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const SizedBox(height: 14),
+      const SectionTitle('الأماكن الرائجة اليوم'),
+      const SizedBox(height: 6),
+      SizedBox(
+        height: 92,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: places.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, i) => _TrendCard(place: places[i]),
+        ),
+      ),
+    ]);
+  }
+}
+
+class _TrendCard extends StatelessWidget {
+  final TrendingPlace place;
+  const _TrendCard({required this.place});
+
+  Widget _thumb() {
+    final logo = place.logoUrl;
+    if (logo != null && logo.isNotEmpty) {
+      final img = logo.startsWith('asset:') ? Image.asset('assets/${logo.substring(6)}', fit: BoxFit.cover) : Image.network(logo, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.storefront_rounded, color: Joy.primary));
+      return ClipRRect(borderRadius: BorderRadius.circular(12), child: SizedBox(width: 44, height: 44, child: img));
+    }
+    if (place.sampleKind == 'image' && place.sampleUrl != null) {
+      return ClipRRect(borderRadius: BorderRadius.circular(12), child: SizedBox(width: 44, height: 44, child: Image.network(place.sampleUrl!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.place_rounded, color: Joy.primary))));
+    }
+    return Container(width: 44, height: 44, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(12)), child: Icon(place.bizId != null ? Icons.storefront_rounded : Icons.place_rounded, color: Joy.primary));
+  }
+
+  @override
+  Widget build(BuildContext context) => JoyCard(
+        key: Key('trend-${place.key}'),
+        padding: const EdgeInsets.all(10),
+        onTap: () => FeedPage.open(context, placeKey: place.key, placeName: place.name),
+        child: SizedBox(
+          width: 150,
+          child: Row(children: [
+            _thumb(),
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+              Text(place.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+              const SizedBox(height: 2),
+              Text('${place.posts} لحظة · ${place.authors} شخص', maxLines: 1, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
+              if (place.distanceKm != null) Text(distanceText(place.distanceKm), style: const TextStyle(color: Joy.primary, fontSize: 11.5, fontWeight: FontWeight.w600)),
+            ])),
           ]),
         ),
       );

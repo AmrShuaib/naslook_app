@@ -47,26 +47,73 @@ class MapPost {
   final int views, likes;
   final bool liked, mine, expired;
   final DateTime? expiresAt, createdAt;
+  /// في البث: المسافة من المستخدم بالكيلومتر والمكان المنسوب (دائرة قريبة أو اسم مكتوب).
+  final double? distanceKm;
+  final PostPlace? place;
   const MapPost({
     required this.id, required this.user, required this.kind, this.mediaUrl, this.caption = '', this.bg, this.overlays = const [], this.tag = 'moment', this.title = '', this.price, this.cta,
     required this.lat, required this.lng, this.placeName, this.durationSec, this.status = 'active', this.views = 0, this.likes = 0, this.liked = false, this.mine = false, this.expired = false, this.expiresAt, this.createdAt,
+    this.distanceKm, this.place,
   });
   factory MapPost.fromJson(Map m) => MapPost(
         id: m['id'].toString(), user: Person.fromJson(asMap(m['user'])), kind: m['kind']?.toString() ?? 'text', mediaUrl: m['mediaUrl']?.toString(), caption: m['caption']?.toString() ?? '', bg: m['bg']?.toString(),
         overlays: asList(m['overlays']).map(PostOverlay.fromJson).toList(), tag: m['tag']?.toString() ?? 'moment', title: m['title']?.toString() ?? '', price: m['price'] == null ? null : _i(m['price']),
         cta: m['cta'] is Map ? PostCta.fromJson(asMap(m['cta'])) : null, lat: _d(m['lat']), lng: _d(m['lng']), placeName: m['placeName']?.toString(), durationSec: m['durationSec'] == null ? null : _i(m['durationSec']),
         status: m['status']?.toString() ?? 'active', views: _i(m['views']), likes: _i(m['likes']), liked: m['liked'] == true, mine: m['mine'] == true, expired: m['expired'] == true, expiresAt: _t(m['expiresAt']), createdAt: _t(m['createdAt']),
+        distanceKm: m['distanceKm'] == null ? null : _d(m['distanceKm']), place: m['place'] is Map ? PostPlace.fromJson(asMap(m['place'])) : null,
       );
   MapPost copyWith({int? likes, bool? liked, int? views, String? status}) => MapPost(
         id: id, user: user, kind: kind, mediaUrl: mediaUrl, caption: caption, bg: bg, overlays: overlays, tag: tag, title: title, price: price, cta: cta, lat: lat, lng: lng, placeName: placeName,
-        durationSec: durationSec, status: status ?? this.status, views: views ?? this.views, likes: likes ?? this.likes, liked: liked ?? this.liked, mine: mine, expired: expired, expiresAt: expiresAt, createdAt: createdAt);
+        durationSec: durationSec, status: status ?? this.status, views: views ?? this.views, likes: likes ?? this.likes, liked: liked ?? this.liked, mine: mine, expired: expired, expiresAt: expiresAt, createdAt: createdAt, distanceKm: distanceKm, place: place);
   String get tagLabel => postTags[tag] ?? tag;
   String get kindLabel => switch (kind) { 'image' => 'صورة', 'video' => 'فيديو', 'audio' => 'تسجيل صوتي', _ => 'نص' };
   /// نص مختصر للقوائم: العنوان أو التعليق أو أول نص في الطبقات.
   String get summary => title.isNotEmpty ? title : caption.isNotEmpty ? caption : (overlays.where((o) => !o.isSticker).map((o) => o.text).firstOrNull ?? kindLabel);
 }
 
+/// مكان منسوب إلى لحظة في البث: دائرة تجارية قريبة (bizId) أو اسم مكتوب أو خلية جغرافية بلا اسم.
+class PostPlace {
+  final String key;
+  final String? name, bizId, category, logoUrl;
+  const PostPlace({required this.key, this.name, this.bizId, this.category, this.logoUrl});
+  factory PostPlace.fromJson(Map m) => PostPlace(key: m['key'].toString(), name: m['name']?.toString(), bizId: m['bizId']?.toString(), category: m['category']?.toString(), logoUrl: m['logoUrl']?.toString());
+}
+
+/// صفحة من البث العمودي «الآن حولك» مع مؤشر الصفحة التالية.
+class FeedSlice {
+  final List<MapPost> items;
+  final int? nextCursor;
+  final bool located;
+  const FeedSlice({this.items = const [], this.nextCursor, this.located = false});
+  factory FeedSlice.fromJson(Map m) => FeedSlice(items: asList(m['items']).map(MapPost.fromJson).toList(), nextCursor: m['nextCursor'] == null ? null : _i(m['nextCursor']), located: m['located'] == true);
+}
+
+/// مكان رائج: الأكثر لحظاتٍ خلال الساعات الأخيرة.
+class TrendingPlace {
+  final String key, name;
+  final String? bizId, category, logoUrl, sampleId, sampleKind, sampleUrl, sampleBg;
+  final double lat, lng;
+  final double? distanceKm;
+  final int posts, authors;
+  final DateTime? latest;
+  const TrendingPlace({required this.key, required this.name, this.bizId, this.category, this.logoUrl, required this.lat, required this.lng, this.distanceKm, this.posts = 0, this.authors = 0, this.latest, this.sampleId, this.sampleKind, this.sampleUrl, this.sampleBg});
+  factory TrendingPlace.fromJson(Map m) => TrendingPlace(
+        key: m['key'].toString(), name: m['name']?.toString() ?? '', bizId: m['bizId']?.toString(), category: m['category']?.toString(), logoUrl: m['logoUrl']?.toString(), lat: _d(m['lat']), lng: _d(m['lng']),
+        distanceKm: m['distanceKm'] == null ? null : _d(m['distanceKm']), posts: _i(m['posts']), authors: _i(m['authors']), latest: _t(m['latest']),
+        sampleId: m['sampleId']?.toString(), sampleKind: m['sampleKind']?.toString(), sampleUrl: m['sampleUrl']?.toString(), sampleBg: m['sampleBg']?.toString(),
+      );
+}
+
+/// نص المسافة للعرض: «250 م» أو «3.4 كم».
+String distanceText(double? km) => km == null ? '' : km < 1 ? '${(km * 1000).round()} م' : km < 10 ? '${km.toStringAsFixed(1)} كم' : '${km.round()} كم';
+
 extension PostsApi on ApiClient {
+  /// البث العمودي: مرتّب بالقرب والحداثة حول (lat, lng)، مع ترقيم بالمؤشر وتصفية اختيارية بمفتاح مكان.
+  Future<FeedSlice> postsFeed({double? lat, double? lng, int? cursor, int limit = 20, String? place, String? tag, double radiusKm = 30}) async => FeedSlice.fromJson(await get('/mapposts/feed', query: {
+        if (lat != null && lng != null) ...{'lat': '$lat', 'lng': '$lng'}, if (cursor != null) 'cursor': '$cursor', 'limit': '$limit', 'radiusKm': '$radiusKm', if (place != null) 'place': place, if (tag != null) 'tag': tag,
+      }));
+  Future<List<TrendingPlace>> trendingPlaces({double? lat, double? lng, int hours = 24, int limit = 10}) async =>
+      asList((await get('/mapposts/trending', query: {if (lat != null && lng != null) ...{'lat': '$lat', 'lng': '$lng'}, 'hours': '$hours', 'limit': '$limit'}))['places']).map(TrendingPlace.fromJson).toList();
   Future<MapPost> createPost(Map<String, dynamic> body) async => MapPost.fromJson(await post('/mapposts', body));
   Future<List<MapPost>> posts({BBox? bbox, int limit = 200, String? tag}) async =>
       asList(await getList('/mapposts', query: {if (bbox != null) 'bbox': bbox.query, 'limit': '$limit', if (tag != null) 'tag': tag})).map(MapPost.fromJson).toList();

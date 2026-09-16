@@ -2,6 +2,8 @@
 // فوق الوسائط عند العرض، وحقول احترافية للمسوّقين والمستثمرين (نوع المنشور، عنوان، سعر، زر إجراء)، ومدة ظهور (يوم/3 أيام/أسبوع)،
 // وإعجابات ومشاهدات. الوسائط تُرفع عبر /chat/upload ثم يُمرَّر رابطها هنا.
 // المسارات تحت /mapposts (النواة تستخدم /posts لمنشورات الدوائر) والملف map_posts.js (النواة تملك posts.js).
+// البث العمودي: GET /mapposts/feed?lat&lng&radiusKm&cursor&limit&place (مرتّب بالقرب والحداثة) وGET /mapposts/trending?lat&lng&hours
+// (الأماكن الأكثر لحظاتٍ: دائرة تجارية قريبة أو اسم المكان المكتوب).
 // التسجيل في src/index.js:
 //   await app.register((await import("./map_posts.js")).default, { pool, auth });
 import crypto from "node:crypto";
@@ -155,6 +157,73 @@ export default async function posts(app, opts) {
       ORDER BY p.created_at DESC LIMIT $7`, [uid, bb?.minLng ?? null, bb?.minLat ?? null, bb?.maxLng ?? null, bb?.maxLat ?? null, tag, limit, blocked])).rows;
     return many(rows, uid);
   });
+  // ---- البث العمودي «الآن حولك» والأماكن الرائجة
+  // مسافة هافرساين بالكيلومتر بين نقطة الطلب ($2, $3) والمنشور
+  const DIST_P = `(2 * 6371 * asin(least(1, sqrt(power(sin(radians(($2::float8 - p.lat) / 2)), 2) + cos(radians($2::float8)) * cos(radians(p.lat)) * power(sin(radians(($3::float8 - p.lng) / 2)), 2)))))`;
+  // أقرب دائرة تجارية ضمن 250 متراً من المنشور (إن وُجد جدول الدوائر) لنسب اللحظة إلى مكان معروف
+  let hasBiz = false;
+  const checkBiz = async () => { try { hasBiz = (await pool.query("SELECT to_regclass('biz') IS NOT NULL AS ok")).rows[0]?.ok === true; } catch { hasBiz = false; } };
+  await checkBiz();
+  const BIZ_JOIN = `LEFT JOIN LATERAL (SELECT b.id, b.name_ar, b.name, b.category, b.logo_url, b.lat AS blat, b.lng AS blng,
+      (2 * 6371 * asin(least(1, sqrt(power(sin(radians((p.lat - b.lat) / 2)), 2) + cos(radians(p.lat)) * cos(radians(b.lat)) * power(sin(radians((p.lng - b.lng) / 2)), 2))))) AS bdist
+      FROM biz b WHERE b.active AND abs(b.lat - p.lat) < 0.004 AND abs(b.lng - p.lng) < 0.004 ORDER BY bdist LIMIT 1) nb ON nb.bdist < 0.25`;
+  const NO_BIZ_JOIN = `LEFT JOIN LATERAL (SELECT NULL::text AS id, NULL::text AS name_ar, NULL::text AS name, NULL::text AS category, NULL::text AS logo_url, NULL::float8 AS blat, NULL::float8 AS blng, NULL::float8 AS bdist) nb ON false`;
+  const bizJoin = () => (hasBiz ? BIZ_JOIN : NO_BIZ_JOIN);
+  // مفتاح المكان: الدائرة القريبة، وإلا اسم المكان المكتوب، وإلا خلية جغرافية صغيرة
+  const PLACE_KEY = `COALESCE('biz:' || nb.id, CASE WHEN p.place_name IS NOT NULL AND p.place_name <> '' THEN 'name:' || lower(p.place_name) END, 'cell:' || round(p.lat::numeric, 3) || ',' || round(p.lng::numeric, 3))`;
+  const PLACE_NAME = `COALESCE(NULLIF(nb.name_ar, ''), nb.name, NULLIF(p.place_name, ''))`;
+  const placeOf = (r) => (r.place_key ? { key: r.place_key, name: r.place_name_r ?? r.place_name ?? null, bizId: r.nb_id ?? null, category: r.nb_category ?? null, logoUrl: r.nb_logo ?? null } : null);
+  const round1 = (v) => (v == null ? null : Math.round(Number(v) * 10) / 10);
+
+  app.get("/mapposts/feed", async (req) => {
+    const uid = await optionalAuth(req);
+    const lat = num(req.query?.lat), lng = num(req.query?.lng);
+    const has = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    const radius = clamp(req.query?.radiusKm, 1, 200, 30);
+    const limit = Math.round(clamp(req.query?.limit, 1, 60, 20));
+    const offset = Math.round(clamp(req.query?.cursor, 0, 100000, 0));
+    const place = str(req.query?.place, 120) || null;
+    const tag = TAGS.has(req.query?.tag) ? req.query.tag : null;
+    const blocked = uid ? await (globalThis.naslifeBlockedIds?.(uid) ?? []) : [];
+    const run = () => pool.query(`SELECT * FROM (${SELECT.replace("FROM map_posts p", "")}, (CASE WHEN $2::float8 IS NULL OR $3::float8 IS NULL THEN NULL ELSE ${DIST_P} END) AS dist,
+        ${PLACE_KEY} AS place_key, ${PLACE_NAME} AS place_name_r, nb.id AS nb_id, nb.category AS nb_category, nb.logo_url AS nb_logo
+        FROM map_posts p ${bizJoin()}
+        WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($4::text[])) AND ($5::text IS NULL OR p.tag=$5)) x
+      WHERE (x.dist IS NULL OR x.dist <= $6) AND ($7::text IS NULL OR x.place_key = $7)
+      ORDER BY (EXTRACT(EPOCH FROM (now() - x.created_at)) / 3600.0) + COALESCE(x.dist, 0) * 1.5 ASC, x.created_at DESC
+      LIMIT $8 OFFSET $9`, [uid, has ? lat : null, has ? lng : null, blocked, tag, radius, place, limit + 1, offset]);
+    let rows;
+    try { rows = (await run()).rows; } catch (e) { if (hasBiz) { hasBiz = false; rows = (await run()).rows; } else throw e; }
+    const more = rows.length > limit;
+    const page = more ? rows.slice(0, limit) : rows;
+    const items = (await many(page, uid)).map((o, i) => ({ ...o, distanceKm: round1(page[i].dist), place: placeOf(page[i]) }));
+    return { items, nextCursor: more ? offset + limit : null, radiusKm: radius, located: has };
+  });
+
+  app.get("/mapposts/trending", async (req) => {
+    const uid = await optionalAuth(req);
+    const lat = num(req.query?.lat), lng = num(req.query?.lng);
+    const has = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    const hours = Math.round(clamp(req.query?.hours, 1, 168, 24));
+    const radius = clamp(req.query?.radiusKm, 1, 500, 60);
+    const limit = Math.round(clamp(req.query?.limit, 1, 30, 10));
+    const blocked = uid ? await (globalThis.naslifeBlockedIds?.(uid) ?? []) : [];
+    const run = () => pool.query(`WITH x AS (
+        SELECT p.id, p.kind, p.media_url, p.bg, p.user_id, p.created_at, p.lat, p.lng, $1::text AS viewer, (CASE WHEN $2::float8 IS NULL OR $3::float8 IS NULL THEN NULL ELSE ${DIST_P} END) AS dist,
+          ${PLACE_KEY} AS key, ${PLACE_NAME} AS name, nb.id AS biz_id, nb.category, nb.logo_url, nb.blat, nb.blng
+        FROM map_posts p ${bizJoin()}
+        WHERE p.status='active' AND p.expires_at > now() AND p.created_at > now() - ($4 || ' hours')::interval AND NOT (p.user_id = ANY($5::text[])))
+      SELECT key, max(name) AS name, max(biz_id) AS biz_id, max(category) AS category, max(logo_url) AS logo_url,
+        COALESCE(max(blat), avg(lat)) AS lat, COALESCE(max(blng), avg(lng)) AS lng, min(dist) AS dist, count(*)::int AS posts, count(DISTINCT user_id)::int AS authors, max(created_at) AS latest,
+        (array_agg(id ORDER BY created_at DESC))[1] AS sample_id, (array_agg(kind ORDER BY created_at DESC))[1] AS sample_kind,
+        (array_agg(media_url ORDER BY created_at DESC))[1] AS sample_url, (array_agg(bg ORDER BY created_at DESC))[1] AS sample_bg
+      FROM x WHERE name IS NOT NULL AND (dist IS NULL OR dist <= $6)
+      GROUP BY key ORDER BY posts DESC, latest DESC LIMIT $7`, [uid, has ? lat : null, has ? lng : null, String(hours), blocked, radius, limit]);
+    let rows;
+    try { rows = (await run()).rows; } catch (e) { if (hasBiz) { hasBiz = false; rows = (await run()).rows; } else throw e; }
+    return { hours, places: rows.map((r) => ({ key: r.key, name: r.name, bizId: r.biz_id, category: r.category, logoUrl: r.logo_url, lat: Number(r.lat), lng: Number(r.lng), distanceKm: round1(r.dist), posts: r.posts, authors: r.authors, latest: r.latest, sampleId: r.sample_id, sampleKind: r.sample_kind, sampleUrl: r.sample_url, sampleBg: r.sample_bg })) };
+  });
+
   app.get("/mapposts/mine", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const rows = (await pool.query(`${SELECT} WHERE p.user_id=$1 AND p.created_at > now() - interval '30 days' ORDER BY p.created_at DESC LIMIT 200`, [uid])).rows;
