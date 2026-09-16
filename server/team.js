@@ -6,6 +6,7 @@
 //   globalThis.naslifeTeamAccess(uid, method, url)  → هل يسمح مسار /adminapi هذا لهذا العضو؟
 //   globalThis.naslifeTeamScope(uid)                → {all, ids:Set} (العضو نفسه + من تحته في التسلسل)
 //   globalThis.naslifeTeamMembers()                 → قائمة الأعضاء النشطين
+//   globalThis.naslifeTeamPeople(ids)               → Map(id → {id, nickname, avatarUrl}) من جدول المستخدمين
 // التسجيل في src/index.js بعد admin.js:
 //   await app.register((await import("./team.js")).default, { pool, auth });
 import crypto from "node:crypto";
@@ -158,6 +159,7 @@ export default async function team(app, opts = {}) {
   globalThis.naslifeTeamAccess = access;
   globalThis.naslifeTeamScope = scope;
   globalThis.naslifeTeamMembers = activeMembers;
+  globalThis.naslifeTeamPeople = people;
 
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
   async function guard(req, reply, perm) {

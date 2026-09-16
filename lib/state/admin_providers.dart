@@ -42,12 +42,16 @@ final adminMailProvider = FutureProvider<AdminMailSettings>((ref) => ref.watch(a
 final adminMailLogProvider = FutureProvider<AdminMailLog>((ref) => ref.watch(apiClientProvider).adminMailLog());
 final adminMailDomainProvider = FutureProvider<AdminMailDomainInfo>((ref) => ref.watch(apiClientProvider).adminMailDomain());
 final adminTeamProvider = FutureProvider<TeamInfo>((ref) => ref.watch(apiClientProvider).adminTeam());
+/// قائمة المهام بحسب العرض (mine | team | all) وفلتر الحالة: المفتاح "view|status".
+final adminTasksProvider = FutureProvider.family<TaskList, String>((ref, key) { final parts = key.split('|'); return ref.watch(apiClientProvider).adminTasks(view: parts[0], status: parts.length > 1 ? parts[1] : null); });
+final adminTaskProvider = FutureProvider.family<WorkTask, String>((ref, id) => ref.watch(apiClientProvider).adminTask(id));
+final adminTasksSummaryProvider = FutureProvider<List<TaskSummaryRow>>((ref) => ref.watch(apiClientProvider).adminTasksSummary());
 final adminTeamTreeProvider = FutureProvider<List<TeamNode>>((ref) => ref.watch(apiClientProvider).adminTeamTree());
 final adminTeamPermissionsProvider = FutureProvider<List<TeamPermission>>((ref) => ref.watch(apiClientProvider).adminTeamPermissions());
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
 
 void invalidateAdmin(WidgetRef ref) {
-  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider]) {
+  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider, adminTasksProvider, adminTasksSummaryProvider]) {
     ref.invalidate(p);
   }
   ref.invalidate(adminUsersProvider);

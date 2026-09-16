@@ -94,6 +94,82 @@ class TeamNode {
   factory TeamNode.fromJson(Map m) => TeamNode(member: TeamMember.fromJson(m), depth: _i(m['depth']), reports: asList(m['reports']).map(TeamNode.fromJson).toList());
 }
 
+/// مهمة عمل.
+class WorkTask {
+  final String id, title, description, status, priority, department;
+  final Person? assignee, creator;
+  final DateTime? dueAt, createdAt, updatedAt, completedAt;
+  final List<String> tags;
+  final Map<String, dynamic>? related;
+  final List<TaskCheck> checklist;
+  final int comments;
+  final bool overdue, canEdit, canUpdateStatus, mine;
+  final List<TaskComment> commentList;
+  final List<TaskEvent> events;
+  const WorkTask({required this.id, required this.title, this.description = '', this.status = 'todo', this.priority = 'normal', this.department = '', this.assignee, this.creator, this.dueAt, this.createdAt, this.updatedAt, this.completedAt, this.tags = const [], this.related, this.checklist = const [], this.comments = 0, this.overdue = false, this.canEdit = false, this.canUpdateStatus = false, this.mine = false, this.commentList = const [], this.events = const []});
+  factory WorkTask.fromJson(Map m) => WorkTask(
+        id: m['id'].toString(), title: m['title']?.toString() ?? '', description: m['description']?.toString() ?? '', status: m['status']?.toString() ?? 'todo', priority: m['priority']?.toString() ?? 'normal', department: m['department']?.toString() ?? '',
+        assignee: m['assignee'] is Map ? Person.fromJson(_m(m['assignee'])) : null, creator: m['creator'] is Map ? Person.fromJson(_m(m['creator'])) : null,
+        dueAt: _t(m['dueAt']), createdAt: _t(m['createdAt']), updatedAt: _t(m['updatedAt']), completedAt: _t(m['completedAt']),
+        tags: (m['tags'] as List? ?? const []).map((e) => e.toString()).toList(), related: m['related'] is Map ? _m(m['related']) : null,
+        checklist: asList(m['checklist']).map(TaskCheck.fromJson).toList(), comments: _i(m['comments']), overdue: m['overdue'] == true, canEdit: m['canEdit'] == true, canUpdateStatus: m['canUpdateStatus'] == true, mine: m['mine'] == true,
+        commentList: asList(m['commentList']).map(TaskComment.fromJson).toList(), events: asList(m['events']).map(TaskEvent.fromJson).toList());
+  int get checksDone => checklist.where((c) => c.done).length;
+  bool get done => status == 'done';
+}
+
+class TaskCheck {
+  final String text;
+  final bool done;
+  const TaskCheck({required this.text, this.done = false});
+  factory TaskCheck.fromJson(Map m) => TaskCheck(text: m['text']?.toString() ?? '', done: m['done'] == true);
+  Map<String, dynamic> toJson() => {'text': text, 'done': done};
+}
+
+class TaskComment {
+  final String id, text;
+  final Person user;
+  final DateTime? createdAt;
+  const TaskComment({required this.id, required this.user, required this.text, this.createdAt});
+  factory TaskComment.fromJson(Map m) => TaskComment(id: m['id'].toString(), user: Person.fromJson(_m(m['user'])), text: m['text']?.toString() ?? '', createdAt: _t(m['createdAt']));
+}
+
+class TaskEvent {
+  final String id, kind;
+  final Person user;
+  final Map<String, dynamic> data;
+  final DateTime? createdAt;
+  const TaskEvent({required this.id, required this.kind, required this.user, this.data = const {}, this.createdAt});
+  factory TaskEvent.fromJson(Map m) => TaskEvent(id: m['id'].toString(), kind: m['kind']?.toString() ?? '', user: Person.fromJson(_m(m['user'])), data: _m(m['data']), createdAt: _t(m['createdAt']));
+}
+
+class TaskAssignee {
+  final String id, nickname, roleName, title;
+  final String? avatarUrl;
+  const TaskAssignee({required this.id, required this.nickname, this.roleName = '', this.title = '', this.avatarUrl});
+  factory TaskAssignee.fromJson(Map m) => TaskAssignee(id: m['id'].toString(), nickname: m['nickname']?.toString() ?? '', roleName: m['roleName']?.toString() ?? '', title: m['title']?.toString() ?? '', avatarUrl: m['avatarUrl']?.toString());
+  Person get person => Person(id: id, nickname: nickname, avatarUrl: avatarUrl);
+  String get displayName => nickname.isEmpty ? id : nickname;
+}
+
+class TaskList {
+  final List<WorkTask> items;
+  final Map<String, int> counts;
+  final List<TaskAssignee> assignees;
+  final bool canAssign, canManage;
+  final String view;
+  const TaskList({this.items = const [], this.counts = const {}, this.assignees = const [], this.canAssign = false, this.canManage = false, this.view = 'mine'});
+  factory TaskList.fromJson(Map m) => TaskList(items: asList(m['items']).map(WorkTask.fromJson).toList(), counts: {for (final e in _m(m['counts']).entries) e.key: _i(e.value)}, assignees: asList(m['assignees']).map(TaskAssignee.fromJson).toList(), canAssign: m['canAssign'] == true, canManage: m['canManage'] == true, view: m['view']?.toString() ?? 'mine');
+}
+
+class TaskSummaryRow {
+  final TaskAssignee member;
+  final String department;
+  final int open, overdue, review, done30;
+  const TaskSummaryRow({required this.member, this.department = '', this.open = 0, this.overdue = 0, this.review = 0, this.done30 = 0});
+  factory TaskSummaryRow.fromJson(Map m) => TaskSummaryRow(member: TaskAssignee.fromJson(m), department: m['department']?.toString() ?? '', open: _i(m['open']), overdue: _i(m['overdue']), review: _i(m['review']), done30: _i(m['done30']));
+}
+
 class TeamCandidate {
   final String id, nickname;
   final String? avatarUrl;
@@ -367,6 +443,15 @@ extension AdminApi on ApiClient {
   Future<TeamRole> adminRoleCreate(Map<String, dynamic> body) async => TeamRole.fromJson(await post('/adminapi/team/roles', body));
   Future<TeamRole> adminRoleUpdate(String id, Map<String, dynamic> body) async => TeamRole.fromJson(await patch('/adminapi/team/roles/$id', body));
   Future<void> adminRoleDelete(String id) => delete('/adminapi/team/roles/$id');
+  // ---- مهام العمل (server/tasks.js)
+  Future<TaskList> adminTasks({String view = 'mine', String? status, String? priority, String? assignee, String? q}) async =>
+      TaskList.fromJson(await get('/adminapi/tasks', query: {'view': view, if (status != null && status.isNotEmpty) 'status': status, if (priority != null && priority.isNotEmpty) 'priority': priority, if (assignee != null && assignee.isNotEmpty) 'assignee': assignee, if (q != null && q.trim().isNotEmpty) 'q': q.trim()}));
+  Future<WorkTask> adminTask(String id) async => WorkTask.fromJson(await get('/adminapi/tasks/$id'));
+  Future<WorkTask> adminTaskCreate(Map<String, dynamic> body) async => WorkTask.fromJson(await post('/adminapi/tasks', body));
+  Future<WorkTask> adminTaskUpdate(String id, Map<String, dynamic> body) async => WorkTask.fromJson(await patch('/adminapi/tasks/$id', body));
+  Future<TaskComment> adminTaskComment(String id, String text) async => TaskComment.fromJson(await post('/adminapi/tasks/$id/comments', {'text': text.trim()}));
+  Future<void> adminTaskDelete(String id) => delete('/adminapi/tasks/$id');
+  Future<List<TaskSummaryRow>> adminTasksSummary() async => asList((await get('/adminapi/tasks/summary'))['members']).map(TaskSummaryRow.fromJson).toList();
   Future<AdminMailDomainInfo> adminMailDomain() async => AdminMailDomainInfo.fromJson(await get('/adminapi/mail/domain'));
   Future<AdminMailDomainInfo> adminMailDomainStart({required String domain, String local = 'admin'}) async => AdminMailDomainInfo.fromJson(await post('/adminapi/mail/domain', {'domain': domain.trim(), 'local': local.trim()}));
   Future<AdminMailDomainInfo> adminMailDomainVerify() async => AdminMailDomainInfo.fromJson(await post('/adminapi/mail/domain/verify', const {}));

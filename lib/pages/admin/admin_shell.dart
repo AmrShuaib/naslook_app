@@ -19,6 +19,7 @@ import 'admin_reports.dart';
 import 'admin_settings.dart';
 import 'admin_users.dart';
 import 'admin_team.dart';
+import 'admin_tasks.dart';
 
 /// أقسام لوحة الإدارة (المفتاح، الاسم، الأيقونة، الصلاحية المطلوبة لظهوره).
 const adminSections = [
@@ -31,6 +32,7 @@ const adminSections = [
   ('blog', 'المدونة', Icons.newspaper_outlined, 'blog.view'),
   ('mail', 'البريد', Icons.mail_outline_rounded, 'mail.view'),
   ('team', 'الفريق', Icons.groups_outlined, 'team.view'),
+  ('tasks', 'المهام', Icons.task_alt_rounded, 'tasks.view'),
   ('settings', 'الإعدادات', Icons.tune_rounded, 'settings.view'),
   ('audit', 'سجل الإجراءات', Icons.history_rounded, 'audit.view'),
 ];
@@ -69,6 +71,12 @@ String adminErrText(Object e) {
   if (s.contains('role-exists')) return 'يوجد دور بهذا المعرّف';
   if (s.contains('role-in-use')) return 'الدور مستخدم من أعضاء؛ انقلهم أولاً';
   if (s.contains('builtin-role')) return 'الأدوار المدمجة لا تُعدَّل صلاحياتها ولا تُحذف';
+  if (s.contains('cannot-assign')) return 'لا يمكنك الإسناد لهذا الشخص: يجب أن يكون عضواً في الفريق وضمن نطاقك';
+  if (s.contains('assignee-limited')) return 'المسند إليه يغيّر الحالة وقائمة التحقق فقط؛ التعديل لمن أسند المهمة أو لمديره';
+  if (s.contains('bad-title')) return 'اكتب عنواناً من حرفين على الأقل';
+  if (s.contains('bad-due')) return 'الموعد غير صحيح';
+  if (s.contains('bad-text')) return 'اكتب نص التعليق';
+  if (s.contains('nothing-to-update')) return 'لا تغييرات';
   if (s.contains('forbidden')) return 'ليست لديك صلاحية لهذا الإجراء';
   return s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
 }
@@ -110,6 +118,7 @@ class _Layout extends ConsumerWidget {
 
   Widget _page(int i) => switch (adminSections[i].$1) {
         'team' => const AdminTeamPage(),
+        'tasks' => const AdminTasksPage(),
         'overview' => AdminOverviewPage(onGo: (key) => onSelect(adminSections.indexWhere((s) => s.$1 == key))),
         'users' => const AdminUsersPage(),
         'reports' => const AdminReportsPage(),

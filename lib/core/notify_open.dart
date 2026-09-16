@@ -64,7 +64,15 @@ Widget? notificationTarget(AppNotification n) {
     case 'report_new':
       return const AdminShell(standalone: false, initialSection: 2);
     case 'admin_granted':
-      return const AdminShell(standalone: false);
+    case 'team_added':
+    case 'team_role':
+      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'team').clamp(0, adminSections.length - 1));
+    case 'task_assigned':
+    case 'task_status':
+    case 'task_comment':
+    case 'task_due':
+    case 'task_overdue':
+      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'tasks').clamp(0, adminSections.length - 1));
     case 'post_blocked':
       return const MyPostsPage();
     case 'wish_price_drop':
