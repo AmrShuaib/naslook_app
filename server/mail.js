@@ -360,7 +360,14 @@ export default async function mail(app, opts = {}) {
     if (!DOMAIN_PROVIDERS.has(settings.provider) || !settings.apiKey) return bad(reply, 400, "provider-required");
     let p;
     try { p = await providerDomain(settings.provider, settings.apiKey, "create", { domain: name }, fetchFn()); }
-    catch (e) { await audit(uid, "mail.domain", { domain: name, ok: false, error: String(e.message) }); return bad(reply, 502, "provider-failed", { detail: String(e.message).slice(0, 300) }); }
+    catch (e) {
+      const msg = String(e.message);
+      await audit(uid, "mail.domain", { domain: name, ok: false, error: msg });
+      // أخطاء المفتاح الشائعة بأكواد واضحة للتطبيق
+      if (/restricted_api_key|restricted to only send/i.test(msg)) return bad(reply, 403, "key-restricted", { detail: msg.slice(0, 300) });
+      if (/HTTP 401|invalid api key|key not found|unauthorized/i.test(msg)) return bad(reply, 403, "key-invalid", { detail: msg.slice(0, 300) });
+      return bad(reply, 502, "provider-failed", { detail: msg.slice(0, 300) });
+    }
     const d = { name, local, provider: settings.provider, id: p.id ?? null, status: p.status, records: [], createdAt: new Date().toISOString(), verifiedAt: null, checkedAt: null, error: null, fromApplied: false };
     d.records = withDmarc(d, p.records);
     await saveSettings({ ...settings, domain: d });
