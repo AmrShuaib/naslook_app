@@ -17,3 +17,4 @@ await app.register((await import("./blog.js")).default, { pool, auth });
 await app.register((await import("./auth_alias.js")).default, { pool, auth });
 await app.register((await import("./mail.js")).default, { pool, auth });
 await app.register((await import("./vessel_mod.js")).default, { pool, auth });
+await app.register((await import("./team.js")).default, { pool, auth });

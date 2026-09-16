@@ -355,7 +355,9 @@ ${newer ? `<a href="/blog/${esc(newer.slug)}" style="text-align:left"><span>ال
     const uid = await auth(req);
     if (!uid) { bad(reply, 401, "auth"); return null; }
     const isAdmin = globalThis.naslifeIsAdmin;
-    if (!isAdmin || !(await isAdmin(uid))) { bad(reply, 403, "admin-only"); return null; }
+    if (isAdmin && (await isAdmin(uid))) return uid;
+    let ok = false; try { ok = !!(await globalThis.naslifeTeamAccess?.(uid, req.method, req.url)); } catch { ok = false; }
+    if (!ok) { bad(reply, 403, "admin-only"); return null; }
     return uid;
   }
   const adminJson = (req, p) => ({ ...p, body: p.body, effectiveStatus: effective(p), date: dateOf(p), url: `${publicOrigin(req)}/blog/${p.slug}` });

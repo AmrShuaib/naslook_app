@@ -18,19 +18,21 @@ import 'admin_overview.dart';
 import 'admin_reports.dart';
 import 'admin_settings.dart';
 import 'admin_users.dart';
+import 'admin_team.dart';
 
-/// أقسام لوحة الإدارة.
+/// أقسام لوحة الإدارة (المفتاح، الاسم، الأيقونة، الصلاحية المطلوبة لظهوره).
 const adminSections = [
-  ('overview', 'نظرة عامة', Icons.space_dashboard_outlined),
-  ('users', 'المستخدمون', Icons.people_alt_outlined),
-  ('reports', 'البلاغات', Icons.flag_outlined),
-  ('biz', 'الدوائر التجارية', Icons.storefront_outlined),
-  ('finance', 'المالية', Icons.account_balance_wallet_outlined),
-  ('content', 'المحتوى', Icons.inventory_2_outlined),
-  ('blog', 'المدونة', Icons.newspaper_outlined),
-  ('mail', 'البريد', Icons.mail_outline_rounded),
-  ('settings', 'الإعدادات', Icons.tune_rounded),
-  ('audit', 'سجل الإجراءات', Icons.history_rounded),
+  ('overview', 'نظرة عامة', Icons.space_dashboard_outlined, 'overview.view'),
+  ('users', 'المستخدمون', Icons.people_alt_outlined, 'users.view'),
+  ('reports', 'البلاغات', Icons.flag_outlined, 'reports.view'),
+  ('biz', 'الدوائر التجارية', Icons.storefront_outlined, 'biz.view'),
+  ('finance', 'المالية', Icons.account_balance_wallet_outlined, 'finance.view'),
+  ('content', 'المحتوى', Icons.inventory_2_outlined, 'content.view'),
+  ('blog', 'المدونة', Icons.newspaper_outlined, 'blog.view'),
+  ('mail', 'البريد', Icons.mail_outline_rounded, 'mail.view'),
+  ('team', 'الفريق', Icons.groups_outlined, 'team.view'),
+  ('settings', 'الإعدادات', Icons.tune_rounded, 'settings.view'),
+  ('audit', 'سجل الإجراءات', Icons.history_rounded, 'audit.view'),
 ];
 
 /// رسالة خطأ مفهومة لعمليات الإدارة.
@@ -53,6 +55,21 @@ String adminErrText(Object e) {
   if (s.contains('bad-recipient')) return 'بريد المستلم غير صحيح';
   if (s.contains('not-configured')) return 'خدمة البريد غير مفعّلة بعد؛ اختر مزوّداً واحفظ الإعدادات أولاً';
   if (s.contains('send-failed')) return 'فشل الإرسال${body['detail'] is String ? ': ${body['detail']}' : ''}';
+  if (s.contains('role-above-you')) return 'لا يمكنك منح دور بمستوى يساوي مستواك أو يعلوه';
+  if (s.contains('member-above-you')) return 'هذا العضو بمستوى يساوي مستواك أو يعلوه';
+  if (s.contains('permissions-above-you')) return 'لا يمكنك منح صلاحيات لا تملكها';
+  if (s.contains('manager-cycle')) return 'لا يمكن أن يكون المدير أحد مرؤوسي هذا العضو';
+  if (s.contains('already-member')) return 'هذا المستخدم عضو في الفريق أصلاً';
+  if (s.contains('user-not-found')) return 'لا يوجد مستخدم بهذا المعرّف';
+  if (s.contains('bad-role')) return 'اختر دوراً صحيحاً';
+  if (s.contains('bad-manager')) return 'المدير المختار ليس عضواً في الفريق';
+  if (s.contains('bad-mailbox')) return 'اسم الصندوق يقبل حروفاً إنجليزية وأرقاماً ونقطة وشرطة فقط';
+  if (s.contains('out-of-scope')) return 'هذا العضو خارج نطاق إدارتك';
+  if (s.contains('last-owner')) return 'لا يمكن إزالة آخر مالك';
+  if (s.contains('role-exists')) return 'يوجد دور بهذا المعرّف';
+  if (s.contains('role-in-use')) return 'الدور مستخدم من أعضاء؛ انقلهم أولاً';
+  if (s.contains('builtin-role')) return 'الأدوار المدمجة لا تُعدَّل صلاحياتها ولا تُحذف';
+  if (s.contains('forbidden')) return 'ليست لديك صلاحية لهذا الإجراء';
   return s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
 }
 
@@ -92,6 +109,7 @@ class _Layout extends ConsumerWidget {
   const _Layout({required this.index, required this.onSelect, required this.status, required this.standalone});
 
   Widget _page(int i) => switch (adminSections[i].$1) {
+        'team' => const AdminTeamPage(),
         'overview' => AdminOverviewPage(onGo: (key) => onSelect(adminSections.indexWhere((s) => s.$1 == key))),
         'users' => const AdminUsersPage(),
         'reports' => const AdminReportsPage(),
@@ -109,7 +127,11 @@ class _Layout extends ConsumerWidget {
     final me = status.user;
     return LayoutBuilder(builder: (context, c) {
       final wide = c.maxWidth >= 900;
-      final title = adminSections[index].$2;
+      // تظهر للعضو الأقسام التي تسمح بها صلاحياته فقط
+      final visible = [for (final (i, sec) in adminSections.indexed) if (status.can(sec.$4)) i];
+      if (visible.isEmpty) return _Forbidden(status: status, standalone: standalone);
+      final current = visible.contains(index) ? index : visible.first;
+      final title = adminSections[current].$2;
       final header = Padding(
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
         child: Row(children: [
@@ -120,15 +142,17 @@ class _Layout extends ConsumerWidget {
       );
       final nav = ListView(padding: EdgeInsets.zero, children: [
         header,
-        for (final (i, s) in adminSections.indexed)
+        for (final i in visible)
           ListTile(
-            selected: i == index,
+            key: Key('admin-nav-${adminSections[i].$1}'),
+            selected: i == current,
             selectedTileColor: Joy.primarySoft,
             selectedColor: Joy.primary,
-            leading: Icon(s.$3),
-            title: Text(s.$2, style: TextStyle(fontWeight: i == index ? FontWeight.w700 : FontWeight.w500)),
+            leading: Icon(adminSections[i].$3),
+            title: Text(adminSections[i].$2, style: TextStyle(fontWeight: i == current ? FontWeight.w700 : FontWeight.w500)),
             onTap: () { onSelect(i); if (!wide) Navigator.of(context).maybePop(); },
           ),
+        if (status.roleName != null) Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), child: Text('${status.roleName}${status.title.isNotEmpty ? ' · ${status.title}' : ''}', key: const Key('admin-role'), style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
         const Divider(),
         if (me != null) ListTile(leading: ProfileAvatar(person: me, size: 36), title: Text(me.nickname), subtitle: Text(me.id, style: const TextStyle(fontSize: 11)), trailing: IconButton(tooltip: 'تسجيل الخروج', icon: const Icon(Icons.logout_rounded), onPressed: () => ref.read(appStateProvider.notifier).logout())),
         if (!standalone) ListTile(leading: const Icon(Icons.arrow_back_rounded), title: const Text('العودة إلى التطبيق'), onTap: () => Navigator.of(context).maybePop()),
@@ -145,7 +169,7 @@ class _Layout extends ConsumerWidget {
                 decoration: const BoxDecoration(color: Joy.surface, border: Border(bottom: BorderSide(color: Joy.line))),
                 child: Row(children: [Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)), const Spacer(), IconButton(tooltip: 'تحديث', onPressed: () => invalidateAdmin(ref), icon: const Icon(Icons.refresh_rounded))]),
               ),
-              Expanded(child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1100), child: _page(index)))),
+              Expanded(child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1100), child: _page(current)))),
             ])),
           ]),
         );
@@ -154,7 +178,7 @@ class _Layout extends ConsumerWidget {
         backgroundColor: Joy.bg,
         appBar: AppBar(title: Text(title), actions: [IconButton(tooltip: 'تحديث', onPressed: () => invalidateAdmin(ref), icon: const Icon(Icons.refresh_rounded))]),
         drawer: Drawer(backgroundColor: Joy.surface, child: SafeArea(child: nav)),
-        body: _page(index),
+        body: _page(current),
       );
     });
   }

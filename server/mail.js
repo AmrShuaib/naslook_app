@@ -277,7 +277,10 @@ export default async function mail(app, opts = {}) {
   async function guard(req, reply) {
     if (!auth) { bad(reply, 503, "auth-unavailable"); return null; }
     const uid = await auth(req); if (!uid) { bad(reply, 401, "auth"); return null; }
-    const isAdmin = globalThis.naslifeIsAdmin; if (!isAdmin || !(await isAdmin(uid))) { bad(reply, 403, "admin-only"); return null; }
+    const isAdmin = globalThis.naslifeIsAdmin;
+    if (isAdmin && (await isAdmin(uid))) return uid;
+    let ok = false; try { ok = !!(await globalThis.naslifeTeamAccess?.(uid, req.method, req.url)); } catch { ok = false; }
+    if (!ok) { bad(reply, 403, "admin-only"); return null; }
     return uid;
   }
   const audit = async (adminId, action, details = {}) => { try { await pool.query("INSERT INTO admin_audit(id,admin_id,action,target,details) VALUES($1,$2,$3,'mail',$4)", [crypto.randomUUID(), adminId, action, JSON.stringify(details)]); } catch { /* ignore */ } };

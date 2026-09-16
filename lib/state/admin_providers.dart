@@ -41,10 +41,13 @@ final adminBlogPostProvider = FutureProvider.family<BlogPost, String>((ref, id) 
 final adminMailProvider = FutureProvider<AdminMailSettings>((ref) => ref.watch(apiClientProvider).adminMail());
 final adminMailLogProvider = FutureProvider<AdminMailLog>((ref) => ref.watch(apiClientProvider).adminMailLog());
 final adminMailDomainProvider = FutureProvider<AdminMailDomainInfo>((ref) => ref.watch(apiClientProvider).adminMailDomain());
+final adminTeamProvider = FutureProvider<TeamInfo>((ref) => ref.watch(apiClientProvider).adminTeam());
+final adminTeamTreeProvider = FutureProvider<List<TeamNode>>((ref) => ref.watch(apiClientProvider).adminTeamTree());
+final adminTeamPermissionsProvider = FutureProvider<List<TeamPermission>>((ref) => ref.watch(apiClientProvider).adminTeamPermissions());
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
 
 void invalidateAdmin(WidgetRef ref) {
-  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider]) {
+  for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider]) {
     ref.invalidate(p);
   }
   ref.invalidate(adminUsersProvider);

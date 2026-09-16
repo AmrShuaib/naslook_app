@@ -153,7 +153,10 @@ export default async function admin(app, opts) {
   /// حارس مسارات الإدارة
   async function guard(req, reply) {
     const uid = await auth(req); if (!uid) { unauthorized(reply); return null; }
-    if (!(await isAdmin(uid))) { bad(reply, 403, "admin-only"); return null; }
+    if (await isAdmin(uid)) return uid;
+    // أعضاء فريق العمل (server/team.js): وفق صلاحية المسار
+    let ok = false; try { ok = !!(await globalThis.naslifeTeamAccess?.(uid, req.method, req.url)); } catch { ok = false; }
+    if (!ok) { bad(reply, 403, "admin-only"); return null; }
     return uid;
   }
 
@@ -182,7 +185,10 @@ export default async function admin(app, opts) {
     // تلميح للمؤسس عند الإعداد الأول: آخر حرفين من الرمز الحالي وتاريخه، حتى يتأكد أن ما نسخه من الخادم هو الرمز الفعّال
     let setupHint = null, setupCodeCreatedAt = null;
     if (n === 0 && setupCode) { setupHint = setupCode.slice(-2); try { setupCodeCreatedAt = (await pool.query("SELECT created_at FROM admin_setup WHERE code=$1", [setupCode])).rows[0]?.created_at ?? null; } catch { /* ignore */ } }
-    return { hasAdmin: n > 0, setupRequired: n === 0, isAdmin: uid ? await isAdmin(uid) : false, user: uid ? await person(uid) : null, admins: n, version: 1, setupHint, setupCodeCreatedAt, bootstrapFile: n === 0 ? path.join(OPS, "admin-ids") : null };
+    const admin = uid ? await isAdmin(uid) : false;
+    let team = null; try { team = uid ? await globalThis.naslifeTeamInfo?.(uid) : null; } catch { team = null; }
+    const perms = admin ? ["*"] : (team?.permissions ?? []);
+    return { hasAdmin: n > 0, setupRequired: n === 0, isAdmin: admin || !!team, role: team?.roleId ?? (admin ? "owner" : null), roleName: team?.roleName ?? (admin ? "المالك" : null), level: team?.level ?? (admin ? 100 : 0), permissions: perms, title: team?.title ?? "", department: team?.department ?? "", user: uid ? await person(uid) : null, admins: n, version: 1, setupHint, setupCodeCreatedAt, bootstrapFile: n === 0 ? path.join(OPS, "admin-ids") : null };
   });
   app.post("/adminapi/setup", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);

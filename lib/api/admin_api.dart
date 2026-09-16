@@ -16,9 +16,91 @@ class AdminStatus {
   /// عند الإعداد الأول: آخر حرفين من رمز الإعداد الفعّال وتاريخه ومسار ملف admin-ids على الخادم.
   final String? setupHint, bootstrapFile;
   final DateTime? setupCodeCreatedAt;
-  const AdminStatus({this.hasAdmin = false, this.setupRequired = false, this.isAdmin = false, this.user, this.admins = 0, this.setupHint, this.bootstrapFile, this.setupCodeCreatedAt});
+  /// دور العضو في فريق العمل وصلاحياته ('*' = كل الصلاحيات).
+  final String? role, roleName;
+  final int level;
+  final List<String> permissions;
+  final String title, department;
+  const AdminStatus({this.hasAdmin = false, this.setupRequired = false, this.isAdmin = false, this.user, this.admins = 0, this.setupHint, this.bootstrapFile, this.setupCodeCreatedAt, this.role, this.roleName, this.level = 0, this.permissions = const [], this.title = '', this.department = ''});
   factory AdminStatus.fromJson(Map m) => AdminStatus(hasAdmin: m['hasAdmin'] == true, setupRequired: m['setupRequired'] == true, isAdmin: m['isAdmin'] == true, user: m['user'] is Map ? Person.fromJson(_m(m['user'])) : null, admins: _i(m['admins']),
-      setupHint: m['setupHint']?.toString(), bootstrapFile: m['bootstrapFile']?.toString(), setupCodeCreatedAt: _t(m['setupCodeCreatedAt']));
+      setupHint: m['setupHint']?.toString(), bootstrapFile: m['bootstrapFile']?.toString(), setupCodeCreatedAt: _t(m['setupCodeCreatedAt']),
+      role: m['role']?.toString(), roleName: m['roleName']?.toString(), level: _i(m['level']), permissions: m['permissions'] is List ? (m['permissions'] as List).map((e) => e.toString()).toList() : (m['isAdmin'] == true ? const ['*'] : const []),
+      title: m['title']?.toString() ?? '', department: m['department']?.toString() ?? '');
+  bool can(String perm) => permissions.contains('*') || permissions.contains(perm);
+  bool get owner => permissions.contains('*');
+}
+
+/// دور في فريق العمل بصلاحياته.
+class TeamRole {
+  final String id, name, description;
+  final int level, members;
+  final List<String> permissions;
+  final bool builtin;
+  const TeamRole({required this.id, required this.name, this.description = '', this.level = 10, this.permissions = const [], this.builtin = false, this.members = 0});
+  factory TeamRole.fromJson(Map m) => TeamRole(id: m['id'].toString(), name: m['name']?.toString() ?? '', description: m['description']?.toString() ?? '', level: _i(m['level']), permissions: (m['permissions'] as List? ?? const []).map((e) => e.toString()).toList(), builtin: m['builtin'] == true, members: _i(m['members']));
+  bool get all => permissions.contains('*');
+}
+
+/// عضو فريق العمل.
+class TeamMember {
+  final Person user;
+  final String roleId, roleName, title, department, managerName, mailbox;
+  final String? managerId;
+  final int level;
+  final List<String> permissions;
+  final bool active, legacy;
+  final DateTime? since;
+  const TeamMember({required this.user, required this.roleId, required this.roleName, this.level = 0, this.permissions = const [], this.title = '', this.department = '', this.managerId, this.managerName = '', this.active = true, this.mailbox = '', this.legacy = false, this.since});
+  factory TeamMember.fromJson(Map m) => TeamMember(
+        user: Person.fromJson(_m(m['user'])), roleId: m['roleId']?.toString() ?? '', roleName: m['roleName']?.toString() ?? '', level: _i(m['level']), permissions: (m['permissions'] as List? ?? const []).map((e) => e.toString()).toList(),
+        title: m['title']?.toString() ?? '', department: m['department']?.toString() ?? '', managerId: m['managerId']?.toString(), managerName: m['managerName']?.toString() ?? '', active: m['active'] != false, mailbox: m['mailbox']?.toString() ?? '', legacy: m['legacy'] == true, since: _t(m['since']));
+  String get id => user.id;
+  String get displayName => user.nickname.isEmpty ? user.id : user.nickname;
+}
+
+class TeamPermission {
+  final String key, group, label;
+  const TeamPermission({required this.key, required this.group, required this.label});
+  factory TeamPermission.fromJson(Map m) => TeamPermission(key: m['key'].toString(), group: m['group']?.toString() ?? '', label: m['label']?.toString() ?? '');
+}
+
+class TeamMe {
+  final String? roleId, roleName;
+  final int level;
+  final List<String> permissions;
+  final bool scopeAll;
+  final List<String> scopeIds;
+  const TeamMe({this.roleId, this.roleName, this.level = 0, this.permissions = const [], this.scopeAll = false, this.scopeIds = const []});
+  factory TeamMe.fromJson(Map m) => TeamMe(roleId: m['roleId']?.toString(), roleName: m['roleName']?.toString(), level: _i(m['level']), permissions: (m['permissions'] as List? ?? const []).map((e) => e.toString()).toList(), scopeAll: m['scopeAll'] == true, scopeIds: (m['scopeIds'] as List? ?? const []).map((e) => e.toString()).toList());
+  bool can(String perm) => permissions.contains('*') || permissions.contains(perm);
+  bool get owner => permissions.contains('*');
+}
+
+class TeamInfo {
+  final List<TeamMember> members;
+  final List<TeamRole> roles;
+  final List<String> departments;
+  final TeamMe me;
+  const TeamInfo({this.members = const [], this.roles = const [], this.departments = const [], this.me = const TeamMe()});
+  factory TeamInfo.fromJson(Map m) => TeamInfo(members: asList(m['members']).map(TeamMember.fromJson).toList(), roles: asList(m['roles']).map(TeamRole.fromJson).toList(), departments: (m['departments'] as List? ?? const []).map((e) => e.toString()).toList(), me: TeamMe.fromJson(_m(m['me'])));
+}
+
+/// عقدة في الهيكل الإداري.
+class TeamNode {
+  final TeamMember member;
+  final int depth;
+  final List<TeamNode> reports;
+  const TeamNode({required this.member, this.depth = 0, this.reports = const []});
+  factory TeamNode.fromJson(Map m) => TeamNode(member: TeamMember.fromJson(m), depth: _i(m['depth']), reports: asList(m['reports']).map(TeamNode.fromJson).toList());
+}
+
+class TeamCandidate {
+  final String id, nickname;
+  final String? avatarUrl;
+  final bool member;
+  const TeamCandidate({required this.id, required this.nickname, this.avatarUrl, this.member = false});
+  factory TeamCandidate.fromJson(Map m) => TeamCandidate(id: m['id'].toString(), nickname: m['nickname']?.toString() ?? '', avatarUrl: m['avatarUrl']?.toString(), member: m['member'] == true);
+  Person get person => Person(id: id, nickname: nickname, avatarUrl: avatarUrl);
 }
 
 class AdminOverview {
@@ -274,6 +356,17 @@ extension AdminApi on ApiClient {
   Future<AdminMailSettings> adminMailSave(Map<String, dynamic> patch) async => AdminMailSettings.fromJson(await put('/adminapi/mail', patch));
   /// يرسل رسالة تجريبية ويعيد معرّف الرسالة عند المزوّد إن وُجد.
   Future<String?> adminMailTest(String to) async => (await post('/adminapi/mail/test', {'to': to.trim()}))['id']?.toString();
+  // ---- فريق العمل (server/team.js)
+  Future<TeamInfo> adminTeam() async => TeamInfo.fromJson(await get('/adminapi/team'));
+  Future<List<TeamNode>> adminTeamTree() async => asList((await get('/adminapi/team/tree'))['roots']).map(TeamNode.fromJson).toList();
+  Future<List<TeamPermission>> adminTeamPermissions() async => asList(await getList('/adminapi/team/permissions')).map(TeamPermission.fromJson).toList();
+  Future<List<TeamCandidate>> adminTeamSearch(String q) async => asList(await getList('/adminapi/team/search', query: {'q': q.trim()})).map(TeamCandidate.fromJson).toList();
+  Future<TeamMember> adminTeamAdd(Map<String, dynamic> body) async => TeamMember.fromJson(await post('/adminapi/team/members', body));
+  Future<TeamMember> adminTeamUpdate(String id, Map<String, dynamic> body) async => TeamMember.fromJson(await patch('/adminapi/team/members/$id', body));
+  Future<void> adminTeamRemove(String id) => delete('/adminapi/team/members/$id');
+  Future<TeamRole> adminRoleCreate(Map<String, dynamic> body) async => TeamRole.fromJson(await post('/adminapi/team/roles', body));
+  Future<TeamRole> adminRoleUpdate(String id, Map<String, dynamic> body) async => TeamRole.fromJson(await patch('/adminapi/team/roles/$id', body));
+  Future<void> adminRoleDelete(String id) => delete('/adminapi/team/roles/$id');
   Future<AdminMailDomainInfo> adminMailDomain() async => AdminMailDomainInfo.fromJson(await get('/adminapi/mail/domain'));
   Future<AdminMailDomainInfo> adminMailDomainStart({required String domain, String local = 'admin'}) async => AdminMailDomainInfo.fromJson(await post('/adminapi/mail/domain', {'domain': domain.trim(), 'local': local.trim()}));
   Future<AdminMailDomainInfo> adminMailDomainVerify() async => AdminMailDomainInfo.fromJson(await post('/adminapi/mail/domain/verify', const {}));
