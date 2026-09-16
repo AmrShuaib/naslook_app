@@ -132,7 +132,7 @@ void main() {
     expect(find.byKey(const Key('nick-taken')), findsOneWidget);
     await tester.tap(find.byKey(const Key('auth-submit')));
     await settle(tester);
-    expect(find.text('اسم المستخدم مستخدم من قبل، اختر غيره'), findsOneWidget);
+    expect(find.text('هذا الاسم مستخدم، اختر غيره'), findsOneWidget);
     expect(calls, isNot(contains('POST /auth/register')));
     await tester.enterText(find.byKey(const Key('reg-nickname')), 'fresh_name');
     await tester.pump(const Duration(milliseconds: 500));

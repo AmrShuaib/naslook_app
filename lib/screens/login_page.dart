@@ -140,7 +140,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     if (s.length < 3) return 'اسم المستخدم يجب أن يكون 3 خانات على الأقل';
     if (s.length > _nickMax) return 'اسم المستخدم يجب ألا يتجاوز $_nickMax حرفاً';
     if (!_nickRe.hasMatch(s)) return 'حروف إنجليزية صغيرة وأرقام و _ فقط، بلا مسافات';
-    if (_nickStatus == _NickStatus.taken) return 'اسم المستخدم مستخدم من قبل، اختر غيره';
+    if (_nickStatus == _NickStatus.taken) return 'هذا الاسم مستخدم، اختر غيره';
     return null;
   }
 
@@ -159,7 +159,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   }
 
   InputDecoration _dec(String label, IconData icon, {String? helper, Widget? suffix}) => InputDecoration(
-        labelText: label, helperText: helper, helperMaxLines: 2, prefixIcon: Icon(icon), suffixIcon: suffix,
+        labelText: label, helperText: helper, helperMaxLines: 2, errorMaxLines: 2, prefixIcon: Icon(icon), suffixIcon: suffix,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       );
 
@@ -202,7 +202,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               validator: _validateNickname,
               decoration: _dec(
                 'اسم المستخدم', Icons.badge_outlined,
-                helper: switch (_nickStatus) { _NickStatus.available => 'متاح', _NickStatus.taken => 'مستخدم من قبل، اختر غيره', _NickStatus.checking => 'جارٍ التحقق…', _NickStatus.idle => 'فريد، يظهر للآخرين: حروف إنجليزية صغيرة وأرقام و _ (3 إلى 25)' },
+                helper: switch (_nickStatus) { _NickStatus.available => 'متاح', _NickStatus.taken => 'هذا الاسم مستخدم، اختر غيره', _NickStatus.checking => 'جارٍ التحقق…', _NickStatus.idle => 'فريد، يظهر للآخرين: حروف إنجليزية صغيرة وأرقام و _ (3 إلى 25)' },
                 suffix: switch (_nickStatus) {
                   _NickStatus.available => const Icon(Icons.check_circle_rounded, key: Key('nick-available'), color: Color(0xFF1FA35A)),
                   _NickStatus.taken => const Icon(Icons.cancel_rounded, key: Key('nick-taken'), color: Color(0xFFD23B3B)),
