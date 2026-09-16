@@ -391,8 +391,9 @@ export default async function mail(app, opts = {}) {
     const uid = await guard(req, reply); if (!uid) return;
     await load();
     if (!settings.domain) return bad(reply, 404, "no-domain");
-    // بعد التوثيق لا نطلب إعادة التحقق من المزوّد (تعيد الحالة إلى قيد الفحص)، بل نقرأ الحالة فقط
-    const out = await refreshDomain(settings.domain.verifiedAt ? "get" : "verify");
+    // بعد التوثيق نقرأ الحالة فقط، إلا إن كان سجل مطلوب ما زال معلّقاً عند المزوّد (مثل MX الاستقبال) فنطلب التحقق مجدداً
+    const pendingLeft = (settings.domain.records ?? []).some((r) => !r.optional && r.status !== "verified");
+    const out = await refreshDomain(settings.domain.verifiedAt && !pendingLeft ? "get" : "verify");
     await audit(uid, "mail.domain.verify", { domain: out.name, status: out.status });
     return { domain: out, suggested: suggested(req), providerReady: DOMAIN_PROVIDERS.has(settings.provider) && !!settings.apiKey, provider: settings.provider, from: settings.from };
   });
