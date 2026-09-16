@@ -78,3 +78,19 @@
 Brevo مدعوم بالطريقة نفسها (المفتاح xkeysib-…)، وسجلاته: DKIM على `mail._domainkey`، وكود التحقق على النطاق نفسه، وDMARC.
 
 المسارات: `GET/POST/DELETE /adminapi/mail/domain` و`POST /adminapi/mail/domain/verify` (للمديرين فقط).
+
+## البريد الوارد لفريق العمل (صندوق لكل موظف)
+
+بعد توثيق النطاق، كل عضو في «الفريق» له صندوق باسمه (الحقل «صندوق البريد» في بياناته، مثل `sara@naslife.app`) وصندوق مشترك
+هو عنوان المرسل الرسمي (`admin@naslife.app`). الرد والإنشاء من اللوحة يخرجان بعنوان الصندوق نفسه عبر Resend.
+
+**الاستقبال** يحتاج جهة تستلم رسائل النطاق وتدفعها إلى الخادم:
+
+- **Resend Receiving** (الأسهل): في Resend افتح Domains ثم naslife.app ثم Receiving وفعّله، وأضف سجل MX الذي يعرضه لك في name.com
+  (Host فارغ أو `@`، الأولوية كما تظهر). ثم Webhooks ثم Add Endpoint بالرابط `https://naslife.app/inbox/webhook/resend`
+  وحدث `email.received`، وانسخ Signing Secret إلى لوحة الإدارة ثم البريد الوارد ثم إعدادات الاستقبال.
+- **Webhook عام**: أي خدمة تحويل تدعم Webhook (Cloudflare Email Workers، ImprovMX…) ترسل JSON
+  `{from, to, cc?, subject, text, html?, messageId?, inReplyTo?}` إلى الرابط العام الظاهر في الإعدادات (يحمل رمزاً سرياً).
+
+الرسائل تُربط في محادثات بمعرّفات الرسائل ثم بالموضوع والطرف، وتصل إشعارات لصاحب الصندوق (أو لمن أُسندت إليه المحادثة).
+الرؤية: صندوقك، والصندوق المشترك لمن يملك صلاحية الرد، وصناديق من تحتك في التسلسل، وكل الصناديق لمن يملك inbox.manage.

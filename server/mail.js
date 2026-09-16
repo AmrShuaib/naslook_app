@@ -25,13 +25,14 @@ const encHeader = (s) => (/^[\x20-\x7e]*$/.test(String(s)) ? String(s) : `=?UTF-
 const b64Lines = (s) => b64(s).replace(/(.{76})/g, "$1\r\n");
 
 /// يبني رسالة MIME كاملة (نص + HTML) بترميز base64 للأجزاء.
-export function buildMime({ from, fromName, to, subject, text, html, replyTo, messageId }) {
+export function buildMime({ from, fromName, to, subject, text, html, replyTo, messageId, headers = {} }) {
   const boundary = "nl-" + crypto.randomBytes(9).toString("hex");
   const lines = [
     `From: ${addr(from, fromName)}`,
     `To: ${to}`,
     `Subject: ${encHeader(subject)}`,
     replyTo ? `Reply-To: ${replyTo}` : null,
+    ...Object.entries(headers).filter(([k, v]) => /^[A-Za-z-]+$/.test(k) && v).map(([k, v]) => `${k}: ${String(v).replace(/[\r\n]+/g, " ")}`),
     `Date: ${new Date().toUTCString()}`,
     `Message-ID: <${messageId}>`,
     "MIME-Version: 1.0",
@@ -196,17 +197,17 @@ export async function dnsMatches(rec, domain, fetchFn = globalThis.fetch) {
   } catch { return null; }
 }
 
-export async function httpSend(provider, { apiKey, from, fromName, replyTo, to, subject, text, html }, fetchFn = globalThis.fetch) {
+export async function httpSend(provider, { apiKey, from, fromName, replyTo, to, subject, text, html, headers: extra = {} }, fetchFn = globalThis.fetch) {
   let url, headers, body;
   if (provider === "resend") {
     url = "https://api.resend.com/emails"; headers = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
-    body = { from: fromName ? `${fromName} <${from}>` : from, to: [to], subject, text, html, ...(replyTo ? { reply_to: replyTo } : {}) };
+    body = { from: fromName ? `${fromName} <${from}>` : from, to: [to], subject, text, html, ...(replyTo ? { reply_to: replyTo } : {}), ...(Object.keys(extra).length ? { headers: extra } : {}) };
   } else if (provider === "brevo") {
     url = "https://api.brevo.com/v3/smtp/email"; headers = { "api-key": apiKey, "content-type": "application/json" };
-    body = { sender: { email: from, name: fromName || undefined }, to: [{ email: to }], subject, textContent: text, htmlContent: html, ...(replyTo ? { replyTo: { email: replyTo } } : {}) };
+    body = { sender: { email: from, name: fromName || undefined }, to: [{ email: to }], subject, textContent: text, htmlContent: html, ...(replyTo ? { replyTo: { email: replyTo } } : {}), ...(Object.keys(extra).length ? { headers: extra } : {}) };
   } else if (provider === "sendgrid") {
     url = "https://api.sendgrid.com/v3/mail/send"; headers = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
-    body = { personalizations: [{ to: [{ email: to }] }], from: { email: from, name: fromName || undefined }, subject, content: [{ type: "text/plain", value: text || " " }, { type: "text/html", value: html || `<pre>${text || ""}</pre>` }], ...(replyTo ? { reply_to: { email: replyTo } } : {}) };
+    body = { personalizations: [{ to: [{ email: to }] }], from: { email: from, name: fromName || undefined }, subject, content: [{ type: "text/plain", value: text || " " }, { type: "text/html", value: html || `<pre>${text || ""}</pre>` }], ...(replyTo ? { reply_to: { email: replyTo } } : {}), ...(Object.keys(extra).length ? { headers: extra } : {}) };
   } else throw new Error("mail: unknown provider");
   const r = await fetchFn(url, { method: "POST", headers, body: JSON.stringify(body) });
   const t = await r.text();
@@ -249,29 +250,35 @@ export default async function mail(app, opts = {}) {
   const configured = () => settings.provider !== "off" && EMAIL_RE.test(settings.from) && (settings.provider === "smtp" ? !!settings.host : !!settings.apiKey);
   const masked = () => ({ ...settings, pass: settings.pass ? MASK : "", apiKey: settings.apiKey ? MASK : "", hasPass: !!settings.pass, hasApiKey: !!settings.apiKey, configured: configured() });
 
-  async function send({ to, subject, text, html, tag = null }) {
+  /// إرسال رسالة. الحقول الاختيارية from/fromName/replyTo/headers تتجاوز الإعدادات (لصناديق الفريق مثل sara@naslife.app).
+  async function send({ to, subject, text, html, tag = null, from = null, fromName = null, replyTo = null, headers = {} }) {
     const rcpt = String(to ?? "").trim().toLowerCase();
     if (!EMAIL_RE.test(rcpt)) throw new Error("mail: bad recipient");
     if (!configured()) throw new Error("mail: not configured");
     const id = crypto.randomUUID();
     const p = settings.provider;
+    const sender = from && EMAIL_RE.test(from) && p !== "smtp" ? from : settings.from; // SMTP يرسل باسم الحساب نفسه فقط
+    const senderName = fromName ?? settings.fromName;
+    const reply = replyTo ?? (from && p === "smtp" ? from : settings.replyTo);
+    const messageId = `${id}@${(settings.domain?.name) || "naslife.app"}`;
     try {
       let res;
       if (p === "smtp") {
-        const mime = buildMime({ from: settings.from, fromName: settings.fromName, to: rcpt, subject, text, html, replyTo: settings.replyTo, messageId: `${id}@naslife.app` });
-        res = await smtpSend({ host: settings.host, port: Number(settings.port) || (settings.secure ? 465 : 587), secure: settings.secure === true, user: settings.user, pass: settings.pass, from: settings.from, to: rcpt, mime });
+        const mime = buildMime({ from: sender, fromName: senderName, to: rcpt, subject, text, html, replyTo: reply, messageId, headers });
+        res = await smtpSend({ host: settings.host, port: Number(settings.port) || (settings.secure ? 465 : 587), secure: settings.secure === true, user: settings.user, pass: settings.pass, from: sender, to: rcpt, mime });
       } else {
-        res = await httpSend(p, { apiKey: settings.apiKey, from: settings.from, fromName: settings.fromName, replyTo: settings.replyTo, to: rcpt, subject, text, html });
+        res = await httpSend(p, { apiKey: settings.apiKey, from: sender, fromName: senderName, replyTo: reply, to: rcpt, subject, text, html, headers });
       }
       await pool.query("INSERT INTO mail_log(id, recipient, subject, tag, status, provider) VALUES($1,$2,$3,$4,'sent',$5)", [id, rcpt, subject, tag, p]).catch(() => {});
-      return { ok: true, id: res?.id ?? id };
+      return { ok: true, id: res?.id ?? id, messageId, from: sender };
     } catch (e) {
       const msg = String(e?.message ?? e).slice(0, 300);
       await pool.query("INSERT INTO mail_log(id, recipient, subject, tag, status, error, provider) VALUES($1,$2,$3,$4,'failed',$5,$6)", [id, rcpt, subject, tag, msg, p]).catch(() => {});
       throw new Error(msg);
     }
   }
-  globalThis.naslifeMail = { configured, send, template, settings: () => ({ provider: settings.provider, from: settings.from, fromName: settings.fromName }) };
+  globalThis.naslifeMailApiKey = () => (settings.provider === "resend" ? settings.apiKey : "");
+  globalThis.naslifeMail = { configured, send, template, settings: () => ({ provider: settings.provider, from: settings.from, fromName: settings.fromName, domain: settings.domain ? { name: settings.domain.name, local: settings.domain.local, verified: settings.domain.status === "verified" } : null }) };
 
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
   async function guard(req, reply) {

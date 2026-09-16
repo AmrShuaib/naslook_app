@@ -73,6 +73,9 @@ Widget? notificationTarget(AppNotification n) {
     case 'task_due':
     case 'task_overdue':
       return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'tasks').clamp(0, adminSections.length - 1));
+    case 'inbox_message':
+    case 'inbox_assigned':
+      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'inbox').clamp(0, adminSections.length - 1));
     case 'post_blocked':
       return const MyPostsPage();
     case 'wish_price_drop':
