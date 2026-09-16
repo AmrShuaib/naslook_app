@@ -694,14 +694,14 @@ export default async function inbox(app, opts = {}) {
         (SELECT count(*)::int FROM inbox_messages WHERE mailbox = ANY($1) AND direction='out' AND sent_by IS NOT NULL AND created_at >= $2) AS sent,
         (SELECT count(*)::int FROM inbox_threads WHERE mailbox = ANY($1) AND NOT spam AND created_at >= $2) AS threads,
         (SELECT count(*)::int FROM inbox_threads WHERE mailbox = ANY($1) AND status='closed' AND closed_at >= $2) AS closed,
-        (SELECT count(*)::int FROM inbox_threads WHERE mailbox = ANY($1) AND NOT spam AND NOT archived AND status='open' AND unread > 0) AS openUnanswered,
+        (SELECT count(*)::int FROM inbox_threads WHERE mailbox = ANY($1) AND NOT spam AND NOT archived AND status='open' AND unread > 0) AS "openUnanswered",
         (SELECT count(*)::int FROM inbox_threads WHERE mailbox = ANY($1) AND spam AND created_at >= $2) AS spam,
-        (SELECT round(avg(EXTRACT(EPOCH FROM (first_reply_at - first_in_at)))/60)::int FROM inbox_threads WHERE mailbox = ANY($1) AND first_reply_at IS NOT NULL AND first_in_at IS NOT NULL AND first_in_at >= $2) AS firstResponseMin,
-        (SELECT round(percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (first_reply_at - first_in_at)))/60)::int FROM inbox_threads WHERE mailbox = ANY($1) AND first_reply_at IS NOT NULL AND first_in_at IS NOT NULL AND first_in_at >= $2) AS firstResponseMedianMin,
-        (SELECT round(avg(EXTRACT(EPOCH FROM (closed_at - first_in_at)))/3600, 1)::float FROM inbox_threads WHERE mailbox = ANY($1) AND closed_at IS NOT NULL AND first_in_at IS NOT NULL AND closed_at >= $2) AS resolutionHours,
+        (SELECT round(avg(EXTRACT(EPOCH FROM (first_reply_at - first_in_at)))/60)::int FROM inbox_threads WHERE mailbox = ANY($1) AND first_reply_at IS NOT NULL AND first_in_at IS NOT NULL AND first_in_at >= $2) AS "firstResponseMin",
+        (SELECT round(percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (first_reply_at - first_in_at)))/60)::int FROM inbox_threads WHERE mailbox = ANY($1) AND first_reply_at IS NOT NULL AND first_in_at IS NOT NULL AND first_in_at >= $2) AS "firstResponseMedianMin",
+        (SELECT round(avg(EXTRACT(EPOCH FROM (closed_at - first_in_at)))/3600, 1)::float FROM inbox_threads WHERE mailbox = ANY($1) AND closed_at IS NOT NULL AND first_in_at IS NOT NULL AND closed_at >= $2) AS "resolutionHours",
         (SELECT round(avg(score), 2)::float FROM inbox_ratings WHERE mailbox = ANY($1) AND score IS NOT NULL AND rated_at >= $2) AS csat,
         (SELECT count(*)::int FROM inbox_ratings WHERE mailbox = ANY($1) AND score IS NOT NULL AND rated_at >= $2) AS ratings,
-        (SELECT count(*)::int FROM inbox_ratings WHERE mailbox = ANY($1) AND created_at >= $2) AS ratingsSent`, P)).rows[0];
+        (SELECT count(*)::int FROM inbox_ratings WHERE mailbox = ANY($1) AND created_at >= $2) AS "ratingsSent"`, P)).rows[0];
     const agents = (await pool.query(`SELECT a.uid,
         COALESCE(s.replies,0)::int AS replies, COALESCE(c.closed,0)::int AS closed, COALESCE(f.frt,0)::int AS "firstResponseMin", r.csat::float AS csat, COALESCE(r.n,0)::int AS ratings
       FROM (SELECT sent_by AS uid FROM inbox_messages WHERE mailbox = ANY($1) AND direction='out' AND sent_by IS NOT NULL AND created_at >= $2
