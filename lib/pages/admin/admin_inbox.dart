@@ -213,7 +213,7 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
                       decoration: BoxDecoration(color: m.outgoing ? Joy.primarySoft : Joy.surface2, borderRadius: BorderRadius.circular(14)),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Row(children: [
-                          Expanded(child: Text(m.outgoing ? '${m.sentByName.isNotEmpty ? m.sentByName : 'الفريق'} ← ${m.to.map((a) => a.email).join('، ')}' : '${m.from.name.isNotEmpty ? m.from.name : m.from.email}${m.from.name.isNotEmpty ? ' <${m.from.email}>' : ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5), overflow: TextOverflow.ellipsis)),
+                          Expanded(child: Text(m.outgoing ? '${m.sentByName.isNotEmpty ? m.sentByName : 'الفريق'} إلى ${m.to.map((a) => a.email).join('، ')}' : '${m.from.name.isNotEmpty ? m.from.name : m.from.email}${m.from.name.isNotEmpty ? ' <${m.from.email}>' : ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5), overflow: TextOverflow.ellipsis)),
                           Text(timeAgo(m.createdAt), style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
                         ]),
                         if (m.cc.isNotEmpty) Text('نسخة: ${m.cc.map((a) => a.email).join('، ')}', style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
