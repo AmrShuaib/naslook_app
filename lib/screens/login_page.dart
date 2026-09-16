@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +8,9 @@ import '../api/client.dart';
 import '../state/app_state.dart';
 
 enum _Mode { login, register, forgot, reset }
+
+/// حالة فحص توفر اسم المستخدم أثناء الكتابة.
+enum _NickStatus { idle, checking, available, taken }
 
 /// شاشة الدخول والتسجيل بالبريد الإلكتروني وكلمة السر (بدون تشفير من جهة العميل)، مع استعادة كلمة السر
 /// برمز يصل بالبريد. الدخول يقبل البريد أو اسم المستخدم للحسابات القديمة.
@@ -21,11 +26,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _handle = TextEditingController(), _email = TextEditingController(), _nickname = TextEditingController(), _pin = TextEditingController(), _code = TextEditingController();
   _Mode _mode = _Mode.login;
   bool _showPin = false, _localBusy = false;
+  _NickStatus _nickStatus = _NickStatus.idle;
+  Timer? _nickTimer;
+  int _nickSeq = 0;
 
   static const _primary = Color(0xFF1565C0);
 
   @override
   void dispose() {
+    _nickTimer?.cancel();
     for (final c in [_handle, _email, _nickname, _pin, _code]) {
       c.dispose();
     }
@@ -88,8 +97,24 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
   }
 
-  // قواعد الخادم: اسم المستخدم [a-z0-9_] من 3 إلى 32، وكلمة السر 8 خانات على الأقل عند التسجيل
-  static final _nickRe = RegExp(r'^[a-z0-9_]{3,32}$');
+  // قواعد الخادم: اسم المستخدم [a-z0-9_] من 3 إلى 25 فريد، وكلمة السر 8 خانات على الأقل عند التسجيل
+  static final _nickRe = RegExp(r'^[a-z0-9_]{3,25}$');
+  static const _nickMax = 25;
+
+  /// يفحص توفر اسم المستخدم بعد توقف الكتابة (400 مللي ثانية) ويتجاهل نتائج الفحوص الأقدم.
+  void _onNicknameChanged(String v) {
+    _nickTimer?.cancel();
+    final s = v.trim().toLowerCase();
+    if (!_nickRe.hasMatch(s)) { if (_nickStatus != _NickStatus.idle) setState(() => _nickStatus = _NickStatus.idle); return; }
+    setState(() => _nickStatus = _NickStatus.checking);
+    final seq = ++_nickSeq;
+    _nickTimer = Timer(const Duration(milliseconds: 400), () async {
+      bool? ok;
+      try { ok = await ref.read(apiClientProvider).nicknameAvailable(s); } catch (_) { ok = null; }
+      if (!mounted || seq != _nickSeq) return;
+      setState(() => _nickStatus = ok == null ? _NickStatus.idle : ok ? _NickStatus.available : _NickStatus.taken);
+    });
+  }
   static final _emailRe = RegExp(r'^[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9.-]+\.[a-z]{2,}$');
   static const _pinMin = 8;
 
@@ -113,8 +138,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     final s = (v ?? '').trim().toLowerCase();
     if (s.isEmpty) return 'أدخل اسم المستخدم';
     if (s.length < 3) return 'اسم المستخدم يجب أن يكون 3 خانات على الأقل';
-    if (s.length > 32) return 'اسم المستخدم يجب ألا يتجاوز 32 خانة';
+    if (s.length > _nickMax) return 'اسم المستخدم يجب ألا يتجاوز $_nickMax حرفاً';
     if (!_nickRe.hasMatch(s)) return 'حروف إنجليزية صغيرة وأرقام و _ فقط، بلا مسافات';
+    if (_nickStatus == _NickStatus.taken) return 'اسم المستخدم مستخدم من قبل، اختر غيره';
     return null;
   }
 
@@ -170,8 +196,20 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             TextFormField(
               key: const Key('reg-nickname'), controller: _nickname, autofillHints: const [AutofillHints.newUsername], textInputAction: TextInputAction.next,
               keyboardType: TextInputType.visiblePassword, autocorrect: false, textDirection: TextDirection.ltr,
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_]')), LengthLimitingTextInputFormatter(32)],
-              validator: _validateNickname, decoration: _dec('اسم المستخدم', Icons.badge_outlined, helper: 'يظهر للآخرين: حروف إنجليزية صغيرة وأرقام و _ (3 إلى 32)'),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_]')), LengthLimitingTextInputFormatter(_nickMax)],
+              onChanged: _onNicknameChanged,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              validator: _validateNickname,
+              decoration: _dec(
+                'اسم المستخدم', Icons.badge_outlined,
+                helper: switch (_nickStatus) { _NickStatus.available => 'متاح', _NickStatus.taken => 'مستخدم من قبل، اختر غيره', _NickStatus.checking => 'جارٍ التحقق…', _NickStatus.idle => 'فريد، يظهر للآخرين: حروف إنجليزية صغيرة وأرقام و _ (3 إلى 25)' },
+                suffix: switch (_nickStatus) {
+                  _NickStatus.available => const Icon(Icons.check_circle_rounded, key: Key('nick-available'), color: Color(0xFF1FA35A)),
+                  _NickStatus.taken => const Icon(Icons.cancel_rounded, key: Key('nick-taken'), color: Color(0xFFD23B3B)),
+                  _NickStatus.checking => const Padding(padding: EdgeInsets.all(14), child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+                  _NickStatus.idle => null,
+                },
+              ),
             ),
             const SizedBox(height: 16),
             _pinField(key: const Key('reg-password'), helper: '8 خانات على الأقل، حروف أو أرقام أو رموز', hints: const [AutofillHints.newPassword]),

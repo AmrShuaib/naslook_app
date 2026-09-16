@@ -44,6 +44,9 @@ void main() {
       case 'POST /auth/change-password':
         if (lastBody!['current'] != 'secret123') return _json({'error': 'bad-password'}, 403);
         return _json({'ok': true, 'token': 'tok-new'});
+      case 'GET /auth/nickname-available':
+        final n = req.url.queryParameters['nickname'] ?? '';
+        return _json({'available': !['amr', 'sara'].contains(n), 'reason': ['amr', 'sara'].contains(n) ? 'taken' : null});
       case 'GET /me/recovery':
         return _json({'enabled': recoveryEnabled, 'email': 'amr@example.com', 'verified': true, 'mailConfigured': mailConfigured});
       case 'PUT /me/recovery':
@@ -106,6 +109,36 @@ void main() {
     expect(find.text('صيغة البريد غير صحيحة'), findsOneWidget);
     expect(find.text('كلمة السر يجب أن تكون 8 خانات على الأقل'), findsOneWidget);
     expect(calls.where((c) => c.startsWith('POST')), isEmpty);
+  });
+
+  testWidgets('nickname: 3 to 25 characters, live availability check blocks a taken name', (tester) async {
+    await pumpLogin(tester);
+    await tester.tap(find.byKey(const Key('auth-toggle')));
+    await settle(tester);
+    await tester.enterText(find.byKey(const Key('reg-nickname')), 'abcdefghijklmnopqrstuvwxyz1234');
+    await tester.pump();
+    expect(tester.widget<TextFormField>(find.byKey(const Key('reg-nickname'))).controller!.text.length, 25, reason: 'الحقل يقطع عند 25 حرفاً');
+    await tester.enterText(find.byKey(const Key('reg-nickname')), 'ab');
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('reg-email')), 'x@example.com');
+    await tester.enterText(find.byKey(const Key('reg-password')), 'Password1');
+    await tester.tap(find.byKey(const Key('auth-submit')));
+    await settle(tester);
+    expect(find.text('اسم المستخدم يجب أن يكون 3 خانات على الأقل'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('reg-nickname')), 'sara');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(calls, contains('GET /auth/nickname-available'));
+    expect(find.byKey(const Key('nick-taken')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('auth-submit')));
+    await settle(tester);
+    expect(find.text('اسم المستخدم مستخدم من قبل، اختر غيره'), findsOneWidget);
+    expect(calls, isNot(contains('POST /auth/register')));
+    await tester.enterText(find.byKey(const Key('reg-nickname')), 'fresh_name');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const Key('nick-available')), findsOneWidget);
+    expect(find.text('متاح'), findsOneWidget);
   });
 
   testWidgets('forgot password: sends the code, rejects a wrong code, then resets and signs in', (tester) async {

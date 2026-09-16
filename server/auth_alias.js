@@ -2,6 +2,7 @@
 // /recover {handle, recoveryPhrase, newPassword})، وهذه الإضافة تربط كل حساب ببريد (login_aliases) وتحفظ عبارة الاسترداد
 // مشفّرة (account_recovery) كي تعيد تعيين كلمة السر برمز يصل بالبريد بالطريقة الاعتيادية.
 // المسارات:
+//   GET  /auth/nickname-available?nickname=x         هل اسم المستخدم متاح (3 إلى 25: حروف إنجليزية صغيرة وأرقام و _)
 //   POST /auth/register {email, nickname, password}   تسجيل بالبريد (ينشئ الحساب في النواة ويربط البريد ويحفظ العبارة)
 //   POST /auth/login {handle, password}                دخول بالبريد أو النك نيم (يُمرَّر إلى /login في النواة)
 //   POST /auth/forgot {email}                          إرسال رمز استعادة (الرد عام دائماً)
@@ -17,7 +18,7 @@ import path from "node:path";
 
 const EMAIL_RE = /^[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9.-]+\.[a-z]{2,}$/;
 const ID_RE = /^[A-Z]{2}\d{7}$/;
-const NICK_RE = /^[a-z0-9_]{3,32}$/;
+const NICK_RE = /^[a-z0-9_]{3,25}$/;
 const CODE_TTL_MIN = 15, CODE_MAX_ATTEMPTS = 5, RESEND_SECONDS = 60, PW_MIN = 8, PW_MAX = 64;
 
 export const normEmail = (v) => String(v ?? "").trim().toLowerCase();
@@ -127,6 +128,16 @@ export default async function authAlias(app, opts = {}) {
     await pool.query("UPDATE login_aliases SET reset_hash=$2, reset_exp=now() + ($3 || ' minutes')::interval, reset_sent_at=now(), reset_attempts=0 WHERE alias=$1", [email, hashCode("reset:" + email, code), String(CODE_TTL_MIN)]);
     return code;
   }
+
+  // ================= توفر اسم المستخدم (للتحقق أثناء الكتابة) =================
+  app.get("/auth/nickname-available", async (req, reply) => {
+    const nickname = String(req.query?.nickname ?? "").trim().toLowerCase();
+    if (!NICK_RE.test(nickname)) return { available: false, reason: "invalid" };
+    if (limited("nick:" + ipOf(req), 60, 60000)) return bad(reply, 429, "too-many-attempts");
+    let taken = false;
+    try { taken = (await pool.query("SELECT 1 FROM users WHERE lower(nickname)=$1 LIMIT 1", [nickname])).rowCount > 0; } catch { /* جدول النواة غير متاح: نعتبره متاحاً والنواة تحسم عند التسجيل */ }
+    return { available: !taken, reason: taken ? "taken" : null };
+  });
 
   // ================= التسجيل بالبريد =================
   app.post("/auth/register", async (req, reply) => {

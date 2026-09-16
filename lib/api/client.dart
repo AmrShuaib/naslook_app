@@ -115,6 +115,17 @@ class ApiClient {
     return session;
   }
 
+  /// هل اسم المستخدم متاح؟ (server/auth_alias.js) يعيد null إن لم يكن الخادم يدعم الفحص.
+  Future<bool?> nicknameAvailable(String nickname) async {
+    try {
+      final r = await get('/auth/nickname-available', query: {'nickname': nickname.trim().toLowerCase()});
+      return r['available'] == true;
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
   /// نسيت كلمة السر: يطلب إرسال رمز إلى البريد (الرد عام دائماً كي لا يُكشف وجود الحساب).
   Future<void> forgotPassword(String email) => post('/auth/forgot', {'email': email.trim().toLowerCase()});
 
@@ -258,8 +269,8 @@ class ApiClient {
   }
 
   static const _serverErrors = <String, String>{
-    'nickname-taken': 'النك نيم مستخدم من قبل، اختر غيره',
-    'invalid-nickname': 'النك نيم غير صالح: حروف إنجليزية صغيرة وأرقام و _ فقط (3 إلى 32)',
+    'nickname-taken': 'اسم المستخدم مستخدم من قبل، اختر غيره',
+    'invalid-nickname': 'اسم المستخدم غير صالح: حروف إنجليزية صغيرة وأرقام و _ فقط (3 إلى 25)',
     'invalid-password': 'الرقم السري غير صالح',
     'weak-password': 'الرقم السري يجب أن يكون 8 خانات على الأقل',
     'bad-credentials': 'النك نيم أو الرقم السري غير صحيح',
