@@ -58,7 +58,8 @@ void main() {
     if (key == 'PUT /adminapi/mail') {
       final b = lastBody!;
       final pass = b['pass'] == '••••••••' ? (settings['hasPass'] == true ? 'kept' : '') : (b['pass'] ?? '');
-      settings = {...settings, ...b, 'pass': pass.isEmpty ? '' : '••••••••', 'hasPass': pass.isNotEmpty, 'configured': b['provider'] != 'off' && (b['from'] as String).contains('@') && (b['provider'] == 'smtp' ? (b['host'] as String).isNotEmpty : (b['apiKey'] as String).isNotEmpty)};
+      final key = b['apiKey'] == '••••••••' ? (settings['hasApiKey'] == true ? 'kept' : '') : (b['apiKey'] ?? '');
+      settings = {...settings, ...b, 'apiKey': key.isEmpty ? '' : '••••••••', 'hasApiKey': key.isNotEmpty, 'pass': pass.isEmpty ? '' : '••••••••', 'hasPass': pass.isNotEmpty, 'configured': b['provider'] != 'off' && (b['from'] as String).contains('@') && (b['provider'] == 'smtp' ? (b['host'] as String).isNotEmpty : (b['apiKey'] as String).isNotEmpty)};
       return _json(settings);
     }
     if (key == 'POST /adminapi/mail/test') {
@@ -172,12 +173,23 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('mail-domain-need-provider')), findsOneWidget, reason: 'SMTP لا يدعم توثيق النطاق');
     expect(tester.widget<FilledButton>(find.byKey(const Key('mail-domain-start'))).onPressed, isNull);
-    // مزوّد جاهز: Resend بمفتاح محفوظ
-    settings = {...settings, 'provider': 'resend', 'apiKey': '••••••••', 'hasApiKey': true};
-    await pump(tester);
+    // اختيار Resend وحفظ المفتاح في الشجرة نفسها: يصبح زر الربط متاحاً بلا إعادة تحميل
+    await tester.drag(find.byType(ListView), const Offset(0, 900));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('mail-provider-resend')));
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('mail-apikey')), 're_test_key');
+    await tester.enterText(find.byKey(const Key('mail-from')), 'jeddahh@gmail.com');
+    await tester.drag(find.byType(ListView), const Offset(0, -500));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('mail-save')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(lastBody!['apiKey'], 're_test_key');
     await tester.drag(find.byType(ListView), const Offset(0, -900));
     await tester.pump();
-    expect(find.byKey(const Key('mail-domain-need-provider')), findsNothing);
+    expect(find.byKey(const Key('mail-domain-need-provider')), findsNothing, reason: 'الحفظ يعيد فحص جاهزية المزوّد');
     expect(tester.widget<TextField>(find.byKey(const Key('mail-domain-name'))).controller!.text, 'naslife.app');
     expect(tester.widget<TextField>(find.byKey(const Key('mail-domain-local'))).controller!.text, 'admin');
     await tester.tap(find.byKey(const Key('mail-domain-start')));

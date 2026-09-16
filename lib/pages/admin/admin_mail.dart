@@ -71,6 +71,7 @@ class _AdminMailPageState extends ConsumerState<AdminMailPage> {
       });
       loaded = false;
       ref.invalidate(adminMailProvider);
+      ref.invalidate(adminMailDomainProvider); // جاهزية الربط تعتمد على المزوّد والمفتاح المحفوظين
       if (mounted) toast(context, provider == 'off' ? 'عُطّلت خدمة البريد' : 'حُفظت إعدادات البريد');
     } catch (e) {
       if (mounted) toast(context, adminErrText(e), error: true);
