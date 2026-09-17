@@ -8,9 +8,11 @@ import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/share/share_links.dart';
 import '../../core/nav_provider.dart';
+import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
+import '../admin/user_admin_sheet.dart';
 import '../chat/chat_thread_page.dart';
 
 /// يفتح الملف الشخصي لأي مستخدم؛ إن كان المستخدم نفسه يُنقل إلى ماي سبيس.
@@ -50,6 +52,9 @@ class UserProfilePage extends ConsumerWidget {
         title: Text(nickname),
         actions: [
           IconButton(key: const Key('share-profile'), tooltip: 'مشاركة الحساب', icon: const Icon(Icons.ios_share_rounded), onPressed: () => shareLink(context, title: nickname, url: profileLink(nickname), subtitle: 'حساب على ناس لايف', code: userCode(nickname))),
+          // المدير يدير أي حساب من هنا مباشرة: تعديل، رصيد، إيقاف، حذف نهائي
+          if (!isMe && ref.watch(adminStatusProvider).valueOrNull?.isAdmin == true)
+            IconButton(key: const Key('admin-user'), tooltip: 'إدارة الحساب', icon: const Icon(Icons.admin_panel_settings_outlined, color: Joy.accent), onPressed: () => showUserAdminSheet(context, ref, id: person.id, nickname: nickname)),
           if (!isMe)
             PopupMenuButton<String>(
               tooltip: 'المزيد',

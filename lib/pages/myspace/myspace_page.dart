@@ -22,6 +22,7 @@ import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import '../business/my_bookings_page.dart';
 import '../admin/admin_shell.dart';
+import '../admin/blog_drafts_page.dart';
 import '../business/owner/my_businesses_page.dart';
 import '../events/events_page.dart';
 import '../market/market_page.dart';
@@ -94,6 +95,8 @@ class MySpacePage extends ConsumerWidget {
             if (ref.watch(adminStatusProvider).valueOrNull?.isAdmin == true) ...[
               const Divider(indent: 16, endIndent: 16),
               ListTile(leading: const Icon(Icons.admin_panel_settings_outlined, color: Joy.accent), title: const Text('لوحة الإدارة'), subtitle: const Text('المستخدمون والبلاغات والمالية والإعدادات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminShell(standalone: false)))),
+              const Divider(indent: 16, endIndent: 16),
+              ListTile(key: const Key('blog-drafts'), leading: const Icon(Icons.article_outlined, color: Joy.accent), title: const Text('تدوينات جاهزة للنشر'), subtitle: const Text('مسودات «جديد ناس لايف» تُنشر بضغطة من هنا'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BlogDraftsPage()))),
             ],
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.auto_awesome_motion_outlined, color: Joy.accent), title: const Text('منشوراتي على الخريطة'), subtitle: const Text('صور وفيديو وصوت ونص · تعديل وإخفاء وحذف'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyPostsPage()))),

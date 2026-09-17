@@ -37,6 +37,17 @@ export default async function admin(app, opts) {
   const colsOf = async (t) => new Set((await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1", [t])).rows.map((r) => r.column_name));
   const pick = (set, ...names) => names.find((n) => set.has(n)) ?? null;
   const userCols = tables.has("users") ? await colsOf("users") : new Set();
+  // جدول ملف المستخدم في النواة (النبذة والظهور والمهارات): يُكتشف باسم أعمدته لا باسمه
+  let PT = null, ptScore = 0;
+  for (const t of tables) {
+    if (t === "users") continue;
+    const c = await colsOf(t);
+    // النبذة والمهارات علامتان قويتان؛ is_public وحدها تظهر في جداول أخرى (الدوائر مثلاً) فلا تكفي
+    const score = (c.has("bio") ? 2 : 0) + (c.has("skills") ? 2 : 0) + (c.has("is_public") ? 1 : 0) + (/profile/.test(t) ? 3 : 0);
+    if (score < 2 || score <= ptScore) continue;
+    const key = pick(c, "user_id", "id", "uid"); if (!key) continue;
+    PT = { table: t, key, cols: c }; ptScore = score;
+  }
   const U = {
     ok: tables.has("users") && userCols.has("id"),
     nick: pick(userCols, "nickname", "name", "handle", "username"), avatar: pick(userCols, "avatar_url", "avatarurl", "avatar"),
@@ -317,6 +328,111 @@ export default async function admin(app, opts) {
     await audit(uid, suspended ? "user.suspend" : "user.unsuspend", id, { note });
     await notify(id, { kind: suspended ? "account_suspended" : "account_restored", title: suspended ? "أُوقف حسابك" : "أُعيد تفعيل حسابك", body: suspended ? (note || "تواصل مع الدعم للمراجعة") : "يمكنك الشراء والحجز والتحويل من جديد", data: {} });
     return { ok: true, suspended };
+  });
+  // ---- تعديل ملف مستخدم من الإدارة: اسم المستخدم (النواة + بريد الدخول)، النبذة والظهور (جدول الملف المكتشف)، إزالة الصورة، وبريد الدخول
+  const NICK_RE = /^[a-z0-9_]{3,25}$/, EMAIL_RE2 = /^[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9.-]+\.[a-z]{2,}$/;
+  app.patch("/adminapi/users/:id", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    const id = str(req.params.id, 12).toUpperCase();
+    if (!ID_RE.test(id)) return bad(reply, 400, "bad-id");
+    const u = await userRow(id); if (!u) return bad(reply, 404, "not-found");
+    const b = req.body && typeof req.body === "object" ? req.body : {};
+    const changes = {};
+    if (b.nickname !== undefined) {
+      const nick = String(b.nickname ?? "").trim().toLowerCase();
+      if (!NICK_RE.test(nick)) return bad(reply, 400, "invalid-nickname");
+      if (!U.nick) return bad(reply, 501, "no-nickname-column");
+      if ((await pool.query(`SELECT 1 FROM users WHERE lower(${q(U.nick)})=$1 AND id<>$2`, [nick, id])).rowCount) return bad(reply, 409, "nickname-taken");
+      await pool.query(`UPDATE users SET ${q(U.nick)}=$2 WHERE id=$1`, [id, nick]);
+      if (tables.has("login_aliases")) await pool.query("UPDATE login_aliases SET nickname=$2 WHERE user_id=$1", [id, nick]).catch(() => {});
+      changes.nickname = nick;
+    }
+    const dn = pick(userCols, "display_name", "displayname");
+    if (b.displayName !== undefined && dn) { const v = str(b.displayName, 60); await pool.query(`UPDATE users SET ${q(dn)}=$2 WHERE id=$1`, [id, v || null]); changes.displayName = v; }
+    if (b.bio !== undefined) {
+      const v = str(b.bio, 300);
+      if (U.bio) await pool.query(`UPDATE users SET ${q(U.bio)}=$2 WHERE id=$1`, [id, v]);
+      else if (PT?.cols.has("bio")) await pool.query(`UPDATE ${q(PT.table)} SET bio=$2 WHERE ${q(PT.key)}=$1`, [id, v]);
+      else return bad(reply, 501, "no-bio-column");
+      changes.bio = v;
+    }
+    if (b.isPublic !== undefined) {
+      const v = b.isPublic === true;
+      if (userCols.has("is_public")) await pool.query("UPDATE users SET is_public=$2 WHERE id=$1", [id, v]);
+      else if (PT?.cols.has("is_public")) await pool.query(`UPDATE ${q(PT.table)} SET is_public=$2 WHERE ${q(PT.key)}=$1`, [id, v]);
+      else return bad(reply, 501, "no-public-column");
+      changes.isPublic = v;
+    }
+    if (b.avatarUrl === null && U.avatar) { await pool.query(`UPDATE users SET ${q(U.avatar)}=NULL WHERE id=$1`, [id]); changes.avatarUrl = null; }
+    if (b.email !== undefined && tables.has("login_aliases")) {
+      const email = String(b.email ?? "").trim().toLowerCase();
+      if (email === "") { await pool.query("DELETE FROM login_aliases WHERE user_id=$1", [id]); changes.email = null; }
+      else {
+        if (!EMAIL_RE2.test(email)) return bad(reply, 400, "bad-email");
+        const taken = (await pool.query("SELECT user_id FROM login_aliases WHERE alias=$1", [email])).rows[0];
+        if (taken && taken.user_id !== id) return bad(reply, 409, "email-taken");
+        const nick = changes.nickname ?? (U.nick ? String(u[U.nick] ?? "") : "");
+        await pool.query("DELETE FROM login_aliases WHERE user_id=$1", [id]);
+        await pool.query("INSERT INTO login_aliases(alias, user_id, nickname, verified, verified_at) VALUES($1,$2,$3,true,now()) ON CONFLICT (alias) DO UPDATE SET user_id=EXCLUDED.user_id, nickname=EXCLUDED.nickname, verified=true, verified_at=now()", [email, id, nick]);
+        changes.email = email;
+      }
+    }
+    await audit(uid, "user.edit", id, changes);
+    const flags = (await pool.query("SELECT * FROM user_flags WHERE user_id=$1", [id])).rows[0] ?? null;
+    return { ok: true, changes, user: await userOut(await userRow(id), { flags }) };
+  });
+
+  // ---- حذف نهائي (للمديرين فقط، بتأكيد كتابة اسم المستخدم): كل صف يخص المستخدم في كل جداول القاعدة، يُكتشف بأسماء الأعمدة،
+  // ثم صفه في users. أعمدة الملكية تُحذف صفوفها، وأعمدة الإشارة (طرف آخر، منفّذ إجراء) تُفرَّغ حتى لا تُمحى سجلات غيره؛ سجل الإجراءات يبقى.
+  const REF_DELETE = new Set(["user_id", "uid", "owner_id", "author_id", "sender_id", "member_id", "follower_id", "user_a", "user_b", "a_id", "b_id", "from_id", "to_id", "from_user", "to_user", "recipient_id", "buyer_id", "seller_id", "host_id", "creator_id", "contact_id", "friend_id", "other_id", "blocked_id", "muted_id", "requester_id", "subscriber_id"]);
+  const REF_NULL = new Set(["peer_id", "target_id", "reporter_id", "granted_by", "admin_id", "created_by", "closed_by", "assignee_id", "assigned_to", "manager_id", "actor_id", "by_id", "viewer_id", "handled_by", "resolved_by", "updated_by", "hidden_by", "removed_by", "invited_by"]);
+  const PURGE_OVERRIDE = { biz: { owner_id: "null" }, blog_posts: { author_id: "null" }, admin_audit: { "*": "keep" } };
+  async function purgeUser(c, id) {
+    const cols = (await c.query("SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema='public' ORDER BY table_name")).rows;
+    const byTable = new Map();
+    for (const r of cols) { if (!byTable.has(r.table_name)) byTable.set(r.table_name, []); byTable.get(r.table_name).push(r); }
+    const report = {};
+    const note = (k, n) => { if (n) report[k] = (report[k] ?? 0) + n; };
+    for (const [t, list] of byTable) {
+      if (t === "users") continue;
+      const ov = PURGE_OVERRIDE[t] ?? {};
+      if (ov["*"] === "keep") continue;
+      const names = new Set(list.map((x) => x.column_name));
+      for (const col of list) {
+        const n = col.column_name;
+        if (col.data_type === "ARRAY" && /^(members|participants|member_ids|user_ids|ids|admins|viewers|readers|seen_by)$/.test(n)) {
+          note(`${t}.${n}`, (await c.query(`UPDATE ${q(t)} SET ${q(n)} = array_remove(${q(n)}, $1) WHERE $1 = ANY(${q(n)})`, [id])).rowCount); continue;
+        }
+        if (!/^(text|character varying|character)$/.test(col.data_type)) continue;
+        let mode = ov[n] ?? (REF_DELETE.has(n) || /_user_id$|_uid$/.test(n) ? "delete" : REF_NULL.has(n) || /_by$/.test(n) ? "null" : null);
+        // جدول ملف المستخدم أو أي جدول مفتاحه الأساسي هو معرّف المستخدم نفسه
+        if (!mode && n === "id" && !names.has("user_id") && (PT?.table === t || /^(profiles|user_profiles|user_settings|user_prefs|wallets)$/.test(t))) mode = "delete";
+        if (!mode) continue;
+        if (mode === "null" && col.is_nullable !== "YES") mode = "delete";
+        if (mode === "delete") note(`${t}.${n}`, (await c.query(`DELETE FROM ${q(t)} WHERE ${q(n)}=$1`, [id])).rowCount);
+        else note(`${t}.${n}`, (await c.query(`UPDATE ${q(t)} SET ${q(n)}=NULL WHERE ${q(n)}=$1`, [id])).rowCount);
+      }
+    }
+    note("users", (await c.query("DELETE FROM users WHERE id=$1", [id])).rowCount);
+    return report;
+  }
+  app.delete("/adminapi/users/:id", async (req, reply) => {
+    const uid = await guard(req, reply); if (!uid) return;
+    if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
+    const id = str(req.params.id, 12).toUpperCase();
+    if (!ID_RE.test(id)) return bad(reply, 400, "bad-id");
+    if (id === uid) return bad(reply, 400, "self");
+    const u = await userRow(id); if (!u) return bad(reply, 404, "not-found");
+    const nick = U.nick ? String(u[U.nick] ?? "") : "";
+    const confirm = str(req.body?.confirm, 40);
+    if (!confirm || (confirm.toLowerCase() !== nick.toLowerCase() && confirm.toUpperCase() !== id)) return bad(reply, 400, "confirm-mismatch", { expected: nick || id });
+    const c = await pool.connect();
+    let report;
+    try { await c.query("BEGIN"); report = await purgeUser(c, id); await c.query("COMMIT"); }
+    catch (e) { await c.query("ROLLBACK").catch(() => {}); return bad(reply, 409, "delete-failed", { detail: String(e?.message ?? e).slice(0, 200) }); }
+    finally { c.release(); }
+    await audit(uid, "user.delete", id, { nickname: nick, report });
+    return { ok: true, id, nickname: nick, report };
   });
   app.post("/adminapi/users/:id/admin", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;

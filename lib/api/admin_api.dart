@@ -616,6 +616,10 @@ extension AdminApi on ApiClient {
   Future<int> adminCredit(String id, int halalas, {String note = ''}) async => _i((await post('/adminapi/users/$id/credit', {'amount': halalas, 'note': note}))['balance']);
   Future<void> adminSuspend(String id, {required bool suspended, String note = ''}) => post('/adminapi/users/$id/suspend', {'suspended': suspended, 'note': note});
   Future<void> adminGrant(String id, {required bool grant}) => post('/adminapi/users/$id/admin', {'grant': grant});
+  /// تعديل ملف مستخدم من الإدارة: nickname، displayName، bio، isPublic، avatarUrl (null لإزالة الصورة)، email ('' لإزالة بريد الدخول).
+  Future<AdminUser> adminUpdateUser(String id, Map<String, dynamic> fields) async => AdminUser.fromJson(asMap((await patch_('/adminapi/users/$id', fields))['user']));
+  /// حذف نهائي من كل الجداول؛ [confirm] هو اسم المستخدم أو المعرّف كما كتبه المدير للتأكيد. يعيد عدد الصفوف المحذوفة لكل جدول.
+  Future<Map<String, dynamic>> adminDeleteUser(String id, {required String confirm}) async => asMap((await delete('/adminapi/users/$id', body: {'confirm': confirm}))['report']);
   Future<AdminReports> adminReports({bool all = false}) async => AdminReports.fromJson(await get('/adminapi/reports', query: {'status': all ? 'all' : 'open'}));
   Future<void> adminReportAction(String id, {required String action, String note = '', String? targetId}) => post('/adminapi/reports/$id/action', {'action': action, 'note': note, if (targetId != null) 'targetId': targetId});
   Future<List<AdminBiz>> adminBiz() async => asList(await getList('/adminapi/biz')).map(AdminBiz.fromJson).toList();

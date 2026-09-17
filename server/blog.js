@@ -6,7 +6,7 @@
 // المسارات العامة: /blog (القائمة، مع ?kind=update|news|post)، /blog/<slug> (منشور)، /blog/feed.json، /blog/rss.xml، /blog/status.
 // التسجيل في register.txt: await app.register((await import("./blog.js")).default, { pool, auth });
 import crypto from "node:crypto";
-import { BLOG_POSTS } from "./blog_posts.js";
+import { BLOG_POSTS, BLOG_DRAFTS } from "./blog_posts.js";
 
 const SITE = "ناس لايف";
 export const KINDS = {
@@ -176,6 +176,15 @@ export default async function blog(app, opts = {}) {
       for (const p of staticPosts()) {
         await pool.query(`INSERT INTO blog_posts(id, slug, kind, title, summary, body, status, published_at, created_at, updated_at) VALUES($1,$2,$3,$4,$5,$6,'published',$7,$7,$7) ON CONFLICT (slug) DO NOTHING`,
           [crypto.randomUUID(), p.slug, p.kind, p.title, p.summary, p.body, p.publishedAt]);
+      }
+      // مسودات جاهزة للنشر من التطبيق: تُدرج مرة واحدة فقط؛ blog_seeded يمنع عودتها بعد نشرها أو حذفها
+      await pool.query("CREATE TABLE IF NOT EXISTS blog_seeded (slug TEXT PRIMARY KEY, at TIMESTAMPTZ NOT NULL DEFAULT now())");
+      for (const p of Array.isArray(BLOG_DRAFTS) ? BLOG_DRAFTS : []) {
+        if (!p?.slug || !p.title) continue;
+        const first = await pool.query("INSERT INTO blog_seeded(slug) VALUES($1) ON CONFLICT DO NOTHING RETURNING slug", [p.slug]);
+        if (!first.rowCount) continue;
+        await pool.query(`INSERT INTO blog_posts(id, slug, kind, title, summary, body, status, created_at, updated_at) VALUES($1,$2,$3,$4,$5,$6,'draft',now(),now()) ON CONFLICT (slug) DO NOTHING`,
+          [crypto.randomUUID(), p.slug, KINDS[p.kind] ? p.kind : "update", p.title, p.summary ?? "", p.body ?? ""]);
       }
       dbOk = true; dbError = null;
     } catch (e) { dbError = String(e?.message ?? e).slice(0, 300); log("error", { err: e }, "blog: table/seed failed; serving static posts"); }
