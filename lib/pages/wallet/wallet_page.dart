@@ -14,6 +14,7 @@ import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../business/my_bookings_page.dart';
 import '../events/events_page.dart';
+import 'my_offers_page.dart';
 
 final walletProvider = FutureProvider<Wallet>((ref) => ref.watch(apiClientProvider).wallet());
 final walletTxProvider = FutureProvider<List<WalletTx>>((ref) => ref.watch(apiClientProvider).walletTransactions());
@@ -59,6 +60,7 @@ class WalletPage extends ConsumerWidget {
                 _action(Icons.qr_code_scanner_rounded, 'دفع', () => _pay(context, ref)),
                 _action(Icons.confirmation_number_outlined, 'تذاكري', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()))),
                 _action(Icons.receipt_long_outlined, 'حجوزاتي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
+                _action(Icons.local_offer_outlined, 'عروضي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyOffersPage()))),
                 if (wallet.testTopup) _action(Icons.add_rounded, 'شحن', () => _topup(context, ref)),
               ]),
               const SizedBox(height: 18),

@@ -14,6 +14,14 @@ final bizListProvider = FutureProvider.family<List<Biz>, BizQuery>((ref, k) =>
 final bizDetailProvider = FutureProvider.family<Biz, String>((ref, id) => ref.watch(apiClientProvider).businessCircle(id));
 final myBizOrdersProvider = FutureProvider<List<BizOrder>>((ref) => ref.watch(apiClientProvider).myBizOrders());
 
+// ---- العروض
+/// عروض دائرة معيّنة (السارية والقادمة والمنتهية) مع حالة العضوية ومستوى التنبيه.
+final bizOffersProvider = FutureProvider.family<BizOffersPage, String>((ref, id) => ref.watch(apiClientProvider).bizOffers(id));
+/// عروضي من الدوائر المنضم إليها.
+final myOffersProvider = FutureProvider<MyOffers>((ref) => ref.watch(apiClientProvider).myOffers());
+/// عروض الدائرة من جهة المالك مع الإحصاءات والقوالب.
+final manageOffersProvider = FutureProvider.family<ManageOffers, String>((ref, id) => ref.watch(apiClientProvider).manageOffers(id));
+
 /// الدوائر التجارية ضمن حدود الخريطة الحالية.
 final mapBizProvider = FutureProvider<List<Biz>>((ref) => ref.watch(apiClientProvider).businessCircles(bbox: ref.watch(bboxProvider)));
 
@@ -24,6 +32,8 @@ void invalidateBiz(WidgetRef ref, String id) {
   ref.invalidate(bizDetailProvider(id));
   ref.invalidate(myBizOrdersProvider);
   ref.invalidate(bizListProvider);
+  ref.invalidate(bizOffersProvider(id));
+  ref.invalidate(myOffersProvider);
 }
 
 // ---- لوحة صاحب النشاط
@@ -41,4 +51,5 @@ void invalidateBizAll(WidgetRef ref, String id) {
   ref.invalidate(bizTeamProvider(id));
   ref.invalidate(myBusinessesProvider);
   ref.invalidate(mapBizProvider);
+  ref.invalidate(manageOffersProvider(id));
 }

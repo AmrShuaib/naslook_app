@@ -147,7 +147,8 @@ class BizRow extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
                 Flexible(child: Text(b.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15), overflow: TextOverflow.ellipsis)),
-                if (b.following) Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)), child: const Text('متابَع', style: TextStyle(fontSize: 10.5, color: Joy.primary, fontWeight: FontWeight.w600))),
+                if (b.following) Container(margin: const EdgeInsets.only(right: 8), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)), child: const Text('عضو', style: TextStyle(fontSize: 10.5, color: Joy.primary, fontWeight: FontWeight.w600))),
+                if (b.offers > 0) Container(margin: const EdgeInsets.only(right: 6), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(999)), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.local_offer_rounded, size: 11, color: Joy.accent), const SizedBox(width: 3), Text(b.offers == 1 ? 'عرض' : '${b.offers} عروض', style: const TextStyle(fontSize: 10.5, color: Joy.accent, fontWeight: FontWeight.w700))])),
               ]),
               Text('${b.sector.isNotEmpty ? b.sector : b.category.label} · ${b.address.split('،').first}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
               if (b.matchedItem != null && b.matchedItem!.isNotEmpty)

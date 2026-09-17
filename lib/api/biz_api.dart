@@ -20,7 +20,7 @@ extension BizApi on ApiClient {
   Future<void> followBiz(String id) => post('/biz/$id/follow', const {});
   Future<void> unfollowBiz(String id) => delete('/biz/$id/follow', body: const {});
   Future<void> reviewBiz(String id, {required int rating, String text = ''}) => post('/biz/$id/reviews', {'rating': rating, 'text': text});
-  Future<BizOrder> orderBiz(String id, {required String itemId, int qty = 1, DateTime? startAt, DateTime? endAt, int? guests, String note = ''}) async =>
+  Future<BizOrder> orderBiz(String id, {required String itemId, int qty = 1, DateTime? startAt, DateTime? endAt, int? guests, String note = '', String? offerId, double? lat, double? lng}) async =>
       BizOrder.fromJson(await post('/biz/$id/orders', {
         'itemId': itemId,
         'qty': qty,
@@ -28,6 +28,9 @@ extension BizApi on ApiClient {
         if (endAt != null) 'endAt': endAt.toUtc().toIso8601String(),
         if (guests != null) 'guests': guests,
         'note': note,
+        if (offerId != null) 'offerId': offerId,
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
       }));
   Future<List<BizOrder>> myBizOrders() async => asList(await getList('/biz/orders/mine')).map(BizOrder.fromJson).toList();
   Future<void> cancelBizOrder(String id) => post('/biz/orders/$id/cancel', const {});
@@ -56,4 +59,24 @@ extension BizApi on ApiClient {
   Future<void> addBizStaff(String id, String userId, {String role = 'staff'}) => post('/biz/$id/team', {'userId': userId, 'role': role});
   Future<void> removeBizStaff(String id, String userId) => delete('/biz/$id/team/$userId', body: const {});
   Future<void> transferBiz(String id, String userId) => post('/biz/$id/transfer', {'userId': userId});
+
+  // ---- العروض (server/offers.js)
+  /// عروض الدائرة للزائر: السارية والقادمة والمنتهية مع حالة العضوية ومستوى التنبيه.
+  Future<BizOffersPage> bizOffers(String id) async => BizOffersPage.fromJson(await get('/biz/$id/offers'));
+  /// عروضي من الدوائر المنضم إليها: السارية والمنتهية والمستخدمة مع إجمالي التوفير.
+  Future<MyOffers> myOffers() async => MyOffers.fromJson(await get('/offers/mine'));
+  /// إرسال كوبون لمستخدم آخر (ينتقل كاملًا مرة واحدة).
+  Future<void> sendOffer(String id, String offerId, String toUserId) => post('/biz/$id/offers/$offerId/send', {'toUserId': toUserId});
+  /// مستوى تنبيهات العضو في الدائرة: all | near | none.
+  Future<String> bizNotify(String id) async => (await get('/biz/$id/notify'))['notify']?.toString() ?? 'near';
+  Future<String> setBizNotify(String id, String level) async => (await put('/biz/$id/notify', {'notify': level}))['notify']?.toString() ?? level;
+  // لوحة المالك
+  Future<ManageOffers> manageOffers(String id) async => ManageOffers.fromJson(await get('/biz/$id/manage/offers'));
+  Future<BizOffer> createOffer(String id, Map<String, dynamic> body) async => BizOffer.fromJson(await post('/biz/$id/manage/offers', body));
+  Future<BizOffer> updateOffer(String id, String offerId, Map<String, dynamic> body) async => BizOffer.fromJson(await patch_('/biz/$id/manage/offers/$offerId', body));
+  Future<void> deleteOffer(String id, String offerId) => delete('/biz/$id/manage/offers/$offerId', body: const {});
+  Future<BizOffer> duplicateOffer(String id, String offerId, {DateTime? startsAt, DateTime? endsAt}) async => BizOffer.fromJson(await post('/biz/$id/manage/offers/$offerId/duplicate', {
+        if (startsAt != null) 'startsAt': startsAt.toUtc().toIso8601String(),
+        if (endsAt != null) 'endsAt': endsAt.toUtc().toIso8601String(),
+      }));
 }

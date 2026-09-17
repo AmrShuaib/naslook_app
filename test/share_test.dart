@@ -116,8 +116,8 @@ void main() {
     expect(find.byType(BusinessPage), findsOneWidget);
     expect(find.text('برو 92'), findsWidgets);
     expect(find.byKey(const Key('guest-bar')), findsOneWidget);
-    // فعل يتطلب حساباً: المتابعة → 401 → دعوة للدخول
-    await tester.tap(find.text('متابعة'));
+    // فعل يتطلب حساباً: الانضمام → 401 → دعوة للدخول
+    await tester.tap(find.text('انضم'));
     await _settle(tester);
     expect(find.text('هذا يحتاج حساباً'), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 600)); // اكتمال حركة الورقة قبل اللمس

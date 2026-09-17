@@ -114,7 +114,7 @@ void main() {
 
   test('notificationTarget maps kinds to pages', () {
     expect(notificationTarget(_n('biz_order', {'bizId': 'biz-ikea'})), isA<BusinessDashboardPage>().having((p) => p.initialTab, 'orders tab', 1));
-    expect(notificationTarget(_n('biz_review', {'bizId': 'biz-ikea'})), isA<BusinessDashboardPage>().having((p) => p.initialTab, 'reviews tab', 4));
+    expect(notificationTarget(_n('biz_review', {'bizId': 'biz-ikea'})), isA<BusinessDashboardPage>().having((p) => p.initialTab, 'reviews tab', 5));
     expect(notificationTarget(_n('claim_decided', {'bizId': 'biz-vox', 'approved': false})), isA<BusinessPage>());
     expect(notificationTarget(_n('order_status', {'bizId': 'biz-vox'})), isA<MyBookingsPage>());
     expect(notificationTarget(_n('transfer_in')), isA<WalletPage>());

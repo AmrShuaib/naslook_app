@@ -4,10 +4,14 @@ import 'package:latlong2/latlong.dart';
 /// موقع الجهاز عبر المتصفح (يطلب الإذن مرة واحدة). يرجع null إن رُفض أو تعذّر.
 class DeviceLocation {
   static LatLng? last;
+  /// بديل للاختبارات: يُستدعى بدل المتصفح إن وُجد.
+  static Future<LatLng?> Function()? override;
 
-  static Future<LatLng?> current({bool precise = true}) =>
-      // مهلة إجمالية: طلب الإذن أو تحديد الموقع قد لا يرد أبداً على بعض المتصفحات
-      _current(precise: precise).timeout(const Duration(seconds: 14), onTimeout: () => last);
+  /// [timeout] مهلة إجمالية: طلب الإذن أو تحديد الموقع قد لا يرد أبداً على بعض المتصفحات، وعندها يُعاد آخر موقع معروف.
+  static Future<LatLng?> current({bool precise = true, Duration timeout = const Duration(seconds: 14)}) async {
+    if (override != null) return await override!();
+    return _current(precise: precise).timeout(timeout, onTimeout: () => last);
+  }
 
   static Future<LatLng?> _current({required bool precise}) async {
     try {

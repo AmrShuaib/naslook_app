@@ -142,7 +142,7 @@ void main() {
 
   testWidgets('posts tab: publishing an offer posts kind=offer', (tester) async {
     final srv = _Srv();
-    await _pump(tester, srv, const BusinessDashboardPage(id: 'biz-cafe', initialTab: 3));
+    await _pump(tester, srv, const BusinessDashboardPage(id: 'biz-cafe', initialTab: 4));
     await tester.tap(find.text('منشور جديد'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('عرض'));
@@ -156,7 +156,7 @@ void main() {
 
   testWidgets('reviews tab: reply posts text', (tester) async {
     final srv = _Srv();
-    await _pump(tester, srv, const BusinessDashboardPage(id: 'biz-cafe', initialTab: 4));
+    await _pump(tester, srv, const BusinessDashboardPage(id: 'biz-cafe', initialTab: 5));
     expect(find.text('لذيذ'), findsOneWidget);
     await tester.tap(find.text('رد'));
     await tester.pumpAndSettle();
@@ -168,7 +168,7 @@ void main() {
 
   testWidgets('team tab lists owner and staff', (tester) async {
     final srv = _Srv();
-    await _pump(tester, srv, const BusinessDashboardPage(id: 'biz-cafe', initialTab: 5));
+    await _pump(tester, srv, const BusinessDashboardPage(id: 'biz-cafe', initialTab: 6));
     expect(find.text('amr'), findsOneWidget);
     expect(find.text('khalid'), findsOneWidget);
     expect(find.text('نقل ملكية الدائرة'), findsOneWidget);

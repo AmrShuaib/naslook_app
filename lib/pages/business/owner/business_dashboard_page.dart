@@ -13,6 +13,7 @@ import '../business_page.dart' show openBusiness, BizLogo, Stars, dayLabel, shor
 import 'business_editor.dart';
 import 'dashboard_catalog.dart';
 import 'dashboard_orders.dart';
+import 'dashboard_offers.dart';
 import 'dashboard_posts.dart';
 import 'dashboard_reviews_team.dart';
 
@@ -31,7 +32,8 @@ class BusinessDashboardPage extends ConsumerWidget {
       ('نظرة عامة', Icons.insights_outlined),
       ('الطلبات', Icons.receipt_long_outlined),
       (biz?.category.catalogTitle ?? 'الكتالوج', Icons.inventory_2_outlined),
-      ('الأخبار والعروض', Icons.campaign_outlined),
+      ('العروض', Icons.local_offer_outlined),
+      ('التحديثات', Icons.campaign_outlined),
       ('التقييمات', Icons.star_outline_rounded),
       ('الفريق', Icons.groups_outlined),
       ('الملف', Icons.badge_outlined),
@@ -69,6 +71,7 @@ class BusinessDashboardPage extends ConsumerWidget {
                     OverviewTab(biz: biz),
                     OrdersTab(biz: biz),
                     CatalogTab(biz: biz),
+                    OffersTab(biz: biz),
                     PostsTab(biz: biz),
                     ReviewsTab(biz: biz),
                     TeamTab(biz: biz),
@@ -163,7 +166,7 @@ class OverviewTab extends ConsumerWidget {
         Wrap(spacing: 8, runSpacing: 8, children: [
           _Action(icon: Icons.qr_code_scanner_rounded, label: 'تأكيد استلام برمز', onTap: () => checkinByCode(context, ref, biz)),
           if (biz.canManage) _Action(icon: Icons.add_box_outlined, label: 'إضافة ${_itemNoun(biz.category)}', onTap: () => openItemEditor(context, biz)),
-          if (biz.canManage) _Action(icon: Icons.local_offer_outlined, label: 'نشر عرض', onTap: () => openPostEditor(context, biz, kind: 'offer')),
+          if (biz.canManage) _Action(icon: Icons.local_offer_outlined, label: 'عرض جديد', onTap: () => openOfferTemplates(context, biz, ref.read(manageOffersProvider(biz.id)).valueOrNull?.templates ?? const [])),
           if (biz.canManage) _Action(icon: Icons.edit_outlined, label: 'تعديل الملف', onTap: () => openBusinessEditor(context, biz: biz)),
           _Action(icon: Icons.open_in_new_rounded, label: 'الصفحة العامة', onTap: () => openBusiness(context, biz.id)),
         ]),

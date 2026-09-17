@@ -6,6 +6,8 @@ import '../pages/admin/admin_shell.dart';
 import '../pages/business/business_page.dart';
 import '../pages/business/community_page.dart';
 import '../pages/business/my_bookings_page.dart';
+import '../pages/business/offers_page.dart';
+import '../pages/wallet/my_offers_page.dart';
 import '../pages/business/owner/business_dashboard_page.dart';
 import '../pages/events/events_page.dart';
 import '../pages/market/market_page.dart';
@@ -39,13 +41,19 @@ Widget? notificationTarget(AppNotification n) {
     case 'order_cancelled':
       return biz == null ? null : BusinessDashboardPage(id: biz, initialTab: 1);
     case 'biz_review':
-      return biz == null ? null : BusinessDashboardPage(id: biz, initialTab: 4);
+      return biz == null ? null : BusinessDashboardPage(id: biz, initialTab: 5);
     case 'biz_owner':
       return biz == null ? null : BusinessDashboardPage(id: biz);
     case 'claim_decided':
       return biz == null ? null : (n.data['approved'] == true ? BusinessDashboardPage(id: biz) : BusinessPage(id: biz));
     case 'review_reply':
+    case 'biz_update':
       return biz == null ? null : BusinessPage(id: biz);
+    case 'biz_offer':
+      return biz == null ? const MyOffersPage() : CircleOffersPage(bizId: biz);
+    case 'offer_received':
+    case 'offer_loyalty':
+      return const MyOffersPage();
     case 'order_status':
       return const MyBookingsPage();
     case 'ticket_sale':

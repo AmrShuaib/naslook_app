@@ -10,6 +10,7 @@ import '../../api/client.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
+import '../../core/location.dart';
 import '../../core/nav_provider.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
@@ -21,6 +22,7 @@ import '../wallet/wallet_page.dart';
 import '../../api/community_api.dart';
 import 'community_page.dart';
 import 'my_bookings_page.dart';
+import 'offers_page.dart';
 import 'owner/business_dashboard_page.dart';
 import 'owner/dashboard_posts.dart';
 
@@ -83,9 +85,24 @@ String bizErrText(Object e) {
   if (s.contains('in-past')) return 'لا يمكن الحجز في تاريخ مضى';
   if (s.contains('not-cancellable')) return 'انتهت مهلة الإلغاء لهذا الحجز';
   if (s.contains('already-owned')) return 'لهذه الدائرة مالك بالفعل';
+  if (e is ApiException && e.body?['error'] == 'offer-unavailable') return offerUnavailableText(e.body?['reason']?.toString());
   if (e is ApiException) return e.message;
   return s;
 }
+
+/// سبب تعذّر تطبيق عرض اختاره المستخدم صراحة.
+String offerUnavailableText(String? reason) => switch (reason) {
+      'members' => 'هذا العرض للأعضاء؛ انضم إلى الدائرة أولاً',
+      'used' => 'استخدمت هذا العرض من قبل',
+      'used-today' => 'استخدمت هذا العرض اليوم',
+      'first-order' => 'هذا العرض لأول طلب فقط',
+      'min-total' => 'الطلب أقل من الحد الأدنى لهذا العرض',
+      'near' => 'هذا العرض يُفتح وأنت في المكان؛ فعّل الموقع أو اقترب أكثر',
+      'sold-out' => 'نفدت كمية هذا العرض',
+      'item' => 'هذا العرض لا يشمل هذا المنتج',
+      'ended' => 'انتهى هذا العرض',
+      _ => 'هذا العرض غير متاح لطلبك الآن',
+    };
 
 /// يفتح صفحة دائرة تجارية.
 void openBusiness(BuildContext context, String id, {Biz? initial}) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BusinessPage(id: id, initial: initial)));
@@ -127,6 +144,11 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
               // مساحة المجتمع في أعلى الصفحة: أول ما يراه الزائر بعد اسم الدائرة
               CommunityEntryCard(bizId: biz.id, title: biz.title, prominent: true),
               const SizedBox(height: 12),
+              // العروض السارية: بطاقة واحدة مختصرة تفتح شاشة العروض (السارية والقادمة والمنتهية)
+              if (biz.offers > 0 || ref.watch(bizOffersProvider(biz.id)).valueOrNull?.active.isNotEmpty == true) ...[
+                OffersEntryCard(biz: biz, onOpen: () => _openOffers(biz)),
+                const SizedBox(height: 12),
+              ],
               _InfoCard(biz: biz, onMap: () => _onMap(biz)),
               if (biz.highlights.isNotEmpty) ...[
                 const SizedBox(height: 10),
@@ -136,7 +158,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
                 Container(margin: const EdgeInsets.only(top: 10), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(14)), child: const Row(children: [Icon(Icons.pause_circle_outline_rounded, color: Joy.accent), SizedBox(width: 8), Expanded(child: Text('الدائرة موقوفة مؤقتاً ولا تظهر للعامة', style: TextStyle(color: Joy.accent, fontWeight: FontWeight.w600, fontSize: 13)))])),
               if (biz.posts.isNotEmpty) ...[
                 const SizedBox(height: 16),
-                const SectionTitle('الأخبار والعروض'),
+                const SectionTitle('آخر التحديثات'),
                 for (final p in biz.posts) Padding(padding: const EdgeInsets.only(bottom: 10), child: PostCard(post: p, biz: biz)),
               ],
               const SizedBox(height: 16),
@@ -197,16 +219,42 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
     Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
-  Future<void> _follow(Biz b) async {
+  void _openOffers(Biz b) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleOffersPage(bizId: b.id, title: b.title, onJoin: () => _follow(b, joinOnly: true))));
+
+  /// الانضمام ضغطة واحدة: يفتح العروض والخصومات والتحديثات، مع سطر إخبار بمستوى التنبيه الافتراضي (القريبة فقط) وزر تغييره.
+  Future<void> _follow(Biz b, {bool joinOnly = false}) async {
+    if (_busy) return;
+    if (b.following && joinOnly) return;
+    if (b.following) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('مغادرة ${b.title}؟'),
+          content: const Text('تتوقف عروضها وتحديثاتها عن الوصول إلى محفظتك، ويمكنك الانضمام مجدداً في أي وقت.'),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('البقاء')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('مغادرة'))],
+        ),
+      );
+      if (ok != true || !mounted) return;
+    }
     setState(() => _busy = true);
     try {
       if (b.following) {
         await ref.read(apiClientProvider).unfollowBiz(b.id);
+        invalidateBiz(ref, b.id);
+        if (mounted) toast(context, 'غادرت ${b.title}');
       } else {
         await ref.read(apiClientProvider).followBiz(b.id);
+        invalidateBiz(ref, b.id);
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(SnackBar(
+              content: Text('انضممت إلى ${b.title} · تصلك عروضها حين تكون قريباً'),
+              duration: const Duration(seconds: 6),
+              action: SnackBarAction(label: 'تغيير', textColor: Joy.sun, onPressed: () => showNotifyLevelSheet(context, ref, bizId: b.id, current: 'near')),
+            ));
+        }
       }
-      invalidateBiz(ref, b.id);
-      if (mounted) toast(context, b.following ? 'ألغيت متابعة ${b.title}' : 'أصبحت تتابع ${b.title}');
     } catch (e) {
       if (mounted) toast(context, bizErrText(e), error: true);
     } finally {
@@ -253,6 +301,9 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
     var qty = 1;
     final max = it.stock == null ? 20 : it.stock!.clamp(0, 20);
     if (max == 0) return;
+    // السعر الخاص يُطبّق تلقائياً على الخادم؛ نعرضه هنا إن كان متاحاً للمستخدم (عام، أو للأعضاء وهو عضو)
+    final deal = it.deal != null && (!it.deal!.membersOnly || b.following) ? it.deal : null;
+    final unit = deal?.price ?? it.price;
     final ok = await showActionSheet<bool>(
       context,
       body: (ctx, setS) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -261,9 +312,10 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
         const SizedBox(height: 12),
         _stepRow('الكمية', _Stepper(value: qty, min: 1, max: max, onChanged: (v) => setS(() => qty = v))),
         const SizedBox(height: 8),
-        _TotalRow(total: it.price * qty),
+        _TotalRow(total: unit * qty, hint: deal != null ? 'بعرض «${deal.title}» بدل ${money(it.price * qty)}' : null),
+        if (it.deal != null && deal == null) const Padding(padding: EdgeInsets.only(top: 6), child: Text('السعر الخاص للأعضاء؛ انضم إلى الدائرة ليُطبّق على طلبك', style: TextStyle(color: Joy.textMuted, fontSize: 12))),
       ]),
-      action: (ctx, _) => FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.shopping_bag_outlined), label: Text('ادفع ${money(it.price * qty)} من المحفظة')),
+      action: (ctx, _) => FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.shopping_bag_outlined), label: Text('ادفع ${money(unit * qty)} من المحفظة')),
     );
     if (ok != true) return;
     await _order(b, it, qty: qty);
@@ -310,7 +362,9 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
 
   Future<void> _order(Biz b, BizItem it, {required int qty, DateTime? startAt, DateTime? endAt, int? guests}) async {
     try {
-      final o = await ref.read(apiClientProvider).orderBiz(b.id, itemId: it.id, qty: qty, startAt: startAt, endAt: endAt, guests: guests);
+      // موقع الجهاز يُرسل مع الطلب فقط حين تكون للدائرة عروض، ليُفتح عرض «لمن هنا الآن» تلقائياً؛ مهلة قصيرة ثم آخر موقع معروف
+      final loc = b.offers > 0 ? await DeviceLocation.current(precise: true, timeout: const Duration(seconds: 3)) : null;
+      final o = await ref.read(apiClientProvider).orderBiz(b.id, itemId: it.id, qty: qty, startAt: startAt, endAt: endAt, guests: guests, lat: loc?.latitude, lng: loc?.longitude);
       invalidateBiz(ref, b.id);
       ref.invalidate(walletProvider);
       if (!mounted) return;
@@ -423,6 +477,15 @@ void showOrderSheet(BuildContext context, BizOrder o, {Biz? biz, VoidCallback? o
           if (o.endAt != null && !isSlotKind(o.kind)) _kv('إلى', '${dayLabel(o.endAt!)} · ${shortDate(o.endAt!)}'),
           if (o.meta['hall'] != null) _kv('الصالة', o.meta['hall'].toString()),
           _kv('المبلغ', money(o.total)),
+          if (o.offer != null && o.offer!.discount > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(children: [
+                const Icon(Icons.local_offer_rounded, size: 15, color: Joy.success),
+                const SizedBox(width: 4),
+                Expanded(child: Text('وفّرت ${money(o.offer!.discount)} بعرض «${o.offer!.title}»', key: const Key('order-savings'), style: const TextStyle(color: Joy.success, fontWeight: FontWeight.w700, fontSize: 13))),
+              ]),
+            ),
           _kv('الحالة', o.statusLabel),
           const SizedBox(height: 12),
           Text(o.kind == 'product' ? 'أظهر الرمز عند الاستلام من الفرع' : 'أظهر الرمز عند الوصول', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
@@ -485,8 +548,8 @@ class _Header extends StatelessWidget {
                         : Align(
                             alignment: AlignmentDirectional.centerEnd,
                             child: biz.following
-                                ? OutlinedButton.icon(onPressed: onFollow, icon: const Icon(Icons.check_rounded, size: 18, color: Joy.success), label: const Text('متابَع'))
-                                : FilledButton.icon(onPressed: onFollow, icon: const Icon(Icons.add_rounded, size: 18), label: const Text('متابعة')),
+                                ? OutlinedButton.icon(key: const Key('member-btn'), onPressed: onFollow, icon: const Icon(Icons.check_rounded, size: 18, color: Joy.success), label: const Text('عضو'))
+                                : FilledButton.icon(key: const Key('join-btn'), onPressed: onFollow, icon: const Icon(Icons.add_rounded, size: 18), label: const Text('انضم')),
                           ),
                   ),
                 ),
@@ -503,7 +566,7 @@ class _Header extends StatelessWidget {
                   Wrap(spacing: 6, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
                     Container(padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(biz.category.icon, size: 14, color: Joy.primary), const SizedBox(width: 4), Text(biz.sector.isNotEmpty ? biz.sector : biz.category.label, style: const TextStyle(color: Joy.primary, fontSize: 12, fontWeight: FontWeight.w600))])),
                     Stars(rating: biz.rating, count: biz.ratingCount),
-                    Text('${biz.followers} متابع', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+                    Text('${biz.followers} عضو', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
                   ]),
                 ]),
               ),
@@ -594,9 +657,10 @@ class _Price extends StatelessWidget {
   const _Price(this.item);
   @override
   Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-        Text(item.isFree ? 'مجاني' : money(item.price), style: TextStyle(fontWeight: FontWeight.w800, color: item.isFree ? Joy.success : Joy.primary, fontSize: 16)),
+        Text(item.isFree ? 'مجاني' : money(item.payPrice), style: TextStyle(fontWeight: FontWeight.w800, color: item.isFree ? Joy.success : item.deal != null ? Joy.accent : Joy.primary, fontSize: 16)),
         if (item.unitLabel.isNotEmpty && !item.isFree) Padding(padding: const EdgeInsets.only(right: 4), child: Text(item.unitLabel, style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
         if (item.isOffer) Padding(padding: const EdgeInsets.only(right: 6), child: Text(money(item.oldPrice!), style: const TextStyle(color: Joy.textMuted, fontSize: 12, decoration: TextDecoration.lineThrough))),
+        if (item.deal?.membersOnly == true) Padding(padding: const EdgeInsets.only(right: 6), child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1), decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(999)), child: const Text('للأعضاء', style: TextStyle(color: Joy.textMuted, fontSize: 10, fontWeight: FontWeight.w700)))),
       ]);
 }
 
