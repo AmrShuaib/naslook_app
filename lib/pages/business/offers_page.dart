@@ -114,9 +114,12 @@ String offerWhen(BizOffer o) {
   if (o.state == 'ended') return 'انتهى ${dayLabel(e)}';
   final left = e.difference(now);
   if (left.inMinutes < 60) return 'ينتهي خلال ${left.inMinutes.clamp(1, 59)} دقيقة';
-  if (left.inHours < 24) return 'ينتهي بعد ${left.inHours} ${left.inHours <= 2 ? (left.inHours == 1 ? 'ساعة' : 'ساعتين') : (left.inHours <= 10 ? 'ساعات' : 'ساعة')}';
+  if (left.inHours < 24) return 'ينتهي بعد ${hoursLabel(left.inHours)}';
   return 'حتى ${dayLabel(e)} ${shortDate(e)}';
 }
+
+/// «ساعة» أو «ساعتين» أو «3 ساعات» أو «11 ساعة».
+String hoursLabel(int h) => h == 1 ? 'ساعة' : h == 2 ? 'ساعتين' : h <= 10 ? '$h ساعات' : '$h ساعة';
 
 bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
 String _clock(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
@@ -273,7 +276,7 @@ class OffersEntryCard extends ConsumerWidget {
     final first = page?.active.firstOrNull;
     final soon = first?.endsAt ?? biz.offerEndsAt;
     final sub = first != null
-        ? '${first.title} · ${first.valueLabel}'
+        ? [first.title, if (offerWhen(first).isNotEmpty) offerWhen(first)].join(' · ')
         : soon != null
             ? 'أقربها ينتهي ${dayLabel(soon)}'
             : 'اطّلع على العروض';

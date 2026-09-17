@@ -364,7 +364,6 @@ class BizOffer {
     if (kind == 'checkin') parts.add('وأنت في المكان');
     if (kind == 'loyalty') parts.add('كل ${_i(conditions['every'])} طلبات مستلمة');
     if (left != null) parts.add('بقي $left');
-    if (membersOnly && kind != 'loyalty') parts.add('للأعضاء');
     return parts.join(' · ');
   }
   bool get endingSoon => endsAt != null && endsAt!.difference(DateTime.now()).inHours < 2;

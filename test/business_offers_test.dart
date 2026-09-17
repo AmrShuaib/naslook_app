@@ -144,7 +144,7 @@ void main() {
   test('BizOffer labels: value, condition, locked reason and ending soon', () {
     final o = BizOffer.fromJson(_offer('x', value: {'type': 'amount', 'amount': 1000}, conditions: {'firstOrder': true, 'minTotal': 3000}, endsAt: _in90m));
     expect(o.valueLabel, 'خصم 10 ر.س');
-    expect(o.conditionLabel, 'لأول طلب · لطلب من 30 ر.س · للأعضاء');
+    expect(o.conditionLabel, 'لأول طلب · لطلب من 30 ر.س');
     expect(o.endingSoon, isTrue);
     expect(BizOffer.fromJson(_offer('y', eligible: false, lockedReason: 'members')).lockedLabel, contains('انضم'));
     final deal = BizItem.fromJson(_biz()['items'][0] as Map);

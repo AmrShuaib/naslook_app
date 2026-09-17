@@ -142,8 +142,8 @@ class _ManageOfferCard extends ConsumerWidget {
             const SizedBox(width: 6),
             Text(o.kindLabel, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
             if (o.membersOnly) const Text(' · للأعضاء', style: TextStyle(color: Joy.textMuted, fontSize: 11.5)),
-            const Spacer(),
-            Text(offerWhen(o), style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
+            const SizedBox(width: 8),
+            Expanded(child: Text(offerWhen(o), textAlign: TextAlign.end, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5))),
             if (biz.canManage)
               PopupMenuButton<String>(
                 key: Key('offer-menu-${o.id}'),
@@ -367,7 +367,7 @@ class _OfferEditorState extends ConsumerState<_OfferEditor> {
           TextField(key: const Key('offer-every'), controller: every, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'كل كم طلباً مستلماً؟ (2 إلى 50)'))
         else ...[
           Row(children: [
-            Expanded(child: TextField(key: const Key('offer-min'), controller: minTotal, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'حد أدنى للطلب (ر.س)'))),
+            Expanded(child: TextField(key: const Key('offer-min'), controller: minTotal, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'حد أدنى (ر.س)'))),
             const SizedBox(width: 8),
             Expanded(child: TextField(key: const Key('offer-peruser'), controller: perUser, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'مرات لكل عضو'))),
           ]),
@@ -413,7 +413,7 @@ class _OfferEditorState extends ConsumerState<_OfferEditor> {
                 setState(() => startsAt = DateTime(d.year, d.month, d.day, tm?.hour ?? 0, tm?.minute ?? 0));
               },
               icon: const Icon(Icons.play_arrow_outlined, size: 18),
-              label: Text(startsAt == null ? 'يبدأ الآن' : 'يبدأ ${dayLabel(startsAt!)} ${shortDate(startsAt!)}', overflow: TextOverflow.ellipsis),
+              label: Text(startsAt == null ? 'يبدأ الآن' : 'يبدأ ${_when(startsAt!)}', overflow: TextOverflow.ellipsis),
             ),
           ),
           const SizedBox(width: 8),
@@ -428,18 +428,25 @@ class _OfferEditorState extends ConsumerState<_OfferEditor> {
                 setState(() => endsAt = DateTime(d.year, d.month, d.day, tm?.hour ?? 23, tm?.minute ?? 59));
               },
               icon: const Icon(Icons.event_outlined, size: 18),
-              label: Text(endsAt == null ? (kind == 'loyalty' ? 'بلا نهاية' : 'حدّد النهاية') : 'حتى ${dayLabel(endsAt!)} ${shortDate(endsAt!)}', overflow: TextOverflow.ellipsis),
+              label: Text(endsAt == null ? (kind == 'loyalty' ? 'بلا نهاية' : 'حدّد النهاية') : 'ينتهي ${_when(endsAt!)}', overflow: TextOverflow.ellipsis),
             ),
           ),
         ]),
         const SizedBox(height: 14),
-        FilledButton.icon(key: const Key('offer-save'), onPressed: busy ? null : _save, icon: busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.check_rounded), label: Text(o == null ? 'نشر العرض' : 'حفظ')),
+        SizedBox(width: double.infinity, child: FilledButton.icon(key: const Key('offer-save'), onPressed: busy ? null : _save, icon: busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.check_rounded), label: Text(o == null ? 'نشر العرض' : 'حفظ'))),
         if (o == null) const Padding(padding: EdgeInsets.only(top: 6), child: Text('يصل التنبيه لأعضاء دائرتك حسب اختيارهم، ويظهر العرض في محفظتهم.', style: TextStyle(color: Joy.textMuted, fontSize: 11.5))),
       ]),
     );
   }
 
   int _halalas(String s) => ((double.tryParse(s.trim().replaceAll('٫', '.')) ?? 0) * 100).round();
+
+  /// «اليوم 23:59» أو «غداً 09:00» أو «3 أكتوبر».
+  static String _when(DateTime t) {
+    final d = dayLabel(t);
+    if (d == 'اليوم' || d == 'غداً') return '$d ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    return shortDate(t);
+  }
 
   Future<void> _save() async {
     if (title.text.trim().length < 2) {
