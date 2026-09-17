@@ -25,6 +25,15 @@ class _SignedIn extends AppStateNotifier {
 http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
 
 void main() {
+  test('Session parses recoverySent and email from the register response', () {
+    final s = Session.fromJson({'id': 'SA0000009', 'nickname': 'new', 'token': 't', 'recoveryPhrase': 'a b c', 'email': 'new@example.com', 'recoverySent': true});
+    expect(s.recoverySent, isTrue);
+    expect(s.email, 'new@example.com');
+    expect(s.copyWith(clearRecovery: true).recoveryPhrase, isNull);
+    expect(s.copyWith(clearRecovery: true).recoverySent, isTrue);
+    expect(Session.fromJson({'token': 't', 'id': 'SA1', 'nickname': 'x'}).recoverySent, isFalse);
+  });
+
   final calls = <String>[];
   Map<String, dynamic>? lastBody;
   var mailConfigured = true, recoveryEnabled = false;

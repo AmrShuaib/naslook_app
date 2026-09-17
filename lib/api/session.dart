@@ -58,8 +58,12 @@ class Session {
 
   /// عبارة الاسترداد التي يصدرها الخادم مرة واحدة عند التسجيل (لا تُحفظ محلياً).
   final String? recoveryPhrase;
+  /// صحيح حين أرسل الخادم بيانات الاسترداد (العبارة وبيانات الحساب) إلى بريد التسجيل، فلا يُطلب من المستخدم حفظ شيء.
+  final bool recoverySent;
+  /// بريد الدخول الذي سُجّل به الحساب (إن وُجد).
+  final String? email;
 
-  const Session({required this.token, required this.user, this.recoveryPhrase});
+  const Session({required this.token, required this.user, this.recoveryPhrase, this.recoverySent = false, this.email});
 
   bool get isValid => token.isNotEmpty;
 
@@ -79,6 +83,8 @@ class Session {
           .toString(),
       user: SessionUser.fromJson(userJson),
       recoveryPhrase: json['recoveryPhrase']?.toString(),
+      recoverySent: json['recoverySent'] == true,
+      email: json['email']?.toString(),
     );
   }
 
@@ -89,6 +95,8 @@ class Session {
         token: token ?? this.token,
         user: user ?? this.user,
         recoveryPhrase: clearRecovery ? null : recoveryPhrase,
+        recoverySent: recoverySent,
+        email: email,
       );
 }
 

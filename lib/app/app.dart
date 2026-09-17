@@ -133,10 +133,20 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     }
   }
 
+  /// بعد التسجيل: إن أرسل الخادم بيانات الاسترداد إلى البريد نكتفي بسطر إخبار، وإلا (تسجيل بلا بريد أو البريد معطّل)
+  /// نعرض عبارة الاسترداد مرة واحدة ليحفظها المستخدم.
   Future<void> _maybeShowRecovery() async {
-    final phrase = ref.read(appStateProvider).session?.recoveryPhrase;
+    final session = ref.read(appStateProvider).session;
+    final phrase = session?.recoveryPhrase;
     if (phrase == null || _recoveryShown || !mounted) return;
     _recoveryShown = true;
+    if (session!.recoverySent) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(key: const Key('recovery-sent'), content: Text('أهلاً بك! أرسلنا رمز التأكيد وبيانات حسابك إلى ${session.email ?? 'بريدك'}'), duration: const Duration(seconds: 7)));
+      ref.read(appStateProvider.notifier).dismissRecoveryPhrase();
+      return;
+    }
     await showDialog<void>(
       context: context,
       barrierDismissible: false,

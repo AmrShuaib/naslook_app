@@ -109,13 +109,38 @@ export default async function authAlias(app, opts = {}) {
     }
   } catch { /* لا ملف تمهيد */ }
 
-  /// يولّد رمز تأكيد البريد ويرسله ويخزّن تجزئته؛ يرمي خطأً إن فشل الإرسال.
-  async function sendVerifyCode(email) {
+  const APP_URL = "https://naslife.app";
+  const CODE_HINT = `الرمز صالح لمدة ${CODE_TTL_MIN} دقيقة. إن لم تطلبه فتجاهل هذه الرسالة.`;
+  /// رسالة الترحيب عند التسجيل: رمز التأكيد وبيانات الحساب وعبارة الاسترداد (نسخة احتياطية) وكيفية الاستعادة وأول خطوات.
+  function welcomeMail({ code, email, nickname, userId, phrase }) {
+    return mailSvc().template({
+      title: `أهلاً بك في ناس لايف، ${nickname}`,
+      preheader: "رمز تأكيد بريدك وبيانات حسابك؛ احتفظ بهذه الرسالة.",
+      greeting: "أنشأنا حسابك بنجاح. أدخل الرمز التالي في التطبيق لتأكيد بريد الدخول:",
+      code, codeLabel: "رمز التأكيد", codeHint: CODE_HINT,
+      sections: [
+        { heading: "بيانات حسابك", rows: [["المعرّف", userId], ["اسم المستخدم", nickname], ["بريد الدخول", email]] },
+        { heading: "إن نسيت كلمة السر", text: "من شاشة الدخول اضغط «نسيت كلمة السر» وأدخل هذا البريد؛ يصلك رمز خلال دقيقة تعيّن به كلمة سر جديدة. لا حاجة لحفظ أي شيء آخر ما دام هذا البريد بيدك." },
+      ],
+      phrase: phrase ? { label: "عبارة الاسترداد (نسخة احتياطية)", words: phrase, hint: "تفيدك إن تعذّر الوصول إلى بريدك يوماً: من ماي سبيس ← الأمان تُدخلها لتعيين كلمة سر جديدة. احتفظ بهذه الرسالة ولا تشاركها مع أحد." } : null,
+      stepsTitle: "ابدأ الآن",
+      steps: ["فعّل موقعك لترى من حولك ولحظات مدينتك على الخريطة", "انضم إلى الدوائر التي تحبها لتصلك عروضها وتحديثاتها في محفظتك", "اشحن محفظتك لتطلب وتحجز داخل التطبيق برمز واحد"],
+      cta: { label: "افتح ناس لايف", url: APP_URL },
+      reason: `وصلتك هذه الرسالة لأن حساباً باسم «${nickname}» أُنشئ بهذا البريد في ناس لايف.`,
+    });
+  }
+  /// يولّد رمز تأكيد البريد ويرسله (رسالة ترحيب عند التسجيل، أو رسالة رمز فقط) ويخزّن تجزئته؛ يرمي خطأً إن فشل الإرسال.
+  async function sendVerifyCode(email, welcome = null) {
     const svc = mailSvc();
     if (!svc || !mailOn()) throw new Error("mail-not-configured");
     const code = newCode();
-    const t = svc.template({ title: "رمز تأكيد بريدك في ناس لايف", lines: ["أدخل هذا الرمز في التطبيق لتأكيد بريد الدخول.", `الرمز صالح لمدة ${CODE_TTL_MIN} دقيقة. إن لم تطلبه فتجاهل هذه الرسالة.`], code });
-    await svc.send({ to: email, subject: "رمز تأكيد البريد · ناس لايف", ...t, tag: "verify" });
+    if (welcome) {
+      const t = welcomeMail({ code, email, ...welcome });
+      await svc.send({ to: email, subject: "أهلاً بك في ناس لايف · رمز التأكيد وبيانات حسابك", ...t, tag: "welcome" });
+    } else {
+      const t = svc.template({ title: "رمز تأكيد بريدك", greeting: "أدخل هذا الرمز في التطبيق لتأكيد بريد الدخول.", code, codeLabel: "رمز التأكيد", codeHint: CODE_HINT, reason: "وصلتك هذه الرسالة لأن هذا البريد أُضيف بريدَ دخولٍ لحساب في ناس لايف." });
+      await svc.send({ to: email, subject: "رمز تأكيد البريد · ناس لايف", ...t, tag: "verify" });
+    }
     await pool.query("UPDATE login_aliases SET code_hash=$2, code_exp=now() + ($3 || ' minutes')::interval, code_sent_at=now(), attempts=0 WHERE alias=$1", [email, hashCode(email, code), String(CODE_TTL_MIN)]);
     return code;
   }
@@ -123,7 +148,7 @@ export default async function authAlias(app, opts = {}) {
   async function sendResetCode(email, nickname) {
     const svc = mailSvc();
     const code = newCode();
-    const t = svc.template({ title: "رمز استعادة كلمة السر", lines: [`طلب أحدهم إعادة تعيين كلمة السر لحساب «${nickname}» في ناس لايف. أدخل هذا الرمز في التطبيق مع كلمة السر الجديدة.`, `الرمز صالح لمدة ${CODE_TTL_MIN} دقيقة. إن لم تطلبه فتجاهل هذه الرسالة وكلمة سرك تبقى كما هي.`], code });
+    const t = svc.template({ title: "رمز استعادة كلمة السر", greeting: `طُلبت إعادة تعيين كلمة السر لحساب «${nickname}». أدخل هذا الرمز في التطبيق مع كلمة السر الجديدة.`, code, codeLabel: "رمز الاستعادة", codeHint: CODE_HINT, note: "إن لم تطلب ذلك فتجاهل الرسالة؛ كلمة سرك لم تتغير ولا يستطيع أحد تغييرها بدون هذا الرمز.", reason: "وصلتك هذه الرسالة لأن هذا البريد هو بريد الدخول لحساب في ناس لايف." });
     await svc.send({ to: email, subject: "استعادة كلمة السر · ناس لايف", ...t, tag: "reset" });
     await pool.query("UPDATE login_aliases SET reset_hash=$2, reset_exp=now() + ($3 || ' minutes')::interval, reset_sent_at=now(), reset_attempts=0 WHERE alias=$1", [email, hashCode("reset:" + email, code), String(CODE_TTL_MIN)]);
     return code;
@@ -154,10 +179,12 @@ export default async function authAlias(app, opts = {}) {
     const userId = String(body.id ?? body.user?.id ?? "").toUpperCase();
     if (!ID_RE.test(userId)) return forward(reply, r);
     await pool.query("INSERT INTO login_aliases(alias, user_id, nickname) VALUES($1,$2,$3) ON CONFLICT (alias) DO NOTHING", [email, userId, nickname]);
-    if (typeof body.recoveryPhrase === "string" && body.recoveryPhrase.trim()) await saveRecovery(userId, body.recoveryPhrase.trim(), "register");
-    let codeSent = false;
-    if (mailOn()) { try { await sendVerifyCode(email); codeSent = true; } catch { /* يُعاد الإرسال من ماي سبيس */ } }
-    return reply.code(r.statusCode).send({ ...body, email, verified: false, codeSent });
+    const phrase = typeof body.recoveryPhrase === "string" && body.recoveryPhrase.trim() ? body.recoveryPhrase.trim() : null;
+    if (phrase) await saveRecovery(userId, phrase, "register");
+    // رسالة الترحيب تحمل رمز التأكيد وبيانات الحساب وعبارة الاسترداد، فلا يُطلب من المستخدم حفظ شيء
+    let codeSent = false, recoverySent = false;
+    if (mailOn()) { try { await sendVerifyCode(email, { nickname, userId, phrase }); codeSent = true; recoverySent = !!phrase; } catch { /* يُعاد الإرسال من ماي سبيس */ } }
+    return reply.code(r.statusCode).send({ ...body, email, verified: false, codeSent, recoverySent });
   });
 
   // ================= الدخول بالبريد أو النك نيم =================
@@ -189,7 +216,7 @@ export default async function authAlias(app, opts = {}) {
       try {
         if (await recoveryOf(row.user_id)) await sendResetCode(email, nickname);
         else {
-          const t = mailSvc().template({ title: "تعذّر إعادة تعيين كلمة السر", lines: [`طُلبت استعادة كلمة السر لحساب «${nickname}»، لكن الاستعادة بالبريد غير مفعّلة لهذا الحساب بعد.`, "ادخل بكلمة سرك الحالية ثم فعّلها من ماي سبيس ← «الاستعادة بالبريد» بإدخال عبارة الاسترداد، أو استخدم عبارة الاسترداد مباشرة."] });
+          const t = mailSvc().template({ title: "تعذّر إعادة تعيين كلمة السر", greeting: `طُلبت استعادة كلمة السر لحساب «${nickname}»، لكن الاستعادة بالبريد غير مفعّلة لهذا الحساب بعد.`, stepsTitle: "لتفعيلها", steps: ["ادخل بكلمة سرك الحالية أو بعبارة الاسترداد", "من ماي سبيس ← الأمان فعّل الاستعادة بالبريد بعبارتك وكلمة سرك", "بعدها يصلك رمز على هذا البريد كلما احتجت"], note: "إن لم تطلب ذلك فتجاهل الرسالة؛ كلمة سرك لم تتغير.", reason: "وصلتك هذه الرسالة لأن هذا البريد هو بريد الدخول لحساب في ناس لايف." });
           await mailSvc().send({ to: email, subject: "استعادة كلمة السر · ناس لايف", ...t, tag: "reset" });
           await pool.query("UPDATE login_aliases SET reset_sent_at=now() WHERE alias=$1", [email]);
         }
