@@ -205,6 +205,7 @@ export default async function business(app, opts) {
     return (await isAdmin(uid)) ? "admin" : null;
   }
   const canManage = (r) => r === "owner" || r === "manager" || r === "admin";
+  globalThis.naslifeBizRole = async (uid, b) => roleFor(uid, typeof b === "string" ? await loadBiz(b, { includeInactive: true }) : b);
   const canOperate = (r) => canManage(r) || r === "staff";
   const canOwn = (r) => r === "owner" || r === "admin";
   async function loadBiz(id, { includeInactive = false } = {}) {
@@ -304,7 +305,7 @@ export default async function business(app, opts) {
   const orderOut = (o, extra = {}) => ({
     id: o.id, bizId: o.biz_id, bizName: o.biz_name ?? null, bizNameAr: o.biz_name_ar ?? null, category: o.category ?? null, itemId: o.item_id, title: o.item_title ?? null, kind: o.kind, qty: o.qty,
     startAt: o.start_at, endAt: o.end_at, units: o.units, total: Number(o.total), status: o.status, code: o.code, note: o.note, meta: o.meta ?? {}, createdAt: o.created_at, updatedAt: o.updated_at,
-    cancellable: cancellable(o), ...extra,
+    cancellable: cancellable(o), offer: o.meta?.offer ?? null, ...extra,
   });
   const postOut = (p) => ({ id: p.id, bizId: p.biz_id, kind: p.kind, title: p.title, body: p.body, imageUrl: p.image_url, startsAt: p.starts_at, endsAt: p.ends_at, active: p.active, createdAt: p.created_at });
   // الإلغاء من العميل: المنتجات خلال 24 ساعة من الشراء، التذاكر قبل ساعتين من العرض، الغرف والسيارات قبل 24 ساعة من البداية
@@ -351,7 +352,8 @@ export default async function business(app, opts) {
       WHERE ($11::float8 <= 0 OR x.rating >= $11::float8)
       ORDER BY ${order} LIMIT 200`,
       [uid, cat, bb?.minLng ?? null, bb?.minLat ?? null, bb?.maxLng ?? null, bb?.maxLat ?? null, q ? likeOf(q) : "", !!mine, geo ? lat : null, geo ? lng : null, minRating]);
-    const list = r.rows.map((b) => bizOut(b));
+    let oc = new Map(); try { oc = (await globalThis.naslifeOffersCounts?.(r.rows.map((b) => b.id))) ?? oc; } catch { /* ignore */ }
+    const list = r.rows.map((b) => bizOut(b, oc.get(b.id) ?? { offers: 0, offerEndsAt: null }));
     return openOnly ? list.filter((b) => b.openNow === true) : list;
   });
 
@@ -489,11 +491,13 @@ export default async function business(app, opts) {
       for (const r of (await pool.query("SELECT item_id, count(*)::int AS n FROM (SELECT item_id FROM biz_community_posts WHERE biz_id=$1 AND hidden=false AND item_id IS NOT NULL UNION ALL SELECT r.item_id FROM biz_community_replies r JOIN biz_community_posts p ON p.id=r.post_id WHERE p.biz_id=$1 AND r.hidden=false AND r.item_id IS NOT NULL) x GROUP BY item_id", [b.id])).rows) d.set(r.item_id, r.n);
       for (const it of items) it.discussions = d.get(it.id) ?? 0;
     } catch { for (const it of items) it.discussions = 0; }
+    let offersInfo = { offers: 0, offerEndsAt: null };
+    try { await globalThis.naslifeOffersAnnotate?.(b.id, items, uid); offersInfo = (await globalThis.naslifeOffersCounts?.([b.id]))?.get(b.id) ?? offersInfo; } catch { /* ignore */ }
     const reviews = await Promise.all((await pool.query("SELECT * FROM biz_reviews WHERE biz_id=$1 ORDER BY created_at DESC LIMIT 50", [b.id])).rows.map(async (x) => ({
       user: await person(x.user_id), rating: x.rating, text: x.text, createdAt: x.created_at, mine: x.user_id === uid, reply: x.reply, replyAt: x.reply_at })));
     const posts = (await pool.query(`SELECT * FROM biz_posts WHERE biz_id=$1${staffView ? "" : " AND active AND (starts_at IS NULL OR starts_at <= now()) AND (ends_at IS NULL OR ends_at >= now())"} ORDER BY created_at DESC LIMIT 30`, [b.id])).rows.map(postOut);
     const myOrders = uid ? (await pool.query(`${ORDER_JOIN} WHERE o.biz_id=$1 AND o.user_id=$2 ORDER BY o.created_at DESC LIMIT 50`, [b.id, uid])).rows.map((o) => orderOut(o)) : [];
-    return bizOut(b, { myRole: role, items, reviews, posts, myOrders });
+    return bizOut(b, { myRole: role, items, reviews, posts, myOrders, ...offersInfo });
   });
 
   app.post("/biz/:id/follow", async (req, reply) => {
@@ -617,7 +621,9 @@ export default async function business(app, opts) {
     await pool.query("INSERT INTO biz_posts(id,biz_id,kind,title,body,image_url,starts_at,ends_at,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
       [id, g.b.id, f.kind, f.title, f.body, f.image_url ?? null, f.starts_at ?? null, f.ends_at ?? null, f.active ?? true]);
     await pool.query("UPDATE biz SET updated_at=now() WHERE id=$1", [g.b.id]);
-    return postOut((await pool.query("SELECT * FROM biz_posts WHERE id=$1", [id])).rows[0]);
+    const created = (await pool.query("SELECT * FROM biz_posts WHERE id=$1", [id])).rows[0];
+    if (created.active !== false && (!created.starts_at || new Date(created.starts_at) <= new Date())) { try { await globalThis.naslifeOffersOnPost?.(g.b, created); } catch { /* ignore */ } }
+    return postOut(created);
   });
   app.patch("/biz/:id/posts/:postId", async (req, reply) => {
     const g = await guard(req, reply, "manage"); if (!g) return;
@@ -726,6 +732,12 @@ export default async function business(app, opts) {
           meta = it.kind === "room" ? { rooms, guests: Math.max(1, Math.min(20, Math.round(Number(body.guests) || 1))) } : { pickup: b.address };
         }
         const finalQty = it.kind === "room" ? Math.min(qty, 5) : it.kind === "car" || it.kind === "clinic" ? 1 : qty;
+        // العروض (server/offers.js): أفضل عرض متاح يُطبَّق تلقائياً، أو عرض بعينه بـ offerId، أو بلا عرض بـ offerId: "none"
+        const wantOffer = body.offerId === "none" ? null : UUID_RE.test(body.offerId ?? "") ? body.offerId : undefined;
+        if (wantOffer !== null && total > 0 && globalThis.naslifeOffersApply) {
+          const applied = await globalThis.naslifeOffersApply(c, { biz: b, uid, item: it, qty: finalQty, total, offerId: wantOffer, lat: body.lat, lng: body.lng, orderId: id });
+          if (applied) { meta.offer = { id: applied.id, kind: applied.kind, title: applied.title, discount: applied.discount, before: total }; total = Math.max(0, total - applied.discount); }
+        }
         const code = "NAS-" + crypto.randomBytes(4).toString("hex").toUpperCase();
         const label = `${b.name_ar || b.name} · ${it.title}`;
         if (total > 0) {
@@ -742,6 +754,7 @@ export default async function business(app, opts) {
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       if (["sold-out", "unavailable"].includes(err.code)) return bad(reply, 409, err.code, { left: err.left ?? 0 });
       if (["bad-slot", "bad-date", "bad-range", "in-past", "too-many", "not-orderable"].includes(err.code)) return bad(reply, 400, err.code);
+      if (err.code === "offer-unavailable") return bad(reply, 409, "offer-unavailable", { reason: err.reason ?? null });
       throw err;
     }
     await notify(await bizTeam(out.b), { kind: "biz_order", title: `${orderNoun(out.it.kind)} جديد · ${bizName(out.b)}`,
@@ -763,6 +776,7 @@ export default async function business(app, opts) {
       if (!o || (byUser && o.user_id !== byUser)) throw fail("not-found");
       if (force ? o.status !== "confirmed" : !cancellable(o)) throw fail("not-cancellable");
       await c.query("UPDATE biz_orders SET status='cancelled', updated_at=now() WHERE id=$1", [o.id]);
+      if (globalThis.naslifeOffersRelease) await globalThis.naslifeOffersRelease(c, o.id);
       if (o.kind === "product" && o.stock != null) await c.query("UPDATE biz_items SET stock=stock+$2 WHERE id=$1", [o.item_id, o.qty]);
       const label = `${o.name_ar || o.name} · ${o.item_title}`;
       if (Number(o.total) > 0) {
@@ -812,6 +826,7 @@ export default async function business(app, opts) {
       return bad(reply, exists ? 409 : 404, exists ? `already-${exists.status}` : "code-invalid");
     }
     const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [r.rows[0].id])).rows[0];
+    try { await globalThis.naslifeOffersOnRedeem?.(g.b, o.user_id); } catch { /* المكافأة لا تُفشل الاستلام */ }
     await notify(o.user_id, { kind: "order_status", title: o.kind === "product" ? "تم استلام طلبك" : "تم تأكيد حجزك", body: `${o.biz_name_ar || o.biz_name}: ${o.item_title} (${o.code})`, data: { bizId: o.biz_id, orderId: o.id, status: "used" }, exclude: g.uid });
     return orderOut(o, { customer: await person(o.user_id) });
   });

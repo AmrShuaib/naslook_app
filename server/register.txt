@@ -20,3 +20,4 @@ await app.register((await import("./vessel_mod.js")).default, { pool, auth });
 await app.register((await import("./team.js")).default, { pool, auth });
 await app.register((await import("./tasks.js")).default, { pool, auth });
 await app.register((await import("./inbox.js")).default, { pool, auth });
+await app.register((await import("./offers.js")).default, { pool, auth });
