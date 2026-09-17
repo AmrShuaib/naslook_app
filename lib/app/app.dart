@@ -140,10 +140,35 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final phrase = session?.recoveryPhrase;
     if (phrase == null || _recoveryShown || !mounted) return;
     _recoveryShown = true;
-    if (session!.recoverySent) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(key: const Key('recovery-sent'), content: Text('أهلاً بك! أرسلنا رمز التأكيد وبيانات حسابك إلى ${session.email ?? 'بريدك'}'), duration: const Duration(seconds: 7)));
+    final me = session!.user;
+    // بطاقة الحساب: من أنت الآن بوضوح (الاسم والمعرّف) حتى لا يلتبس الحساب الجديد بحساب آخر على الجهاز نفسه
+    final who = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(14)),
+      child: Row(children: [
+        const Icon(Icons.verified_user_rounded, color: Joy.primary),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(me.nickname, key: const Key('welcome-nick'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: Joy.primary)),
+          Text('المعرّف ${me.id}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+        ])),
+      ]),
+    );
+    if (session.recoverySent) {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          key: const Key('welcome-dialog'),
+          title: const Text('تم إنشاء حسابك'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            who,
+            const SizedBox(height: 12),
+            Text('أرسلنا رمز تأكيد البريد وبيانات حسابك وعبارة الاسترداد إلى ${session.email ?? 'بريدك'}. أكّد بريدك من ماي سبيس متى شئت.', style: const TextStyle(height: 1.6)),
+          ]),
+          actions: [FilledButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('ابدأ'))],
+        ),
+      );
       ref.read(appStateProvider.notifier).dismissRecoveryPhrase();
       return;
     }
@@ -156,6 +181,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            who,
+            const SizedBox(height: 12),
             const Text('نسخة احتياطية لاستعادة حسابك إن نسيت كلمة السر ولم تصلك رسائل البريد. لن تُعرض مرة أخرى.'),
             const SizedBox(height: 12),
             SelectableText(phrase, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),

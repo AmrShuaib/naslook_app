@@ -40,16 +40,27 @@ class ApiClient {
   final http.Client _http;
   final Duration timeout;
 
-  String? _token;
+  /// رمز الجلسة في صندوق مشترك بين العميل الأصلي ونُسخه (ApiClient.view) حتى يظل الرمز واحداً مهما تعدّدت النسخ.
+  final _TokenBox _box;
+  String? get _token => _box.value;
 
   /// يُستدعى عند رفض الخادم طلباً لزائر بلا جلسة (401)؛ تعيّنه واجهة الزائر لعرض الدخول.
   static void Function()? onUnauthorized;
 
   ApiClient({String? baseUrl, http.Client? httpClient, this.timeout = const Duration(seconds: 20)})
       : baseUrl = _normalize(baseUrl ?? resolveBaseUrl()),
-        _http = httpClient ?? http.Client() {
+        _http = httpClient ?? http.Client(),
+        _box = _TokenBox() {
     _currentBase = this.baseUrl;
   }
+
+  /// نسخة تشارك [base] الاتصال ورمز الجلسة نفسيهما لكنها كائن مختلف: تُنشأ مع كل تبديل حساب حتى تُعاد بناء مزوّدات
+  /// البيانات التي تعتمد عليها (Riverpod لا يعيد البناء حين تبقى القيمة الكائن نفسه).
+  ApiClient.view(ApiClient base)
+      : baseUrl = base.baseUrl,
+        _http = base._http,
+        timeout = base.timeout,
+        _box = base._box;
 
   static String? _currentBase;
   /// أصل الخادم الذي تُطلب منه الوسائط (آخر عميل أُنشئ، وإلا الأصل المستنتج)
@@ -71,8 +82,8 @@ class ApiClient {
   static String _normalize(String url) =>
       url.endsWith('/') ? url.substring(0, url.length - 1) : url;
 
-  String? get token => _token;
-  set token(String? value) => _token = (value == null || value.isEmpty) ? null : value;
+  String? get token => _box.value;
+  set token(String? value) => _box.value = (value == null || value.isEmpty) ? null : value;
 
   Uri _uri(String path, [Map<String, String>? query]) {
     final u = Uri.parse('$baseUrl$path');
@@ -376,4 +387,8 @@ String thumbUrl(String url, {String? base}) {
   final m = u == null ? null : _chatMediaPath.firstMatch(u.path);
   if (m == null) return full;
   return '${base ?? ApiClient.mediaBase}/chat/thumb/${m.group(1)}';
+}
+
+class _TokenBox {
+  String? value;
 }

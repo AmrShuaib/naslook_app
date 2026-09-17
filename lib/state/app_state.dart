@@ -40,17 +40,25 @@ class AppState {
   }
 }
 
-final apiClientProvider = Provider<ApiClient>((ref) {
+/// عميل HTTP الوحيد للتطبيق (يحمل رمز الجلسة الحالي).
+final rawApiClientProvider = Provider<ApiClient>((ref) {
   final client = ApiClient();
   ref.onDispose(client.close);
   return client;
+});
+
+/// العميل الذي تعتمد عليه مزوّدات البيانات كلها. يُعاد بناؤه كلما تغيّر صاحب الجلسة (دخول، تسجيل، خروج، أو تبديل من
+/// تبويب آخر)، فتُبنى كل المزوّدات من جديد ولا تبقى بيانات حساب سابق (الملف، الأصدقاء، المحفظة…) ظاهرة تحت اسم الحساب الجديد.
+final apiClientProvider = Provider<ApiClient>((ref) {
+  ref.watch(appStateProvider.select((s) => s.session?.user.id));
+  return ApiClient.view(ref.watch(rawApiClientProvider));
 });
 
 final sessionStoreProvider = Provider<SessionStore>((_) => SessionStore());
 
 final appStateProvider = StateNotifierProvider<AppStateNotifier, AppState>((ref) {
   return AppStateNotifier(
-    ref.watch(apiClientProvider),
+    ref.watch(rawApiClientProvider),
     ref.watch(sessionStoreProvider),
   )..bootstrap();
 });
@@ -63,6 +71,8 @@ class AppStateNotifier extends StateNotifier<AppState> {
 
   /// استعادة الجلسة المحفوظة عند بدء التطبيق والتحقق منها مع الخادم.
   Future<void> bootstrap() async {
+    // على الويب: إن بدّل تبويب آخر الحساب أو خرج، يتبعه هذا التبويب فوراً بدل أن يظل على جلسة قديمة
+    _store.watch(() => unawaited(syncFromStore()));
     Session? saved;
     try {
       saved = await _store.load();
@@ -131,6 +141,28 @@ class AppStateNotifier extends StateNotifier<AppState> {
         clearSession: true,
       );
       return false;
+    }
+  }
+
+  /// يطابق الجلسة الحالية مع المحفوظة (كتبها تبويب آخر): خروج هناك = خروج هنا، ودخول بحساب آخر هناك = تبديل هنا.
+  Future<void> syncFromStore() async {
+    Session? saved;
+    try {
+      saved = await _store.load();
+    } catch (_) {
+      return;
+    }
+    final current = state.session;
+    if (saved == null) {
+      if (current != null) {
+        _api.token = null;
+        state = const AppState(status: AuthStatus.signedOut);
+      }
+      return;
+    }
+    if (current == null || saved.token != current.token || saved.user.id != current.user.id) {
+      _api.token = saved.token;
+      state = AppState(status: AuthStatus.signedIn, session: saved);
     }
   }
 

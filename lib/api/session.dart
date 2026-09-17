@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'session_watch_stub.dart' if (dart.library.js_interop) 'session_watch_web.dart';
+
 /// بيانات المستخدم كما يرجعها الخادم بعد الدخول بالنك نيم + الرقم السري.
 class SessionUser {
   final String id;
@@ -103,6 +105,9 @@ class Session {
 /// تخزين الجلسة محلياً (localStorage على الويب عبر shared_preferences).
 class SessionStore {
   static const _key = 'naslife.session.v2';
+
+  /// ينادي [onChange] حين يغيّر تبويب آخر في المتصفح نفسه الجلسة المحفوظة (دخول بحساب آخر أو خروج).
+  void watch(void Function() onChange) => watchSessionStorage(_key, onChange);
 
   Future<Session?> load() async {
     SharedPreferences? prefs;
