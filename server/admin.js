@@ -48,6 +48,11 @@ export default async function admin(app, opts) {
     const key = pick(c, "user_id", "id", "uid"); if (!key) continue;
     PT = { table: t, key, cols: c }; ptScore = score;
   }
+  // كتابة حقل في جدول الملف: الحسابات الجديدة قد لا تملك صفاً بعد، فيُنشأ عند أول تعديل من الإدارة
+  const setProfileField = async (id, col, v) => {
+    if ((await pool.query(`UPDATE ${q(PT.table)} SET ${q(col)}=$2 WHERE ${q(PT.key)}=$1`, [id, v])).rowCount) return true;
+    return pool.query(`INSERT INTO ${q(PT.table)} (${q(PT.key)}, ${q(col)}) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [id, v]).then((r) => r.rowCount > 0).catch(() => false);
+  };
   const U = {
     ok: tables.has("users") && userCols.has("id"),
     nick: pick(userCols, "nickname", "name", "handle", "username"), avatar: pick(userCols, "avatar_url", "avatarurl", "avatar"),
@@ -352,14 +357,14 @@ export default async function admin(app, opts) {
     if (b.bio !== undefined) {
       const v = str(b.bio, 300);
       if (U.bio) await pool.query(`UPDATE users SET ${q(U.bio)}=$2 WHERE id=$1`, [id, v]);
-      else if (PT?.cols.has("bio")) await pool.query(`UPDATE ${q(PT.table)} SET bio=$2 WHERE ${q(PT.key)}=$1`, [id, v]);
+      else if (PT?.cols.has("bio")) { if (!(await setProfileField(id, "bio", v))) return bad(reply, 409, "no-profile-row"); }
       else return bad(reply, 501, "no-bio-column");
       changes.bio = v;
     }
     if (b.isPublic !== undefined) {
       const v = b.isPublic === true;
       if (userCols.has("is_public")) await pool.query("UPDATE users SET is_public=$2 WHERE id=$1", [id, v]);
-      else if (PT?.cols.has("is_public")) await pool.query(`UPDATE ${q(PT.table)} SET is_public=$2 WHERE ${q(PT.key)}=$1`, [id, v]);
+      else if (PT?.cols.has("is_public")) { if (!(await setProfileField(id, "is_public", v))) return bad(reply, 409, "no-profile-row"); }
       else return bad(reply, 501, "no-public-column");
       changes.isPublic = v;
     }

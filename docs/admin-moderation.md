@@ -31,9 +31,9 @@
 
 ## تعديل الملف من الإدارة
 
-`PATCH /adminapi/users/:id` بأي من: `nickname` (يحدّث النواة وبريد الدخول)، `displayName`، `bio`، `isPublic`، `avatarUrl: null` لإزالة الصورة، `email` (يربط بريد دخول مؤكَّداً، أو `""` لإزالته). النبذة والظهور تُكتب في جدول ملف النواة الذي يُكتشف عند الإقلاع بأعمدته (`bio`، `skills`، `is_public`).
+`PATCH /adminapi/users/:id` بأي من: `nickname` (يحدّث النواة وبريد الدخول)، `displayName`، `bio`، `isPublic`، `avatarUrl: null` لإزالة الصورة، `email` (يربط بريد دخول مؤكَّداً، أو `""` لإزالته). النبذة والظهور تُكتب في جدول ملف النواة الذي يُكتشف عند الإقلاع بأعمدته (`bio`، `skills`، `is_public`)؛ الحساب المسجَّل حديثاً الذي لا يملك صفاً في هذا الجدول بعد يُنشأ صفه عند أول تعديل.
 
-الأخطاء: `invalid-nickname`، `nickname-taken`، `email-taken`، `no-bio-column`/`no-public-column` (الخادم بلا هذا الحقل).
+الأخطاء: `invalid-nickname`، `nickname-taken`، `email-taken`، `no-bio-column`/`no-public-column` (الخادم بلا هذا الحقل)، `no-profile-row` (تعذّر إنشاء صف الملف).
 
 ## تدوينات جاهزة للنشر
 
