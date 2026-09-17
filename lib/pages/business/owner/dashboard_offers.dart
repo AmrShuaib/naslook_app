@@ -403,8 +403,9 @@ class _OfferEditorState extends ConsumerState<_OfferEditor> {
         const SizedBox(height: 6),
         Row(children: [
           Expanded(
-            child: OutlinedButton.icon(
+            child: OutlinedButton(
               key: const Key('offer-start'),
+              style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
               onPressed: () async {
                 final now = DateTime.now();
                 final d = await showDatePicker(context: context, firstDate: DateTime(now.year, now.month, now.day), lastDate: now.add(const Duration(days: 365)), initialDate: startsAt ?? now, helpText: 'يبدأ العرض');
@@ -412,14 +413,14 @@ class _OfferEditorState extends ConsumerState<_OfferEditor> {
                 final tm = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(startsAt ?? now));
                 setState(() => startsAt = DateTime(d.year, d.month, d.day, tm?.hour ?? 0, tm?.minute ?? 0));
               },
-              icon: const Icon(Icons.play_arrow_outlined, size: 18),
-              label: Text(startsAt == null ? 'يبدأ الآن' : 'يبدأ ${_when(startsAt!)}', overflow: TextOverflow.ellipsis),
+              child: Text(startsAt == null ? 'يبدأ الآن' : 'يبدأ ${_when(startsAt!)}', maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: OutlinedButton.icon(
+            child: OutlinedButton(
               key: const Key('offer-end'),
+              style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
               onPressed: () async {
                 final now = DateTime.now();
                 final d = await showDatePicker(context: context, firstDate: DateTime(now.year, now.month, now.day), lastDate: now.add(const Duration(days: 90)), initialDate: endsAt ?? now.add(const Duration(days: 7)), helpText: 'ينتهي العرض');
@@ -427,8 +428,7 @@ class _OfferEditorState extends ConsumerState<_OfferEditor> {
                 final tm = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(endsAt ?? DateTime(now.year, now.month, now.day, 23, 59)));
                 setState(() => endsAt = DateTime(d.year, d.month, d.day, tm?.hour ?? 23, tm?.minute ?? 59));
               },
-              icon: const Icon(Icons.event_outlined, size: 18),
-              label: Text(endsAt == null ? (kind == 'loyalty' ? 'بلا نهاية' : 'حدّد النهاية') : 'ينتهي ${_when(endsAt!)}', overflow: TextOverflow.ellipsis),
+              child: Text(endsAt == null ? (kind == 'loyalty' ? 'بلا نهاية' : 'حدّد النهاية') : 'ينتهي ${_when(endsAt!)}', maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
           ),
         ]),
