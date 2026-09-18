@@ -95,5 +95,14 @@ export default async function share(app, opts) {
     if (!isPublic) return serve(req, reply, { title, description: `حساب ${u.nickname} على ناس لايف`, url, type: "profile" });
     return serve(req, reply, { title, description: bio.slice(0, 200) || `تواصل مع ${u.nickname} على ناس لايف`, url, type: "profile", image: absImage(req, u.avatar) });
   });
+  // رابط عرض في السوق: /l/<معرّف العرض> مع معاينة العنوان والسعر والصورة
+  app.get("/l/:id", async (req, reply) => {
+    const id = String(req.params.id ?? "");
+    let l = null;
+    if (/^[0-9a-f-]{36}$/i.test(id)) { try { l = (await pool.query("SELECT title, description, price, image_url, status FROM market_listings WHERE id=$1", [id])).rows[0] ?? null; } catch { l = null; } }
+    const url = `${publicOrigin(req)}/l/${esc(id)}`;
+    const price = l ? (Number(l.price) / 100).toLocaleString("ar-SA") + " ر.س" : "";
+    return page(reply, { title: l && l.status === "active" ? `${l.title} · ${price}` : "عرض في سوق ناس لايف", description: l && l.status === "active" ? String(l.description ?? "").slice(0, 160) || "اطلبه من ناس لايف" : "افتح ناس لايف لرؤية العرض", image: l?.image_url ?? null, url });
+  });
   app.get("/share/status", async () => ({ ok: true, webappDir: WEBAPP, avatarColumn: avatarCol, privacy: !!privacy }));
 }
