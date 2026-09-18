@@ -408,14 +408,15 @@ class AdminOverview {
 
 class AdminUser {
   final String id, nickname, bio, flagNote;
-  final String? avatarUrl;
+  final String? avatarUrl, email;
   final DateTime? createdAt, lastSeen;
-  final bool deleted, isAdmin, suspended;
+  final bool deleted, isAdmin, suspended, emailVerified;
   final int? balance;
-  const AdminUser({required this.id, this.nickname = '', this.avatarUrl, this.bio = '', this.flagNote = '', this.createdAt, this.lastSeen, this.deleted = false, this.isAdmin = false, this.suspended = false, this.balance});
+  const AdminUser({required this.id, this.nickname = '', this.avatarUrl, this.bio = '', this.flagNote = '', this.createdAt, this.lastSeen, this.deleted = false, this.isAdmin = false, this.suspended = false, this.balance, this.email, this.emailVerified = false});
   factory AdminUser.fromJson(Map m) => AdminUser(
         id: m['id'].toString(), nickname: m['nickname']?.toString() ?? '', avatarUrl: m['avatarUrl']?.toString(), bio: m['bio']?.toString() ?? '', flagNote: m['flagNote']?.toString() ?? '',
         createdAt: _t(m['createdAt']), lastSeen: _t(m['lastSeen']), deleted: m['deleted'] == true, isAdmin: m['isAdmin'] == true, suspended: m['suspended'] == true, balance: m['balance'] == null ? null : _i(m['balance']),
+        email: (m['email']?.toString() ?? '').isEmpty ? null : m['email'].toString(), emailVerified: m['emailVerified'] == true,
       );
   Person get person => Person(id: id, nickname: nickname, avatarUrl: avatarUrl);
 }
@@ -427,13 +428,39 @@ class AdminUserDetail {
   final List<({String id, String name, String category, bool active})> circles;
   final List<AdminReport> reportsAbout;
   final List<AdminAudit> actions;
-  const AdminUserDetail({required this.user, this.points = 0, this.ordersCount = 0, this.ordersTotal = 0, this.transactions = const [], this.circles = const [], this.reportsAbout = const [], this.actions = const []});
+  // البيانات الشخصية الكاملة: صف الحساب في النواة (بلا أسرار)، صف الملف، بُرُد الدخول، الاسترداد، الجلسات، وأعداد النشاط
+  final Map<String, dynamic> personal, profile, counts;
+  final List<AdminEmail> emails;
+  final bool hasRecovery;
+  final String? recoverySource;
+  final AdminSessions? sessions;
+  const AdminUserDetail({required this.user, this.points = 0, this.ordersCount = 0, this.ordersTotal = 0, this.transactions = const [], this.circles = const [], this.reportsAbout = const [], this.actions = const [],
+      this.personal = const {}, this.profile = const {}, this.counts = const {}, this.emails = const [], this.hasRecovery = false, this.recoverySource, this.sessions});
   factory AdminUserDetail.fromJson(Map m) => AdminUserDetail(
         user: AdminUser.fromJson(_m(m['user'])), points: _i(m['points']), ordersCount: _i(_m(m['orders'])['count']), ordersTotal: _i(_m(m['orders'])['total']),
         transactions: asList(m['transactions']).map(WalletTx.fromJson).toList(),
         circles: [for (final c in asList(m['circles'])) (id: c['id'].toString(), name: c['name']?.toString() ?? '', category: c['category']?.toString() ?? '', active: c['active'] != false)],
         reportsAbout: asList(m['reportsAbout']).map(AdminReport.fromJson).toList(), actions: asList(m['actions']).map(AdminAudit.fromJson).toList(),
+        personal: Map<String, dynamic>.from(_m(m['personal'])), profile: Map<String, dynamic>.from(_m(m['profile'])), counts: Map<String, dynamic>.from(_m(m['counts'])),
+        emails: asList(m['emails']).map(AdminEmail.fromJson).toList(), hasRecovery: _m(m['recovery'])['hasPhrase'] == true, recoverySource: _m(m['recovery'])['source']?.toString(),
+        sessions: m['sessions'] is Map ? AdminSessions.fromJson(_m(m['sessions'])) : null,
       );
+}
+
+class AdminEmail {
+  final String email;
+  final bool verified;
+  final DateTime? verifiedAt, createdAt;
+  const AdminEmail({required this.email, this.verified = false, this.verifiedAt, this.createdAt});
+  factory AdminEmail.fromJson(Map m) => AdminEmail(email: m['email']?.toString() ?? '', verified: m['verified'] == true, verifiedAt: _t(m['verifiedAt']), createdAt: _t(m['createdAt']));
+}
+
+class AdminSessions {
+  final int count;
+  final DateTime? last;
+  final List<String> agents;
+  const AdminSessions({this.count = 0, this.last, this.agents = const []});
+  factory AdminSessions.fromJson(Map m) => AdminSessions(count: _i(m['count']), last: _t(m['last']), agents: [for (final a in (m['agents'] is List ? m['agents'] as List : const [])) if (a != null && a.toString().isNotEmpty) a.toString()]);
 }
 
 class AdminReport {

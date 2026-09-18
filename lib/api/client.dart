@@ -359,7 +359,7 @@ class ApiClient {
   void close() => _http.close();
 }
 
-final _ownMediaPath = RegExp(r'^/(?:chat/media|files|media|uploads)/', caseSensitive: false);
+final _ownMediaPath = RegExp(r'^/(?:chat/media|files|media|uploads|seed)/', caseSensitive: false);
 
 /// يعيد رابط وسائط من خادمنا على أصل التطبيق نفسه.
 ///

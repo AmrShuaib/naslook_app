@@ -103,6 +103,7 @@ class _UserAdminSheetState extends ConsumerState<_UserAdminSheet> {
         Wrap(spacing: 6, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
           Text(u?.nickname.isNotEmpty == true ? u!.nickname : widget.nickname, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
           Text(widget.id, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+          if (u?.email != null) Text(u!.email!, style: TextStyle(color: u.emailVerified ? Joy.success : Joy.textMuted, fontSize: 12.5)),
           if (u?.isAdmin == true) _chip('مدير', Joy.primary, Joy.primarySoft),
           if (u?.suspended == true) _chip('موقوف', Joy.danger, Joy.accentSoft),
           if (u?.balance != null) _chip('الرصيد ${money(u!.balance!)}', Joy.success, const Color(0xFFE3F5EA)),

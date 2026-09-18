@@ -278,6 +278,43 @@ export default async function admin(app, opts) {
     isAdmin: admin ?? (await isAdmin(u.id)), suspended: flags?.suspended === true, flagNote: flags?.note ?? "", balance: balance == null ? null : Number(balance),
     email: email !== undefined ? email?.alias ?? null : u.login_email ?? null, emailVerified: email !== undefined ? email?.verified === true : u.login_verified === true,
   });
+  // ---- البيانات الشخصية الكاملة لمستخدم (للوحة الإدارة): صف users كاملاً بلا أسرار، صف الملف، كل بُرُد الدخول،
+  // حالة الاسترداد، الجلسات، الاشتراكات، وأعداد ما يخصه في المنصة. الأعمدة تُكتشف عند الإقلاع فلا يعطّل غيابها الطلب.
+  const SECRET_COL = /pass|hash|salt|secret|token|otp|pin\b|code_|_code|key$/i;
+  const cleanRow = (row) => { const o = {}; for (const [k, v] of Object.entries(row ?? {})) { if (SECRET_COL.test(k)) continue; o[k] = v instanceof Date ? v.toISOString() : v; } return o; };
+  const sessionsCols = tables.has("sessions") ? await colsOf("sessions") : null;
+  const sessionsUser = sessionsCols ? pick(sessionsCols, "user_id", "uid") : null;
+  const sessionsTime = sessionsCols ? pick(sessionsCols, "last_seen_at", "last_used_at", "updated_at", "created_at") : null;
+  const sessionsAgent = sessionsCols ? pick(sessionsCols, "user_agent", "agent", "device", "client") : null;
+  const countOf = async (sql, params) => { try { return (await pool.query(sql, params)).rows[0]?.n ?? 0; } catch { return null; } };
+  const personalData = async (id, u) => {
+    const personal = cleanRow(u);
+    const profile = PT ? cleanRow((await pool.query(`SELECT * FROM ${q(PT.table)} WHERE ${q(PT.key)}=$1`, [id]).catch(() => ({ rows: [] }))).rows[0]) : null;
+    const emails = aliasesOk ? (await pool.query("SELECT alias, verified, verified_at, created_at, code_sent_at FROM login_aliases WHERE user_id=$1 ORDER BY verified DESC, created_at DESC", [id])).rows
+      .map((r) => ({ email: r.alias, verified: r.verified === true, verifiedAt: r.verified_at, createdAt: r.created_at, codeSentAt: r.code_sent_at })) : [];
+    const rec = tables.has("account_recovery") ? (await pool.query("SELECT source, updated_at FROM account_recovery WHERE user_id=$1", [id]).catch(() => ({ rows: [] }))).rows[0] : null;
+    let sessions = null;
+    if (sessionsUser) {
+      const r = (await pool.query(`SELECT count(*)::int AS n${sessionsTime ? `, max(${q(sessionsTime)}) AS last` : ""} FROM sessions WHERE ${q(sessionsUser)}=$1`, [id]).catch(() => ({ rows: [] }))).rows[0];
+      const agents = sessionsAgent ? (await pool.query(`SELECT DISTINCT ${q(sessionsAgent)} AS a FROM sessions WHERE ${q(sessionsUser)}=$1 LIMIT 5`, [id]).catch(() => ({ rows: [] }))).rows.map((x) => x.a).filter(Boolean) : [];
+      sessions = { count: r?.n ?? 0, last: r?.last ?? null, agents };
+    }
+    const counts = {
+      listings: marketOk ? await countOf("SELECT count(*)::int AS n FROM market_listings WHERE seller_id=$1", [id]) : null,
+      marketOrders: marketOk ? await countOf("SELECT count(*)::int AS n FROM market_orders WHERE buyer_id=$1", [id]) : null,
+      bizOrders: await countOf("SELECT count(*)::int AS n FROM biz_orders WHERE user_id=$1", [id]),
+      circles: bizOk ? await countOf("SELECT count(*)::int AS n FROM biz WHERE owner_id=$1", [id]) : null,
+      mapPosts: tables.has("map_posts") ? await countOf("SELECT count(*)::int AS n FROM map_posts WHERE user_id=$1", [id]) : null,
+      communityPosts: tables.has("biz_community_posts") ? await countOf("SELECT count(*)::int AS n FROM biz_community_posts WHERE user_id=$1", [id]) : null,
+      contacts: tables.has("contacts") ? await countOf("SELECT count(*)::int AS n FROM contacts WHERE user_id=$1", [id]) : null,
+      memberships: tables.has("biz_follows") ? await countOf("SELECT count(*)::int AS n FROM biz_follows WHERE user_id=$1", [id]) : null,
+      notifications: tables.has("app_notifications") ? await countOf("SELECT count(*)::int AS n FROM app_notifications WHERE user_id=$1", [id]) : null,
+      pushSubscriptions: tables.has("push_subscriptions") ? await countOf("SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id=$1", [id]) : null,
+      reportsMade: reportsTable && RC.reporter ? await countOf(`SELECT count(*)::int AS n FROM ${q(reportsTable)} WHERE ${q(RC.reporter)}::text=$1`, [id]) : null,
+      blocks: blocksTable ? await countOf(`SELECT count(*)::int AS n FROM ${q(blocksTable)} WHERE user_id=$1`, [id]) : null,
+    };
+    return { personal, profile, emails, recovery: rec ? { hasPhrase: true, source: rec.source, updatedAt: rec.updated_at } : { hasPhrase: false }, sessions, counts };
+  };
   app.get("/adminapi/users", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;
     if (!U.ok) return [];
@@ -310,7 +347,8 @@ export default async function admin(app, opts) {
     let reportsAbout = [];
     if (reportsTable && RC.target) reportsAbout = (await pool.query(`SELECT * FROM ${q(reportsTable)} WHERE ${q(RC.target)}::text=$1 ORDER BY ${RC.created ? q(RC.created) : "1"} DESC LIMIT 20`, [id])).rows.map(reportOut);
     const actions = (await pool.query("SELECT * FROM admin_audit WHERE target=$1 ORDER BY created_at DESC LIMIT 20", [id])).rows.map(auditOut);
-    return { user: await userOut(u, { flags, balance: w?.balance ?? 0, email: await emailOf(id) }), points: w?.points ?? 0, transactions: txs.map(txOut), orders: { count: orders.n, total: Number(orders.total) }, circles, reportsAbout, actions };
+    return { user: await userOut(u, { flags, balance: w?.balance ?? 0, email: await emailOf(id) }), points: w?.points ?? 0, transactions: txs.map(txOut), orders: { count: orders.n, total: Number(orders.total) }, circles, reportsAbout, actions,
+      ...(await personalData(id, u)) };
   });
   const txOut = (x) => ({ id: x.id, kind: x.kind, amount: Number(x.amount), peerId: x.peer_id, ref: x.ref, note: x.note, createdAt: x.created_at, userId: x.user_id });
   const auditOut = (a) => ({ id: a.id, adminId: a.admin_id, action: a.action, target: a.target, details: a.details ?? {}, createdAt: a.created_at });

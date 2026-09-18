@@ -11,6 +11,7 @@ import '../../ui/widgets.dart';
 import '../business/business_page.dart' show openBusiness;
 import '../wallet/wallet_page.dart' show TxRow;
 import 'admin_shell.dart';
+import 'admin_user_personal.dart';
 
 class AdminUsersPage extends ConsumerStatefulWidget {
   const AdminUsersPage({super.key});
@@ -47,7 +48,7 @@ class _AdminUsersPageState extends ConsumerState<AdminUsersPage> {
                           if (u.isAdmin) _badge('مدير', Joy.primary, Joy.primarySoft),
                           if (u.suspended) _badge('موقوف', Joy.danger, Joy.accentSoft),
                         ]),
-                        subtitle: Text('${u.id} · انضم ${timeAgo(u.createdAt)}'),
+                        subtitle: Text('${u.id}${u.email != null ? ' · ${u.email}' : ''} · انضم ${timeAgo(u.createdAt)}'),
                         trailing: Text(u.balance == null ? '' : money(u.balance!), style: const TextStyle(fontWeight: FontWeight.w700, color: Joy.text, fontSize: 13)),
                         onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AdminUserPage(id: u.id))),
                         divider: i < list.length - 1,
@@ -84,6 +85,7 @@ class AdminUserPage extends ConsumerWidget {
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [Flexible(child: Text(u.nickname.isEmpty ? u.id : u.nickname, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18))), if (u.isAdmin) _badge('مدير', Joy.primary, Joy.primarySoft), if (u.suspended) _badge('موقوف', Joy.danger, Joy.accentSoft)]),
                 Text('${u.id} · انضم ${timeAgo(u.createdAt)}${u.lastSeen != null ? ' · آخر ظهور ${timeAgo(u.lastSeen)}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+                Text(u.email ?? 'بلا بريد دخول', key: const Key('user-email'), style: TextStyle(color: u.email == null ? Joy.textMuted : (u.emailVerified ? Joy.success : Joy.text), fontSize: 13)),
                 if (u.bio.isNotEmpty) Text(u.bio, style: const TextStyle(fontSize: 13)),
                 if (u.suspended && u.flagNote.isNotEmpty) Text('سبب الإيقاف: ${u.flagNote}', style: const TextStyle(color: Joy.danger, fontSize: 12.5)),
               ])),
@@ -119,6 +121,8 @@ class AdminUserPage extends ConsumerWidget {
               ),
               OutlinedButton.icon(onPressed: () => openProfile(context, u.person), icon: const Icon(Icons.person_outline_rounded, size: 18), label: const Text('الملف العام')),
             ]),
+            const SectionTitle('البيانات الشخصية'),
+            AdminPersonalCard(detail: x),
             if (x.circles.isNotEmpty) ...[
               const SectionTitle('دوائره التجارية'),
               JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, c) in x.circles.indexed) ListRow(leading: const Icon(Icons.storefront_outlined, color: Joy.primary), title: Text(c.name), subtitle: Text('${c.category} · ${c.active ? 'منشورة' : 'موقوفة'}'), onTap: () => openBusiness(context, c.id), divider: i < x.circles.length - 1)])),
