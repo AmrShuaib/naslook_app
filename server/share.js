@@ -102,7 +102,8 @@ export default async function share(app, opts) {
     if (/^[0-9a-f-]{36}$/i.test(id)) { try { l = (await pool.query("SELECT title, description, price, image_url, status FROM market_listings WHERE id=$1", [id])).rows[0] ?? null; } catch { l = null; } }
     const url = `${publicOrigin(req)}/l/${esc(id)}`;
     const price = l ? (Number(l.price) / 100).toLocaleString("ar-SA") + " ر.س" : "";
-    return page(reply, { title: l && l.status === "active" ? `${l.title} · ${price}` : "عرض في سوق ناس لايف", description: l && l.status === "active" ? String(l.description ?? "").slice(0, 160) || "اطلبه من ناس لايف" : "افتح ناس لايف لرؤية العرض", image: l?.image_url ?? null, url });
+    const live = l && l.status === "active";
+    return serve(req, reply, { title: live ? `${l.title} · ${price}` : `عرض في سوق ${SITE}`, description: live ? String(l.description ?? "").slice(0, 200) || "اطلبه من ناس لايف" : "افتح الرابط في ناس لايف لرؤية العرض.", image: live ? absImage(req, l.image_url) : null, url, type: live ? "product" : "website" });
   });
   app.get("/share/status", async () => ({ ok: true, webappDir: WEBAPP, avatarColumn: avatarCol, privacy: !!privacy }));
 }
