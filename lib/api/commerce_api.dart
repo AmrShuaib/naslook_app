@@ -98,4 +98,21 @@ extension CommerceApi on ApiClient {
   Future<void> adminMarketSellerFlags(String id, {required bool licensed, String note = ''}) => patch_('/adminapi/market/sellers/$id/flags', {'licensed': licensed, 'note': note});
   Future<List<Listing>> adminMarketListings({String status = '', String q = ''}) async => asList(await getList('/adminapi/market/listings', query: {'status': status, 'q': q})).map(Listing.fromJson).toList();
   Future<List<Order>> adminMarketOrders({String status = ''}) async => asList(await getList('/adminapi/market/orders', query: {'status': status})).map(Order.fromJson).toList();
+
+  // ---- المرحلة (ب): مندوب توصيل، بازارات، بوابة دفع، ترقية البائع
+  Future<Order> setCourier(String orderId, {required String nickname, String note = ''}) async => Order.fromJson(await post('/market/orders/$orderId/courier', {'nickname': nickname, 'note': note}));
+  Future<Order> clearCourier(String orderId) async => Order.fromJson(await delete('/market/orders/$orderId/courier'));
+  Future<List<Bazaar>> bazaars() async => asList(await getList('/market/bazaars')).map(Bazaar.fromJson).toList();
+  Future<Bazaar> bazaar(String id, {double? lat, double? lng}) async => Bazaar.fromJson(await get('/market/bazaars/$id', query: {if (lat != null && lng != null) ...{'lat': '$lat', 'lng': '$lng'}}));
+  Future<void> joinBazaar(String bazaarId, String listingId) => post('/market/bazaars/$bazaarId/join', {'listingId': listingId});
+  Future<void> leaveBazaar(String bazaarId, String listingId) => delete('/market/bazaars/$bazaarId/join/$listingId');
+  Future<List<Bazaar>> adminBazaars() async => asList(await getList('/adminapi/market/bazaars')).map(Bazaar.fromJson).toList();
+  Future<Bazaar> adminCreateBazaar(Map<String, dynamic> body) async => Bazaar.fromJson(await post('/adminapi/market/bazaars', body));
+  Future<Bazaar> adminPatchBazaar(String id, Map<String, dynamic> body) async => Bazaar.fromJson(await patch_('/adminapi/market/bazaars/$id', body));
+  Future<PayConfig> payConfig() async => PayConfig.fromJson(await get('/pay/config'));
+  /// يبدأ شحناً بالبطاقة ويعيد رابط صفحة الدفع التي يفتحها المتصفح
+  Future<String> payTopup(int halalas) async => (await post('/pay/topup', {'amount': halalas}))['checkoutUrl'].toString();
+  Future<List<PaymentRow>> myPayments() async => asList(await getList('/pay/mine')).map(PaymentRow.fromJson).toList();
+  Future<UpgradePreview> upgradePreview() async => UpgradePreview.fromJson(await get('/market/seller/upgrade'));
+  Future<String> upgradeSeller({required String nameAr, String description = '', String? category}) async => (await post('/market/seller/upgrade', {'nameAr': nameAr, 'description': description, if (category != null) 'category': category}))['bizId'].toString();
 }

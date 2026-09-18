@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../chat/chat_thread_page.dart';
+
 import '../../api/chat_tools_api.dart';
 import '../../api/client.dart';
 import '../../api/commerce_api.dart';
@@ -153,13 +155,13 @@ class OrderCard extends ConsumerWidget {
   const OrderCard(this.o, {super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final other = o.mineAsSeller ? o.buyer : o.seller;
+    final other = o.mineAsSeller || o.mineAsCourier ? o.buyer : o.seller;
     return JoyCard(onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => OrderPage(o.id))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         ProfileAvatar(person: other, size: 40), const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${o.title}${o.variant != null ? ' (${o.variant})' : ''}${o.qty > 1 ? ' × ${o.qty}' : ''}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5)),
-          Text('${o.mineAsSeller ? 'المشتري' : 'البائع'}: ${other.nickname} · ${timeAgo(o.createdAt)}${o.slot != null ? ' · موعد ${o.slot!.day}/${o.slot!.month} ${clockOf(o.slot)}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+          Text('${o.mineAsCourier ? 'توصيل إلى' : o.mineAsSeller ? 'المشتري' : 'البائع'}: ${other.nickname} · ${timeAgo(o.createdAt)}${o.slot != null ? ' · موعد ${o.slot!.day}/${o.slot!.month} ${clockOf(o.slot)}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
         ])),
         Text(money(o.total), style: const TextStyle(fontWeight: FontWeight.w700, color: Joy.primary)),
       ]),
@@ -212,7 +214,7 @@ class OrderPage extends ConsumerWidget {
             const SizedBox(width: 10),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('${x.title}${x.variant != null ? ' (${x.variant})' : ''}${x.qty > 1 ? ' × ${x.qty}' : ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-              Text('${x.mineAsSeller ? 'المشتري' : 'البائع'}: ${(x.mineAsSeller ? x.buyer : x.seller).nickname} · ${timeAgo(x.createdAt)}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+              Text(x.mineAsCourier ? 'البائع ${x.seller.nickname} → المشتري ${x.buyer.nickname} · ${timeAgo(x.createdAt)}' : '${x.mineAsSeller ? 'المشتري' : 'البائع'}: ${(x.mineAsSeller ? x.buyer : x.seller).nickname} · ${timeAgo(x.createdAt)}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
               if (x.slot != null) Text('الموعد: ${weekdayLabels[x.slot!.weekday % 7]} ${x.slot!.day}/${x.slot!.month} ${clockOf(x.slot)}', style: const TextStyle(fontSize: 12.5)),
               if (x.note.isNotEmpty) Text('ملاحظة: ${x.note}', style: const TextStyle(fontSize: 12.5)),
             ])),
@@ -224,7 +226,18 @@ class OrderPage extends ConsumerWidget {
           else _Timeline(status: x.status),
           if (x.disputeNote != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('قرار الإدارة: ${x.disputeNote}', style: const TextStyle(fontSize: 12.5))),
           const SizedBox(height: 16),
-          if (!x.mineAsSeller && x.code != null && x.open) JoyCard(child: Column(children: [
+          // مندوب التوصيل: يراه الطرفان، ويعيّنه البائع من زر أدناه
+          if (x.courier != null) JoyCard(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), child: Row(children: [
+            ProfileAvatar(person: x.courier!, size: 40), const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(x.mineAsCourier ? 'أنت مندوب التوصيل' : 'مندوب التوصيل: ${x.courier!.nickname}', key: const Key('order-courier-name'), style: const TextStyle(fontWeight: FontWeight.w700)),
+              if (x.courierNote.isNotEmpty) Text(x.courierNote, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+            ])),
+            if (!x.mineAsCourier) IconButton(tooltip: 'مراسلة', icon: const Icon(Icons.chat_bubble_outline_rounded), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: x.courier!)))),
+            if (x.mineAsSeller && x.open) IconButton(key: const Key('order-courier-clear'), tooltip: 'إلغاء التكليف', icon: const Icon(Icons.close_rounded), onPressed: () => _clearCourier(context, ref, x)),
+          ])),
+          if (x.courier != null) const SizedBox(height: 12),
+          if (x.mineAsBuyer && x.code != null && x.open) JoyCard(child: Column(children: [
             const Text('رمز الاستلام', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
             Text(x.code!, key: const Key('order-code'), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 34, letterSpacing: 8)),
             const Text('أعطه للبائع عند الاستلام، أو أكّد الاستلام بنفسك من الزر أدناه.', textAlign: TextAlign.center, style: TextStyle(color: Joy.textMuted, fontSize: 12)),
@@ -232,18 +245,20 @@ class OrderPage extends ConsumerWidget {
           const SizedBox(height: 12),
           Wrap(spacing: 8, runSpacing: 8, children: [
             // المشتري
-            if (!x.mineAsSeller && x.open) FilledButton.icon(key: const Key('order-confirm'), onPressed: () => _confirm(context, ref, x), icon: const Icon(Icons.check_circle_outline_rounded, size: 18), label: const Text('تأكيد الاستلام')),
-            if (!x.mineAsSeller && x.status == 'paid') OutlinedButton(key: const Key('order-cancel'), style: OutlinedButton.styleFrom(foregroundColor: Joy.danger), onPressed: () => _cancel(context, ref, x), child: const Text('إلغاء الطلب')),
-            if (!x.mineAsSeller && x.open) OutlinedButton.icon(key: const Key('order-dispute'), style: OutlinedButton.styleFrom(foregroundColor: Joy.danger), onPressed: () => _dispute(context, ref, x), icon: const Icon(Icons.report_problem_outlined, size: 18), label: const Text('فتح نزاع')),
-            if (!x.mineAsSeller && x.status == 'completed' && !x.reviewed) FilledButton.tonalIcon(key: const Key('order-review'), onPressed: () => reviewOrder(context, ref, x), icon: const Icon(Icons.star_outline_rounded, size: 18), label: const Text('قيّم البائع')),
+            if (x.mineAsBuyer && x.open) FilledButton.icon(key: const Key('order-confirm'), onPressed: () => _confirm(context, ref, x), icon: const Icon(Icons.check_circle_outline_rounded, size: 18), label: const Text('تأكيد الاستلام')),
+            if (x.mineAsBuyer && x.status == 'paid') OutlinedButton(key: const Key('order-cancel'), style: OutlinedButton.styleFrom(foregroundColor: Joy.danger), onPressed: () => _cancel(context, ref, x), child: const Text('إلغاء الطلب')),
+            if (x.mineAsBuyer && x.open) OutlinedButton.icon(key: const Key('order-dispute'), style: OutlinedButton.styleFrom(foregroundColor: Joy.danger), onPressed: () => _dispute(context, ref, x), icon: const Icon(Icons.report_problem_outlined, size: 18), label: const Text('فتح نزاع')),
+            if (x.mineAsBuyer && x.status == 'completed' && !x.reviewed) FilledButton.tonalIcon(key: const Key('order-review'), onPressed: () => reviewOrder(context, ref, x), icon: const Icon(Icons.star_outline_rounded, size: 18), label: const Text('قيّم البائع')),
             // البائع
             if (x.mineAsSeller && x.status == 'paid') FilledButton(key: const Key('stage-preparing'), onPressed: () => advanceOrder(context, ref, x, 'preparing'), child: const Text('بدء التحضير')),
-            if (x.mineAsSeller && x.status == 'preparing') FilledButton(key: const Key('stage-on_the_way'), onPressed: () => advanceOrder(context, ref, x, 'on_the_way'), child: const Text('في الطريق')),
-            if (x.mineAsSeller && (x.status == 'preparing' || x.status == 'on_the_way')) FilledButton(key: const Key('stage-delivered'), onPressed: () => advanceOrder(context, ref, x, 'delivered'), child: const Text('تم التسليم')),
+            // البائع أو المندوب المعيَّن
+            if ((x.mineAsSeller || x.mineAsCourier) && x.status == 'preparing') FilledButton(key: const Key('stage-on_the_way'), onPressed: () => advanceOrder(context, ref, x, 'on_the_way'), child: const Text('في الطريق')),
+            if ((x.mineAsSeller || x.mineAsCourier) && (x.status == 'preparing' || x.status == 'on_the_way')) FilledButton(key: const Key('stage-delivered'), onPressed: () => advanceOrder(context, ref, x, 'delivered'), child: const Text('تم التسليم')),
             if (x.mineAsSeller && x.open) OutlinedButton.icon(key: const Key('seller-code'), onPressed: () => _sellerCode(context, ref, x), icon: const Icon(Icons.pin_outlined, size: 18), label: const Text('إدخال رمز المشتري')),
+            if (x.mineAsSeller && x.courier == null && const {'paid', 'preparing', 'on_the_way'}.contains(x.status)) OutlinedButton.icon(key: const Key('order-courier'), onPressed: () => _assignCourier(context, ref, x), icon: const Icon(Icons.delivery_dining_outlined, size: 18), label: const Text('تعيين مندوب توصيل')),
             if (x.mineAsSeller && x.open) TextButton(style: TextButton.styleFrom(foregroundColor: Joy.danger), onPressed: () => _cancel(context, ref, x), child: const Text('إلغاء وردّ المبلغ')),
           ]),
-          if (x.status == 'delivered' && !x.mineAsSeller) const Padding(padding: EdgeInsets.only(top: 10), child: Text('إن لم تؤكد خلال ٧٢ ساعة من التسليم يكتمل الطلب تلقائياً ويصل المبلغ للبائع.', style: TextStyle(color: Joy.textMuted, fontSize: 12))),
+          if (x.status == 'delivered' && x.mineAsBuyer) const Padding(padding: EdgeInsets.only(top: 10), child: Text('إن لم تؤكد خلال ٧٢ ساعة من التسليم يكتمل الطلب تلقائياً ويصل المبلغ للبائع.', style: TextStyle(color: Joy.textMuted, fontSize: 12))),
         ]),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(orderProvider(id))),
@@ -257,6 +272,22 @@ class OrderPage extends ConsumerWidget {
     final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: const Text('تأكيد الاستلام؟'), content: Text('سيصل المبلغ ${money(x.total)} إلى البائع ولا يمكن التراجع.'), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(key: const Key('confirm-go'), onPressed: () => Navigator.pop(ctx, true), child: const Text('نعم، استلمت'))]));
     if (ok != true || !context.mounted) return;
     try { await ref.read(apiClientProvider).confirmOrder(x.id); ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); ref.invalidate(walletProvider); if (context.mounted) toast(context, 'اكتمل الطلب، شكراً لك'); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
+  }
+  /// البائع يعيّن مستخدماً في ناس لايف مندوباً للتوصيل باسم المستخدم
+  Future<void> _assignCourier(BuildContext context, WidgetRef ref, Order x) async {
+    final nick = TextEditingController(), note = TextEditingController();
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: const Text('تعيين مندوب توصيل'), content: Column(mainAxisSize: MainAxisSize.min, children: [
+      TextField(key: const Key('courier-nick'), controller: nick, autofocus: true, decoration: const InputDecoration(labelText: 'اسم المستخدم في ناس لايف', hintText: 'مثال: rider')),
+      const SizedBox(height: 8),
+      TextField(key: const Key('courier-note'), controller: note, decoration: const InputDecoration(labelText: 'ملاحظة للمندوب (اختياري)', hintText: 'يتصل بالمشتري قبل الوصول')),
+      const SizedBox(height: 6),
+      const Text('سيرى المندوب الطلب في «الطلبات» ويستطيع تحديثه إلى «في الطريق» و«تم التسليم»، ولن يرى رمز المشتري.', style: TextStyle(color: Joy.textMuted, fontSize: 12)),
+    ]), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(key: const Key('courier-save'), onPressed: () => Navigator.pop(ctx, true), child: const Text('تعيين'))]));
+    if (ok != true || nick.text.trim().isEmpty || !context.mounted) return;
+    try { await ref.read(apiClientProvider).setCourier(x.id, nickname: nick.text.trim(), note: note.text.trim()); ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); if (context.mounted) toast(context, 'تم تعيين المندوب وإخطاره'); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
+  }
+  Future<void> _clearCourier(BuildContext context, WidgetRef ref, Order x) async {
+    try { await ref.read(apiClientProvider).clearCourier(x.id); ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
   }
   Future<void> _sellerCode(BuildContext context, WidgetRef ref, Order x) async {
     final code = await askText(context, title: 'رمز المشتري', hint: '٤ أرقام يعطيها لك المشتري عند التسليم', confirm: 'تأكيد', maxLines: 1, keyboardType: TextInputType.number);

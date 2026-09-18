@@ -1,10 +1,11 @@
 import 'dart:math' as math;
 
+import '../../api/commerce_models.dart';
 import '../../api/models.dart';
 import '../../api/posts_api.dart';
 
 /// نوع العنصر المعروض على الخريطة.
-enum MapItemKind { person, story, pin, business, post }
+enum MapItemKind { person, story, pin, business, post, listing }
 
 /// عنصر موحّد على الخريطة (شخص/لحظة/دبوس/متجر) مع موقعه وصاحبه ووقته.
 class MapItem {
@@ -31,6 +32,19 @@ class MapItem {
   });
 
   String get key => '${kind.name}:$id';
+
+  /// عرض من السوق (منتج أو خدمة) بموقعه وبائعه
+  factory MapItem.listing(Listing l) => MapItem(
+        kind: MapItemKind.listing,
+        id: l.id,
+        lat: l.lat ?? 0,
+        lng: l.lng ?? 0,
+        title: l.title,
+        subtitle: '${l.price == 0 ? 'مجاناً' : money(l.price)} · ${l.seller.nickname}${l.placeName != null && l.placeName!.isNotEmpty ? ' · ${l.placeName}' : ''}',
+        at: l.publishAt,
+        author: l.seller,
+        data: l,
+      );
 
   factory MapItem.person(Presence p) => MapItem(
         kind: MapItemKind.person,

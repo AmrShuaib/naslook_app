@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../api/biz_models.dart';
+import '../../api/commerce_models.dart';
 import '../../api/models.dart';
 import '../../api/posts_api.dart';
 import '../../api/naslife_api.dart';
@@ -14,12 +15,14 @@ import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
+import '../../state/market_providers.dart';
 import '../../state/posts_providers.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../business/business_page.dart';
 import '../chat/chat_thread_page.dart';
+import '../market/listing_page.dart';
 import '../posts/post_composer.dart';
 import '../posts/post_viewer.dart';
 import 'map_cluster.dart';
@@ -38,7 +41,7 @@ class MapPage extends ConsumerStatefulWidget {
 class _MapPageState extends ConsumerState<MapPage> {
   final _map = MapController();
   final _sheet = DraggableScrollableController();
-  bool showPeople = true, showPins = true, showStories = true, showBusinesses = true;
+  bool showPeople = true, showPins = true, showStories = true, showBusinesses = true, showMarket = true;
   // فلاتر الأنشطة التجارية: مفتوح الآن، وفئات محددة (فارغة = الكل)
   bool openOnly = false;
   final Set<String> bizCats = {};
@@ -99,6 +102,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     final businesses = ref.watch(businessesProvider).value ?? const <Business>[];
     final circles = ref.watch(mapBizProvider).value ?? const <Biz>[];
     final posts = ref.watch(mapPostsProvider).value ?? const <MapPost>[];
+    final listings = ref.watch(mapMarketProvider).value ?? const <Listing>[];
     final seen = <String>{};
     final out = <MapItem>[];
     void add(MapItem? i) {
@@ -121,6 +125,11 @@ class _MapPageState extends ConsumerState<MapPage> {
     if (showPins) {
       for (final p in pins) {
         add(MapItem.pin(p));
+      }
+    }
+    if (showMarket) {
+      for (final l in listings) {
+        add(MapItem.listing(l));
       }
     }
     if (showBusinesses) {
@@ -149,7 +158,7 @@ class _MapPageState extends ConsumerState<MapPage> {
       } catch (_) {}
     });
     final mine = ref.watch(myPresenceProvider).value;
-    final loading = ref.watch(presenceProvider).isLoading || ref.watch(storiesProvider).isLoading || ref.watch(pinsProvider).isLoading || ref.watch(businessesProvider).isLoading || ref.watch(mapPostsProvider).isLoading;
+    final loading = ref.watch(presenceProvider).isLoading || ref.watch(storiesProvider).isLoading || ref.watch(pinsProvider).isLoading || ref.watch(businessesProvider).isLoading || ref.watch(mapPostsProvider).isLoading || ref.watch(mapMarketProvider).isLoading;
     final items = _collect();
     final b = _bounds;
     final visible = b == null ? items : itemsInBounds(items, minLat: b.south, minLng: b.west, maxLat: b.north, maxLng: b.east);
@@ -206,6 +215,7 @@ class _MapPageState extends ConsumerState<MapPage> {
                   _chip('لحظات', Icons.auto_awesome_rounded, showStories, () => setState(() => showStories = !showStories)),
                   _chip('دبابيس', Icons.push_pin_rounded, showPins, () => setState(() => showPins = !showPins)),
                   _chip('متاجر', Icons.storefront_rounded, showBusinesses, () => setState(() => showBusinesses = !showBusinesses)),
+                  _chip('السوق', Icons.shopping_bag_rounded, showMarket, () => setState(() => showMarket = !showMarket)),
                   if (showBusinesses) ...[
                     _chip('مفتوح الآن', Icons.schedule_rounded, openOnly, () => setState(() => openOnly = !openOnly)),
                     for (final c in BizCategory.values)
@@ -295,6 +305,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     ref.invalidate(storiesProvider);
     ref.invalidate(businessesProvider);
     ref.invalidate(mapPostsProvider);
+    ref.invalidate(mapMarketProvider);
   }
 
   /// يقرّب الخريطة إلى العنصر ويفتح تفاصيله.
@@ -462,6 +473,8 @@ class _MapPageState extends ConsumerState<MapPage> {
         _showBusiness(item.data as Business);
       case MapItemKind.post:
         _showPost(item.data as MapPost);
+      case MapItemKind.listing:
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage((item.data as Listing).id)));
     }
   }
 
@@ -662,10 +675,12 @@ Color _kindColor(MapItemKind k) => switch (k) {
       MapItemKind.pin => Joy.accent,
       MapItemKind.business => Joy.primary,
       MapItemKind.post => Joy.accent,
+      MapItemKind.listing => const Color(0xFF00897B),
     };
 
 Color _kindOn(MapItemKind k) => switch (k) {
       MapItemKind.story => Joy.sunText,
+      MapItemKind.listing => Colors.white,
       _ => Joy.primaryOn,
     };
 
@@ -675,6 +690,7 @@ IconData _kindIcon(MapItemKind k) => switch (k) {
       MapItemKind.pin => Icons.push_pin_rounded,
       MapItemKind.business => Icons.storefront_rounded,
       MapItemKind.post => Icons.auto_awesome_motion_rounded,
+      MapItemKind.listing => Icons.shopping_bag_rounded,
     };
 
 String _kindLabel(MapItemKind k) => switch (k) {
@@ -683,6 +699,7 @@ String _kindLabel(MapItemKind k) => switch (k) {
       MapItemKind.pin => 'دبوس',
       MapItemKind.business => 'متجر',
       MapItemKind.post => 'منشور',
+      MapItemKind.listing => 'عرض في السوق',
     };
 
 const _markerShadow = [BoxShadow(color: Color(0x33000000), blurRadius: 4, offset: Offset(0, 1.5))];
@@ -718,6 +735,7 @@ IconData _itemIcon(MapItem item) => switch (item.kind) {
       MapItemKind.pin => (item.data as Pin).type == 'review' ? Icons.star_rounded : Icons.push_pin_rounded,
       MapItemKind.story => Icons.auto_awesome_rounded,
       MapItemKind.person => Icons.person_rounded,
+      MapItemKind.listing => (item.data as Listing).kind == 'service' ? Icons.handyman_rounded : Icons.shopping_bag_rounded,
     };
 
 /// نقطة صغيرة احترافية لعنصر واحد: دائرة ملونة بحدّ أبيض وظل خفيف ورمز يعبّر عن نوع المحتوى؛

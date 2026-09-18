@@ -23,3 +23,4 @@ await app.register((await import("./inbox.js")).default, { pool, auth });
 await app.register((await import("./offers.js")).default, { pool, auth });
 await app.register((await import("./market_seed.js")).default, { pool, auth });
 await app.register((await import("./market_plus.js")).default, { pool, auth });
+await app.register((await import("./market_b.js")).default, { pool, auth });

@@ -183,13 +183,22 @@ class ChatCodeCard extends StatelessWidget {
           _actions([_button('احجز', 'open', icon: Icons.confirmation_number_outlined)]),
         ]));
       case 'listing':
+        // بطاقة عرض السوق: صورة، سعر، بائع، حالة/توصيل/تقييم من الخادم، وشارة سبوت لايت، وزر طلب مباشر
         return _frame(key: key, child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
           _head(
-            leading: _CardImage(url: c.image, fallback: Icons.sell_outlined, color: Joy.sunText),
+            leading: _CardImage(url: c.image, fallback: c.kind == 'service' ? Icons.handyman_outlined : Icons.sell_outlined, color: Joy.sunText),
             title: c.title, subtitle: [if (c.person != null) 'البائع ${c.person!.nickname}', c.subtitle].where((s) => s.isNotEmpty).join(' · '),
-            trailing: c.price == null ? null : _Chip(_sar(c.price!), color: Joy.accent, bg: Joy.accentSoft),
+            trailing: c.price == null ? null : _Chip(c.price == 0 ? 'مجاناً' : _sar(c.price!), color: Joy.accent, bg: Joy.accentSoft),
           ),
-          _actions([_button(c.status == 'active' ? 'تفاوض' : 'افتح', 'open', icon: Icons.storefront_outlined)]),
+          if (c.verified == true || c.status != 'active' || (c.left != null && c.left! <= 0)) Padding(padding: const EdgeInsets.only(top: 6), child: Wrap(spacing: 6, children: [
+            if (c.verified == true) const _Chip('سبوت لايت', color: Joy.sunText, bg: Joy.sunSoft),
+            if (c.status != 'active') _Chip(c.status == 'sold' ? 'مباع' : 'غير متاح', color: Joy.textMuted, bg: Joy.surface2),
+            if (c.status == 'active' && c.left != null && c.left! <= 0) _Chip('نفدت الكمية', color: Joy.danger, bg: Joy.danger.withValues(alpha: .1)),
+          ])),
+          _actions([
+            _button('التفاصيل', 'open', icon: Icons.storefront_outlined, primary: false),
+            if (c.status == 'active' && (c.left == null || c.left! > 0)) _button(c.kind == 'service' ? 'احجز' : 'اطلب الآن', 'open', icon: Icons.shopping_bag_outlined),
+          ]),
         ]));
       case 'post':
         return _frame(key: key, child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [

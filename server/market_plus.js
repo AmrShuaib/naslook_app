@@ -362,6 +362,7 @@ export default async function marketPlus(app, opts) {
       spotlight: await Promise.all(spot.rows.map(async (x) => ({ id: x.sid, endsAt: x.ends_at, listing: await listingOut(x, uid) }))),
       popular: await Promise.all(popular.rows.map((l) => listingOut(l, uid))), nearby: await Promise.all(nearby.rows.map((l) => listingOut(l, uid, { dist: l.dist }))),
       categories: Object.fromEntries(CATEGORIES.map((c) => [c, counts.find((x) => x.category === c)?.n ?? 0])), subcategories: SUBCATEGORIES, wantedOpen: wanted,
+      bazaars: await (globalThis.naslifeMarketBazaars?.(uid).catch(() => []) ?? []),
       spotlightPricePerDay: spotPrice(), commissionPct: Number(settings().marketCommissionPct) || 0,
     };
   });

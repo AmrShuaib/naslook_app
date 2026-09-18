@@ -9,6 +9,7 @@ import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../market/bazaar_page.dart';
 import '../market/market_page.dart';
 import 'admin_shell.dart';
 
@@ -28,7 +29,13 @@ class AdminMarketPage extends ConsumerWidget {
           StatTile(label: 'نزاعات مفتوحة', value: '${o.disputesOpen}', icon: Icons.gavel_rounded, color: o.disputesOpen > 0 ? Joy.danger : Joy.textMuted, hint: '${o.ordersOpen} طلب جارٍ · إلغاء ${o.cancelRatePct}٪'),
           StatTile(label: 'عروض ظاهرة', value: '${o.listings['active'] ?? 0}', icon: Icons.storefront_outlined, hint: '${o.listings['pending'] ?? 0} للمراجعة · ${o.listings['blocked'] ?? 0} محجوبة · ${o.listings['draft'] ?? 0} مسودات'),
         ]),
-        Row(children: [const Expanded(child: SectionTitle('إجراءات')), TextButton.icon(key: const Key('am-grant'), onPressed: () => _grantSpotlight(context, ref), icon: const Icon(Icons.auto_awesome_rounded, size: 18), label: const Text('منح سبوت لايت')), TextButton.icon(key: const Key('am-license'), onPressed: () => _license(context, ref), icon: const Icon(Icons.workspace_premium_rounded, size: 18), label: const Text('تمييز بائع مرخّص'))]),
+        const SectionTitle('إجراءات'),
+        Wrap(spacing: 4, children: [
+          TextButton.icon(key: const Key('am-grant'), onPressed: () => _grantSpotlight(context, ref), icon: const Icon(Icons.auto_awesome_rounded, size: 18), label: const Text('منح سبوت لايت')),
+          TextButton.icon(key: const Key('am-license'), onPressed: () => _license(context, ref), icon: const Icon(Icons.workspace_premium_rounded, size: 18), label: const Text('تمييز بائع مرخّص')),
+          TextButton.icon(key: const Key('am-bazaar'), onPressed: () => _newBazaar(context, ref), icon: const Icon(Icons.celebration_outlined, size: 18), label: const Text('بازار جديد')),
+        ]),
+        const _BazaarsAdmin(),
         if (o.pending.isNotEmpty) ...[
           SectionTitle('بانتظار المراجعة (${o.pending.length})'),
           JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, l) in o.pending.indexed) ListRow(
@@ -75,6 +82,25 @@ class AdminMarketPage extends ConsumerWidget {
     if (note == null || !context.mounted) return;
     try { await ref.read(apiClientProvider).adminMarketDispute(d.id, resolution: resolution, note: note); ref.invalidate(adminMarketProvider); if (context.mounted) toast(context, 'حُسم النزاع'); } catch (e) { if (context.mounted) toast(context, adminErrText(e), error: true); }
   }
+  /// بازار موسمي: عنوان ووصف ومدينة وتصنيف اختياري ومدة بالأيام من الآن
+  Future<void> _newBazaar(BuildContext context, WidgetRef ref) async {
+    final title = TextEditingController(), desc = TextEditingController(), city = TextEditingController(), days = TextEditingController(text: '7');
+    String? category;
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) => AlertDialog(title: const Text('بازار جديد'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      TextField(key: const Key('bz-title'), controller: title, autofocus: true, decoration: const InputDecoration(labelText: 'العنوان', hintText: 'مثال: بازار العيد')),
+      TextField(key: const Key('bz-desc'), controller: desc, maxLines: 2, decoration: const InputDecoration(labelText: 'وصف قصير')),
+      TextField(controller: city, decoration: const InputDecoration(labelText: 'المدينة (اختياري)')),
+      DropdownButtonFormField<String?>(initialValue: category, decoration: const InputDecoration(labelText: 'التصنيف (اختياري)'), items: [const DropdownMenuItem<String?>(value: null, child: Text('كل التصنيفات')), for (final e in marketCategories.entries) DropdownMenuItem<String?>(value: e.key, child: Text(e.value))], onChanged: (v) => setSt(() => category = v)),
+      TextField(key: const Key('bz-days'), controller: days, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'المدة بالأيام من الآن')),
+    ])), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(key: const Key('bz-save'), onPressed: () => Navigator.pop(ctx, true), child: const Text('إنشاء'))])));
+    if (ok != true || title.text.trim().isEmpty || !context.mounted) return;
+    final n = int.tryParse(days.text.trim()) ?? 7;
+    try {
+      await ref.read(apiClientProvider).adminCreateBazaar({'title': title.text.trim(), 'description': desc.text.trim(), 'city': city.text.trim(), 'category': category, 'endsAt': DateTime.now().add(Duration(days: n.clamp(1, 90))).toUtc().toIso8601String()});
+      ref.invalidate(adminBazaarsProvider);
+      if (context.mounted) toast(context, 'أُنشئ البازار وأُخطر البائعون');
+    } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
+  }
   Future<void> _grantSpotlight(BuildContext context, WidgetRef ref) async {
     final id = await askText(context, title: 'منح سبوت لايت', hint: 'معرّف العرض (UUID)', confirm: 'التالي', maxLines: 1);
     if (id == null || id.isEmpty || !context.mounted) return;
@@ -86,5 +112,25 @@ class AdminMarketPage extends ConsumerWidget {
     final id = await askText(context, title: 'بائع مرخّص', hint: 'معرّف الحساب (SA…)', confirm: 'تمييز', maxLines: 1);
     if (id == null || id.isEmpty || !context.mounted) return;
     try { await ref.read(apiClientProvider).adminMarketSellerFlags(id.trim().toUpperCase(), licensed: true); ref.invalidate(adminMarketProvider); if (context.mounted) toast(context, 'مُيّز البائع بشارة مرخّص'); } catch (e) { if (context.mounted) toast(context, adminErrText(e), error: true); }
+  }
+}
+
+final adminBazaarsProvider = FutureProvider<List<Bazaar>>((ref) => ref.watch(apiClientProvider).adminBazaars());
+
+/// قائمة البازارات مع مفتاح تفعيل لكل واحد
+class _BazaarsAdmin extends ConsumerWidget {
+  const _BazaarsAdmin();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final list = ref.watch(adminBazaarsProvider).valueOrNull ?? const <Bazaar>[];
+    if (list.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SectionTitle('البازارات (${list.length})'),
+      JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, b) in list.indexed) ListRow(
+        leading: Icon(Icons.celebration_rounded, color: b.live ? Joy.sunText : Joy.textMuted),
+        title: Text(b.title), subtitle: Text('${b.stateLabel} · ${b.listings} عرض${b.city.isNotEmpty ? ' · ${b.city}' : ''}${b.category != null ? ' · ${marketCategories[b.category] ?? b.category}' : ''} · ${bazaarDates(b)}'),
+        trailing: Switch(key: Key('bz-active-${b.id}'), value: b.active && b.state != 'ended', onChanged: (v) async { try { await ref.read(apiClientProvider).adminPatchBazaar(b.id, {'active': v}); ref.invalidate(adminBazaarsProvider); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); } }),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BazaarPage(b.id))), divider: i < list.length - 1)])),
+    ]);
   }
 }

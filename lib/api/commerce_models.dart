@@ -164,17 +164,23 @@ class Order {
   final int qty, total, discount;
   final int? commission;
   final Person buyer, seller;
-  final bool mineAsSeller, reviewed;
+  /// مندوب التوصيل الذي عيّنه البائع (اختياري) وملاحظته له
+  final Person? courier;
+  final String courierNote;
+  final bool mineAsSeller, mineAsCourier, reviewed;
   final DateTime? createdAt, updatedAt, slot, deliveredAt, completedAt;
   const Order({required this.id, required this.listingId, required this.title, required this.status, required this.note, this.imageUrl, this.kind, this.code, this.variant, this.coupon, this.disputeStatus, this.disputeReason, this.disputeNote,
-      required this.qty, required this.total, this.discount = 0, this.commission, required this.buyer, required this.seller, required this.mineAsSeller, this.reviewed = false, this.createdAt, this.updatedAt, this.slot, this.deliveredAt, this.completedAt});
+      required this.qty, required this.total, this.discount = 0, this.commission, required this.buyer, required this.seller, this.courier, this.courierNote = '', required this.mineAsSeller, this.mineAsCourier = false, this.reviewed = false, this.createdAt, this.updatedAt, this.slot, this.deliveredAt, this.completedAt});
   factory Order.fromJson(Map m) => Order(
         id: m['id'].toString(), listingId: m['listingId'].toString(), title: m['title']?.toString() ?? '', status: m['status']?.toString() ?? '', note: m['note']?.toString() ?? '', imageUrl: m['imageUrl']?.toString(), kind: m['kind']?.toString(),
         code: m['code']?.toString(), variant: m['variant']?.toString(), coupon: m['coupon']?.toString(), disputeStatus: m['disputeStatus']?.toString(), disputeReason: m['disputeReason']?.toString(), disputeNote: m['disputeNote']?.toString(),
         qty: _i(m['qty']), total: _i(m['total']), discount: _i(m['discount']), commission: m['commission'] == null ? null : _i(m['commission']), buyer: Person.fromJson(_m(m['buyer'])), seller: Person.fromJson(_m(m['seller'])),
+        courier: m['courier'] is Map ? Person.fromJson(_m(m['courier'])) : null, courierNote: m['courierNote']?.toString() ?? '', mineAsCourier: m['mineAsCourier'] == true,
         mineAsSeller: m['mineAsSeller'] == true, reviewed: m['reviewed'] == true, createdAt: _t(m['createdAt']), updatedAt: _t(m['updatedAt']), slot: _t(m['slot']), deliveredAt: _t(m['deliveredAt']), completedAt: _t(m['completedAt']),
       );
   bool get open => const {'paid', 'preparing', 'on_the_way', 'delivered'}.contains(status);
+  /// دوري في الطلب: بائع أو مشترٍ أو مندوب
+  bool get mineAsBuyer => !mineAsSeller && !mineAsCourier;
   bool get done => status == 'completed';
 }
 
@@ -199,13 +205,65 @@ class SpotlightMine {
 class MarketHome {
   final List<SpotlightItem> spotlight;
   final List<Listing> popular, nearby;
+  final List<Bazaar> bazaars;
   final Map<String, int> categories;
   final int wantedOpen, spotlightPricePerDay;
   final double commissionPct;
-  const MarketHome({this.spotlight = const [], this.popular = const [], this.nearby = const [], this.categories = const {}, this.wantedOpen = 0, this.spotlightPricePerDay = 0, this.commissionPct = 0});
+  const MarketHome({this.spotlight = const [], this.popular = const [], this.nearby = const [], this.bazaars = const [], this.categories = const {}, this.wantedOpen = 0, this.spotlightPricePerDay = 0, this.commissionPct = 0});
   factory MarketHome.fromJson(Map m) => MarketHome(
         spotlight: asList(m['spotlight']).map(SpotlightItem.fromJson).toList(), popular: asList(m['popular']).map(Listing.fromJson).toList(), nearby: asList(m['nearby']).map(Listing.fromJson).toList(),
+        bazaars: asList(m['bazaars']).map(Bazaar.fromJson).toList(),
         categories: {for (final e in _m(m['categories']).entries) e.key: _i(e.value)}, wantedOpen: _i(m['wantedOpen']), spotlightPricePerDay: _i(m['spotlightPricePerDay']), commissionPct: (m['commissionPct'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// بازار موسمي تنشئه الإدارة وينضم إليه البائعون بعروضهم
+class Bazaar {
+  final String id, title, description, city, state;
+  final String? bannerUrl, category;
+  final DateTime? startsAt, endsAt;
+  final bool active;
+  final int listings, mine;
+  final List<Listing> items;
+  const Bazaar({required this.id, required this.title, this.description = '', this.city = '', this.state = 'live', this.bannerUrl, this.category, this.startsAt, this.endsAt, this.active = true, this.listings = 0, this.mine = 0, this.items = const []});
+  factory Bazaar.fromJson(Map m) => Bazaar(
+        id: m['id'].toString(), title: m['title']?.toString() ?? '', description: m['description']?.toString() ?? '', city: m['city']?.toString() ?? '', state: m['state']?.toString() ?? 'live', bannerUrl: m['bannerUrl']?.toString(), category: m['category']?.toString(),
+        startsAt: _t(m['startsAt']), endsAt: _t(m['endsAt']), active: m['active'] != false, listings: _i(m['listings']), mine: _i(m['mine']), items: asList(m['items']).map(Listing.fromJson).toList(),
+      );
+  bool get live => state == 'live';
+  bool get upcoming => state == 'upcoming';
+  String get stateLabel => switch (state) { 'live' => 'جارٍ الآن', 'upcoming' => 'قريباً', _ => 'انتهى' };
+}
+
+/// إعدادات بوابة الدفع كما يعلنها الخادم (مفعّلة فقط عند وجود مفاتيح المزوّد)
+class PayConfig {
+  final bool enabled;
+  final String provider, currency;
+  final List<String> methods;
+  final int min, max;
+  const PayConfig({this.enabled = false, this.provider = '', this.currency = 'SAR', this.methods = const [], this.min = 0, this.max = 0});
+  factory PayConfig.fromJson(Map m) => PayConfig(enabled: m['enabled'] == true, provider: m['provider']?.toString() ?? '', currency: m['currency']?.toString() ?? 'SAR', methods: asList(m['methods']).map((e) => e.toString()).toList(), min: _i(m['min']), max: _i(m['max']));
+}
+
+class PaymentRow {
+  final String id, status, description;
+  final int amount;
+  final DateTime? createdAt, paidAt;
+  const PaymentRow({required this.id, required this.status, required this.amount, this.description = '', this.createdAt, this.paidAt});
+  factory PaymentRow.fromJson(Map m) => PaymentRow(id: m['id'].toString(), status: m['status']?.toString() ?? '', amount: _i(m['amount']), description: m['description']?.toString() ?? '', createdAt: _t(m['createdAt']), paidAt: _t(m['paidAt']));
+}
+
+/// معاينة ترقية البائع إلى دائرة أعمال
+class UpgradePreview {
+  final bool eligible;
+  final int listings, completed;
+  final String suggestedName, suggestedCategory, city, address;
+  final String? marketCategory, upgradedBizId;
+  final int upgradedItems;
+  const UpgradePreview({this.eligible = false, this.listings = 0, this.completed = 0, this.suggestedName = '', this.suggestedCategory = 'brand', this.city = '', this.address = '', this.marketCategory, this.upgradedBizId, this.upgradedItems = 0});
+  factory UpgradePreview.fromJson(Map m) => UpgradePreview(
+        eligible: m['eligible'] == true, listings: _i(m['listings']), completed: _i(m['completed']), suggestedName: m['suggestedName']?.toString() ?? '', suggestedCategory: m['suggestedCategory']?.toString() ?? 'brand', city: m['city']?.toString() ?? '', address: m['address']?.toString() ?? '',
+        marketCategory: m['marketCategory']?.toString(), upgradedBizId: m['upgraded'] is Map ? _m(m['upgraded'])['bizId']?.toString() : null, upgradedItems: m['upgraded'] is Map ? _i(_m(m['upgraded'])['items']) : 0,
       );
 }
 

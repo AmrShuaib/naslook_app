@@ -51,7 +51,8 @@ export default async function commerce(app, opts) {
     CREATE INDEX IF NOT EXISTS market_listings_active ON market_listings(status, bumped_at DESC);
     ALTER TABLE market_orders ADD COLUMN IF NOT EXISTS code TEXT, ADD COLUMN IF NOT EXISTS variant TEXT, ADD COLUMN IF NOT EXISTS coupon TEXT, ADD COLUMN IF NOT EXISTS discount BIGINT NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS commission BIGINT NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS slot TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS dispute_reason TEXT, ADD COLUMN IF NOT EXISTS dispute_status TEXT, ADD COLUMN IF NOT EXISTS dispute_note TEXT, ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+      ADD COLUMN IF NOT EXISTS dispute_reason TEXT, ADD COLUMN IF NOT EXISTS dispute_status TEXT, ADD COLUMN IF NOT EXISTS dispute_note TEXT, ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS courier_id TEXT, ADD COLUMN IF NOT EXISTS courier_note TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS courier_at TIMESTAMPTZ;
     UPDATE market_orders SET status='completed', completed_at=COALESCE(completed_at, updated_at) WHERE status='delivered' AND delivered_at IS NULL;
     CREATE TABLE IF NOT EXISTS market_reviews (order_id UUID PRIMARY KEY, listing_id UUID NOT NULL, seller_id TEXT NOT NULL, buyer_id TEXT NOT NULL, rating INT NOT NULL, text TEXT NOT NULL DEFAULT '',
       reply TEXT, reply_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -517,6 +518,7 @@ export default async function commerce(app, opts) {
     id: o.id, listingId: o.listing_id, title: o.title, imageUrl: o.image_url, kind: o.kind ?? null, qty: o.qty, total: Number(o.total), discount: Number(o.discount ?? 0), coupon: o.coupon ?? null,
     commission: o.seller_id === uid || (await isAdmin(uid)) ? Number(o.commission ?? 0) : null, status: o.status, note: o.note, variant: o.variant ?? null, slot: o.slot ?? null,
     code: o.buyer_id === uid ? o.code ?? null : null, buyer: await person(o.buyer_id), seller: await person(o.seller_id), mineAsSeller: o.seller_id === uid,
+    courier: o.courier_id ? await person(o.courier_id) : null, courierNote: o.courier_note ?? "", mineAsCourier: !!o.courier_id && o.courier_id === uid,
     deliveredAt: o.delivered_at ?? null, completedAt: o.completed_at ?? null, disputeStatus: o.dispute_status ?? null, disputeReason: o.dispute_reason ?? null, disputeNote: o.dispute_note ?? null,
     reviewed: o.reviewed === true, createdAt: o.created_at, updatedAt: o.updated_at,
   });
@@ -524,7 +526,7 @@ export default async function commerce(app, opts) {
   const ORDER_SQL = "SELECT o.*, l.title, l.image_url, l.kind, (r.order_id IS NOT NULL) AS reviewed FROM market_orders o JOIN market_listings l ON l.id=o.listing_id LEFT JOIN market_reviews r ON r.order_id=o.id";
   app.get("/market/orders", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
-    const r = await pool.query(`${ORDER_SQL} WHERE o.buyer_id=$1 OR o.seller_id=$1 ORDER BY o.created_at DESC LIMIT 200`, [uid]);
+    const r = await pool.query(`${ORDER_SQL} WHERE o.buyer_id=$1 OR o.seller_id=$1 OR o.courier_id=$1 ORDER BY o.created_at DESC LIMIT 200`, [uid]);
     return Promise.all(r.rows.map((o) => orderOut(o, uid)));
   });
   app.get("/market/orders/:id", async (req, reply) => {
@@ -532,7 +534,7 @@ export default async function commerce(app, opts) {
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const o = (await pool.query(`${ORDER_SQL} WHERE o.id=$1`, [req.params.id])).rows[0];
     if (!o) return bad(reply, 404, "not-found");
-    if (o.buyer_id !== uid && o.seller_id !== uid && !(await isAdmin(uid))) return bad(reply, 403, "forbidden");
+    if (o.buyer_id !== uid && o.seller_id !== uid && o.courier_id !== uid && !(await isAdmin(uid))) return bad(reply, 403, "forbidden");
     return orderOut(o, uid);
   });
   app.get("/market/:id", async (req, reply) => {
@@ -602,7 +604,10 @@ export default async function commerce(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const o = await loadOrder(req.params.id); if (!o) return bad(reply, 404, "not-found");
-    if (o.seller_id !== uid) return bad(reply, 403, "seller-only");
+    // المندوب المعيَّن يستطيع نقل الطلب إلى «في الطريق» و«تم التسليم» فقط
+    const asCourier = !!o.courier_id && o.courier_id === uid && o.seller_id !== uid;
+    if (o.seller_id !== uid && !asCourier) return bad(reply, 403, "seller-only");
+    if (asCourier && !["on_the_way", "delivered"].includes(stage)) return bad(reply, 403, "courier-stage");
     const from = ORDER_STAGES.indexOf(o.status), to = ORDER_STAGES.indexOf(stage);
     if (from < 0 || to <= from || to >= ORDER_STAGES.indexOf("completed")) return bad(reply, 409, "bad-status");
     await pool.query(`UPDATE market_orders SET status=$2, updated_at=now(), accepted_at=COALESCE(accepted_at, now())${stage === "delivered" ? ", delivered_at=now()" : ""} WHERE id=$1`, [o.id, stage]);

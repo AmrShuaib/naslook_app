@@ -103,7 +103,9 @@ async function setup(app, opts) {
       case "mk": {
         if (!UUID_RE.test(b ?? "")) return null;
         const l = (await pool.query("SELECT * FROM market_listings WHERE id=$1", [b])).rows[0]; if (!l) return null;
-        return { type: "listing", id: l.id, title: l.title, subtitle: l.place_name ?? "", image: l.image_url ?? null, price: Number(l.price), status: l.status, seller: personOf(await userRow(l.seller_id)) };
+        let images = []; try { images = Array.isArray(l.images) ? l.images : JSON.parse(l.images ?? "[]"); } catch { images = []; }
+        const bits = [l.city || l.place_name, l.kind === "service" ? "خدمة" : l.condition === "used" ? "مستعمل" : null, l.delivery ? "توصيل" : null, l.rating_avg != null && Number(l.rating_count) > 0 ? `★ ${Number(l.rating_avg).toFixed(1)}` : null, Number(l.sold) > 0 ? `${l.sold} مبيعة` : null].filter(Boolean);
+        return { type: "listing", id: l.id, title: l.title, subtitle: bits.join(" · "), image: images[0] ?? l.image_url ?? null, price: Number(l.price), status: l.status, kind: l.kind ?? null, category: l.category ?? null, verified: l.spotlight_until != null && new Date(l.spotlight_until) > new Date(), left: l.stock == null ? null : Number(l.stock), seller: personOf(await userRow(l.seller_id)) };
       }
       case "post": {
         if (!UUID_RE.test(b ?? "")) return null;

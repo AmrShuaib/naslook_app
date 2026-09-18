@@ -10,6 +10,7 @@ import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../business/business_page.dart';
 import '../chat/chat_thread_page.dart';
 import '../wallet/wallet_page.dart';
 import 'listing_page.dart';
@@ -93,6 +94,8 @@ class SellerDashboardPage extends ConsumerWidget {
           if (coupons.isEmpty) const Text('أنشئ كوبوناً يكتبه المشتري عند الطلب (مثال: WELCOME10).', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
           JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, c) in coupons.indexed) ListRow(leading: Icon(Icons.confirmation_number_outlined, color: c.active ? Joy.primary : Joy.textMuted), title: Text('${c.code} · ${c.label}'), subtitle: Text('${c.used}${c.maxUses != null ? '/${c.maxUses}' : ''} استخدام${c.minTotal > 0 ? ' · حد أدنى ${money(c.minTotal)}' : ''}${c.expiresAt != null ? ' · ينتهي ${c.expiresAt!.day}/${c.expiresAt!.month}' : ''}'),
             trailing: Switch(value: c.active, onChanged: (v) async { await ref.read(apiClientProvider).setCouponActive(c.code, v); ref.invalidate(couponsProvider); }), divider: i < coupons.length - 1)])),
+          const SizedBox(height: 12),
+          _UpgradeCard(),
           Row(children: [const Expanded(child: SectionTitle('سبوت لايت')), TextButton.icon(key: const Key('spotlight-buy'), onPressed: () => showSpotlightSheet(context, ref), icon: const Icon(Icons.auto_awesome_rounded, size: 18), label: const Text('اشترِ إعلاناً'))]),
           if (spots.isEmpty) const Text('ضع عرضك في أعلى السوق ليراه كل من يدخله.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
           JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, sp) in spots.indexed) ListRow(leading: Icon(Icons.auto_awesome_rounded, color: sp.status == 'active' ? Joy.sunText : Joy.textMuted), title: Text(sp.title, maxLines: 1, overflow: TextOverflow.ellipsis), subtitle: Text('${sp.status == 'active' ? 'نشط حتى ${sp.endsAt!.day}/${sp.endsAt!.month}' : 'انتهى'} · ${sp.views} ظهور · ${sp.clicks} نقرة${sp.granted ? ' · منحة من الإدارة' : ' · ${money(sp.paid)}'}'), divider: i < spots.length - 1)])),
@@ -205,3 +208,49 @@ class ComparePage extends ConsumerWidget {
     );
   }
 }
+
+/// معاينة الترقية إلى دائرة أعمال (تُحمَّل مع لوحة البائع)
+final upgradePreviewProvider = FutureProvider<UpgradePreview>((ref) => ref.watch(apiClientProvider).upgradePreview());
+
+/// بطاقة «رقِّ حسابك إلى دائرة أعمال»: تنشئ دائرة من ملف البائع وتنسخ عروضه النشطة إلى كتالوجها
+class _UpgradeCard extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pv = ref.watch(upgradePreviewProvider).valueOrNull;
+    if (pv == null) return const SizedBox.shrink();
+    if (pv.upgradedBizId != null) {
+      return JoyCard(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BusinessPage(id: pv.upgradedBizId!))), child: Row(children: [
+        const Icon(Icons.storefront_rounded, color: Joy.primary), const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('دائرتك التجارية', style: TextStyle(fontWeight: FontWeight.w700)), Text('${pv.upgradedItems} صنفاً نُسخت من عروضك · افتح لوحة المالك', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5))])),
+        const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+      ]));
+    }
+    if (!pv.eligible) return const SizedBox.shrink();
+    return JoyCard(color: Joy.primarySoft, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Row(children: [Icon(Icons.storefront_rounded, color: Joy.primary), SizedBox(width: 8), Expanded(child: Text('رقِّ حسابك إلى دائرة أعمال', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)))]),
+      const SizedBox(height: 6),
+      Text('تظهر على الخريطة وفي الدوائر باسم تجاري وكتالوج وعروض ومجتمع خاص، وتُنسخ عروضك الـ${pv.listings} النشطة إلى الكتالوج تلقائياً.', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+      const SizedBox(height: 10),
+      Align(alignment: AlignmentDirectional.centerEnd, child: FilledButton.icon(key: const Key('seller-upgrade'), onPressed: () => _upgrade(context, ref, pv), icon: const Icon(Icons.upgrade_rounded, size: 18), label: const Text('إنشاء دائرتي'))),
+    ]));
+  }
+
+  Future<void> _upgrade(BuildContext context, WidgetRef ref, UpgradePreview pv) async {
+    final name = TextEditingController(text: pv.suggestedName), desc = TextEditingController();
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: const Text('دائرة أعمال جديدة'), content: Column(mainAxisSize: MainAxisSize.min, children: [
+      TextField(key: const Key('upgrade-name'), controller: name, decoration: const InputDecoration(labelText: 'الاسم التجاري')),
+      const SizedBox(height: 8),
+      TextField(key: const Key('upgrade-desc'), controller: desc, maxLines: 3, decoration: const InputDecoration(labelText: 'نبذة قصيرة (اختياري)')),
+      const SizedBox(height: 6),
+      Text('الفئة: ${bizCategoryLabel(pv.suggestedCategory)} · الموقع من عروضك · يمكنك تعديل كل شيء لاحقاً من لوحة المالك.', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+    ]), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(key: const Key('upgrade-go'), onPressed: () => Navigator.pop(ctx, true), child: const Text('إنشاء'))]));
+    if (ok != true || name.text.trim().isEmpty || !context.mounted) return;
+    try {
+      final bizId = await ref.read(apiClientProvider).upgradeSeller(nameAr: name.text.trim(), description: desc.text.trim());
+      ref.invalidate(upgradePreviewProvider);
+      if (context.mounted) { toast(context, 'أُنشئت دائرتك'); Navigator.of(context).push(MaterialPageRoute(builder: (_) => BusinessPage(id: bizId))); }
+    } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
+  }
+}
+
+String bizCategoryLabel(String c) => switch (c) { 'cafe' => 'مقهى', 'restaurant' => 'مطعم', 'company' => 'شركة', _ => 'علامة تجارية' };

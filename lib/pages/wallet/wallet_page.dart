@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
@@ -17,6 +18,8 @@ import '../events/events_page.dart';
 import 'my_offers_page.dart';
 
 final walletProvider = FutureProvider<Wallet>((ref) => ref.watch(apiClientProvider).wallet());
+/// بوابة الدفع الخارجية (مدى/بطاقة/أبل باي)؛ يظهر زر الشحن بالبطاقة فقط عندما يفعّلها الخادم
+final payConfigProvider = FutureProvider<PayConfig>((ref) => ref.watch(apiClientProvider).payConfig());
 final walletTxProvider = FutureProvider<List<WalletTx>>((ref) => ref.watch(apiClientProvider).walletTransactions());
 
 class WalletPage extends ConsumerWidget {
@@ -62,6 +65,7 @@ class WalletPage extends ConsumerWidget {
                 _action(Icons.receipt_long_outlined, 'حجوزاتي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
                 _action(Icons.local_offer_outlined, 'عروضي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyOffersPage()))),
                 if (wallet.testTopup) _action(Icons.add_rounded, 'شحن', () => _topup(context, ref)),
+                if (ref.watch(payConfigProvider).valueOrNull?.enabled == true) _action(Icons.credit_card_rounded, 'بالبطاقة', () => _cardTopup(context, ref, ref.read(payConfigProvider).requireValue), key: const Key('wallet-card-topup')),
               ]),
               const SizedBox(height: 18),
               SectionTitle('آخر الحركات', action: 'كشف الحساب', onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StatementPage()))),
@@ -76,8 +80,9 @@ class WalletPage extends ConsumerWidget {
     );
   }
 
-  Widget _action(IconData icon, String label, VoidCallback onTap) => Expanded(
+  Widget _action(IconData icon, String label, VoidCallback onTap, {Key? key}) => Expanded(
         child: InkWell(
+          key: key,
           onTap: onTap,
           borderRadius: BorderRadius.circular(18),
           child: Column(children: [
@@ -146,6 +151,21 @@ class WalletPage extends ConsumerWidget {
     if (context.mounted) await _transfer(context, ref, to: to);
   }
 
+  /// شحن بالبطاقة عبر بوابة الدفع: يطلب المبلغ ثم يفتح صفحة الدفع في المتصفح؛ الرصيد يُضاف بعد تأكيد المزوّد
+  Future<void> _cardTopup(BuildContext context, WidgetRef ref, PayConfig cfg) async {
+    final v = await askText(context, title: 'شحن بالبطاقة', hint: 'المبلغ بالريال (من ${money(cfg.min)} إلى ${money(cfg.max)})', confirm: 'متابعة للدفع', maxLines: 1, keyboardType: const TextInputType.numberWithOptions(decimal: true));
+    if (v == null) return;
+    final halalas = parseSar(v);
+    if (halalas < cfg.min || halalas > cfg.max) { if (context.mounted) toast(context, 'المبلغ يجب أن يكون بين ${money(cfg.min)} و${money(cfg.max)}', error: true); return; }
+    try {
+      final url = await ref.read(apiClientProvider).payTopup(halalas);
+      var opened = false;
+      try { opened = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication); } catch (_) { opened = false; }
+      if (context.mounted) toast(context, opened ? 'أكمل الدفع في الصفحة المفتوحة، وسيُضاف المبلغ فور التأكيد' : 'افتح رابط الدفع: $url');
+    } catch (e) {
+      if (context.mounted) toast(context, _err(e), error: true);
+    }
+  }
   Future<void> _topup(BuildContext context, WidgetRef ref) async {
     final v = await askText(context, title: 'شحن تجريبي', hint: 'المبلغ بالريال (حتى ${money(maxTopupHalalas)})', confirm: 'شحن', maxLines: 1, keyboardType: const TextInputType.numberWithOptions(decimal: true));
     if (v == null) return;
@@ -171,6 +191,7 @@ String _err(Object e) {
   final s = e.toString();
   if (s.contains('insufficient-funds')) return 'الرصيد غير كافٍ';
   if (s.contains('topup-disabled')) return 'الشحن غير مفعّل';
+  if (s.contains('payments-disabled')) return 'الدفع بالبطاقة غير مفعّل حالياً';
   if (s.contains('not-found')) return 'المستلم غير موجود';
   if (s.contains('bad-amount')) return 'المبلغ غير مقبول: يجب أن يكون أكبر من صفر وحتى ${money(maxTopupHalalas)}';
   if (s.contains('bad-recipient')) return 'حدّد مستلماً صحيحاً غير نفسك';

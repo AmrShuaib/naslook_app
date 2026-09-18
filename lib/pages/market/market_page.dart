@@ -12,6 +12,7 @@ import '../../api/client.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
+import 'bazaar_page.dart';
 import 'listing_form.dart';
 import 'listing_page.dart';
 import 'orders_page.dart';
@@ -19,6 +20,7 @@ import 'seller_tools.dart';
 import 'wanted_page.dart';
 
 export 'listing_page.dart' show ListingPage, listingProvider;
+export 'bazaar_page.dart' show BazaarPage, BazaarStrip, bazaarProvider;
 export 'orders_page.dart' show OrdersPage, ordersProvider, myListingsProvider, MyListingRow, OwnerListingActions, listingStatusLabel, listingStatusColor, toggleListingVisibility, editListing, OrderPage, orderProvider;
 export 'listing_form.dart' show showListingForm, ListingDraft;
 
@@ -119,7 +121,8 @@ class _MarketPageState extends ConsumerState<MarketPage> {
               ),
             ),
           )),
-          if (h != null && h.spotlight.isNotEmpty && mq.q.isEmpty && mq.category == null) SliverToBoxAdapter(child: SpotlightStrip(items: h.spotlight)),
+          if (h != null && mq.q.isEmpty && mq.category == null) SliverToBoxAdapter(child: h.spotlight.isNotEmpty ? SpotlightStrip(items: h.spotlight) : const _SpotlightEmpty()),
+          if (h != null && h.bazaars.isNotEmpty && mq.q.isEmpty && mq.category == null) SliverToBoxAdapter(child: BazaarStrip(items: h.bazaars)),
           SliverToBoxAdapter(child: _CategoryRow(mq: mq, counts: h?.categories ?? const {})),
           if (mq.category != null) SliverToBoxAdapter(child: _SubRow(mq: mq)),
           SliverToBoxAdapter(child: _ControlRow(mq: mq, count: list.valueOrNull?.length)),
@@ -178,6 +181,23 @@ class SpotlightStrip extends ConsumerWidget {
           },
         )),
       ]);
+}
+
+/// لا إعلانات في سبوت لايت الآن: سطر واحد هادئ يعرّف بالمساحة لمن يريد إعلانه فيها
+class _SpotlightEmpty extends ConsumerWidget {
+  const _SpotlightEmpty();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 2),
+        child: InkWell(
+          key: const Key('spotlight-info'), borderRadius: BorderRadius.circular(14), onTap: () => showSpotlightSheet(context, ref),
+          child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9), decoration: BoxDecoration(color: Joy.sunSoft, borderRadius: BorderRadius.circular(14)), child: const Row(children: [
+            Icon(Icons.auto_awesome_rounded, size: 16, color: Joy.sunText), SizedBox(width: 8),
+            Expanded(child: Text('سبوت لايت: اعرض إعلانك هنا ليراه كل من يدخل السوق', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600))),
+            Icon(Icons.chevron_left_rounded, size: 18, color: Joy.textMuted),
+          ])),
+        ),
+      );
 }
 
 const _catIcons = {'coffee': Icons.coffee_outlined, 'food': Icons.restaurant_outlined, 'photo': Icons.photo_camera_outlined, 'gifts': Icons.card_giftcard_outlined, 'handmade': Icons.palette_outlined, 'delivery': Icons.local_shipping_outlined, 'services': Icons.handyman_outlined, 'other': Icons.category_outlined};
