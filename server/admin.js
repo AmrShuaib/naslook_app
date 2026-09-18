@@ -268,24 +268,30 @@ export default async function admin(app, opts) {
   });
 
   // ---- المستخدمون
-  const userOut = async (u, { flags = null, balance = null, admin = null } = {}) => ({
+  // بريد الدخول (server/auth_alias.js) يُضم إلى القائمة والتفاصيل حين يوجد جدوله
+  const aliasesOk = tables.has("login_aliases");
+  const aliasJoin = aliasesOk ? "LEFT JOIN LATERAL (SELECT alias, verified FROM login_aliases la WHERE la.user_id=u.id ORDER BY verified DESC, created_at DESC LIMIT 1) al ON true" : "";
+  const aliasCols = aliasesOk ? ", al.alias AS login_email, al.verified AS login_verified" : "";
+  const emailOf = async (id) => aliasesOk ? (await pool.query("SELECT alias, verified FROM login_aliases WHERE user_id=$1 ORDER BY verified DESC, created_at DESC LIMIT 1", [id])).rows[0] ?? null : null;
+  const userOut = async (u, { flags = null, balance = null, admin = null, email } = {}) => ({
     ...personOf(u, u.id), bio: U.bio ? u[U.bio] ?? "" : "", createdAt: U.created ? u[U.created] : null, lastSeen: U.seen ? u[U.seen] : null, deleted: U.deleted ? !!u[U.deleted] : false,
     isAdmin: admin ?? (await isAdmin(u.id)), suspended: flags?.suspended === true, flagNote: flags?.note ?? "", balance: balance == null ? null : Number(balance),
+    email: email !== undefined ? email?.alias ?? null : u.login_email ?? null, emailVerified: email !== undefined ? email?.verified === true : u.login_verified === true,
   });
   app.get("/adminapi/users", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;
     if (!U.ok) return [];
     const term = str(req.query?.q, 60);
-    const limit = Math.max(1, Math.min(200, Number(req.query?.limit) || 50));
+    const limit = Math.max(1, Math.min(1000, Number(req.query?.limit) || 50));
     const filter = req.query?.filter; // suspended | admins | recent
     const order = U.created ? `ORDER BY u.${q(U.created)} DESC NULLS LAST` : "ORDER BY u.id";
     const where = [];
     const params = [];
-    if (term) { params.push(`%${term}%`); where.push(`(u.id ILIKE $${params.length}${U.nick ? ` OR u.${q(U.nick)} ILIKE $${params.length}` : ""})`); }
+    if (term) { params.push(`%${term}%`); where.push(`(u.id ILIKE $${params.length}${U.nick ? ` OR u.${q(U.nick)} ILIKE $${params.length}` : ""}${aliasesOk ? ` OR al.alias ILIKE $${params.length}` : ""})`); }
     if (filter === "suspended") where.push("f.suspended = true");
     if (filter === "admins") where.push("(a.user_id IS NOT NULL" + (U.admin ? ` OR u.${q(U.admin)}=true` : "") + (U.role ? ` OR u.${q(U.role)}='admin'` : "") + ")");
-    const sql = `SELECT u.*, f.suspended, f.note AS flag_note, w.balance, (a.user_id IS NOT NULL) AS in_admins FROM users u
-      LEFT JOIN user_flags f ON f.user_id=u.id LEFT JOIN wallet_accounts w ON w.user_id=u.id LEFT JOIN admins a ON a.user_id=u.id
+    const sql = `SELECT u.*, f.suspended, f.note AS flag_note, w.balance, (a.user_id IS NOT NULL) AS in_admins${aliasCols} FROM users u
+      LEFT JOIN user_flags f ON f.user_id=u.id LEFT JOIN wallet_accounts w ON w.user_id=u.id LEFT JOIN admins a ON a.user_id=u.id ${aliasJoin}
       ${where.length ? "WHERE " + where.join(" AND ") : ""} ${order} LIMIT ${limit}`;
     const rows = (await pool.query(sql, params)).rows;
     return Promise.all(rows.map((u) => userOut(u, { flags: { suspended: u.suspended, note: u.flag_note }, balance: u.balance ?? 0, admin: u.in_admins || (U.admin && u[U.admin] === true) || (U.role && u[U.role] === "admin") })));
@@ -304,7 +310,7 @@ export default async function admin(app, opts) {
     let reportsAbout = [];
     if (reportsTable && RC.target) reportsAbout = (await pool.query(`SELECT * FROM ${q(reportsTable)} WHERE ${q(RC.target)}::text=$1 ORDER BY ${RC.created ? q(RC.created) : "1"} DESC LIMIT 20`, [id])).rows.map(reportOut);
     const actions = (await pool.query("SELECT * FROM admin_audit WHERE target=$1 ORDER BY created_at DESC LIMIT 20", [id])).rows.map(auditOut);
-    return { user: await userOut(u, { flags, balance: w?.balance ?? 0 }), points: w?.points ?? 0, transactions: txs.map(txOut), orders: { count: orders.n, total: Number(orders.total) }, circles, reportsAbout, actions };
+    return { user: await userOut(u, { flags, balance: w?.balance ?? 0, email: await emailOf(id) }), points: w?.points ?? 0, transactions: txs.map(txOut), orders: { count: orders.n, total: Number(orders.total) }, circles, reportsAbout, actions };
   });
   const txOut = (x) => ({ id: x.id, kind: x.kind, amount: Number(x.amount), peerId: x.peer_id, ref: x.ref, note: x.note, createdAt: x.created_at, userId: x.user_id });
   const auditOut = (a) => ({ id: a.id, adminId: a.admin_id, action: a.action, target: a.target, details: a.details ?? {}, createdAt: a.created_at });
@@ -384,7 +390,7 @@ export default async function admin(app, opts) {
     }
     await audit(uid, "user.edit", id, changes);
     const flags = (await pool.query("SELECT * FROM user_flags WHERE user_id=$1", [id])).rows[0] ?? null;
-    return { ok: true, changes, user: await userOut(await userRow(id), { flags }) };
+    return { ok: true, changes, user: await userOut(await userRow(id), { flags, email: await emailOf(id) }) };
   });
 
   // ---- حذف نهائي (للمديرين فقط، بتأكيد كتابة اسم المستخدم): كل صف يخص المستخدم في كل جداول القاعدة، يُكتشف بأسماء الأعمدة،
