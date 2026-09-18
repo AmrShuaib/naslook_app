@@ -296,7 +296,7 @@ export default async function admin(app, opts) {
     let sessions = null;
     if (sessionsUser) {
       const r = (await pool.query(`SELECT count(*)::int AS n${sessionsTime ? `, max(${q(sessionsTime)}) AS last` : ""} FROM sessions WHERE ${q(sessionsUser)}=$1`, [id]).catch(() => ({ rows: [] }))).rows[0];
-      const agents = sessionsAgent ? (await pool.query(`SELECT DISTINCT ${q(sessionsAgent)} AS a FROM sessions WHERE ${q(sessionsUser)}=$1 LIMIT 5`, [id]).catch(() => ({ rows: [] }))).rows.map((x) => x.a).filter(Boolean) : [];
+      const agents = sessionsAgent ? (await pool.query(`SELECT DISTINCT ${q(sessionsAgent)} AS a FROM sessions WHERE ${q(sessionsUser)}=$1 LIMIT 5`, [id]).catch(() => ({ rows: [] }))).rows.map((x) => x.a).filter((a) => a && !/lightMyRequest/i.test(a)) : []; // جلسات الدخول عبر البريد تمرّ داخلياً فتحمل وكيل fastify
       sessions = { count: r?.n ?? 0, last: r?.last ?? null, agents };
     }
     const counts = {
