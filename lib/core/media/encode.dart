@@ -1,0 +1,14 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'encode_stub.dart' if (dart.library.js_interop) 'encode_web.dart' as impl;
+
+/// صورة مشفّرة جاهزة للرفع.
+typedef EncodedImage = ({Uint8List bytes, String mime});
+
+/// يشفّر صورة مرسومة: JPEG عبر canvas على الويب (أصغر بكثير)، وPNG من dart:ui على غيره.
+Future<EncodedImage> encodeImage(ui.Image image) => impl.encodeImage(image);
+
+/// يقصّ تسجيلاً صوتياً بين [start] و[end]: على الويب يُفكّ عبر Web Audio ويُعاد ترميزه WAV (الخادم يحوّله بعد الرفع)؛
+/// على غيره يُعاد كما هو (بلا قصّ).
+Future<({Uint8List bytes, String mime, String name})> trimAudio(Uint8List bytes, String mime, {required Duration start, required Duration end}) => impl.trimAudio(bytes, mime, start: start, end: end);

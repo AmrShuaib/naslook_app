@@ -50,10 +50,13 @@ class MapPost {
   /// في البث: المسافة من المستخدم بالكيلومتر والمكان المنسوب (دائرة قريبة أو اسم مكتوب).
   final double? distanceKm;
   final PostPlace? place;
+  /// طبقة صوتية اختيارية (تعليق صوتي يُشغَّل مع الصورة أو النص)
+  final String? audioUrl;
+  final int? audioSec;
   const MapPost({
     required this.id, required this.user, required this.kind, this.mediaUrl, this.caption = '', this.bg, this.overlays = const [], this.tag = 'moment', this.title = '', this.price, this.cta,
     required this.lat, required this.lng, this.placeName, this.durationSec, this.status = 'active', this.views = 0, this.likes = 0, this.liked = false, this.mine = false, this.expired = false, this.expiresAt, this.createdAt,
-    this.distanceKm, this.place,
+    this.distanceKm, this.place, this.audioUrl, this.audioSec,
   });
   factory MapPost.fromJson(Map m) => MapPost(
         id: m['id'].toString(), user: Person.fromJson(asMap(m['user'])), kind: m['kind']?.toString() ?? 'text', mediaUrl: m['mediaUrl']?.toString(), caption: m['caption']?.toString() ?? '', bg: m['bg']?.toString(),
@@ -61,10 +64,11 @@ class MapPost {
         cta: m['cta'] is Map ? PostCta.fromJson(asMap(m['cta'])) : null, lat: _d(m['lat']), lng: _d(m['lng']), placeName: m['placeName']?.toString(), durationSec: m['durationSec'] == null ? null : _i(m['durationSec']),
         status: m['status']?.toString() ?? 'active', views: _i(m['views']), likes: _i(m['likes']), liked: m['liked'] == true, mine: m['mine'] == true, expired: m['expired'] == true, expiresAt: _t(m['expiresAt']), createdAt: _t(m['createdAt']),
         distanceKm: m['distanceKm'] == null ? null : _d(m['distanceKm']), place: m['place'] is Map ? PostPlace.fromJson(asMap(m['place'])) : null,
+        audioUrl: m['audioUrl']?.toString(), audioSec: m['audioSec'] == null ? null : _i(m['audioSec']),
       );
   MapPost copyWith({int? likes, bool? liked, int? views, String? status}) => MapPost(
         id: id, user: user, kind: kind, mediaUrl: mediaUrl, caption: caption, bg: bg, overlays: overlays, tag: tag, title: title, price: price, cta: cta, lat: lat, lng: lng, placeName: placeName,
-        durationSec: durationSec, status: status ?? this.status, views: views ?? this.views, likes: likes ?? this.likes, liked: liked ?? this.liked, mine: mine, expired: expired, expiresAt: expiresAt, createdAt: createdAt, distanceKm: distanceKm, place: place);
+        durationSec: durationSec, status: status ?? this.status, views: views ?? this.views, likes: likes ?? this.likes, liked: liked ?? this.liked, mine: mine, expired: expired, expiresAt: expiresAt, createdAt: createdAt, distanceKm: distanceKm, place: place, audioUrl: audioUrl, audioSec: audioSec);
   String get tagLabel => postTags[tag] ?? tag;
   String get kindLabel => switch (kind) { 'image' => 'صورة', 'video' => 'فيديو', 'audio' => 'تسجيل صوتي', _ => 'نص' };
   /// نص مختصر للقوائم: العنوان أو التعليق أو أول نص في الطبقات.

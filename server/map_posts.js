@@ -69,6 +69,7 @@ export default async function posts(app, opts) {
     CREATE INDEX IF NOT EXISTS map_posts_active ON map_posts(expires_at) WHERE status='active';
     CREATE TABLE IF NOT EXISTS map_post_likes (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
     CREATE TABLE IF NOT EXISTS map_post_views (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
+    ALTER TABLE map_posts ADD COLUMN IF NOT EXISTS audio_url TEXT, ADD COLUMN IF NOT EXISTS audio_sec INT;
   `);
   // سجل أحداث المنشورات للإحصاءات: مشاهدة (كل فتح)، ضغطة زر الإجراء، مراسلة الناشر، إعجاب
   await pool.query(`
@@ -115,6 +116,8 @@ export default async function posts(app, opts) {
     price: p.price == null ? null : Number(p.price), cta: p.cta ?? null, lat: p.lat, lng: p.lng, placeName: p.place_name, durationSec: p.duration_sec, status: p.status,
     views: Number(p.views ?? 0), likes: Number(p.likes ?? 0), liked: p.liked === true, mine: p.user_id === uid, expiresAt: p.expires_at, createdAt: p.created_at,
     expired: new Date(p.expires_at).getTime() < Date.now(),
+    // طبقة صوتية اختيارية على منشور صورة أو نص (تعليق صوتي يُشغَّل مع المنشور)
+    audioUrl: p.audio_url ?? null, audioSec: p.audio_sec ?? null,
   });
   const many = async (rows, uid) => { const cache = new Map(); const res = []; for (const r of rows) { if (!cache.has(r.user_id)) cache.set(r.user_id, await person(r.user_id)); res.push({ ...(await out(r, uid)), user: cache.get(r.user_id) }); } return res; };
 
@@ -130,16 +133,20 @@ export default async function posts(app, opts) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return bad(reply, 400, "bad-location");
     const caption = str(b.caption, 500);
     const overlays = cleanOverlays(b.overlays);
-    if (kind === "text" && !caption && !overlays.some((o) => o.type === "text")) return bad(reply, 400, "empty");
+    if (kind === "text" && !caption && !overlays.some((o) => o.type === "text") && !absUrl(req, b.audioUrl)) return bad(reply, 400, "empty");
     const banned = globalThis.naslifeCheckText?.(caption, str(b.title, 80), str(b.placeName, 80), ...overlays.filter((o) => o.type === "text").map((o) => o.text));
     if (banned) return reply.code(400).send({ error: "banned-words", word: banned });
     const ttl = TTL_HOURS.has(Number(b.ttlHours)) ? Number(b.ttlHours) : 24;
     const price = b.price == null || b.price === "" ? null : Math.max(0, Math.round(Number(b.price) || 0));
     const id = crypto.randomUUID();
-    await pool.query(`INSERT INTO map_posts(id,user_id,kind,media_url,caption,bg,overlays,tag,title,price,cta,lat,lng,place_name,duration_sec,expires_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now() + ($16 || ' hours')::interval)`,
+    const audioUrl = kind === "image" || kind === "text" ? absUrl(req, b.audioUrl) : null;
+    const audioSec = audioUrl && b.audioSec != null ? Math.round(clamp(b.audioSec, 1, 600, 0)) || null : null;
+    // منشور نصي بلا نص لكن بتسجيل صوتي: مقبول (لوحة صوتية)
+    if (kind === "text" && !caption && !overlays.some((o) => o.type === "text") && !audioUrl) return bad(reply, 400, "empty");
+    await pool.query(`INSERT INTO map_posts(id,user_id,kind,media_url,caption,bg,overlays,tag,title,price,cta,lat,lng,place_name,duration_sec,expires_at,audio_url,audio_sec)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now() + ($16 || ' hours')::interval,$17,$18)`,
       [id, uid, kind, mediaUrl, caption, HEX_RE.test(String(b.bg ?? "")) ? String(b.bg) : null, JSON.stringify(overlays), TAGS.has(b.tag) ? b.tag : "moment", str(b.title, 80), price,
-       JSON.stringify(cleanCta(b.cta)), lat, lng, str(b.placeName, 80) || null, b.durationSec == null ? null : Math.round(clamp(b.durationSec, 0, 600, 0)), String(ttl)]);
+       JSON.stringify(cleanCta(b.cta)), lat, lng, str(b.placeName, 80) || null, b.durationSec == null ? null : Math.round(clamp(b.durationSec, 0, 600, 0)), String(ttl), audioUrl, audioSec]);
     return out((await pool.query(`${SELECT} WHERE p.id=$2`, [uid, id])).rows[0], uid);
   });
 
@@ -262,6 +269,7 @@ export default async function posts(app, opts) {
     if (b.cta !== undefined) set("cta", JSON.stringify(cleanCta(b.cta)));
     if (b.placeName !== undefined) set("place_name", str(b.placeName, 80) || null);
     if (b.mediaUrl !== undefined && p.kind !== "text") { const u = absUrl(req, b.mediaUrl); if (!u) return bad(reply, 400, "bad-media"); set("media_url", u); }
+    if (b.audioUrl !== undefined && (p.kind === "image" || p.kind === "text")) { const u = absUrl(req, b.audioUrl); set("audio_url", u); set("audio_sec", u && b.audioSec != null ? Math.round(clamp(b.audioSec, 1, 600, 0)) || null : null); }
     if (b.status !== undefined) { if (!["active", "hidden"].includes(b.status)) return bad(reply, 400, "bad-status"); if (p.status === "blocked") return bad(reply, 403, "blocked"); set("status", b.status); }
     if (b.ttlHours !== undefined) { if (!TTL_HOURS.has(Number(b.ttlHours))) return bad(reply, 400, "bad-ttl"); vals.push(String(Number(b.ttlHours))); sets.push(`expires_at=now() + ($${vals.length} || ' hours')::interval`); }
     if (!sets.length) return bad(reply, 400, "empty");

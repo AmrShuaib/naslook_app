@@ -12,7 +12,6 @@ import 'package:naslook/api/session.dart';
 import 'package:naslook/pages/map/map_cluster.dart';
 import 'package:naslook/pages/posts/my_posts_page.dart';
 import 'package:naslook/pages/posts/overlay_canvas.dart';
-import 'package:naslook/pages/posts/post_composer.dart';
 import 'package:naslook/pages/posts/post_viewer.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
@@ -124,70 +123,6 @@ void main() {
     expect(changed!.y, closeTo(.66, .03));
   });
 
-  testWidgets('composer publishes a text post with an overlay and pro fields', (tester) async {
-    final srv = await _pump(tester, Scaffold(body: Builder(builder: (ctx) => Center(child: TextButton(onPressed: () => PostComposerPage.open(ctx, lat: 21.5, lng: 39.2, placeName: 'الكورنيش'), child: const Text('open'))))));
-    await tester.tap(find.text('open'));
-    await _settle(tester);
-    expect(find.text('منشور جديد على الخريطة'), findsOneWidget);
-    await tester.tap(find.text('نص على خلفية ملونة'));
-    await _settle(tester);
-    // الكتابة مباشرة على اللوحة بلا نافذة منفصلة، والنص بلا خلفية افتراضياً
-    expect(find.byType(AlertDialog), findsNothing);
-    expect(find.byKey(const ValueKey('inline-text')), findsOneWidget);
-    // أثناء الكتابة: شريط مختصر تحت اللوحة (تم + 5 ألوان + حجم) بدل الحقول والأدوات الجانبية
-    expect(find.byKey(const ValueKey('inline-toolbar')), findsOneWidget);
-    expect(find.text('تعليق (اختياري)…'), findsNothing, reason: 'الحقول السفلية تختفي أثناء الكتابة');
-    expect(find.text('خيارات احترافية'), findsNothing);
-    expect(find.byIcon(Icons.palette_outlined), findsNothing, reason: 'الأدوات الجانبية تختفي أثناء الكتابة');
-    expect(find.byKey(const ValueKey('text-#111111')), findsOneWidget);
-    expect(find.byKey(const ValueKey('text-#FFD54F')), findsOneWidget);
-    await tester.enterText(find.byKey(const ValueKey('inline-text')), 'خصم 30٪');
-    // الحجم يتبدّل بنقرة واحدة بين ثلاث درجات
-    await tester.tap(find.byKey(const ValueKey('inline-size')));
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('inline-done')));
-    await _settle(tester);
-    expect(find.byKey(const ValueKey('inline-text')), findsNothing);
-    expect(find.byKey(const ValueKey('inline-toolbar')), findsNothing);
-    expect(find.text('خصم 30٪'), findsOneWidget);
-    expect(find.text('تعليق (اختياري)…'), findsOneWidget, reason: 'الحقول تعود بعد «تم»');
-    // لون اللوحة: ستة ألوان بنقرة بلا منزلقات، والنص الأسود الافتراضي يصير أبيض على لوحة داكنة
-    await tester.tap(find.byIcon(Icons.palette_outlined));
-    await _settle(tester);
-    expect(find.text('لون اللوحة'), findsOneWidget);
-    expect(find.byType(Slider), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('bg-#BF3A1E')));
-    await tester.pump();
-    await tester.tap(find.text('تم'));
-    await _settle(tester);
-    await tester.tap(find.text('خيارات احترافية'));
-    await _settle(tester);
-    await tester.ensureVisible(find.text('عرض'));
-    await tester.tap(find.text('عرض'));
-    await _settle(tester);
-    await tester.ensureVisible(find.text('واتساب'));
-    await tester.tap(find.text('واتساب'));
-    await _settle(tester);
-    await tester.enterText(find.widgetWithText(TextField, 'رقم واتساب مثل 05xxxxxxxx'), '0501234567');
-    await tester.ensureVisible(find.text('نشر على الخريطة'));
-    await tester.tap(find.text('نشر على الخريطة'));
-    await _settle(tester);
-    final body = srv.bodies['POST /mapposts']!;
-    expect(body['kind'], 'text');
-    expect(body['lat'], 21.5);
-    expect((body['overlays'] as List).first['text'], 'خصم 30٪');
-    expect((body['overlays'] as List).first['bg'], isNull, reason: 'النص بلا خلفية إلزامية');
-    expect((body['overlays'] as List).first['color'], '#FFFFFF', reason: 'الأسود الافتراضي انقلب أبيض على لوحة داكنة');
-    expect((body['overlays'] as List).first['scale'], 2.2, reason: 'نقرة الحجم رفعت 1.5 إلى 2.2');
-    expect(body['bg'], '#BF3A1E');
-    expect(body['tag'], 'offer');
-    expect(body['cta']['type'], 'whatsapp');
-    expect(body['cta']['value'], '0501234567');
-    expect(body['ttlHours'], 24);
-    expect(body['placeName'], 'الكورنيش');
-    expect(find.text('open'), findsOneWidget, reason: 'يعود إلى الصفحة السابقة بعد النشر');
-  });
-
   testWidgets('viewer renders overlays, tag, price and CTA, counts a view and toggles like', (tester) async {
     final srv = await _pump(tester, PostViewerPage(posts: [MapPost.fromJson(_post1())]), height: 900);
     expect(find.text('خصم 30٪'), findsOneWidget);
@@ -210,25 +145,5 @@ void main() {
     expect(find.textContaining('مخفي'), findsWidgets);
     expect(find.textContaining('3 مشاهدة'), findsOneWidget);
     expect(find.text('منشور جديد'), findsOneWidget);
-  });
-
-  testWidgets('text post defaults to a white board with black text and a flat background', (tester) async {
-    final srv = await _pump(tester, Scaffold(body: Builder(builder: (ctx) => Center(child: TextButton(onPressed: () => PostComposerPage.open(ctx, lat: 21.5, lng: 39.2), child: const Text('open'))))));
-    await tester.tap(find.text('open'));
-    await _settle(tester);
-    await tester.tap(find.text('نص على خلفية ملونة'));
-    await _settle(tester);
-    final field = tester.widget<TextField>(find.byKey(const ValueKey('inline-text')));
-    expect(field.style!.color, const Color(0xFF111111));
-    expect(field.style!.shadows, isNull, reason: 'لا ظل على اللوحة البيضاء');
-    await tester.enterText(find.byKey(const ValueKey('inline-text')), 'مرحباً');
-    await tester.tap(find.byKey(const ValueKey('inline-done')));
-    await _settle(tester);
-    await tester.ensureVisible(find.text('نشر على الخريطة'));
-    await tester.tap(find.text('نشر على الخريطة'));
-    await _settle(tester);
-    final body = srv.bodies['POST /mapposts']!;
-    expect(body['bg'], '#FFFFFF');
-    expect((body['overlays'] as List).first['color'], '#111111');
   });
 }

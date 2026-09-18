@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../api/client.dart' show mediaUrl;
 import '../../api/commerce_models.dart';
 import '../../api/posts_api.dart';
 import '../../api/safety_api.dart';
@@ -17,6 +18,7 @@ import '../../ui/wish_button.dart';
 import '../business/business_page.dart';
 import '../chat/chat_thread_page.dart';
 import '../market/market_page.dart';
+import 'composer/voice_layer.dart';
 import 'overlay_canvas.dart';
 import 'post_composer.dart';
 import 'post_stats.dart';
@@ -297,6 +299,8 @@ class PostView extends ConsumerWidget {
               child: Stack(fit: StackFit.expand, children: [
                 PostMedia(kind: p.kind, url: p.mediaUrl, bg: p.bg, durationSec: p.durationSec, play: active),
                 IgnorePointer(child: OverlayCanvas(overlays: p.overlays, shadow: p.kind != 'text')),
+                // الطبقة الصوتية: تعليق صوتي على الصورة أو لوحة النص
+                if (p.audioUrl != null && p.audioUrl!.isNotEmpty) Positioned(bottom: 96, left: 0, right: 0, child: Center(child: VoiceChip(url: mediaUrl(p.audioUrl!), seconds: p.audioSec, light: p.kind == 'text' && colorFromHex(p.bg, Colors.white).computeLuminance() > .5))),
                 // مناطق النقر للتنقل (النصف الأعلى فقط حتى تبقى أدوات الفيديو والأزرار متاحة)
                 if (p.kind != 'video')
                   Positioned(
