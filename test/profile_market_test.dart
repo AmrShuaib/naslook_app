@@ -125,7 +125,7 @@ void main() {
     expect(find.text('عرض جديد'), findsOneWidget);
     await tester.tap(find.text('إضافة صورة'));
     await _settle(tester);
-    expect(find.text('تغيير الصورة'), findsOneWidget);
+    expect(find.text('صورة أخرى'), findsOneWidget);
     await tester.enterText(find.widgetWithText(TextField, 'العنوان'), 'برجر');
     await tester.enterText(find.widgetWithText(TextField, 'السعر (ر.س)'), '50');
     await tester.tap(find.text('نشر'));

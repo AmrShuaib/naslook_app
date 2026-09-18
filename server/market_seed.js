@@ -47,8 +47,24 @@ export default async function marketSeed(app, { pool, auth }) {
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'active', now() - ($12 || ' days')::interval - (random() * interval '20 hours'))`,
       [crypto.randomUUID(), sellerId, l.kind === "service" ? "service" : "product", l.category, l.title, l.desc ?? "", Math.round(Number(l.price) * 100),
        `${BASE}/seed/market/${l.slug}.jpg`, area ? area.split("،")[0].trim() : null, lat, lng, String(days)]);
+    await enrich(l, sellerId).catch(() => {});
   };
 
+  // إثراء العرض بأعمدة النسخة الثانية إن وُجدت (تصنيف فرعي، مدينة، صور، توصيل)؛ ويُطبَّق على العروض المزروعة سابقاً
+  const enrich = async (l, sellerId) => {
+    const area = SELLERS.find((s) => s.nick === l.seller)?.area ?? "";
+    const city = area.includes("،") ? area.split("،")[1].trim() : null;
+    await pool.query(`UPDATE market_listings SET subcategory=COALESCE(subcategory, $3), city=COALESCE(city, $4), images=CASE WHEN images='[]'::jsonb AND image_url IS NOT NULL THEN jsonb_build_array(image_url) ELSE images END,
+      delivery=CASE WHEN category IN ('delivery','food','gifts') THEN true ELSE delivery END, condition=CASE WHEN kind='product' AND condition IS NULL THEN 'new' ELSE condition END
+      WHERE seller_id=$1 AND title=$2`, [sellerId, l.title, l.sub ?? null, city]);
+  };
+  const enrichAll = async () => {
+    const ok = (await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='market_listings' AND column_name='subcategory'")).rowCount;
+    if (!ok) return;
+    if (!(await claim("migrate:v2-subcategories"))) return;
+    for (const l of LISTINGS) { const id = await seededUser(l.seller); if (id) await enrich(l, id).catch(() => {}); }
+    log("market seed: v2 fields applied");
+  };
   // تشغيل التمهيد: يعيد ملخصاً؛ يتوقف عند حدّ التسجيل في النواة ويعاود بعد ربع ساعة (حتى ٨ مرات) ثم في الإقلاع التالي
   let running = false, retries = 0;
   const scheduleRetry = () => { if (retries++ >= 8) return; setTimeout(() => run().catch(() => {}), 15 * 60 * 1000).unref?.(); };
@@ -79,6 +95,7 @@ export default async function marketSeed(app, { pool, auth }) {
         try { await insertListing(l, sellerId); out.listings++; }
         catch (e) { out.errors.push(l.slug + ":" + (e?.message ?? e)); await pool.query("DELETE FROM market_seed WHERE key=$1", ["listing:" + l.slug]); }
       }
+      await enrichAll();
       log("market seed done", out);
       return out;
     } finally { running = false; }

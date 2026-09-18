@@ -395,6 +395,8 @@ export default async function marketPlus(app, opts) {
 
   // ---- فاتورة الطلب (HTML قابل للطباعة والحفظ PDF من المتصفح)
   app.get("/market/orders/:id/invoice", async (req, reply) => {
+    // تُفتح في تبويب جديد بلا ترويسات، فيُقبل الرمز في الاستعلام
+    if (req.query?.token && !req.headers["x-token"]) { req.headers["x-token"] = String(req.query.token); req.headers.authorization = "Bearer " + String(req.query.token); }
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const o = (await pool.query("SELECT o.*, l.title, l.kind FROM market_orders o JOIN market_listings l ON l.id=o.listing_id WHERE o.id=$1", [req.params.id])).rows[0];

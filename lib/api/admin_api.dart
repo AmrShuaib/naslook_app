@@ -538,9 +538,16 @@ class AdminSettings {
   final int maxTopup;
   final String announcement, supportHandle, bannedWords;
   final int reportThreshold;
-  const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = '', this.bannedWords = '', this.reportThreshold = 3});
+  // السوق
+  final double marketCommissionPct;
+  final int spotlightPricePerDay, spotlightMaxDays, spotlightMaxActive;
+  final bool marketReviewNewAccounts, marketBlockContacts;
+  const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = '', this.bannedWords = '', this.reportThreshold = 3,
+      this.marketCommissionPct = 0, this.spotlightPricePerDay = 2000, this.spotlightMaxDays = 30, this.spotlightMaxActive = 12, this.marketReviewNewAccounts = false, this.marketBlockContacts = true});
   factory AdminSettings.fromJson(Map m) => AdminSettings(testTopup: m['testTopup'] == true, maintenance: m['maintenance'] == true, setupCodePresent: m['setupCodePresent'] == true, maxTopup: _i(m['maxTopup']), announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '',
-      bannedWords: m['bannedWords']?.toString() ?? '', reportThreshold: m['reportThreshold'] == null ? 3 : _i(m['reportThreshold']));
+      bannedWords: m['bannedWords']?.toString() ?? '', reportThreshold: m['reportThreshold'] == null ? 3 : _i(m['reportThreshold']),
+      marketCommissionPct: (m['marketCommissionPct'] as num?)?.toDouble() ?? 0, spotlightPricePerDay: m['spotlightPricePerDay'] == null ? 2000 : _i(m['spotlightPricePerDay']), spotlightMaxDays: m['spotlightMaxDays'] == null ? 30 : _i(m['spotlightMaxDays']), spotlightMaxActive: m['spotlightMaxActive'] == null ? 12 : _i(m['spotlightMaxActive']),
+      marketReviewNewAccounts: m['marketReviewNewAccounts'] == true, marketBlockContacts: m['marketBlockContacts'] != false);
 }
 
 class AdminAudit {

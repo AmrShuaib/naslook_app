@@ -18,6 +18,7 @@ import 'admin_overview.dart';
 import 'admin_reports.dart';
 import 'admin_settings.dart';
 import 'admin_users.dart';
+import 'admin_market.dart';
 import 'admin_team.dart';
 import 'admin_tasks.dart';
 import 'admin_inbox.dart';
@@ -28,6 +29,7 @@ const adminSections = [
   ('users', 'المستخدمون', Icons.people_alt_outlined, 'users.view'),
   ('reports', 'البلاغات', Icons.flag_outlined, 'reports.view'),
   ('biz', 'الدوائر التجارية', Icons.storefront_outlined, 'biz.view'),
+  ('market', 'السوق', Icons.shopping_bag_outlined, 'biz.view'),
   ('finance', 'المالية', Icons.account_balance_wallet_outlined, 'finance.view'),
   ('content', 'المحتوى', Icons.inventory_2_outlined, 'content.view'),
   ('blog', 'المدونة', Icons.newspaper_outlined, 'blog.view'),
@@ -143,6 +145,7 @@ class _Layout extends ConsumerWidget {
         'users' => const AdminUsersPage(),
         'reports' => const AdminReportsPage(),
         'biz' => const AdminBizPage(),
+        'market' => const AdminMarketPage(),
         'finance' => const AdminFinancePage(),
         'content' => const AdminContentPage(),
         'blog' => const AdminBlogPage(),

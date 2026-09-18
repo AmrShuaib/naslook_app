@@ -1,27 +1,66 @@
+// السوق: صفحة نظيفة ومريحة. بحث، سبوت لايت (إعلانات يراها كل من يدخل السوق)، تصنيفات وتصنيفات فرعية، ترتيب وفلاتر
+// مختصرة، وشبكة عروض بصور كبيرة. كل التفاصيل في صفحة العرض (listing_page.dart) والإنشاء في listing_form.dart.
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/chat_tools_api.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
-import '../../core/chat/codes.dart';
 import '../../core/location.dart';
-import '../../core/media/pick_image.dart';
+import '../../api/client.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
-import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
-import '../../ui/wish_button.dart';
-import '../../api/safety_api.dart';
-import '../chat/chat_thread_page.dart';
-import '../wallet/wallet_page.dart';
-import '../../api/client.dart';
+import 'listing_form.dart';
+import 'listing_page.dart';
+import 'orders_page.dart';
+import 'seller_tools.dart';
+import 'wanted_page.dart';
 
-final marketProvider = FutureProvider.family<List<Listing>, (String, String?)>((ref, a) => ref.watch(apiClientProvider).market(q: a.$1, category: a.$2));
-final myListingsProvider = FutureProvider<List<Listing>>((ref) => ref.watch(apiClientProvider).myListings());
-final ordersProvider = FutureProvider<List<Order>>((ref) => ref.watch(apiClientProvider).orders());
+export 'listing_page.dart' show ListingPage, listingProvider;
+export 'orders_page.dart' show OrdersPage, ordersProvider, myListingsProvider, MyListingRow, OwnerListingActions, listingStatusLabel, listingStatusColor, toggleListingVisibility, editListing, OrderPage, orderProvider;
+export 'listing_form.dart' show showListingForm, ListingDraft;
+
+/// موقع المستخدم للسوق (بلا دقة عالية، ومهلة قصيرة حتى لا تنتظر الصفحة)؛ يُستبدل في الاختبارات.
+final marketPosProvider = FutureProvider<({double lat, double lng})?>((ref) async {
+  final gps = await DeviceLocation.current(precise: false, timeout: const Duration(seconds: 4));
+  if (gps != null) return (lat: gps.latitude, lng: gps.longitude);
+  final p = ref.read(myPresenceProvider).valueOrNull;
+  return p?.lat != null && p?.lng != null ? (lat: p!.lat!, lng: p.lng!) : null;
+});
+
+/// معايير البحث الحالية
+class MarketQuery {
+  final String q;
+  final String? category, sub, kind, condition, sort;
+  final int? min, max, radiusKm;
+  final bool delivery;
+  const MarketQuery({this.q = '', this.category, this.sub, this.kind, this.condition, this.sort, this.min, this.max, this.radiusKm, this.delivery = false});
+  MarketQuery copyWith({String? q, Object? category = _keep, Object? sub = _keep, Object? kind = _keep, Object? condition = _keep, Object? sort = _keep, Object? min = _keep, Object? max = _keep, Object? radiusKm = _keep, bool? delivery}) => MarketQuery(
+        q: q ?? this.q, category: category == _keep ? this.category : category as String?, sub: sub == _keep ? this.sub : sub as String?, kind: kind == _keep ? this.kind : kind as String?, condition: condition == _keep ? this.condition : condition as String?,
+        sort: sort == _keep ? this.sort : sort as String?, min: min == _keep ? this.min : min as int?, max: max == _keep ? this.max : max as int?, radiusKm: radiusKm == _keep ? this.radiusKm : radiusKm as int?, delivery: delivery ?? this.delivery);
+  int get activeFilters => (kind != null ? 1 : 0) + (condition != null ? 1 : 0) + (min != null || max != null ? 1 : 0) + (delivery ? 1 : 0) + (radiusKm != null ? 1 : 0);
+  @override
+  bool operator ==(Object other) => other is MarketQuery && other.q == q && other.category == category && other.sub == sub && other.kind == kind && other.condition == condition && other.sort == sort && other.min == min && other.max == max && other.radiusKm == radiusKm && other.delivery == delivery;
+  @override
+  int get hashCode => Object.hash(q, category, sub, kind, condition, sort, min, max, radiusKm, delivery);
+}
+const _keep = Object();
+
+final marketQueryProvider = StateProvider<MarketQuery>((_) => const MarketQuery());
+final marketHomeProvider = FutureProvider<MarketHome>((ref) async {
+  final pos = await ref.watch(marketPosProvider.future);
+  return ref.watch(apiClientProvider).marketHome(lat: pos?.lat, lng: pos?.lng);
+});
+final marketListProvider = FutureProvider.family<List<Listing>, MarketQuery>((ref, mq) async {
+  final pos = await ref.watch(marketPosProvider.future);
+  return ref.watch(apiClientProvider).market(q: mq.q, category: mq.category, sub: mq.sub, kind: mq.kind, min: mq.min, max: mq.max, delivery: mq.delivery, condition: mq.condition, sort: mq.sort, lat: pos?.lat, lng: pos?.lng, radiusKm: mq.radiusKm);
+});
+/// عروض اخترتها للمقارنة (حتى ٣)
+final compareProvider = StateProvider<List<Listing>>((_) => const []);
+
+void invalidateMarket(WidgetRef ref) { ref.invalidate(marketHomeProvider); ref.invalidate(marketListProvider); ref.invalidate(myListingsProvider); }
 
 class MarketPage extends ConsumerStatefulWidget {
   const MarketPage({super.key});
@@ -30,430 +69,300 @@ class MarketPage extends ConsumerStatefulWidget {
 }
 
 class _MarketPageState extends ConsumerState<MarketPage> {
-  String q = '';
-  String? cat;
+  final search = TextEditingController();
+  @override
+  void dispose() { search.dispose(); super.dispose(); }
+
   @override
   Widget build(BuildContext context) {
-    final list = ref.watch(marketProvider((q, cat)));
+    final mq = ref.watch(marketQueryProvider);
+    final home = ref.watch(marketHomeProvider);
+    final list = ref.watch(marketListProvider(mq));
+    final compare = ref.watch(compareProvider);
+    final h = home.valueOrNull;
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('السوق'), actions: [IconButton(icon: const Icon(Icons.receipt_long_outlined), tooltip: 'عروضي وطلباتي', onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 1))))]),
-      floatingActionButton: FloatingActionButton.extended(onPressed: _create, backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: const Text('اعرض للبيع')),
-      body: Column(children: [
-        Padding(padding: const EdgeInsets.fromLTRB(20, 4, 20, 8), child: TextField(onChanged: (v) => setState(() => q = v.trim()), decoration: const InputDecoration(hintText: 'ابحث عن خدمة أو منتج', prefixIcon: Icon(Icons.search_rounded, color: Joy.textMuted)))),
-        SizedBox(height: 48, child: ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16), children: [
-          for (final e in [const MapEntry<String?, String>(null, 'الكل'), ...marketCategories.entries])
-            Padding(padding: const EdgeInsets.only(left: 8), child: ChoiceChip(label: Text(e.value, style: TextStyle(color: cat == e.key ? Joy.primaryOn : Joy.text)), selected: cat == e.key, onSelected: (_) => setState(() => cat = e.key), showCheckmark: false, selectedColor: Joy.primary)),
-        ])),
-        Expanded(
-          child: list.when(
+      appBar: AppBar(
+        title: const Text('السوق'),
+        actions: [
+          IconButton(key: const Key('market-wanted'), tooltip: 'طلبات المشترين', icon: Badge(isLabelVisible: (h?.wantedOpen ?? 0) > 0, label: Text('${h?.wantedOpen ?? 0}'), child: const Icon(Icons.campaign_outlined)), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WantedPage()))),
+          IconButton(key: const Key('market-mine'), tooltip: 'عروضي وطلباتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 1)))),
+          PopupMenuButton<String>(
+            tooltip: 'المزيد',
+            onSelected: (v) {
+              if (v == 'seller') Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SellerDashboardPage()));
+              if (v == 'alerts') showMarketAlertsSheet(context, ref);
+              if (v == 'compare') Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ComparePage()));
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'seller', child: ListTile(leading: Icon(Icons.insights_outlined), title: Text('لوحة البائع'))),
+              const PopupMenuItem(value: 'alerts', child: ListTile(leading: Icon(Icons.notifications_active_outlined), title: Text('تنبيهات العروض الجديدة'))),
+              PopupMenuItem(value: 'compare', child: ListTile(leading: const Icon(Icons.compare_arrows_rounded), title: Text('مقارنة${compare.isEmpty ? '' : ' (${compare.length})'}'))),
+            ],
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(key: const Key('market-sell'), onPressed: () => createListing(context, ref), backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: const Text('اعرض للبيع')),
+      body: RefreshIndicator(
+        onRefresh: () async => invalidateMarket(ref),
+        child: CustomScrollView(slivers: [
+          SliverToBoxAdapter(child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 6, 20, 4),
+            child: TextField(
+              key: const Key('market-search'), controller: search, textInputAction: TextInputAction.search,
+              onSubmitted: (v) => ref.read(marketQueryProvider.notifier).state = mq.copyWith(q: v.trim()),
+              onChanged: (v) { if (v.trim().isEmpty && mq.q.isNotEmpty) ref.read(marketQueryProvider.notifier).state = mq.copyWith(q: ''); },
+              decoration: InputDecoration(
+                hintText: 'ابحث عن منتج أو خدمة', prefixIcon: const Icon(Icons.search_rounded, color: Joy.textMuted), filled: true, fillColor: Joy.surface2, isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12), border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                suffixIcon: search.text.isEmpty ? null : IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () { search.clear(); ref.read(marketQueryProvider.notifier).state = mq.copyWith(q: ''); }),
+              ),
+            ),
+          )),
+          if (h != null && h.spotlight.isNotEmpty && mq.q.isEmpty && mq.category == null) SliverToBoxAdapter(child: SpotlightStrip(items: h.spotlight)),
+          SliverToBoxAdapter(child: _CategoryRow(mq: mq, counts: h?.categories ?? const {})),
+          if (mq.category != null) SliverToBoxAdapter(child: _SubRow(mq: mq)),
+          SliverToBoxAdapter(child: _ControlRow(mq: mq, count: list.valueOrNull?.length)),
+          list.when(
             data: (items) => items.isEmpty
-                ? const EmptyState(icon: Icons.storefront_outlined, title: 'لا عروض بعد', subtitle: 'كن أول من يعرض منتجاً أو خدمة لمن حوله.')
-                : RefreshIndicator(
-                    onRefresh: () async => ref.invalidate(marketProvider),
-                    child: GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 96),
-                      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 220, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: .78),
-                      itemCount: items.length,
-                      itemBuilder: (_, i) => ListingCard(items[i]),
+                ? SliverFillRemaining(hasScrollBody: false, child: EmptyState(icon: Icons.storefront_outlined, title: mq.q.isEmpty && mq.category == null ? 'لا عروض بعد' : 'لا نتائج', subtitle: mq.q.isEmpty && mq.category == null ? 'كن أول من يعرض منتجاً أو خدمة لمن حوله.' : 'جرّب تصنيفاً آخر أو وسّع النطاق.'))
+                : SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 96),
+                    sliver: SliverGrid(
+                      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 220, mainAxisSpacing: 14, crossAxisSpacing: 12, childAspectRatio: .72),
+                      delegate: SliverChildBuilderDelegate((_, i) => ListingCard(items[i]), childCount: items.length),
                     ),
                   ),
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(marketProvider)),
+            loading: () => const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator())),
+            error: (e, _) => SliverFillRemaining(hasScrollBody: false, child: ErrorState(e, onRetry: () => ref.invalidate(marketListProvider))),
           ),
-        ),
-      ]),
+        ]),
+      ),
     );
   }
+}
 
-  Future<void> _create() async {
-    final d = await showListingForm(context);
-    if (d == null || !mounted) return;
-    final gps = await DeviceLocation.current(precise: false);
-    final pres = ref.read(myPresenceProvider).value;
-    try {
-      final api = ref.read(apiClientProvider);
-      final imageUrl = d.image == null ? null : (await api.uploadMedia(d.image!.bytes, contentType: d.image!.mime, fileName: d.image!.name)).url;
-      await api.createListing({
-        'title': d.title, 'description': d.description, 'kind': d.kind, 'category': d.category, 'price': d.price, 'placeName': d.placeName,
-        if (imageUrl != null) 'imageUrl': imageUrl,
-        'lat': gps?.latitude ?? pres?.lat, 'lng': gps?.longitude ?? pres?.lng,
-      });
-      ref.invalidate(marketProvider); ref.invalidate(myListingsProvider);
-      if (mounted) toast(context, 'نُشر عرضك');
-    } catch (e) {
-      if (mounted) toast(context, e.toString(), error: true);
-    }
+/// شريط سبوت لايت: بطاقات عريضة بصورة كاملة وعنوان وسعر، وبطاقة أخيرة لمن يريد إعلانه هنا
+class SpotlightStrip extends ConsumerWidget {
+  final List<SpotlightItem> items;
+  const SpotlightStrip({super.key, required this.items});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(padding: const EdgeInsets.fromLTRB(20, 10, 20, 6), child: Row(children: [
+          const Icon(Icons.auto_awesome_rounded, size: 18, color: Joy.sunText), const SizedBox(width: 6),
+          const Text('سبوت لايت', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)), const SizedBox(width: 8),
+          const Text('إعلانات مميزة', style: TextStyle(color: Joy.textMuted, fontSize: 12)), const Spacer(),
+          TextButton(key: const Key('spotlight-info'), onPressed: () => showSpotlightSheet(context, ref), style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), visualDensity: VisualDensity.compact), child: const Text('اعرض إعلانك', style: TextStyle(fontSize: 12.5))),
+        ])),
+        SizedBox(height: 168, child: ListView.separated(
+          scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 20), itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (_, i) {
+            final s = items[i]; final l = s.listing;
+            return GestureDetector(
+              key: Key('spot-${l.id}'),
+              onTap: () { ref.read(apiClientProvider).spotlightClick(s.id).ignore(); Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(l.id))); },
+              child: Container(
+                width: 270, clipBehavior: Clip.antiAlias, decoration: BoxDecoration(borderRadius: BorderRadius.circular(18), color: Joy.surface2),
+                child: Stack(fit: StackFit.expand, children: [
+                  if (l.imageUrl != null) Image.network(thumbUrl(l.imageUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox()),
+                  DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Colors.black.withValues(alpha: .72)], stops: const [.35, 1]))),
+                  Positioned(right: 12, left: 12, bottom: 10, child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                    Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14.5)),
+                    const SizedBox(height: 2),
+                    Row(children: [Text(l.price == 0 ? 'مجاناً' : money(l.price), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)), const Spacer(), Text(l.seller.nickname, style: const TextStyle(color: Colors.white70, fontSize: 11.5))]),
+                  ])),
+                  Positioned(top: 10, right: 10, child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: Joy.sun, borderRadius: BorderRadius.circular(999)), child: const Text('مميز', style: TextStyle(color: Joy.sunText, fontSize: 11, fontWeight: FontWeight.w800)))),
+                ]),
+              ),
+            );
+          },
+        )),
+      ]);
+}
+
+const _catIcons = {'coffee': Icons.coffee_outlined, 'food': Icons.restaurant_outlined, 'photo': Icons.photo_camera_outlined, 'gifts': Icons.card_giftcard_outlined, 'handmade': Icons.palette_outlined, 'delivery': Icons.local_shipping_outlined, 'services': Icons.handyman_outlined, 'other': Icons.category_outlined};
+IconData marketCategoryIcon(String c) => _catIcons[c] ?? Icons.category_outlined;
+
+class _CategoryRow extends ConsumerWidget {
+  final MarketQuery mq;
+  final Map<String, int> counts;
+  const _CategoryRow({required this.mq, required this.counts});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => SizedBox(height: 46, child: ListView(key: const Key('cat-row'), scrollDirection: Axis.horizontal, padding: const EdgeInsets.fromLTRB(16, 8, 16, 4), children: [
+        for (final e in [const MapEntry<String?, String>(null, 'الكل'), ...marketCategories.entries])
+          Padding(padding: const EdgeInsets.only(left: 8), child: ChoiceChip(
+            key: Key('cat-${e.key ?? 'all'}'),
+            avatar: e.key == null ? null : Icon(marketCategoryIcon(e.key!), size: 16, color: mq.category == e.key ? Joy.primaryOn : Joy.textMuted),
+            label: Text(e.value, style: TextStyle(color: mq.category == e.key ? Joy.primaryOn : Joy.text, fontSize: 13)),
+            selected: mq.category == e.key, showCheckmark: false, selectedColor: Joy.primary, backgroundColor: Joy.surface2, side: BorderSide.none, shape: const StadiumBorder(),
+            onSelected: (_) => ref.read(marketQueryProvider.notifier).state = mq.copyWith(category: e.key, sub: null),
+          )),
+      ]));
+}
+
+class _SubRow extends ConsumerWidget {
+  final MarketQuery mq;
+  const _SubRow({required this.mq});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final subs = marketSubcategories[mq.category] ?? const {};
+    if (subs.isEmpty) return const SizedBox.shrink();
+    return SizedBox(height: 38, child: ListView(key: const Key('sub-row'), scrollDirection: Axis.horizontal, padding: const EdgeInsets.fromLTRB(16, 2, 16, 4), children: [
+      for (final e in [const MapEntry<String?, String>(null, 'الكل'), ...subs.entries])
+        Padding(padding: const EdgeInsets.only(left: 6), child: ChoiceChip(
+          key: Key('sub-${e.key ?? 'all'}'), label: Text(e.value, style: TextStyle(color: mq.sub == e.key ? Joy.primary : Joy.textMuted, fontSize: 12)), selected: mq.sub == e.key, showCheckmark: false,
+          selectedColor: Joy.primarySoft, backgroundColor: Joy.bg, side: const BorderSide(color: Joy.line), shape: const StadiumBorder(), visualDensity: VisualDensity.compact,
+          onSelected: (_) => ref.read(marketQueryProvider.notifier).state = mq.copyWith(sub: e.key),
+        )),
+    ]));
   }
 }
 
-/// مسودة عرض من نموذج الإنشاء أو التعديل.
-typedef ListingDraft = ({String title, String description, int price, String kind, String category, String placeName, PickedImage? image, bool removeImage});
+/// صف الترتيب والفلاتر: زرّان خفيفان وعدّاد نتائج
+class _ControlRow extends ConsumerWidget {
+  final MarketQuery mq;
+  final int? count;
+  const _ControlRow({required this.mq, this.count});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pos = ref.watch(marketPosProvider).valueOrNull;
+    final sortLabel = marketSorts[mq.sort ?? (pos != null ? 'near' : 'new')] ?? 'الأحدث';
+    return Padding(padding: const EdgeInsets.fromLTRB(20, 6, 20, 2), child: Row(children: [
+      _Pill(key: const Key('market-sort'), icon: Icons.swap_vert_rounded, label: sortLabel, onTap: () => _pickSort(context, ref)),
+      const SizedBox(width: 8),
+      _Pill(key: const Key('market-filters'), icon: Icons.tune_rounded, label: mq.activeFilters == 0 ? 'فلاتر' : 'فلاتر · ${mq.activeFilters}', active: mq.activeFilters > 0, onTap: () => showFilterSheet(context, ref)),
+      const Spacer(),
+      if (count != null) Text(count == 0 ? '' : '$count عرض', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+    ]));
+  }
 
-String _priceText(int halalas) => halalas % 100 == 0 ? '${halalas ~/ 100}' : (halalas / 100).toStringAsFixed(2);
-
-/// نموذج العرض (إنشاء أو تعديل) مع اختيار صورة من الجهاز. يعيد null عند الإلغاء.
-Future<ListingDraft?> showListingForm(BuildContext context, {Listing? initial}) async {
-  final title = TextEditingController(text: initial?.title ?? ''), desc = TextEditingController(text: initial?.description ?? '');
-  final price = TextEditingController(text: initial == null ? '' : _priceText(initial.price)), place = TextEditingController(text: initial?.placeName ?? '');
-  String kind = initial?.kind ?? 'product', category = marketCategories.containsKey(initial?.category) ? initial!.category : 'other';
-  PickedImage? img;
-  var removeImage = false;
-  final existingUrl = initial?.imageUrl;
-  final hasExisting = existingUrl != null && existingUrl.isNotEmpty;
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => StatefulBuilder(builder: (ctx, setS) {
-      final pic = img; // نسخة محلية حتى يتعرف المحلل على عدم فراغها داخل الشجرة
-      final showsExisting = hasExisting && !removeImage && pic == null;
-      return AlertDialog(
-        title: Text(initial == null ? 'عرض جديد' : 'تعديل العرض'),
-        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Row(children: [
-            Container(
-              width: 72, height: 72, clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)),
-              child: pic != null
-                  ? Image.memory(pic.bytes, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined, color: Joy.textMuted))
-                  : showsExisting
-                      ? Image.network(thumbUrl(existingUrl), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, color: Joy.textMuted))
-                      : const Icon(Icons.add_photo_alternate_outlined, color: Joy.textMuted, size: 28),
-            ),
-            const SizedBox(width: 8),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              TextButton.icon(
-                onPressed: () async { final p = await pickImage(); if (p != null) setS(() { img = p; removeImage = false; }); },
-                icon: const Icon(Icons.photo_camera_outlined, size: 18),
-                label: Text(pic == null && !showsExisting ? 'إضافة صورة' : 'تغيير الصورة'),
-              ),
-              if (pic != null || showsExisting)
-                TextButton.icon(onPressed: () => setS(() { img = null; removeImage = true; }), style: TextButton.styleFrom(foregroundColor: Joy.danger), icon: const Icon(Icons.close_rounded, size: 18), label: const Text('بلا صورة')),
-            ])),
-          ]),
-          const SizedBox(height: 10),
-          Row(children: [for (final (k, l) in [('product', 'منتج'), ('service', 'خدمة')]) Padding(padding: const EdgeInsets.only(left: 8), child: ChoiceChip(label: Text(l, style: TextStyle(color: kind == k ? Joy.primaryOn : Joy.text)), selected: kind == k, onSelected: (_) => setS(() => kind = k), showCheckmark: false, selectedColor: Joy.primary))]),
-          const SizedBox(height: 10),
-          TextField(controller: title, decoration: const InputDecoration(labelText: 'العنوان'), autofocus: initial == null),
-          const SizedBox(height: 10),
-          TextField(controller: desc, maxLines: 3, decoration: const InputDecoration(labelText: 'الوصف')),
-          const SizedBox(height: 10),
-          TextField(controller: price, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'السعر (ر.س)')),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<String>(initialValue: category, decoration: const InputDecoration(labelText: 'الفئة'), items: [for (final e in marketCategories.entries) DropdownMenuItem(value: e.key, child: Text(e.value))], onChanged: (v) => setS(() => category = v ?? 'other')),
-          const SizedBox(height: 10),
-          TextField(controller: place, decoration: const InputDecoration(labelText: 'مكان الاستلام (اختياري)')),
-        ])),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(initial == null ? 'نشر' : 'حفظ'))],
-      );
-    }),
-  );
-  if (ok != true || title.text.trim().isEmpty) return null;
-  return (
-    title: title.text.trim(), description: desc.text.trim(), price: ((double.tryParse(price.text.replaceAll('،', '.')) ?? 0) * 100).round(),
-    kind: kind, category: category, placeName: place.text.trim(), image: img, removeImage: removeImage,
-  );
+  Future<void> _pickSort(BuildContext context, WidgetRef ref) async {
+    final pos = ref.read(marketPosProvider).valueOrNull;
+    final v = await showModalBottomSheet<String>(context: context, showDragHandle: true, builder: (ctx) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      for (final e in marketSorts.entries) if (e.key != 'near' || pos != null) ListTile(key: Key('sort-${e.key}'), title: Text(e.value), trailing: (mq.sort ?? (pos != null ? 'near' : 'new')) == e.key ? const Icon(Icons.check_rounded, color: Joy.primary) : null, onTap: () => Navigator.pop(ctx, e.key)),
+    ])));
+    if (v != null) ref.read(marketQueryProvider.notifier).state = mq.copyWith(sort: v);
+  }
 }
 
+class _Pill extends StatelessWidget {
+  final IconData icon; final String label; final bool active; final VoidCallback onTap;
+  const _Pill({super.key, required this.icon, required this.label, this.active = false, required this.onTap});
+  @override
+  Widget build(BuildContext context) => InkWell(borderRadius: BorderRadius.circular(999), onTap: onTap, child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(color: active ? Joy.primarySoft : Joy.surface2, borderRadius: BorderRadius.circular(999)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 16, color: active ? Joy.primary : Joy.textMuted), const SizedBox(width: 5), Text(label, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: active ? Joy.primary : Joy.text))]),
+      ));
+}
+
+/// ورقة الفلاتر: النوع، السعر، التوصيل، الحالة، النطاق
+Future<void> showFilterSheet(BuildContext context, WidgetRef ref) async {
+  var mq = ref.read(marketQueryProvider);
+  final min = TextEditingController(text: mq.min == null ? '' : '${mq.min! ~/ 100}'), max = TextEditingController(text: mq.max == null ? '' : '${mq.max! ~/ 100}');
+  final pos = ref.read(marketPosProvider).valueOrNull;
+  await showModalBottomSheet<void>(context: context, showDragHandle: true, isScrollControlled: true, builder: (ctx) => StatefulBuilder(builder: (ctx, setS) => Padding(
+    padding: EdgeInsets.fromLTRB(20, 0, 20, 20 + MediaQuery.of(ctx).viewInsets.bottom),
+    child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('فلاتر', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+      const SizedBox(height: 10),
+      Wrap(spacing: 8, children: [for (final (k, l) in [(null, 'الكل'), ('product', 'منتجات'), ('service', 'خدمات')]) ChoiceChip(key: Key('f-kind-${k ?? 'all'}'), label: Text(l), selected: mq.kind == k, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setS(() => mq = mq.copyWith(kind: k)))]),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(child: TextField(key: const Key('f-min'), controller: min, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'السعر من (ر.س)', isDense: true))), const SizedBox(width: 10),
+        Expanded(child: TextField(key: const Key('f-max'), controller: max, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'إلى (ر.س)', isDense: true))),
+      ]),
+      const SizedBox(height: 8),
+      SwitchListTile(key: const Key('f-delivery'), contentPadding: EdgeInsets.zero, value: mq.delivery, onChanged: (v) => setS(() => mq = mq.copyWith(delivery: v)), title: const Text('توصيل متاح فقط')),
+      Wrap(spacing: 8, children: [for (final (k, l) in [(null, 'أي حالة'), ('new', 'جديد'), ('used', 'مستعمل')]) ChoiceChip(label: Text(l), selected: mq.condition == k, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setS(() => mq = mq.copyWith(condition: k)))]),
+      if (pos != null) ...[
+        const SizedBox(height: 12),
+        const Text('النطاق', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        Wrap(spacing: 8, children: [for (final (k, l) in [(null, 'الكل'), (5, 'حيّي · ٥ كم'), (30, 'مدينتي · ٣٠ كم'), (150, '١٥٠ كم')]) ChoiceChip(key: Key('f-radius-${k ?? 'all'}'), label: Text(l), selected: mq.radiusKm == k, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setS(() => mq = mq.copyWith(radiusKm: k)))]),
+      ],
+      const SizedBox(height: 16),
+      Row(children: [
+        TextButton(onPressed: () { ref.read(marketQueryProvider.notifier).state = MarketQuery(q: mq.q, category: mq.category, sub: mq.sub, sort: mq.sort); Navigator.pop(ctx); }, child: const Text('مسح الكل')),
+        const Spacer(),
+        FilledButton(key: const Key('f-apply'), onPressed: () {
+          final mn = parseSar(min.text), mx = parseSar(max.text);
+          ref.read(marketQueryProvider.notifier).state = mq.copyWith(min: mn > 0 ? mn : null, max: mx > 0 ? mx : null);
+          Navigator.pop(ctx);
+        }, child: const Text('تطبيق')),
+      ]),
+    ]),
+  )));
+}
+
+/// بطاقة عرض في الشبكة: صورة كبيرة، عنوان، سعر، تقييم، بائع، ومسافة
 class ListingCard extends StatelessWidget {
   final Listing l;
   const ListingCard(this.l, {super.key});
   @override
-  Widget build(BuildContext context) => JoyCard(
-        padding: EdgeInsets.zero,
+  Widget build(BuildContext context) => InkWell(
+        borderRadius: BorderRadius.circular(18),
         onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(l.id))),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(child: ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            child: l.imageUrl != null && l.imageUrl!.isNotEmpty
-                ? Image.network(thumbUrl(l.imageUrl!), fit: BoxFit.cover, width: double.infinity, errorBuilder: (_, __, ___) => _ph())
-                : _ph(),
-          )),
-          Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
-            const SizedBox(height: 4),
-            Row(children: [ProfileAvatar(person: l.seller, size: 20), const SizedBox(width: 6), Expanded(child: Text(l.seller.nickname, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)))]),
-            const SizedBox(height: 6),
-            Text(l.price == 0 ? 'مجاناً' : money(l.price), style: const TextStyle(fontWeight: FontWeight.w700, color: Joy.primary, fontSize: 14.5)),
-          ])),
+          AspectRatio(aspectRatio: 1, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: Stack(fit: StackFit.expand, children: [
+            l.imageUrl != null && l.imageUrl!.isNotEmpty ? Image.network(thumbUrl(l.imageUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => _ph()) : _ph(),
+            if (l.spotlight) Positioned(top: 8, right: 8, child: _tag('مميز', Joy.sun, Joy.sunText)),
+            if (l.outOfStock) Positioned(top: 8, left: 8, child: _tag('نفد', Joy.surface2, Joy.textMuted)),
+            if (l.distanceKm != null) Positioned(bottom: 8, left: 8, child: _tag(l.distanceKm! < 1 ? 'قريب جداً' : '${l.distanceKm!.toStringAsFixed(l.distanceKm! < 10 ? 1 : 0)} كم', Colors.white.withValues(alpha: .92), Joy.text)),
+          ]))),
+          const SizedBox(height: 8),
+          Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
+          const SizedBox(height: 3),
+          Row(children: [
+            Text(l.price == 0 ? 'مجاناً' : money(l.price), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.text, fontSize: 14)),
+            const Spacer(),
+            if (l.ratingAvg != null || l.sellerRating != null) ...[const Icon(Icons.star_rounded, size: 14, color: Joy.sunText), Text((l.ratingAvg ?? l.sellerRating)!.toStringAsFixed(1), style: const TextStyle(fontSize: 11.5, color: Joy.textMuted))],
+          ]),
+          Text('${l.seller.nickname}${l.placeName != null && l.placeName!.isNotEmpty ? ' · ${l.placeName}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
         ]),
       );
-  Widget _ph() => Container(color: l.kind == 'service' ? Joy.primarySoft : Joy.sunSoft, alignment: Alignment.center, child: Icon(l.kind == 'service' ? Icons.handshake_outlined : Icons.shopping_bag_outlined, size: 36, color: l.kind == 'service' ? Joy.primary : Joy.sunText));
+  Widget _ph() => Container(color: Joy.surface2, alignment: Alignment.center, child: Icon(l.kind == 'service' ? Icons.handshake_outlined : Icons.shopping_bag_outlined, size: 34, color: Joy.control));
+  static Widget _tag(String t, Color bg, Color fg) => Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)), child: Text(t, style: TextStyle(color: fg, fontSize: 10.5, fontWeight: FontWeight.w700)));
 }
 
-final listingProvider = FutureProvider.family<Listing, String>((ref, id) => ref.watch(apiClientProvider).listing(id));
-
-class ListingPage extends ConsumerStatefulWidget {
-  final String id;
-  const ListingPage(this.id, {super.key});
-  @override
-  ConsumerState<ListingPage> createState() => _ListingPageState();
-}
-
-class _ListingPageState extends ConsumerState<ListingPage> {
-  int qty = 1;
-  @override
-  Widget build(BuildContext context) {
-    final l = ref.watch(listingProvider(widget.id));
-    return Scaffold(
-      backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('العرض'), actions: [
-        IconButton(
-          key: const Key('copy-listing-code'),
-          tooltip: 'انسخ رمز المحادثة',
-          icon: const Icon(Icons.bolt_rounded),
-          onPressed: () async {
-            await Clipboard.setData(ClipboardData(text: listingCode(widget.id)));
-            if (context.mounted) toast(context, 'نُسخ الرمز ${listingCode(widget.id)}، الصقه في أي محادثة');
-          },
-        ),
-        WishButton(kind: 'market', refId: widget.id),
-        if (l.value?.mine == false)
-          PopupMenuButton<String>(
-            tooltip: 'المزيد',
-            onSelected: (_) => _reportListing(),
-            itemBuilder: (_) => const [PopupMenuItem(value: 'report', child: ListTile(leading: Icon(Icons.flag_outlined), title: Text('إبلاغ عن العرض')))],
-          ),
-      ]),
-      body: l.when(
-        data: (x) => ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
-          if (x.imageUrl != null && x.imageUrl!.isNotEmpty) ClipRRect(borderRadius: BorderRadius.circular(20), child: Image.network(thumbUrl(x.imageUrl!), height: 220, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())),
-          const SizedBox(height: 12),
-          Row(children: [Expanded(child: Text(x.title, style: Theme.of(context).textTheme.headlineSmall)), Text(x.price == 0 ? 'مجاناً' : money(x.price), style: const TextStyle(fontWeight: FontWeight.w700, color: Joy.primary, fontSize: 20))]),
-          Text('${x.kind == 'service' ? 'خدمة' : 'منتج'} · ${marketCategories[x.category] ?? x.category}${x.placeName != null && x.placeName!.isNotEmpty ? ' · ${x.placeName}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
-          const SizedBox(height: 12),
-          JoyCard(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), child: Row(children: [
-            ProfileAvatar(person: x.seller, size: 44),
-            const SizedBox(width: 10),
-            Expanded(child: Text(x.seller.nickname, style: const TextStyle(fontWeight: FontWeight.w600))),
-            if (!x.mine) OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: x.seller))), icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18), label: const Text('مراسلة')),
-          ])),
-          if (x.description.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text(x.description, style: const TextStyle(height: 1.65))),
-          const SizedBox(height: 8),
-          if (x.mine)
-            OwnerListingActions(x)
-          else if (x.status != 'active')
-            const Text('هذا العرض غير متاح حالياً.', style: TextStyle(color: Joy.textMuted))
-          else
-            Row(children: [
-              IconButton(onPressed: qty > 1 ? () => setState(() => qty--) : null, icon: const Icon(Icons.remove_rounded)),
-              Text('$qty', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-              IconButton(onPressed: qty < 20 ? () => setState(() => qty++) : null, icon: const Icon(Icons.add_rounded)),
-              const SizedBox(width: 8),
-              Expanded(child: FilledButton.icon(onPressed: () => _order(x), icon: const Icon(Icons.account_balance_wallet_outlined), label: Text('اطلب بالمحفظة · ${money(x.price * qty)}'))),
-            ]),
-          const SizedBox(height: 8),
-          const Text('يُحجز المبلغ من محفظتك ولا يصل البائع إلا بعد تأكيد التسليم. يمكنك الإلغاء قبل ذلك.', style: TextStyle(color: Joy.textMuted, fontSize: 12)),
-        ]),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(listingProvider(widget.id))),
-      ),
-    );
-  }
-
-  Future<void> _reportListing() async {
-    final reason = await askText(context, title: 'إبلاغ عن العرض', hint: 'ما المشكلة؟ (احتيال، سلعة مخالفة، مضلل…)', confirm: 'إرسال البلاغ');
-    if (reason == null || reason.isEmpty || !mounted) return;
-    try {
-      final r = await ref.read(apiClientProvider).reportContent(type: 'listing', id: widget.id, reason: reason);
-      if (mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفي العرض للمراجعة' : 'وصل بلاغك وسنراجعه');
-    } catch (e) {
-      if (mounted) toast(context, e.toString(), error: true);
-    }
-  }
-
-  Future<void> _order(Listing x) async {
-    final note = await askText(context, title: 'ملاحظة للبائع', hint: 'مثال: الاستلام بعد المغرب', confirm: 'تأكيد الطلب', maxLines: 2);
-    if (note == null) return;
-    try {
-      await ref.read(apiClientProvider).order(x.id, qty, note: note);
-      ref.invalidate(ordersProvider); ref.invalidate(walletProvider);
-      if (mounted) { toast(context, 'تم الطلب'); Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage())); }
-    } catch (e) {
-      if (mounted) toast(context, e.toString().contains('insufficient-funds') ? 'الرصيد غير كافٍ في المحفظة' : e.toString(), error: true);
-    }
-  }
-}
-
-class OrdersPage extends ConsumerWidget {
-  /// 0 = عروضي، 1 = الطلبات
-  final int initialTab;
-  const OrdersPage({super.key, this.initialTab = 1});
-  @override
-  Widget build(BuildContext context, WidgetRef ref) => DefaultTabController(
-        length: 2,
-        initialIndex: initialTab.clamp(0, 1),
-        child: Scaffold(
-          backgroundColor: Joy.bg,
-          appBar: AppBar(title: const Text('عروضي وطلباتي'), bottom: const TabBar(tabs: [Tab(text: 'عروضي'), Tab(text: 'الطلبات')])),
-          body: const TabBarView(children: [_MyListings(), _MyOrders()]),
-        ),
-      );
-}
-
-class _MyOrders extends ConsumerWidget {
-  const _MyOrders();
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final o = ref.watch(ordersProvider);
-    return o.when(
-      data: (list) => list.isEmpty
-          ? const EmptyState(icon: Icons.receipt_long_outlined, title: 'لا طلبات بعد')
-          : RefreshIndicator(
-              onRefresh: () async => ref.invalidate(ordersProvider),
-              child: ListView.separated(padding: const EdgeInsets.all(20), itemCount: list.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => _OrderCard(list[i])),
-            ),
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(ordersProvider)),
-    );
-  }
-}
-
-/// عروضي كلها: الظاهرة والمخفية وما أخفته الإدارة، مع إظهار/إخفاء سريع.
-class _MyListings extends ConsumerWidget {
-  const _MyListings();
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final l = ref.watch(myListingsProvider);
-    return l.when(
-      data: (list) => list.isEmpty
-          ? const EmptyState(icon: Icons.storefront_outlined, title: 'لم تعرض شيئاً للبيع بعد', subtitle: 'من صفحة السوق اضغط «اعرض للبيع» وأضف صورة ووصفاً وسعراً.')
-          : RefreshIndicator(
-              onRefresh: () async => ref.invalidate(myListingsProvider),
-              child: ListView.separated(padding: const EdgeInsets.all(20), itemCount: list.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => MyListingRow(list[i])),
-            ),
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(myListingsProvider)),
-    );
-  }
-}
-
-String listingStatusLabel(String status) => switch (status) { 'active' => 'ظاهر في السوق', 'hidden' => 'مخفي', 'blocked' => 'أخفته الإدارة', _ => status };
-Color listingStatusColor(String status) => switch (status) { 'active' => Joy.success, 'blocked' => Joy.danger, _ => Joy.textMuted };
-
-/// يبدّل ظهور عرضي بين ظاهر ومخفي (ما لم تكن الإدارة قد أخفته).
-Future<void> toggleListingVisibility(BuildContext context, WidgetRef ref, Listing x) async {
-  try {
-    final next = x.status == 'active' ? 'hidden' : 'active';
-    await ref.read(apiClientProvider).updateListing(x.id, {'status': next});
-    ref.invalidate(marketProvider); ref.invalidate(myListingsProvider); ref.invalidate(listingProvider(x.id));
-    if (context.mounted) toast(context, next == 'active' ? 'صار العرض ظاهراً في السوق' : 'أُخفي العرض ولا يراه غيرك');
-  } catch (e) {
-    if (context.mounted) toast(context, e.toString().contains('blocked') ? 'أخفته الإدارة؛ تواصل مع الدعم' : e.toString(), error: true);
-  }
-}
-
-/// يفتح نموذج التعديل ويرفع الصورة الجديدة إن اختيرت ثم يحفظ.
-Future<void> editListing(BuildContext context, WidgetRef ref, Listing x) async {
-  final d = await showListingForm(context, initial: x);
+/// إنشاء عرض: النموذج ثم رفع الصور ثم النشر
+Future<void> createListing(BuildContext context, WidgetRef ref) async {
+  final d = await showListingForm(context);
   if (d == null || !context.mounted) return;
   try {
     final api = ref.read(apiClientProvider);
-    final imageUrl = d.image == null ? null : (await api.uploadMedia(d.image!.bytes, contentType: d.image!.mime, fileName: d.image!.name)).url;
-    await api.updateListing(x.id, {
-      'title': d.title, 'description': d.description, 'price': d.price, 'kind': d.kind, 'category': d.category, 'placeName': d.placeName,
-      if (imageUrl != null) 'imageUrl': imageUrl else if (d.removeImage) 'imageUrl': null,
-    });
-    ref.invalidate(marketProvider); ref.invalidate(myListingsProvider); ref.invalidate(listingProvider(x.id));
-    if (context.mounted) toast(context, 'حُفظت التعديلات');
-  } catch (e) {
-    if (context.mounted) toast(context, e.toString(), error: true);
-  }
-}
-
-class MyListingRow extends ConsumerWidget {
-  final Listing l;
-  const MyListingRow(this.l, {super.key});
-  @override
-  Widget build(BuildContext context, WidgetRef ref) => JoyCard(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(l.id))),
-        child: Row(children: [
-          Container(
-            width: 48, height: 48, clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
-            child: l.imageUrl != null && l.imageUrl!.isNotEmpty ? Image.network(thumbUrl(l.imageUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, color: Joy.textMuted)) : const Icon(Icons.storefront_outlined, color: Joy.textMuted),
-          ),
-          const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-            Text('${l.price == 0 ? 'مجاناً' : money(l.price)} · ${listingStatusLabel(l.status)}', style: TextStyle(color: listingStatusColor(l.status), fontSize: 12.5, fontWeight: FontWeight.w600)),
-          ])),
-          if (l.status == 'blocked')
-            const Icon(Icons.block_rounded, color: Joy.danger)
-          else
-            IconButton(
-              tooltip: l.status == 'active' ? 'إخفاء' : 'إظهار',
-              onPressed: () => toggleListingVisibility(context, ref, l),
-              icon: Icon(l.status == 'active' ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: l.status == 'active' ? Joy.textMuted : Joy.primary),
-            ),
-        ]),
-      );
-}
-
-/// إجراءات صاحب العرض داخل صفحته: حالة العرض، تعديل، إخفاء/إظهار.
-class OwnerListingActions extends ConsumerWidget {
-  final Listing x;
-  const OwnerListingActions(this.x, {super.key});
-  @override
-  Widget build(BuildContext context, WidgetRef ref) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (x.status != 'active')
-          Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: x.status == 'blocked' ? Joy.accentSoft : Joy.surface2, borderRadius: BorderRadius.circular(14)),
-            child: Row(children: [
-              Icon(x.status == 'blocked' ? Icons.block_rounded : Icons.visibility_off_outlined, color: x.status == 'blocked' ? Joy.accent : Joy.textMuted),
-              const SizedBox(width: 8),
-              Expanded(child: Text(x.status == 'blocked' ? 'أخفته الإدارة من السوق؛ تواصل مع الدعم إن كان ذلك خطأً.' : 'العرض مخفي ولا يراه أحد غيرك.', style: TextStyle(color: x.status == 'blocked' ? Joy.accent : Joy.textMuted, fontWeight: FontWeight.w600, fontSize: 13))),
-            ]),
-          ),
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          OutlinedButton.icon(onPressed: () => editListing(context, ref, x), icon: const Icon(Icons.edit_outlined, size: 18), label: const Text('تعديل')),
-          if (x.status != 'blocked')
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(foregroundColor: x.status == 'active' ? Joy.danger : Joy.primary),
-              onPressed: () => toggleListingVisibility(context, ref, x),
-              icon: Icon(x.status == 'active' ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 18),
-              label: Text(x.status == 'active' ? 'إخفاء العرض' : 'إظهار العرض'),
-            ),
-        ]),
-      ]);
-}
-
-class _OrderCard extends ConsumerWidget {
-  final Order o;
-  const _OrderCard(this.o);
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final other = o.mineAsSeller ? o.buyer : o.seller;
-    final status = switch (o.status) { 'paid' => 'مدفوع · بانتظار التسليم', 'delivered' => 'تم التسليم', 'cancelled' => 'ملغى', _ => o.status };
-    return JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        ProfileAvatar(person: other, size: 40),
-        const SizedBox(width: 10),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${o.title} × ${o.qty}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5)),
-          Text('${o.mineAsSeller ? 'المشتري' : 'البائع'}: ${other.nickname} · ${timeAgo(o.createdAt)}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
-        ])),
-        Text(money(o.total), style: const TextStyle(fontWeight: FontWeight.w700, color: Joy.primary)),
-      ]),
-      if (o.note.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(o.note, style: const TextStyle(fontSize: 13))),
-      const SizedBox(height: 10),
-      Row(children: [
-        Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: o.status == 'delivered' ? Joy.primarySoft : o.status == 'cancelled' ? Joy.surface2 : Joy.sunSoft, borderRadius: BorderRadius.circular(999)), child: Text(status, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: o.status == 'delivered' ? Joy.primary : o.status == 'cancelled' ? Joy.textMuted : Joy.sunText))),
-        const Spacer(),
-        if (o.status == 'paid' && o.mineAsSeller) FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(44, 40)), onPressed: () => _act(context, ref, deliver: true), child: const Text('تم التسليم')),
-        if (o.status == 'paid') TextButton(onPressed: () => _act(context, ref, deliver: false), child: const Text('إلغاء', style: TextStyle(color: Joy.danger))),
-      ]),
-    ]));
-  }
-  Future<void> _act(BuildContext context, WidgetRef ref, {required bool deliver}) async {
-    try {
-      final api = ref.read(apiClientProvider);
-      if (deliver) { await api.deliverOrder(o.id); } else { await api.cancelOrder(o.id); }
-      ref.invalidate(ordersProvider); ref.invalidate(walletProvider);
-    } catch (e) {
-      if (context.mounted) toast(context, e.toString(), error: true);
+    final pos = ref.read(marketPosProvider).valueOrNull;
+    final pres = ref.read(myPresenceProvider).valueOrNull;
+    final urls = [...d.existingImages];
+    for (final img in d.newImages) {
+      urls.add((await api.uploadMedia(img.bytes, contentType: img.mime, fileName: img.name)).url);
     }
+    final body = d.toBody()..addAll({'images': urls, if (urls.isNotEmpty) 'imageUrl': urls.first, 'lat': pos?.lat ?? pres?.lat, 'lng': pos?.lng ?? pres?.lng});
+    final l = await api.createListing(body);
+    invalidateMarket(ref);
+    if (context.mounted) toast(context, l.status == 'draft' ? 'حُفظ كمسودة' : l.status == 'scheduled' ? 'سيُنشر في موعده' : l.status == 'pending' ? 'أُرسل للمراجعة وسيظهر بعد الموافقة' : 'نُشر عرضك');
+  } catch (e) {
+    if (context.mounted) toast(context, marketErrText(e), error: true);
   }
+}
+
+String marketErrText(Object e) {
+  final code = e is ApiException ? (e.body?['error']?.toString() ?? '') : '';
+  final s = code.isNotEmpty ? code : e.toString();
+  if (s.contains('insufficient-funds')) return 'الرصيد غير كافٍ في المحفظة';
+  if (s.contains('contact-in-text')) return 'لا تكتب أرقام جوال أو روابط في العرض؛ التواصل عبر المراسلة داخل ناس لايف';
+  if (s.contains('duplicate-listing')) return 'لديك عرض مطابق بالعنوان والسعر نفسيهما';
+  if (s.contains('new-account-limit')) return 'الحساب الجديد يمكنه نشر ٣ عروض في أول يوم';
+  if (s.contains('banned-words')) return 'يحتوي كلمات غير مسموح بها';
+  if (s.contains('out-of-stock')) return 'الكمية المطلوبة غير متوفرة';
+  if (s.contains('slot-taken')) return 'هذا الموعد محجوز، اختر موعداً آخر';
+  if (s.contains('slot-unavailable') || s.contains('slot-required')) return 'اختر موعداً داخل أوقات الخدمة';
+  if (s.contains('variant-required')) return 'اختر الخيار المناسب أولاً';
+  if (s.contains('bad-coupon')) return 'الكوبون غير صالح';
+  if (s.contains('coupon-min')) return 'الكوبون يتطلب حداً أدنى للطلب';
+  if (s.contains('bump-too-soon')) return 'يمكنك رفع العرض مرة كل ٢٤ ساعة';
+  if (s.contains('spotlight-full')) return 'مساحة سبوت لايت ممتلئة حالياً، جرّب لاحقاً';
+  if (s.contains('bad-code')) return 'الرمز غير صحيح';
+  if (s.contains('pending-review')) return 'العرض بانتظار مراجعة الإدارة';
+  if (s.contains('blocked')) return 'أخفته الإدارة؛ تواصل مع الدعم';
+  return e is ApiException ? e.message : s;
 }

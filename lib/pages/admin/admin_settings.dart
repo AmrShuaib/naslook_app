@@ -19,7 +19,8 @@ class AdminSettingsPage extends ConsumerStatefulWidget {
 
 class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
   final maxTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
-  bool? testTopup, maintenance;
+  final commission = TextEditingController(), spotPrice = TextEditingController(), spotMaxDays = TextEditingController(), spotMaxActive = TextEditingController();
+  bool? testTopup, maintenance, reviewNew, blockContacts;
   bool loaded = false, busy = false;
 
   void _load(AdminSettings s) {
@@ -32,6 +33,12 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     threshold.text = '${s.reportThreshold}';
     testTopup = s.testTopup;
     maintenance = s.maintenance;
+    commission.text = s.marketCommissionPct == s.marketCommissionPct.roundToDouble() ? '${s.marketCommissionPct.round()}' : '${s.marketCommissionPct}';
+    spotPrice.text = (s.spotlightPricePerDay / 100).toStringAsFixed(0);
+    spotMaxDays.text = '${s.spotlightMaxDays}';
+    spotMaxActive.text = '${s.spotlightMaxActive}';
+    reviewNew = s.marketReviewNewAccounts;
+    blockContacts = s.marketBlockContacts;
   }
 
   @override
@@ -60,12 +67,26 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             const SizedBox(height: 8),
             TextField(controller: threshold, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'عدد البلاغات للإخفاء التلقائي', helperText: 'يُخفى المنشور أو العرض تلقائياً عند بلوغ هذا العدد من المبلّغين المختلفين ويُشعَر المشرفون')),
           ])),
+          const SectionTitle('السوق'),
+          JoyCard(child: Column(children: [
+            TextField(key: const Key('set-commission'), controller: commission, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'عمولة المنصة على كل طلب مكتمل (٪)', helperText: 'تُخصم من مبلغ البائع وتُقيَّد لحساب المنصة. ٠ يعني بلا عمولة')),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(child: TextField(key: const Key('set-spot-price'), controller: spotPrice, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'سعر يوم سبوت لايت (ريال)'))),
+              const SizedBox(width: 8),
+              Expanded(child: TextField(controller: spotMaxDays, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أقصى أيام'))),
+              const SizedBox(width: 8),
+              Expanded(child: TextField(controller: spotMaxActive, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أقصى إعلانات نشطة'))),
+            ]),
+            SwitchListTile(key: const Key('set-review-new'), contentPadding: EdgeInsets.zero, value: reviewNew ?? s.marketReviewNewAccounts, onChanged: (v) => setState(() => reviewNew = v), title: const Text('مراجعة عروض الحسابات الجديدة'), subtitle: const Text('عروض من سجّل قبل أقل من أسبوع لا تظهر إلا بعد موافقة الإدارة', style: TextStyle(fontSize: 12))),
+            SwitchListTile(key: const Key('set-block-contacts'), contentPadding: EdgeInsets.zero, value: blockContacts ?? s.marketBlockContacts, onChanged: (v) => setState(() => blockContacts = v), title: const Text('منع أرقام الجوال والروابط في العروض'), subtitle: const Text('يبقي التواصل داخل المنصة', style: TextStyle(fontSize: 12))),
+          ])),
           const SizedBox(height: 10),
           FilledButton.icon(
             onPressed: busy ? null : () async {
               setState(() => busy = true);
               try {
-                await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold});
+                await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold});
                 loaded = false;
                 invalidateAdmin(ref);
                 ref.invalidate(publicSettingsProvider);

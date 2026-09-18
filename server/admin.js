@@ -136,7 +136,8 @@ export default async function admin(app, opts) {
   await ensureSetupCode();
 
   // ---- الإعدادات الحية: تُطبَّق على العملية نفسها (الشحن التجريبي وسقفه) وتُقرأ من الإضافات الأخرى
-  const DEFAULT_SETTINGS = { testTopup: process.env.WALLET_TEST_TOPUP === "1", maxTopup: 10000000, announcement: "", maintenance: false, supportHandle: "", bannedWords: "", reportThreshold: 3 };
+  const DEFAULT_SETTINGS = { testTopup: process.env.WALLET_TEST_TOPUP === "1", maxTopup: 10000000, announcement: "", maintenance: false, supportHandle: "", bannedWords: "", reportThreshold: 3,
+    marketCommissionPct: 0, spotlightPricePerDay: 2000, spotlightMaxDays: 30, spotlightMaxActive: 12, marketReviewNewAccounts: false, marketBlockContacts: true };
   async function loadSettings() {
     const rows = (await pool.query("SELECT key, value FROM platform_settings")).rows;
     const s = { ...DEFAULT_SETTINGS };
@@ -675,6 +676,13 @@ export default async function admin(app, opts) {
     if (b.supportHandle !== undefined) patch.supportHandle = str(b.supportHandle, 40);
     if (b.bannedWords !== undefined) patch.bannedWords = str(b.bannedWords, 5000);
     if (b.reportThreshold !== undefined) patch.reportThreshold = Math.max(1, Math.min(50, Math.round(Number(b.reportThreshold)) || 3));
+    // السوق: العمولة بالنسبة المئوية، سعر يوم سبوت لايت بالهللة وحدوده، مراجعة عروض الحسابات الجديدة، منع أرقام التواصل والروابط
+    if (b.marketCommissionPct !== undefined) patch.marketCommissionPct = Math.max(0, Math.min(30, Math.round(Number(b.marketCommissionPct) * 10) / 10 || 0));
+    if (b.spotlightPricePerDay !== undefined) patch.spotlightPricePerDay = Math.max(0, Math.min(100000000, Math.round(Number(b.spotlightPricePerDay) || 0)));
+    if (b.spotlightMaxDays !== undefined) patch.spotlightMaxDays = Math.max(1, Math.min(90, Math.round(Number(b.spotlightMaxDays)) || 30));
+    if (b.spotlightMaxActive !== undefined) patch.spotlightMaxActive = Math.max(1, Math.min(50, Math.round(Number(b.spotlightMaxActive)) || 12));
+    if (b.marketReviewNewAccounts !== undefined) patch.marketReviewNewAccounts = b.marketReviewNewAccounts === true;
+    if (b.marketBlockContacts !== undefined) patch.marketBlockContacts = b.marketBlockContacts !== false;
     const s = await saveSettings(patch);
     await audit(uid, "settings.update", "platform", patch);
     return s;
