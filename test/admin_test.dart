@@ -179,8 +179,18 @@ void main() {
     await tester.tap(find.byKey(const Key('pay-save')));
     await tester.pumpAndSettle();
     expect(find.textContaining('صيغة المفتاح غير صحيحة'), findsOneWidget);
-    // مفاتيح اختبار صحيحة
+    // مفتاح سري منسوخ مقنّعاً من لوحة ميسر → يُكتشف محلياً بلا طلب
+    srv.bodies.remove('PUT /adminapi/payments/config');
     await tester.enterText(find.byKey(const Key('pay-pk')), 'pk_test_abcdefgh12');
+    await tester.enterText(find.byKey(const Key('pay-sk')), 'sk_t**************************');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('منسوخ مقنّعاً: فيه نجوم'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('pay-save')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('اضغط أيقونة العين'), findsWidgets);
+    expect(srv.bodies['PUT /adminapi/payments/config'], isNull);
+    // مفاتيح اختبار صحيحة (مع مسافة زائدة تُنظَّف)
+    await tester.enterText(find.byKey(const Key('pay-pk')), ' pk_test_abcdefgh12 ');
     await tester.enterText(find.byKey(const Key('pay-sk')), 'sk_test_abcdefgh34');
     await tester.enterText(find.byKey(const Key('pay-wh')), 'whsec_1');
     await tester.tap(find.byKey(const Key('pay-save')));

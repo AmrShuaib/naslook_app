@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/admin_api.dart';
@@ -191,6 +192,7 @@ class _PayGatewayCardState extends ConsumerState<_PayGatewayCard> {
   String _err(Object e) {
     final code = e is ApiException ? (e.body?['error']?.toString() ?? '') : '';
     return switch (code) {
+      'masked-key' => 'المفتاح منسوخ مقنّعاً (فيه نجوم). في لوحة ميسر اضغط أيقونة العين لإظهار المفتاح كاملاً ثم انسخه، أو استخدم زر النسخ المجاور له',
       'bad-key' => 'صيغة المفتاح غير صحيحة: مفتاح النشر يبدأ بـ pk_test_ أو pk_live_ والسري بـ sk_test_ أو sk_live_',
       'both-keys-required' => 'أدخل المفتاحين معاً (النشر والسري)',
       'mode-mismatch' => 'المفتاحان من وضعين مختلفين: أحدهما اختبار والآخر حي',
@@ -198,7 +200,32 @@ class _PayGatewayCardState extends ConsumerState<_PayGatewayCard> {
     };
   }
 
+  static String _clean(String v) => v.replaceAll(RegExp(r'\s+'), '');
+  static bool _masked(String v) => RegExp(r'[*•●]').hasMatch(v);
+
+  Future<void> _paste(TextEditingController c) async {
+    try {
+      final t = _clean((await Clipboard.getData('text/plain'))?.text ?? '');
+      if (t.isEmpty) { if (mounted) toast(context, 'الحافظة فارغة', error: true); return; }
+      setState(() => c.text = t);
+      if (_masked(t) && mounted) toast(context, 'هذا النص مقنّع بالنجوم؛ أظهر المفتاح في لوحة ميسر قبل نسخه', error: true);
+    } catch (_) {
+      if (mounted) toast(context, 'تعذر قراءة الحافظة؛ الصق يدوياً داخل الحقل', error: true);
+    }
+  }
+
+  /// تلميح تحت الحقل السري: البادئة وعدد الأحرف كي يتأكد أن اللصق اكتمل دون كشف المفتاح
+  String? _skHint() {
+    final v = _clean(sk.text);
+    if (v.isEmpty) return null;
+    if (_masked(v)) return 'منسوخ مقنّعاً: فيه نجوم بدل الأحرف';
+    final us = v.indexOf('_', 3);
+    return '${us > 0 ? v.substring(0, us + 1) : v.substring(0, v.length.clamp(0, 8))}… · ${v.length} حرفاً';
+  }
+
   Future<void> _save({bool clear = false}) async {
+    for (final c in [pk, sk, wh]) { c.text = _clean(c.text); }
+    if (!clear && (_masked(pk.text) || _masked(sk.text))) { toast(context, _err(const ApiException(400, 'masked-key', body: {'error': 'masked-key'})), error: true); return; }
     setState(() { busy = true; testText = null; });
     try {
       final c = clear
@@ -258,16 +285,26 @@ class _PayGatewayCardState extends ConsumerState<_PayGatewayCard> {
             Expanded(child: Text(status, key: const Key('pay-status'), style: const TextStyle(fontSize: 13, height: 1.5))),
           ]),
           const SizedBox(height: 6),
-          const Text('سجّل في dashboard.moyasar.com وانسخ المفتاحين من قسم API Keys. مفاتيح الاختبار (pk_test_ / sk_test_) لا تحتاج سجلاً تجارياً وتحاكي الدفع كاملاً.', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
+          const Text('من لوحة ميسر ← Settings ← API Keys. المفتاح السري يظهر مقنّعاً بالنجوم؛ اضغط أيقونة العين لإظهاره كاملاً ثم انسخه (أو زر النسخ المجاور له). مفاتيح الاختبار (pk_test_ / sk_test_) لا تحتاج سجلاً تجارياً وتحاكي الدفع كاملاً.', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
           const SizedBox(height: 10),
-          TextField(key: const Key('pay-pk'), controller: pk, decoration: const InputDecoration(labelText: 'مفتاح النشر (Publishable key)', hintText: 'pk_test_…'), autocorrect: false, enableSuggestions: false),
+          TextField(key: const Key('pay-pk'), controller: pk, textDirection: TextDirection.ltr, textAlign: TextAlign.left, keyboardType: TextInputType.visiblePassword, autocorrect: false, enableSuggestions: false, style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+              decoration: InputDecoration(labelText: 'مفتاح النشر (Publishable key)', hintText: 'pk_test_…', suffixIcon: IconButton(key: const Key('pay-pk-paste'), tooltip: 'لصق', onPressed: () => _paste(pk), icon: const Icon(Icons.content_paste_rounded)))),
           const SizedBox(height: 8),
           TextField(
-            key: const Key('pay-sk'), controller: sk, obscureText: !showSecret, autocorrect: false, enableSuggestions: false,
-            decoration: InputDecoration(labelText: 'المفتاح السري (Secret key)', hintText: c.secretKeySet && c.source == 'panel' ? 'محفوظ: ${c.secretKeyHint} (اتركه فارغاً للإبقاء عليه)' : 'sk_test_…', suffixIcon: IconButton(onPressed: () => setState(() => showSecret = !showSecret), icon: Icon(showSecret ? Icons.visibility_off_outlined : Icons.visibility_outlined))),
+            key: const Key('pay-sk'), controller: sk, obscureText: !showSecret, textDirection: TextDirection.ltr, textAlign: TextAlign.left, keyboardType: TextInputType.visiblePassword, autocorrect: false, enableSuggestions: false, style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: 'المفتاح السري (Secret key)', hintText: c.secretKeySet && c.source == 'panel' ? 'محفوظ: ${c.secretKeyHint} (اتركه فارغاً للإبقاء عليه)' : 'sk_test_…',
+              helperText: _skHint(), helperStyle: TextStyle(color: _masked(sk.text) ? Joy.danger : Joy.textMuted, fontSize: 11),
+              suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(key: const Key('pay-sk-paste'), tooltip: 'لصق', onPressed: () => _paste(sk), icon: const Icon(Icons.content_paste_rounded)),
+                IconButton(tooltip: showSecret ? 'إخفاء' : 'إظهار', onPressed: () => setState(() => showSecret = !showSecret), icon: Icon(showSecret ? Icons.visibility_off_outlined : Icons.visibility_outlined)),
+              ]),
+            ),
           ),
           const SizedBox(height: 8),
-          TextField(key: const Key('pay-wh'), controller: wh, autocorrect: false, enableSuggestions: false, decoration: InputDecoration(labelText: 'سر الويبهوك (اختياري)', hintText: c.webhookSecretSet && c.source == 'panel' ? 'محفوظ (اتركه فارغاً للإبقاء عليه)' : 'يُنشأ في لوحة ميسر عند إضافة الويبهوك')),
+          TextField(key: const Key('pay-wh'), controller: wh, textDirection: TextDirection.ltr, textAlign: TextAlign.left, keyboardType: TextInputType.visiblePassword, autocorrect: false, enableSuggestions: false, style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+              decoration: InputDecoration(labelText: 'سر الويبهوك (اختياري)', hintText: c.webhookSecretSet && c.source == 'panel' ? 'محفوظ (اتركه فارغاً للإبقاء عليه)' : 'يُنشأ في لوحة ميسر عند إضافة الويبهوك', suffixIcon: IconButton(key: const Key('pay-wh-paste'), tooltip: 'لصق', onPressed: () => _paste(wh), icon: const Icon(Icons.content_paste_rounded)))),
           const SizedBox(height: 10),
           Wrap(spacing: 8, runSpacing: 8, children: [
             FilledButton.icon(key: const Key('pay-save'), onPressed: busy ? null : () => _save(), icon: const Icon(Icons.save_outlined, size: 18), label: const Text('حفظ المفاتيح')),

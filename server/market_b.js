@@ -264,7 +264,8 @@ async function setup(app, opts) {
     const b = req.body ?? {}; const next = { ...panel };
     for (const f of ["publishableKey", "secretKey", "webhookSecret"]) {
       if (b[f] === undefined) continue;
-      const v = str(b[f], 200);
+      const v = str(b[f], 200).replace(/\s+/g, "");
+      if (v && /[*•●]/.test(v)) return bad(reply, 400, "masked-key", { field: f }); // منسوخ من اللوحة وهو مقنّع
       if (v && KEY_RE[f] && !KEY_RE[f].test(v)) return bad(reply, 400, "bad-key", { field: f });
       next[f] = v;
     }
