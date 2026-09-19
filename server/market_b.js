@@ -285,8 +285,14 @@ async function setup(app, opts) {
     const c = PAY(); if (!c.enabled) return { ok: false, error: "payments-disabled", mode: null };
     try {
       const r = await fetchImpl(`${MOYASAR_API}/payments?per=1`, { headers: { authorization: basicAuth(c.secretKey) }, signal: AbortSignal.timeout(8000) });
-      if (r.status === 401 || r.status === 403) return { ok: false, error: "bad-secret", status: r.status, mode: c.mode, source: c.source };
-      if (!r.ok) return { ok: false, error: `provider-${r.status}`, status: r.status, mode: c.mode, source: c.source };
+      if (!r.ok) {
+        let j = null; try { j = await r.json(); } catch { /* ignore */ }
+        const type = String(j?.type ?? ""), message = String(j?.message ?? "").slice(0, 200);
+        if (r.status === 401 || r.status === 403) return { ok: false, error: "bad-secret", status: r.status, mode: c.mode, source: c.source, message };
+        // ميسر يردّ 405 (account_inactive_error) عندما يكون الحساب الحي غير مفعّل بعد مع أن المفتاح صحيح
+        if (r.status === 405 || type === "account_inactive_error") return { ok: false, error: "account-inactive", status: r.status, mode: c.mode, source: c.source, message };
+        return { ok: false, error: `provider-${r.status}`, status: r.status, mode: c.mode, source: c.source, type, message };
+      }
       let count = null; try { const j = await r.json(); count = Array.isArray(j?.payments) ? j.payments.length : null; } catch { /* ignore */ }
       return { ok: true, status: r.status, mode: c.mode, source: c.source, recentPayments: count };
     } catch (e) { return { ok: false, error: "provider-unreachable", message: String(e?.message ?? e).slice(0, 120), mode: c.mode, source: c.source }; }
@@ -319,7 +325,12 @@ async function setup(app, opts) {
     try {
       let r = await createInvoice({ ...base, ...extras });
       if (r.status === 400 || r.status === 422) { app.log?.warn?.({ status: r.status }, "market_b: invoice extras rejected, retrying without them"); r = await createInvoice(base); }
-      if (!r.ok) { let t = ""; try { t = (await r.text()).slice(0, 300); } catch { /* ignore */ } app.log?.warn?.({ status: r.status, body: t }, "market_b: invoice create failed"); return bad(reply, 502, "provider-error", { status: r.status }); }
+      if (!r.ok) {
+        let t = ""; try { t = (await r.text()).slice(0, 300); } catch { /* ignore */ }
+        app.log?.warn?.({ status: r.status, body: t }, "market_b: invoice create failed");
+        if (r.status === 405 || t.includes("account_inactive_error")) return bad(reply, 503, "payments-inactive");
+        return bad(reply, 502, "provider-error", { status: r.status });
+      }
       inv = await r.json();
     } catch (e) { app.log?.warn?.({ err: e?.message }, "market_b: invoice create unreachable"); return bad(reply, 502, "provider-unreachable"); }
     if (!inv?.id || !inv?.url) return bad(reply, 502, "provider-error");

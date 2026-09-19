@@ -192,6 +192,8 @@ String _err(Object e) {
   if (s.contains('insufficient-funds')) return 'الرصيد غير كافٍ';
   if (s.contains('topup-disabled')) return 'الشحن غير مفعّل';
   if (s.contains('payments-disabled')) return 'الدفع بالبطاقة غير مفعّل حالياً';
+  if (s.contains('payments-inactive')) return 'الدفع بالبطاقة غير متاح مؤقتاً لحين تفعيل حساب البوابة؛ حاول لاحقاً';
+  if (s.contains('provider-unreachable') || s.contains('provider-error')) return 'تعذر الوصول إلى بوابة الدفع الآن؛ حاول بعد قليل';
   if (s.contains('not-found')) return 'المستلم غير موجود';
   if (s.contains('bad-amount')) return 'المبلغ غير مقبول: يجب أن يكون أكبر من صفر وحتى ${money(maxTopupHalalas)}';
   if (s.contains('bad-recipient')) return 'حدّد مستلماً صحيحاً غير نفسك';

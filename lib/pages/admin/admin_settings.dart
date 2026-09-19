@@ -256,6 +256,7 @@ class _PayGatewayCardState extends ConsumerState<_PayGatewayCard> {
             : switch (r.error) {
                 'payments-disabled' => 'لا توجد مفاتيح محفوظة بعد',
                 'bad-secret' => 'ميسر رفض المفتاح السري. تأكد من نسخه كاملاً',
+                'account-inactive' => 'المفاتيح صحيحة لكن حسابك ${r.mode == 'live' ? 'الحي' : ''} لدى ميسر غير مفعّل بعد (ردّ ميسر: الحساب غير نشط). أكمل طلب Go Live أو تواصل مع دعم ميسر؛ وحتى التفعيل أعد مفاتيح الاختبار ليبقى الشحن يعمل${r.message.isEmpty ? '' : ' — ${r.message}'}',
                 'provider-unreachable' => 'تعذر الوصول إلى ميسر من الخادم${r.message.isEmpty ? '' : ' (${r.message})'}',
                 _ => 'فشل الفحص: ${r.error}',
               };
