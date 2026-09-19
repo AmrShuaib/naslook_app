@@ -319,15 +319,21 @@ async function setup(app, opts) {
       inv = await r.json();
     } catch (e) { app.log?.warn?.({ err: e?.message }, "market_b: invoice create unreachable"); return bad(reply, 502, "provider-unreachable"); }
     if (!inv?.id || !inv?.url) return bad(reply, 502, "provider-error");
-    await pool.query("INSERT INTO payments(id, user_id, amount, provider, description, nonce, meta) VALUES($1,$2,$3,$4,$5,$6,$7)", [id, uid, amount, c.provider, description, nonce, JSON.stringify({ hosted: true, invoiceId: String(inv.id), invoiceUrl: String(inv.url) })]);
-    return { id, amount, currency: "SAR", checkoutUrl: String(inv.url), expiresInMinutes: 30, hosted: true };
+    // صفحة ميسر تدعم العربية عبر lang=ar
+    const pageUrl = /[?&]lang=/.test(String(inv.url)) ? String(inv.url).replace(/([?&])lang=[a-z-]+/i, "$1lang=ar") : `${inv.url}${String(inv.url).includes("?") ? "&" : "?"}lang=ar`;
+    await pool.query("INSERT INTO payments(id, user_id, amount, provider, description, nonce, meta) VALUES($1,$2,$3,$4,$5,$6,$7)", [id, uid, amount, c.provider, description, nonce, JSON.stringify({ hosted: true, invoiceId: String(inv.id), invoiceUrl: pageUrl })]);
+    return { id, amount, currency: "SAR", checkoutUrl: pageUrl, expiresInMinutes: 30, hosted: true };
   });
+  // دفعات بدأت ولم تكتمل خلال ٤٥ دقيقة تُعلَّم منتهية عند العرض (الفاتورة لدى ميسر تنتهي بعد ٣٠ دقيقة)
+  const expireStale = () => pool.query("UPDATE payments SET status='expired' WHERE status='created' AND created_at < now() - interval '45 minutes'").catch(() => {});
   app.get("/pay/mine", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    await expireStale();
     return (await pool.query("SELECT * FROM payments WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [uid])).rows.map(payOut);
   });
   app.get("/adminapi/payments", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply); if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
+    await expireStale();
     const rows = (await pool.query("SELECT * FROM payments ORDER BY created_at DESC LIMIT 200")).rows;
     return { enabled: PAY().enabled, provider: PAY().provider, mode: PAY().mode, source: PAY().source, items: await Promise.all(rows.map(async (p) => ({ ...payOut(p), user: await person(p.user_id) }))) };
   });
