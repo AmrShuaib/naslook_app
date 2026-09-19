@@ -363,7 +363,9 @@ async function setup(app, opts) {
   });
   app.post("/pay/webhook", async (req, reply) => {
     const c = PAY(); if (!c.enabled) return bad(reply, 503, "payments-disabled");
-    if (c.webhookSecret && String(req.headers["x-webhook-secret"] ?? req.headers.authorization ?? "").replace(/^Bearer /, "") !== c.webhookSecret) return bad(reply, 401, "bad-signature");
+    // ميسر يضع السر في جسم الطلب (secret_token)؛ نقبل أيضاً ترويسة x-webhook-secret أو Authorization: Bearer للاختبار اليدوي
+    const given = String(req.body?.secret_token ?? req.headers["x-webhook-secret"] ?? req.headers.authorization ?? "").replace(/^Bearer /, "");
+    if (c.webhookSecret && (given.length !== c.webhookSecret.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(c.webhookSecret)))) return bad(reply, 401, "bad-signature");
     const id = req.body?.data?.id ?? req.body?.id;
     const r = await settle(id);
     return { ok: r.ok, credited: r.credited === true, error: r.ok ? undefined : r.error };
