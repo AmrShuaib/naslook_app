@@ -245,6 +245,26 @@ class PayConfig {
   factory PayConfig.fromJson(Map m) => PayConfig(enabled: m['enabled'] == true, provider: m['provider']?.toString() ?? '', currency: m['currency']?.toString() ?? 'SAR', methods: asList(m['methods']).map((e) => e.toString()).toList(), min: _i(m['min']), max: _i(m['max']));
 }
 
+/// إعدادات بوابة الدفع كما تراها لوحة الإدارة: السر لا يُعاد أبداً، فقط تلميح بآخر أربعة أحرف
+class PayAdminConfig {
+  final bool enabled, envPresent, secretKeySet, webhookSecretSet, panelKeysSet;
+  final String provider, mode, source, publishableKey, secretKeyHint, returnUrl, webhookUrl, updatedBy;
+  final DateTime? updatedAt;
+  const PayAdminConfig({this.enabled = false, this.envPresent = false, this.secretKeySet = false, this.webhookSecretSet = false, this.panelKeysSet = false, this.provider = 'moyasar', this.mode = '', this.source = '', this.publishableKey = '', this.secretKeyHint = '', this.returnUrl = '', this.webhookUrl = '', this.updatedBy = '', this.updatedAt});
+  factory PayAdminConfig.fromJson(Map m) => PayAdminConfig(
+      enabled: m['enabled'] == true, envPresent: m['envPresent'] == true, secretKeySet: m['secretKeySet'] == true, webhookSecretSet: m['webhookSecretSet'] == true, panelKeysSet: m['panelKeysSet'] == true,
+      provider: m['provider']?.toString() ?? 'moyasar', mode: m['mode']?.toString() ?? '', source: m['source']?.toString() ?? '', publishableKey: m['publishableKey']?.toString() ?? '', secretKeyHint: m['secretKeyHint']?.toString() ?? '',
+      returnUrl: m['returnUrl']?.toString() ?? '', webhookUrl: m['webhookUrl']?.toString() ?? '', updatedBy: m['updatedBy']?.toString() ?? '', updatedAt: _t(m['updatedAt']));
+}
+
+/// نتيجة فحص الاتصال بالبوابة
+class PayTestResult {
+  final bool ok;
+  final String error, mode, source, message;
+  const PayTestResult({this.ok = false, this.error = '', this.mode = '', this.source = '', this.message = ''});
+  factory PayTestResult.fromJson(Map m) => PayTestResult(ok: m['ok'] == true, error: m['error']?.toString() ?? '', mode: m['mode']?.toString() ?? '', source: m['source']?.toString() ?? '', message: m['message']?.toString() ?? '');
+}
+
 class PaymentRow {
   final String id, status, description;
   final int amount;

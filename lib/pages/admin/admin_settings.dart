@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/admin_api.dart';
+import '../../api/client.dart' show ApiException;
+import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
@@ -9,6 +11,7 @@ import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../wallet/wallet_page.dart' show payConfigProvider;
 import 'admin_shell.dart';
 
 class AdminSettingsPage extends ConsumerStatefulWidget {
@@ -54,6 +57,8 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             SwitchListTile(contentPadding: EdgeInsets.zero, value: testTopup ?? s.testTopup, onChanged: (v) => setState(() => testTopup = v), title: const Text('الشحن التجريبي'), subtitle: const Text('يسمح لأي مستخدم بشحن محفظته بلا دفع حقيقي. عطّله قبل الإطلاق.')),
             TextField(controller: maxTopup, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أقصى شحن في المرة الواحدة (ريال)')),
           ])),
+          const SectionTitle('بوابة الدفع (ميسر)'),
+          const _PayGatewayCard(),
           const SectionTitle('الإعلان العام'),
           JoyCard(child: Column(children: [
             TextField(controller: announcement, maxLines: 2, decoration: const InputDecoration(labelText: 'نص يظهر في الرئيسية لكل المستخدمين (اتركه فارغاً لإخفائه)')),
@@ -152,5 +157,136 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     } catch (e) {
       if (mounted) toast(context, adminErrText(e), error: true);
     }
+  }
+}
+
+final adminPayConfigProvider = FutureProvider<PayAdminConfig>((ref) => ref.watch(apiClientProvider).adminPayConfig());
+
+/// مفاتيح ميسر من اللوحة بدل ملف البيئة: مفتاح النشر والمفتاح السري وسر الويبهوك، مع حفظ وفحص اتصال ومسح.
+/// السر لا يُعرض بعد حفظه؛ يظهر تلميح بآخر أربعة أحرف فقط.
+class _PayGatewayCard extends ConsumerStatefulWidget {
+  const _PayGatewayCard();
+  @override
+  ConsumerState<_PayGatewayCard> createState() => _PayGatewayCardState();
+}
+
+class _PayGatewayCardState extends ConsumerState<_PayGatewayCard> {
+  final pk = TextEditingController(), sk = TextEditingController(), wh = TextEditingController();
+  bool loaded = false, busy = false, showSecret = false;
+  String? testText;
+  bool? testOk;
+
+  @override
+  void dispose() {
+    pk.dispose(); sk.dispose(); wh.dispose();
+    super.dispose();
+  }
+
+  void _load(PayAdminConfig c) {
+    if (loaded) return;
+    loaded = true;
+    if (c.source == 'panel') pk.text = c.publishableKey;
+  }
+
+  String _err(Object e) {
+    final code = e is ApiException ? (e.body?['error']?.toString() ?? '') : '';
+    return switch (code) {
+      'bad-key' => 'صيغة المفتاح غير صحيحة: مفتاح النشر يبدأ بـ pk_test_ أو pk_live_ والسري بـ sk_test_ أو sk_live_',
+      'both-keys-required' => 'أدخل المفتاحين معاً (النشر والسري)',
+      'mode-mismatch' => 'المفتاحان من وضعين مختلفين: أحدهما اختبار والآخر حي',
+      _ => adminErrText(e),
+    };
+  }
+
+  Future<void> _save({bool clear = false}) async {
+    setState(() { busy = true; testText = null; });
+    try {
+      final c = clear
+          ? await ref.read(apiClientProvider).adminSavePayConfig(publishableKey: '', secretKey: '', webhookSecret: '')
+          : await ref.read(apiClientProvider).adminSavePayConfig(publishableKey: pk.text, secretKey: sk.text.trim().isEmpty ? null : sk.text, webhookSecret: wh.text.trim().isEmpty ? null : wh.text);
+      sk.clear(); wh.clear();
+      if (clear) pk.clear();
+      loaded = false;
+      ref.invalidate(adminPayConfigProvider);
+      ref.invalidate(payConfigProvider);
+      if (mounted) toast(context, clear ? 'أُزيلت المفاتيح' : c.enabled ? 'حُفظت المفاتيح: ${c.mode == 'live' ? 'الوضع الحي' : 'وضع الاختبار'}' : 'حُفظ');
+    } catch (e) {
+      if (mounted) toast(context, _err(e), error: true);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _test() async {
+    setState(() { busy = true; testText = null; });
+    try {
+      final r = await ref.read(apiClientProvider).adminTestPay();
+      final mode = r.mode == 'live' ? 'الوضع الحي' : 'وضع الاختبار';
+      setState(() {
+        testOk = r.ok;
+        testText = r.ok
+            ? 'الاتصال ناجح بميسر ($mode)'
+            : switch (r.error) {
+                'payments-disabled' => 'لا توجد مفاتيح محفوظة بعد',
+                'bad-secret' => 'ميسر رفض المفتاح السري. تأكد من نسخه كاملاً',
+                'provider-unreachable' => 'تعذر الوصول إلى ميسر من الخادم${r.message.isEmpty ? '' : ' (${r.message})'}',
+                _ => 'فشل الفحص: ${r.error}',
+              };
+      });
+    } catch (e) {
+      setState(() { testOk = false; testText = _err(e); });
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cfg = ref.watch(adminPayConfigProvider);
+    return cfg.when(
+      loading: () => const JoyCard(child: LinearProgressIndicator()),
+      error: (e, _) => JoyCard(child: ErrorState(e, onRetry: () => ref.invalidate(adminPayConfigProvider))),
+      data: (c) {
+        _load(c);
+        final status = !c.enabled
+            ? 'غير مفعّلة: زر «بالبطاقة» مخفي في المحفظة حتى تحفظ المفاتيح'
+            : '${c.mode == 'live' ? 'الوضع الحي (مدفوعات حقيقية)' : 'وضع الاختبار (بطاقات وهمية، لا يُخصم مال)'} · المصدر: ${c.source == 'panel' ? 'اللوحة' : 'ملف البيئة على الخادم'}';
+        return JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(c.enabled ? Icons.check_circle_rounded : Icons.cancel_rounded, color: c.enabled ? (c.mode == 'live' ? Joy.primary : Joy.sunText) : Joy.textMuted, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text(status, key: const Key('pay-status'), style: const TextStyle(fontSize: 13, height: 1.5))),
+          ]),
+          const SizedBox(height: 6),
+          const Text('سجّل في dashboard.moyasar.com وانسخ المفتاحين من قسم API Keys. مفاتيح الاختبار (pk_test_ / sk_test_) لا تحتاج سجلاً تجارياً وتحاكي الدفع كاملاً.', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
+          const SizedBox(height: 10),
+          TextField(key: const Key('pay-pk'), controller: pk, decoration: const InputDecoration(labelText: 'مفتاح النشر (Publishable key)', hintText: 'pk_test_…'), autocorrect: false, enableSuggestions: false),
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('pay-sk'), controller: sk, obscureText: !showSecret, autocorrect: false, enableSuggestions: false,
+            decoration: InputDecoration(labelText: 'المفتاح السري (Secret key)', hintText: c.secretKeySet && c.source == 'panel' ? 'محفوظ: ${c.secretKeyHint} (اتركه فارغاً للإبقاء عليه)' : 'sk_test_…', suffixIcon: IconButton(onPressed: () => setState(() => showSecret = !showSecret), icon: Icon(showSecret ? Icons.visibility_off_outlined : Icons.visibility_outlined))),
+          ),
+          const SizedBox(height: 8),
+          TextField(key: const Key('pay-wh'), controller: wh, autocorrect: false, enableSuggestions: false, decoration: InputDecoration(labelText: 'سر الويبهوك (اختياري)', hintText: c.webhookSecretSet && c.source == 'panel' ? 'محفوظ (اتركه فارغاً للإبقاء عليه)' : 'يُنشأ في لوحة ميسر عند إضافة الويبهوك')),
+          const SizedBox(height: 10),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            FilledButton.icon(key: const Key('pay-save'), onPressed: busy ? null : () => _save(), icon: const Icon(Icons.save_outlined, size: 18), label: const Text('حفظ المفاتيح')),
+            OutlinedButton.icon(key: const Key('pay-test'), onPressed: busy || !c.enabled && pk.text.isEmpty ? null : _test, icon: const Icon(Icons.wifi_tethering_rounded, size: 18), label: const Text('فحص الاتصال')),
+            if (c.panelKeysSet) TextButton.icon(key: const Key('pay-clear'), onPressed: busy ? null : () => _save(clear: true), style: TextButton.styleFrom(foregroundColor: Joy.danger), icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('إزالة المفاتيح')),
+          ]),
+          if (testText != null) Padding(padding: const EdgeInsets.only(top: 10), child: Row(children: [
+            Icon(testOk == true ? Icons.check_circle_outline_rounded : Icons.error_outline_rounded, size: 18, color: testOk == true ? Joy.primary : Joy.danger),
+            const SizedBox(width: 6),
+            Expanded(child: Text(testText!, key: const Key('pay-test-result'), style: TextStyle(fontSize: 13, color: testOk == true ? Joy.primary : Joy.danger))),
+          ])),
+          if (c.enabled) ...[
+            const SizedBox(height: 12),
+            const Text('في لوحة ميسر ← Webhooks أضف هذا الرابط لتصل تأكيدات الدفع حتى لو أغلق المستخدم الصفحة:', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
+            SelectableText(c.webhookUrl, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+          ],
+          if (c.updatedAt != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('آخر تحديث منذ ${timeAgo(c.updatedAt!)}${c.updatedBy.isEmpty ? '' : ' بواسطة ${c.updatedBy}'}', style: const TextStyle(color: Joy.textMuted, fontSize: 11))),
+        ]));
+      },
+    );
   }
 }

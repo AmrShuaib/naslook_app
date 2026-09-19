@@ -2,7 +2,8 @@
 // وترقية البائع إلى دائرة أعمال. يعتمد على commerce.js وmarket_plus.js وbusiness.js (تُسجَّل قبله):
 //   await app.register((await import("./market_b.js")).default, { pool, auth });
 //
-// بوابة الدفع: تُفعَّل فقط عند وجود MOYASAR_PUBLISHABLE_KEY وMOYASAR_SECRET_KEY في البيئة. الشحن عبر البطاقة (مدى/فيزا/أبل باي):
+// بوابة الدفع: تُفعَّل بمفاتيح ميسر من لوحة الإدارة (جدول payment_settings عبر /adminapi/payments/config) أو من البيئة
+//   MOYASAR_PUBLISHABLE_KEY وMOYASAR_SECRET_KEY (اللوحة لها الأولوية). الشحن عبر البطاقة (مدى/فيزا/أبل باي):
 //   POST /pay/topup {amount} → صف في payments + رابط صفحة الدفع /pay/checkout/:id?t=…
 //   صفحة الدفع تُحمّل نموذج ميسر وتعود إلى /pay/return?id=<معرّف ميسر> حيث يُتحقق من الدفعة من خادم ميسر بالمفتاح السري
 //   (لا يُصدَّق أي شيء يأتي من المتصفح) ثم تُقيَّد للمحفظة مرة واحدة. POST /pay/webhook يمر بالتحقق نفسه.
@@ -41,6 +42,7 @@ async function setup(app, opts) {
       id UUID PRIMARY KEY, user_id TEXT NOT NULL, amount BIGINT NOT NULL, currency TEXT NOT NULL DEFAULT 'SAR', provider TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'created',
       provider_ref TEXT UNIQUE, description TEXT NOT NULL DEFAULT '', nonce TEXT NOT NULL, meta JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), paid_at TIMESTAMPTZ);
     CREATE INDEX IF NOT EXISTS payments_user ON payments(user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS payment_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_by TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
   `);
 
   const W = () => globalThis.naslifeWallet;
@@ -227,12 +229,67 @@ async function setup(app, opts) {
   });
 
   // =============================== بوابة الدفع (هيكل) ===============================
-  const PAY = () => {
-    const pk = process.env.MOYASAR_PUBLISHABLE_KEY ?? "", sk = process.env.MOYASAR_SECRET_KEY ?? "";
-    const enabled = !!(pk && sk);
-    const max = Number(settings().maxTopup) || Number(process.env.PAY_MAX) || 500000;
-    return { enabled, provider: "moyasar", publishableKey: pk, secretKey: sk, min: Number(process.env.PAY_MIN) || 1000, max, methods: (process.env.PAY_METHODS ?? "creditcard,applepay,stcpay").split(",").map((s) => s.trim()).filter(Boolean), webhookSecret: process.env.MOYASAR_WEBHOOK_SECRET ?? "" };
+  const fetchImpl = (...a) => (globalThis.naslifePayFetch ?? globalThis.fetch)(...a);
+  // مفاتيح اللوحة تُحمَّل مرة عند الإقلاع وتُحدَّث عند الحفظ (جدول منفصل عن platform_settings كي لا يظهر السر في إعدادات الإدارة العامة)
+  const panel = { publishableKey: "", secretKey: "", webhookSecret: "", updatedAt: null, updatedBy: null };
+  const loadPanel = async () => {
+    const rows = (await pool.query("SELECT key, value, updated_by, updated_at FROM payment_settings")).rows;
+    panel.publishableKey = ""; panel.secretKey = ""; panel.webhookSecret = ""; panel.updatedAt = null; panel.updatedBy = null;
+    for (const r of rows) { if (r.key in panel && typeof panel[r.key] === "string") panel[r.key] = r.value; if (!panel.updatedAt || r.updated_at > panel.updatedAt) { panel.updatedAt = r.updated_at; panel.updatedBy = r.updated_by; } }
   };
+  await loadPanel();
+  const KEY_RE = { publishableKey: /^pk_(test|live)_[A-Za-z0-9]{8,120}$/, secretKey: /^sk_(test|live)_[A-Za-z0-9]{8,120}$/ };
+  const keyMode = (k) => (/^[ps]k_test_/.test(k) ? "test" : /^[ps]k_live_/.test(k) ? "live" : null);
+  const PAY = () => {
+    const env = { publishableKey: process.env.MOYASAR_PUBLISHABLE_KEY ?? "", secretKey: process.env.MOYASAR_SECRET_KEY ?? "", webhookSecret: process.env.MOYASAR_WEBHOOK_SECRET ?? "" };
+    const source = panel.publishableKey && panel.secretKey ? "panel" : env.publishableKey && env.secretKey ? "env" : null;
+    const k = source === "panel" ? panel : source === "env" ? env : { publishableKey: "", secretKey: "", webhookSecret: "" };
+    const enabled = !!source;
+    const max = Number(settings().maxTopup) || Number(process.env.PAY_MAX) || 500000;
+    return { enabled, source, mode: enabled ? keyMode(k.secretKey) ?? keyMode(k.publishableKey) : null, provider: "moyasar", publishableKey: k.publishableKey, secretKey: k.secretKey, min: Number(process.env.PAY_MIN) || 1000, max, methods: (process.env.PAY_METHODS ?? "creditcard,applepay,stcpay").split(",").map((s) => s.trim()).filter(Boolean), webhookSecret: k.webhookSecret, envPresent: !!(env.publishableKey && env.secretKey) };
+  };
+  const hint = (k) => (k ? `${k.slice(0, k.indexOf("_", 3) + 1)}…${k.slice(-4)}` : "");
+  const adminConfigOut = (req) => {
+    const c = PAY();
+    return { enabled: c.enabled, provider: c.provider, mode: c.mode, source: c.source, envPresent: c.envPresent, publishableKey: c.publishableKey || null, secretKeySet: !!c.secretKey, secretKeyHint: hint(c.secretKey), webhookSecretSet: !!c.webhookSecret,
+      panelKeysSet: !!(panel.publishableKey && panel.secretKey), updatedAt: panel.updatedAt, updatedBy: panel.updatedBy, methods: c.methods, min: c.min, max: c.max, currency: "SAR", returnUrl: `${origin(req)}/pay/return`, webhookUrl: `${origin(req)}/pay/webhook` };
+  };
+  app.get("/adminapi/payments/config", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply); if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
+    return adminConfigOut(req);
+  });
+  // حفظ المفاتيح من اللوحة: حقل غير مرسل يبقى كما هو، وحقل فارغ يُمسح. الفارغان معاً يعيدان الاعتماد على البيئة
+  app.put("/adminapi/payments/config", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply); if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
+    const b = req.body ?? {}; const next = { ...panel };
+    for (const f of ["publishableKey", "secretKey", "webhookSecret"]) {
+      if (b[f] === undefined) continue;
+      const v = str(b[f], 200);
+      if (v && KEY_RE[f] && !KEY_RE[f].test(v)) return bad(reply, 400, "bad-key", { field: f });
+      next[f] = v;
+    }
+    if (!!next.publishableKey !== !!next.secretKey) return bad(reply, 400, "both-keys-required");
+    if (next.publishableKey && keyMode(next.publishableKey) !== keyMode(next.secretKey)) return bad(reply, 400, "mode-mismatch");
+    for (const f of ["publishableKey", "secretKey", "webhookSecret"]) {
+      if (next[f]) await pool.query("INSERT INTO payment_settings(key, value, updated_by, updated_at) VALUES($1,$2,$3,now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by, updated_at=now()", [f, next[f], uid]);
+      else await pool.query("DELETE FROM payment_settings WHERE key=$1", [f]);
+    }
+    await loadPanel();
+    globalThis.naslifeAudit?.(uid, "payments.config", "moyasar", { mode: PAY().mode, source: PAY().source, publishableKey: next.publishableKey || null })?.catch?.(() => {});
+    return adminConfigOut(req);
+  });
+  // فحص الاتصال: طلب صغير إلى ميسر بالمفتاح السري الحالي (200 = المفتاح صحيح، 401 = خاطئ)
+  app.post("/adminapi/payments/test", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply); if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
+    const c = PAY(); if (!c.enabled) return { ok: false, error: "payments-disabled", mode: null };
+    try {
+      const r = await fetchImpl(`${MOYASAR_API}/payments?per=1`, { headers: { authorization: "Basic " + Buffer.from(`${c.secretKey}:`).toString("base64") }, signal: AbortSignal.timeout(8000) });
+      if (r.status === 401 || r.status === 403) return { ok: false, error: "bad-secret", status: r.status, mode: c.mode, source: c.source };
+      if (!r.ok) return { ok: false, error: `provider-${r.status}`, status: r.status, mode: c.mode, source: c.source };
+      let count = null; try { const j = await r.json(); count = Array.isArray(j?.payments) ? j.payments.length : null; } catch { /* ignore */ }
+      return { ok: true, status: r.status, mode: c.mode, source: c.source, recentPayments: count };
+    } catch (e) { return { ok: false, error: "provider-unreachable", message: String(e?.message ?? e).slice(0, 120), mode: c.mode, source: c.source }; }
+  });
   const payOut = (p) => ({ id: p.id, amount: Number(p.amount), currency: p.currency, provider: p.provider, status: p.status, providerRef: p.provider_ref ?? null, description: p.description, createdAt: p.created_at, paidAt: p.paid_at ?? null });
   app.get("/pay/config", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -255,7 +312,7 @@ async function setup(app, opts) {
   app.get("/adminapi/payments", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply); if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
     const rows = (await pool.query("SELECT * FROM payments ORDER BY created_at DESC LIMIT 200")).rows;
-    return { enabled: PAY().enabled, provider: PAY().provider, items: await Promise.all(rows.map(async (p) => ({ ...payOut(p), user: await person(p.user_id) }))) };
+    return { enabled: PAY().enabled, provider: PAY().provider, mode: PAY().mode, source: PAY().source, items: await Promise.all(rows.map(async (p) => ({ ...payOut(p), user: await person(p.user_id) }))) };
   });
   // صفحة الدفع: نموذج ميسر (HTML بسيط بالعربية) يعود إلى /pay/return
   const htmlPage = (title, body) => `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
@@ -274,7 +331,6 @@ async function setup(app, opts) {
       .send(htmlPage("شحن المحفظة", body));
   });
   // التحقق من الدفعة عند ميسر ثم قيدها للمحفظة مرة واحدة (idempotent على provider_ref)
-  const fetchImpl = (...a) => (globalThis.naslifePayFetch ?? globalThis.fetch)(...a);
   const settle = async (providerId) => {
     const c = PAY(); if (!c.enabled) return { ok: false, error: "payments-disabled" };
     if (!/^[A-Za-z0-9_-]{6,80}$/.test(String(providerId ?? ""))) return { ok: false, error: "bad-id" };

@@ -8,6 +8,7 @@ import 'package:http/testing.dart';
 
 import 'package:naslook/api/client.dart';
 import 'package:naslook/api/session.dart';
+import 'package:naslook/pages/admin/admin_settings.dart';
 import 'package:naslook/pages/admin/admin_shell.dart';
 import 'package:naslook/pages/admin/admin_users.dart';
 import 'package:naslook/state/admin_providers.dart';
@@ -24,6 +25,7 @@ class _Srv {
   final calls = <String>[];
   final bodies = <String, Map<String, dynamic>>{};
   bool setupRequired = false, isAdmin = true;
+  Map<String, dynamic> payCfg = {'enabled': false, 'provider': 'moyasar', 'mode': null, 'source': null, 'envPresent': false, 'publishableKey': null, 'secretKeySet': false, 'secretKeyHint': '', 'webhookSecretSet': false, 'panelKeysSet': false, 'webhookUrl': 'https://test.local/pay/webhook', 'returnUrl': 'https://test.local/pay/return'};
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   List<Map<String, dynamic>> _daily() => [for (var i = 13; i >= 0; i--) {'day': DateTime.now().subtract(Duration(days: i)).toIso8601String().substring(0, 10), 'users': i % 3, 'orders': i % 4, 'revenue': (i % 4) * 1000, 'topups': 500, 'purchases': 300, 'refunds': 0}];
 
@@ -51,6 +53,17 @@ class _Srv {
         return _json({'testTopup': true, 'maxTopup': 10000000, 'announcement': '', 'maintenance': false, 'supportHandle': ''});
       case 'POST /adminapi/settings':
         return _json({...bodies[key]!});
+      case 'GET /adminapi/payments/config':
+        return _json(payCfg);
+      case 'PUT /adminapi/payments/config':
+        final b = bodies[key]!;
+        if (b['publishableKey'] == 'oops') return _json({'error': 'bad-key', 'field': 'publishableKey'}, 400);
+        final pk = (b['publishableKey'] ?? payCfg['publishableKey'] ?? '') as String;
+        final on = pk.isNotEmpty && (b['secretKey'] ?? (payCfg['secretKeySet'] == true ? 'x' : '')) != '';
+        payCfg = {'enabled': on, 'provider': 'moyasar', 'mode': on ? (pk.startsWith('pk_live_') ? 'live' : 'test') : null, 'source': on ? 'panel' : null, 'envPresent': false, 'publishableKey': on ? pk : null, 'secretKeySet': on, 'secretKeyHint': on ? 'sk_test_…gh34' : '', 'webhookSecretSet': (b['webhookSecret'] ?? '') != '', 'panelKeysSet': on, 'updatedAt': DateTime.now().toUtc().toIso8601String(), 'updatedBy': 'SA0000001', 'webhookUrl': 'https://test.local/pay/webhook', 'returnUrl': 'https://test.local/pay/return'};
+        return _json(payCfg);
+      case 'POST /adminapi/payments/test':
+        return _json(payCfg['enabled'] == true ? {'ok': true, 'mode': payCfg['mode'], 'source': 'panel'} : {'ok': false, 'error': 'payments-disabled'});
       case 'GET /adminapi/admins':
         return _json([{'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'grantedBy': 'setup', 'since': DateTime.now().toUtc().toIso8601String()}]);
       case 'GET /adminapi/reports':
@@ -154,5 +167,40 @@ void main() {
     final b = srv.bodies['POST /adminapi/reports/r1/action']!;
     expect(b['action'], 'warn');
     expect(b['targetId'], 'SA0000003');
+  });
+  testWidgets('payment gateway keys are saved from the panel, masked, tested and cleared', (tester) async {
+    final srv = _Srv();
+    await _pump(tester, srv, const Scaffold(body: AdminSettingsPage()), width: 600);
+    expect(find.textContaining('غير مفعّلة'), findsOneWidget);
+    expect(find.byKey(const Key('pay-clear')), findsNothing);
+    // صيغة خاطئة → رسالة مفهومة
+    await tester.enterText(find.byKey(const Key('pay-pk')), 'oops');
+    await tester.enterText(find.byKey(const Key('pay-sk')), 'sk_test_abcdefgh34');
+    await tester.tap(find.byKey(const Key('pay-save')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('صيغة المفتاح غير صحيحة'), findsOneWidget);
+    // مفاتيح اختبار صحيحة
+    await tester.enterText(find.byKey(const Key('pay-pk')), 'pk_test_abcdefgh12');
+    await tester.enterText(find.byKey(const Key('pay-sk')), 'sk_test_abcdefgh34');
+    await tester.enterText(find.byKey(const Key('pay-wh')), 'whsec_1');
+    await tester.tap(find.byKey(const Key('pay-save')));
+    await tester.pumpAndSettle();
+    final put = srv.bodies['PUT /adminapi/payments/config']!;
+    expect(put['publishableKey'], 'pk_test_abcdefgh12');
+    expect(put['secretKey'], 'sk_test_abcdefgh34');
+    expect(put['webhookSecret'], 'whsec_1');
+    expect(find.textContaining('وضع الاختبار'), findsWidgets);
+    expect(find.textContaining('sk_test_…gh34'), findsOneWidget); // تلميح السر فقط
+    expect(find.text('sk_test_abcdefgh34'), findsNothing); // السر لا يبقى في الحقل
+    expect(find.text('https://test.local/pay/webhook'), findsOneWidget);
+    // فحص الاتصال
+    await tester.tap(find.byKey(const Key('pay-test')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('الاتصال ناجح'), findsOneWidget);
+    // إزالة المفاتيح تعطّل البوابة
+    await tester.tap(find.byKey(const Key('pay-clear')));
+    await tester.pumpAndSettle();
+    expect(srv.bodies['PUT /adminapi/payments/config'], {'publishableKey': '', 'secretKey': '', 'webhookSecret': ''});
+    expect(find.textContaining('غير مفعّلة'), findsOneWidget);
   });
 }

@@ -113,6 +113,14 @@ extension CommerceApi on ApiClient {
   /// يبدأ شحناً بالبطاقة ويعيد رابط صفحة الدفع التي يفتحها المتصفح
   Future<String> payTopup(int halalas) async => (await post('/pay/topup', {'amount': halalas}))['checkoutUrl'].toString();
   Future<List<PaymentRow>> myPayments() async => asList(await getList('/pay/mine')).map(PaymentRow.fromJson).toList();
+  // إعدادات البوابة من لوحة الإدارة: حقل غير مرسل يبقى، وحقل فارغ يُمسح
+  Future<PayAdminConfig> adminPayConfig() async => PayAdminConfig.fromJson(await get('/adminapi/payments/config'));
+  Future<PayAdminConfig> adminSavePayConfig({String? publishableKey, String? secretKey, String? webhookSecret}) async => PayAdminConfig.fromJson(await put('/adminapi/payments/config', {
+        if (publishableKey != null) 'publishableKey': publishableKey.trim(),
+        if (secretKey != null) 'secretKey': secretKey.trim(),
+        if (webhookSecret != null) 'webhookSecret': webhookSecret.trim(),
+      }));
+  Future<PayTestResult> adminTestPay() async => PayTestResult.fromJson(await post('/adminapi/payments/test', const {}));
   Future<UpgradePreview> upgradePreview() async => UpgradePreview.fromJson(await get('/market/seller/upgrade'));
   Future<String> upgradeSeller({required String nameAr, String description = '', String? category}) async => (await post('/market/seller/upgrade', {'nameAr': nameAr, 'description': description, if (category != null) 'category': category}))['bizId'].toString();
 }
