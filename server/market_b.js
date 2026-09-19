@@ -284,7 +284,7 @@ async function setup(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply); if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
     const c = PAY(); if (!c.enabled) return { ok: false, error: "payments-disabled", mode: null };
     try {
-      const r = await fetchImpl(`${MOYASAR_API}/payments?per=1`, { headers: { authorization: "Basic " + Buffer.from(`${c.secretKey}:`).toString("base64") }, signal: AbortSignal.timeout(8000) });
+      const r = await fetchImpl(`${MOYASAR_API}/payments?per=1`, { headers: { authorization: basicAuth(c.secretKey) }, signal: AbortSignal.timeout(8000) });
       if (r.status === 401 || r.status === 403) return { ok: false, error: "bad-secret", status: r.status, mode: c.mode, source: c.source };
       if (!r.ok) return { ok: false, error: `provider-${r.status}`, status: r.status, mode: c.mode, source: c.source };
       let count = null; try { const j = await r.json(); count = Array.isArray(j?.payments) ? j.payments.length : null; } catch { /* ignore */ }
@@ -297,14 +297,30 @@ async function setup(app, opts) {
     const c = PAY();
     return { enabled: c.enabled, provider: c.provider, methods: c.methods, min: c.min, max: c.max, currency: "SAR", publishableKey: c.enabled ? c.publishableKey : null };
   });
+  // الشحن: افتراضياً صفحة دفع مستضافة لدى ميسر (فاتورة) لأنها لا تتأثر بسياسة CSP العامة على نطاقنا وتدعم أبل باي من نطاق ميسر؛
+  // PAY_EMBED=1 يعيد النموذج المضمّن في /pay/checkout/:id (يحتاج استثناء CSP لمسار /pay/* في Caddy).
+  const basicAuth = (sk) => "Basic " + Buffer.from(`${sk}:`).toString("base64");
   app.post("/pay/topup", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const c = PAY(); if (!c.enabled) return bad(reply, 503, "payments-disabled");
     const amount = Math.round(Number(req.body?.amount) || 0);
     if (amount < c.min || amount > c.max) return bad(reply, 400, "bad-amount", { min: c.min, max: c.max });
     const id = crypto.randomUUID(), nonce = crypto.randomBytes(12).toString("hex");
-    await pool.query("INSERT INTO payments(id, user_id, amount, provider, description, nonce) VALUES($1,$2,$3,$4,$5,$6)", [id, uid, amount, c.provider, `شحن محفظة ناس لايف ${sar(amount)}`, nonce]);
-    return { id, amount, currency: "SAR", checkoutUrl: `${origin(req)}/pay/checkout/${id}?t=${nonce}`, expiresInMinutes: 30 };
+    const description = `شحن محفظة ناس لايف ${sar(amount)}`;
+    if (process.env.PAY_EMBED === "1") {
+      await pool.query("INSERT INTO payments(id, user_id, amount, provider, description, nonce) VALUES($1,$2,$3,$4,$5,$6)", [id, uid, amount, c.provider, description, nonce]);
+      return { id, amount, currency: "SAR", checkoutUrl: `${origin(req)}/pay/checkout/${id}?t=${nonce}`, expiresInMinutes: 30, hosted: false };
+    }
+    let inv;
+    try {
+      const r = await fetchImpl(`${MOYASAR_API}/invoices`, { method: "POST", headers: { authorization: basicAuth(c.secretKey), "content-type": "application/json" }, signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({ amount, currency: "SAR", description, callback_url: `${origin(req)}/pay/return`, expired_at: new Date(Date.now() + 30 * 60e3).toISOString(), metadata: { naslife_payment: id, naslife_user: uid } }) });
+      if (!r.ok) { let t = ""; try { t = (await r.text()).slice(0, 300); } catch { /* ignore */ } app.log?.warn?.({ status: r.status, body: t }, "market_b: invoice create failed"); return bad(reply, 502, "provider-error", { status: r.status }); }
+      inv = await r.json();
+    } catch (e) { app.log?.warn?.({ err: e?.message }, "market_b: invoice create unreachable"); return bad(reply, 502, "provider-unreachable"); }
+    if (!inv?.id || !inv?.url) return bad(reply, 502, "provider-error");
+    await pool.query("INSERT INTO payments(id, user_id, amount, provider, description, nonce, meta) VALUES($1,$2,$3,$4,$5,$6,$7)", [id, uid, amount, c.provider, description, nonce, JSON.stringify({ hosted: true, invoiceId: String(inv.id), invoiceUrl: String(inv.url) })]);
+    return { id, amount, currency: "SAR", checkoutUrl: String(inv.url), expiresInMinutes: 30, hosted: true };
   });
   app.get("/pay/mine", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -341,12 +357,15 @@ async function setup(app, opts) {
     if (!/^[A-Za-z0-9_-]{6,80}$/.test(String(providerId ?? ""))) return { ok: false, error: "bad-id" };
     let j;
     try {
-      const r = await fetchImpl(`${MOYASAR_API}/payments/${providerId}`, { headers: { authorization: "Basic " + Buffer.from(`${c.secretKey}:`).toString("base64") } });
+      const r = await fetchImpl(`${MOYASAR_API}/payments/${providerId}`, { headers: { authorization: basicAuth(c.secretKey) }, signal: AbortSignal.timeout(10000) });
       if (!r.ok) return { ok: false, error: `provider-${r.status}` };
       j = await r.json();
     } catch (e) { return { ok: false, error: "provider-unreachable" }; }
-    const pid = j?.metadata?.naslife_payment; if (!UUID_RE.test(String(pid ?? ""))) return { ok: false, error: "no-metadata" };
-    const p = (await pool.query("SELECT * FROM payments WHERE id=$1", [pid])).rows[0]; if (!p) return { ok: false, error: "not-found" };
+    const pid = j?.metadata?.naslife_payment;
+    let p = UUID_RE.test(String(pid ?? "")) ? (await pool.query("SELECT * FROM payments WHERE id=$1", [pid])).rows[0] : null;
+    // دفعات الفاتورة المستضافة قد لا تحمل بياناتنا الوصفية؛ نجدها بمعرّف الفاتورة المحفوظ عند الإنشاء
+    if (!p && j?.invoice_id) p = (await pool.query("SELECT * FROM payments WHERE provider='moyasar' AND meta->>'invoiceId'=$1 ORDER BY created_at DESC LIMIT 1", [String(j.invoice_id)])).rows[0];
+    if (!p) return { ok: false, error: pid || j?.invoice_id ? "not-found" : "no-metadata" };
     if (j.status !== "paid") { await pool.query("UPDATE payments SET status=$2, provider_ref=COALESCE(provider_ref,$3), meta=meta || $4 WHERE id=$1 AND status<>'paid'", [p.id, j.status === "failed" ? "failed" : "pending", String(j.id), JSON.stringify({ providerStatus: j.status, message: j.source?.message ?? null })]); return { ok: false, error: "not-paid", status: j.status, payment: p }; }
     if (Number(j.amount) !== Number(p.amount) || String(j.currency ?? "SAR").toUpperCase() !== "SAR") return { ok: false, error: "amount-mismatch" };
     let credited = false;
