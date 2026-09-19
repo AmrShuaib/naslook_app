@@ -312,9 +312,13 @@ async function setup(app, opts) {
       return { id, amount, currency: "SAR", checkoutUrl: `${origin(req)}/pay/checkout/${id}?t=${nonce}`, expiresInMinutes: 30, hosted: false };
     }
     let inv;
+    const base = { amount, currency: "SAR", description, callback_url: `${origin(req)}/pay/return`, expired_at: new Date(Date.now() + 30 * 60e3).toISOString(), metadata: { naslife_payment: id, naslife_user: uid } };
+    // روابط النجاح والرجوع والشعار اختيارية لدى ميسر؛ إن رُفضت يُعاد الطلب بالحقول الأساسية فقط
+    const extras = { success_url: `${origin(req)}/pay/return?p=${id}`, back_url: `${origin(req)}/pay/return?p=${id}&back=1`, logo_url: process.env.PAY_LOGO_URL || `${origin(req)}/icons/Icon-512.png` };
+    const createInvoice = (body) => fetchImpl(`${MOYASAR_API}/invoices`, { method: "POST", headers: { authorization: basicAuth(c.secretKey), "content-type": "application/json" }, signal: AbortSignal.timeout(10000), body: JSON.stringify(body) });
     try {
-      const r = await fetchImpl(`${MOYASAR_API}/invoices`, { method: "POST", headers: { authorization: basicAuth(c.secretKey), "content-type": "application/json" }, signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ amount, currency: "SAR", description, callback_url: `${origin(req)}/pay/return`, expired_at: new Date(Date.now() + 30 * 60e3).toISOString(), metadata: { naslife_payment: id, naslife_user: uid } }) });
+      let r = await createInvoice({ ...base, ...extras });
+      if (r.status === 400 || r.status === 422) { app.log?.warn?.({ status: r.status }, "market_b: invoice extras rejected, retrying without them"); r = await createInvoice(base); }
       if (!r.ok) { let t = ""; try { t = (await r.text()).slice(0, 300); } catch { /* ignore */ } app.log?.warn?.({ status: r.status, body: t }, "market_b: invoice create failed"); return bad(reply, 502, "provider-error", { status: r.status }); }
       inv = await r.json();
     } catch (e) { app.log?.warn?.({ err: e?.message }, "market_b: invoice create unreachable"); return bad(reply, 502, "provider-unreachable"); }
@@ -384,11 +388,26 @@ async function setup(app, opts) {
     if (credited) await notify(p.user_id, { kind: "wallet", title: "تم شحن محفظتك", body: sar(p.amount), data: { paymentId: p.id } });
     return { ok: true, credited, payment: { ...p, status: "paid" } };
   };
+  // العودة من صفحة ميسر: إمّا بمعرّف الدفعة (callback) أو بمعرّفنا p (success_url/back_url) فنسأل ميسر عن دفعات الفاتورة
+  const settleByOurs = async (ourId, back) => {
+    if (!UUID_RE.test(String(ourId ?? ""))) return { ok: false, error: "bad-id" };
+    const p = (await pool.query("SELECT * FROM payments WHERE id=$1", [ourId])).rows[0]; if (!p) return { ok: false, error: "not-found" };
+    if (p.status === "paid") return { ok: true, credited: false, payment: p };
+    const c = PAY(); const invId = p.meta?.invoiceId; if (!c.enabled || !invId) return { ok: false, error: back ? "cancelled" : "not-paid", status: p.status, payment: p };
+    try {
+      const r = await fetchImpl(`${MOYASAR_API}/invoices/${encodeURIComponent(invId)}`, { headers: { authorization: basicAuth(c.secretKey) }, signal: AbortSignal.timeout(10000) });
+      if (!r.ok) return { ok: false, error: `provider-${r.status}` };
+      const inv = await r.json();
+      const paid = (inv?.payments ?? []).find((x) => x?.status === "paid") ?? (inv?.payments ?? []).at(-1);
+      if (!paid?.id) return { ok: false, error: back ? "cancelled" : "not-paid", status: inv?.status ?? p.status, payment: p };
+      return settle(paid.id);
+    } catch { return { ok: false, error: "provider-unreachable" }; }
+  };
   app.get("/pay/return", async (req, reply) => {
-    const r = await settle(req.query?.id);
+    const r = req.query?.id ? await settle(req.query.id) : await settleByOurs(req.query?.p, req.query?.back === "1");
     if (r.ok) return reply.type("text/html; charset=utf-8").send(htmlPage("تم الشحن", `<h1>تم شحن المحفظة</h1><div class="amt">${esc(sar(r.payment.amount))}</div><p>يمكنك إغلاق هذه الصفحة والعودة إلى التطبيق.</p><a class="btn" href="/">العودة إلى ناس لايف</a>`));
-    const msg = r.error === "not-paid" ? `لم تكتمل العملية (${esc(String(req.query?.message ?? r.status ?? ""))}). لم يُخصم شيء.` : r.error === "payments-disabled" ? "الدفع بالبطاقة غير مفعّل." : "تعذر التحقق من العملية؛ إن خُصم المبلغ فسيُضاف تلقائياً خلال دقائق.";
-    return reply.code(r.error === "not-paid" ? 402 : 400).type("text/html; charset=utf-8").send(htmlPage("لم تكتمل", `<h1>لم تكتمل عملية الدفع</h1><p>${msg}</p><a class="btn" href="/">العودة إلى ناس لايف</a>`));
+    const msg = r.error === "cancelled" ? "أُلغيت العملية قبل الدفع. لم يُخصم شيء، ويمكنك المحاولة من المحفظة متى شئت." : r.error === "not-paid" ? `لم تكتمل العملية (${esc(String(req.query?.message ?? r.status ?? ""))}). لم يُخصم شيء.` : r.error === "payments-disabled" ? "الدفع بالبطاقة غير مفعّل." : "تعذر التحقق من العملية؛ إن خُصم المبلغ فسيُضاف تلقائياً خلال دقائق.";
+    return reply.code(r.error === "cancelled" ? 200 : r.error === "not-paid" ? 402 : 400).type("text/html; charset=utf-8").send(htmlPage("لم تكتمل", `<h1>${r.error === "cancelled" ? "أُلغيت عملية الدفع" : "لم تكتمل عملية الدفع"}</h1><p>${msg}</p><a class="btn" href="/">العودة إلى ناس لايف</a>`));
   });
   app.post("/pay/webhook", async (req, reply) => {
     const c = PAY(); if (!c.enabled) return bad(reply, 503, "payments-disabled");
