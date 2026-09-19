@@ -246,7 +246,7 @@ async function setup(app, opts) {
     const k = source === "panel" ? panel : source === "env" ? env : { publishableKey: "", secretKey: "", webhookSecret: "" };
     const enabled = !!source;
     const max = Number(settings().maxTopup) || Number(process.env.PAY_MAX) || 500000;
-    return { enabled, source, mode: enabled ? keyMode(k.secretKey) ?? keyMode(k.publishableKey) : null, provider: "moyasar", publishableKey: k.publishableKey, secretKey: k.secretKey, min: Number(process.env.PAY_MIN) || 1000, max, methods: (process.env.PAY_METHODS ?? "creditcard,applepay,stcpay").split(",").map((s) => s.trim()).filter(Boolean), webhookSecret: k.webhookSecret, envPresent: !!(env.publishableKey && env.secretKey) };
+    return { enabled, source, mode: enabled ? keyMode(k.secretKey) ?? keyMode(k.publishableKey) : null, provider: "moyasar", publishableKey: k.publishableKey, secretKey: k.secretKey, min: Number(process.env.PAY_MIN) || 1000, max, methods: (process.env.PAY_METHODS ?? "creditcard,stcpay").split(",").map((s) => s.trim()).filter(Boolean), webhookSecret: k.webhookSecret, envPresent: !!(env.publishableKey && env.secretKey) };
   };
   const hint = (k) => (k ? `${k.slice(0, k.indexOf("_", 3) + 1)}…${k.slice(-4)}` : "");
   const adminConfigOut = (req) => {
@@ -324,11 +324,15 @@ async function setup(app, opts) {
     if (!p || p.nonce !== String(req.query?.t ?? "")) return reply.code(404).type("text/html; charset=utf-8").send(htmlPage("غير موجود", "<h1>رابط الدفع غير صالح</h1><p>افتح المحفظة في ناس لايف وابدأ الشحن من جديد.</p>"));
     if (p.status === "paid") return reply.type("text/html; charset=utf-8").send(htmlPage("تم الشحن", `<h1>تم شحن المحفظة</h1><div class="amt">${esc(sar(p.amount))}</div><a class="btn" href="/">العودة إلى ناس لايف</a>`));
     if (!c.enabled) return reply.code(503).type("text/html; charset=utf-8").send(htmlPage("غير متاح", "<h1>الدفع بالبطاقة غير مفعّل حالياً</h1><p>سيتوفر قريباً؛ يمكنك الشحن عبر الإدارة في الوقت الحالي.</p>"));
-    const cfg = { element: ".mysr-form", amount: Number(p.amount), currency: "SAR", description: p.description, publishable_api_key: c.publishableKey, callback_url: `${origin(req)}/pay/return`, methods: c.methods, metadata: { naslife_payment: p.id, naslife_user: p.user_id }, language: "ar" };
-    const body = `<h1>شحن محفظة ناس لايف</h1><p>ادفع بمدى أو البطاقة أو أبل باي. يُضاف المبلغ لمحفظتك فور نجاح العملية.</p><div class="amt">${esc(sar(p.amount))}</div><div class="mysr-form"></div>
-<link rel="stylesheet" href="${MPF_CSS}"><script src="${MPF_SRC}"></script><script>Moyasar.init(${JSON.stringify(cfg)});</script>`;
+    // أبل باي يحتاج إعدادات إضافية وتسجيل النطاق في لوحة ميسر؛ لا يُضاف إلا إذا كان ضمن PAY_METHODS
+    const applePay = c.methods.includes("applepay") ? { country: process.env.PAY_APPLEPAY_COUNTRY || "SA", label: process.env.PAY_APPLEPAY_LABEL || "ناس لايف", validate_merchant_url: "https://api.moyasar.com/v1/applepay/initiate" } : undefined;
+    const cfg = { element: ".mysr-form", amount: Number(p.amount), currency: "SAR", description: p.description, publishable_api_key: c.publishableKey, callback_url: `${origin(req)}/pay/return`, methods: c.methods, metadata: { naslife_payment: p.id, naslife_user: p.user_id }, language: "ar", ...(applePay ? { apple_pay: applePay } : {}) };
+    const body = `<h1>شحن محفظة ناس لايف</h1><p>ادفع بمدى أو البطاقة${c.methods.includes("applepay") ? " أو أبل باي" : ""}. يُضاف المبلغ لمحفظتك فور نجاح العملية.</p><div class="amt">${esc(sar(p.amount))}</div><div class="mysr-form"></div><p id="pay-err" style="color:#b3261e;display:none"></p>
+<p style="margin-top:18px"><a class="btn" href="/" style="background:#eee;color:#1f1b16">العودة إلى ناس لايف</a></p>
+<link rel="stylesheet" href="${MPF_CSS}"><script src="${MPF_SRC}" onerror="document.getElementById('pay-err').style.display='block';document.getElementById('pay-err').textContent='تعذر تحميل نموذج الدفع؛ تحقق من الاتصال ثم أعد فتح الرابط.'"></script>
+<script>try{Moyasar.init(${JSON.stringify(cfg)});}catch(e){var el=document.getElementById('pay-err');el.style.display='block';el.textContent='تعذر تهيئة نموذج الدفع: '+(e&&e.message?e.message:e);}</script>`;
     return reply.type("text/html; charset=utf-8").header("cache-control", "no-store")
-      .header("content-security-policy", `default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.moyasar.com https://api.moyasar.com; style-src 'self' 'unsafe-inline' https://cdn.moyasar.com; img-src 'self' data: https://cdn.moyasar.com; connect-src 'self' https://api.moyasar.com https://applepay.moyasar.com; frame-src https://api.moyasar.com https://*.moyasar.com; form-action 'self' https://api.moyasar.com`)
+      .header("content-security-policy", `default-src 'self'; script-src 'self' 'unsafe-inline' https://*.moyasar.com; style-src 'self' 'unsafe-inline' https://*.moyasar.com; img-src 'self' data: https://*.moyasar.com; font-src 'self' data: https://*.moyasar.com; connect-src 'self' https://*.moyasar.com; frame-src https://*.moyasar.com`)
       .send(htmlPage("شحن المحفظة", body));
   });
   // التحقق من الدفعة عند ميسر ثم قيدها للمحفظة مرة واحدة (idempotent على provider_ref)
