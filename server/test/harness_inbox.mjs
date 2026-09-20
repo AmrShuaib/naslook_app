@@ -1,0 +1,470 @@
+// البريد الوارد (server/inbox.js): الصناديق حسب الفريق، الاستقبال عبر webhook عام وResend بتوقيع Svix، الربط في محادثات،
+// القراءة/الأرشفة/الإسناد، والرد والإنشاء بعنوان الصندوق مع ترويسات الربط.
+import Fastify from 'fastify';
+import pg from 'pg';
+import crypto from 'node:crypto';
+import { parseAddress, normSubject, stripHtml, verifySvix } from '../inbox.js';
+process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0';
+let fails = 0;
+const check = (c, l, extra = '') => { if (!c) fails++; console.log((c ? 'OK  ' : 'FAIL') + ' ' + l + (extra ? ' ' + extra : '')); };
+check(parseAddress('"Ahmed Ali" <Ahmed@Example.com>').email === 'ahmed@example.com' && parseAddress('"Ahmed Ali" <a@b.co>').name === 'Ahmed Ali' && parseAddress('x@y.co').name === '', 'parseAddress');
+check(normSubject('Re: RE: رد: طلب مساعدة') === 'طلب مساعدة' && normSubject('Fwd: hello') === 'hello', 'normSubject strips prefixes');
+check(stripHtml('<p>مرحباً <b>بك</b></p><br><style>x{}</style>&amp;') === 'مرحباً بك\n\n&', 'stripHtml', JSON.stringify(stripHtml('<p>مرحباً <b>بك</b></p><br><style>x{}</style>&amp;')));
+const secret = 'whsec_' + Buffer.from('supersecretkey123').toString('base64');
+const sign = (body, id = 'msg_1', ts = Math.floor(Date.now() / 1000)) => ({ 'svix-id': id, 'svix-timestamp': String(ts), 'svix-signature': 'v1,' + crypto.createHmac('sha256', Buffer.from('supersecretkey123')).update(`${id}.${ts}.${body}`).digest('base64') });
+check(verifySvix(secret, sign('{"a":1}'), '{"a":1}') === true && verifySvix(secret, sign('{"a":1}'), '{"a":2}') === false && verifySvix(secret, sign('{"a":1}', 'x', 1000), '{"a":1}') === false, 'verifySvix ok / tampered / stale');
+
+const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
+await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
+await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara'),('SA0000003','khalid'),('SA0000004','nora'),('SA0000005','fahad'),('SA0000006','lina') ON CONFLICT DO NOTHING");
+for (const sql of ['DROP TABLE IF EXISTS inbox_messages, inbox_threads, inbox_settings, inbox_templates, inbox_rules, inbox_member_settings, inbox_autoreplies, inbox_blocked, inbox_drafts, inbox_outbox, inbox_ratings', 'DROP TABLE IF EXISTS work_tasks, work_task_comments, work_task_events', 'DROP TABLE IF EXISTS login_aliases', 'DROP TABLE IF EXISTS team_members', 'DROP TABLE IF EXISTS team_roles', 'DROP TABLE IF EXISTS mail_settings, mail_log', 'DELETE FROM admins', "INSERT INTO admins(user_id,granted_by) VALUES('SA0000001','test')", 'DELETE FROM app_notifications']) { try { await pool.query(sql); } catch { /* first run */ } }
+const sent = []; const resendEmails = {}; const aiCalls = [];
+globalThis.fetch = async (url, init = {}) => {
+  const u = String(url); const m = init.method ?? 'GET';
+  const res = (code, body) => ({ ok: code < 300, status: code, text: async () => JSON.stringify(body), headers: { get: () => null } });
+  if (u === 'https://api.resend.com/emails' && m === 'POST') { const b = JSON.parse(init.body); sent.push(b); return res(200, { id: 're_' + sent.length }); }
+  if (u === 'https://api.anthropic.com/v1/messages' && m === 'POST') { const b = JSON.parse(init.body); aiCalls.push({ headers: init.headers, body: b }); if (init.headers['x-api-key'] === 'sk-ant-bad') return res(401, { error: { message: 'invalid x-api-key' } }); return res(200, { id: 'msg_1', model: b.model, stop_reason: 'end_turn', content: [{ type: 'text', text: b.messages[0].content.startsWith('لخّص') ? '- العميل يسأل عن الاشتراك\nالحالة: بانتظار الرد' : 'مرحباً أحمد،\nنعم يوجد اشتراك سنوي.' }] }); }
+  const rm = u.match(/^https:\/\/api\.resend\.com\/emails\/receiving\/(.+)$/); if (rm) return resendEmails[decodeURIComponent(rm[1])] ? res(200, resendEmails[decodeURIComponent(rm[1])]) : res(404, {});
+  return res(404, { message: 'no route ' + m + ' ' + u });
+};
+const auth = async (req) => req.headers['x-user'] || null;
+const app = Fastify();
+const dir = new URL('.', import.meta.url).pathname;
+app.register((await import('../notify.js')).default, { pool, auth, pollMs: 3600000, opsDir: dir + 'ops' });
+app.register((await import('../commerce.js')).default, { pool, auth });
+app.register((await import('../business.js')).default, { pool, auth });
+app.register((await import('../admin.js')).default, { pool, auth, webappDir: dir + 'webapp', opsDir: dir + 'ops' });
+app.register((await import('../mail.js')).default, { pool, auth });
+app.register((await import('../team.js')).default, { pool, auth });
+app.register((await import('../tasks.js')).default, { pool, auth, sweepMs: 0 });
+app.register((await import('../inbox.js')).default, { pool, auth, sweepMs: 0 });
+await app.ready(); await new Promise((r) => setTimeout(r, 300));
+const call = async (method, url, { body = {}, user = 'SA0000001', headers = {}, raw, expect } = {}) => {
+  const r = await app.inject({ method, url, headers: { ...(user ? { 'x-user': user } : {}), 'content-type': 'application/json', host: 'naslife.app', ...headers }, payload: method === 'GET' ? undefined : (raw ?? JSON.stringify(body)) });
+  let j; try { j = r.json(); } catch { j = r.body; }
+  if (expect != null) check(r.statusCode === expect, `${method} ${url} [${user}] -> ${r.statusCode}`, r.statusCode === expect ? '' : JSON.stringify(j).slice(0, 160));
+  return j;
+};
+const notes = async (kind, user) => (await pool.query("SELECT user_id, title, body FROM app_notifications WHERE kind=$1 AND user_id=$2 ORDER BY created_at", [kind, user])).rows;
+// البريد: Resend + مرسل admin@naslife.app؛ الفريق: sara مديرة (صندوق sara)، khalid دعم تحت sara (صندوق khalid)، fahad محرر بلا صندوق، nora مشرفة بلا صندوق
+await call('PUT', '/adminapi/mail', { body: { provider: 'resend', apiKey: 're_key', from: 'admin@naslife.app', fromName: 'ناس لايف' }, expect: 200 });
+await call('POST', '/adminapi/team/members', { body: { userId: 'SA0000002', roleId: 'manager', mailbox: 'sara' }, expect: 200 });
+await call('POST', '/adminapi/team/members', { body: { userId: 'SA0000003', roleId: 'support', managerId: 'SA0000002', mailbox: 'khalid' }, expect: 200 });
+await call('POST', '/adminapi/team/members', { body: { userId: 'SA0000005', roleId: 'editor', managerId: 'SA0000002' }, expect: 200 });
+await call('POST', '/adminapi/team/members', { body: { userId: 'SA0000004', roleId: 'viewer' }, expect: 200 });
+
+// ---- الصناديق
+let mb = await call('GET', '/adminapi/inbox/mailboxes', { user: 'SA0000003', expect: 200 });
+check(mb.mailboxes.map((b) => b.alias + ':' + b.kind).join(',') === 'khalid:own,admin:shared' && mb.domain === 'naslife.app' && mb.canReply === true && mb.canManage === false && mb.myMailbox === 'khalid', 'support: own + shared', JSON.stringify(mb.mailboxes));
+mb = await call('GET', '/adminapi/inbox/mailboxes', { user: 'SA0000002', expect: 200 });
+check(mb.mailboxes.map((b) => b.alias + ':' + b.kind).join(',') === 'sara:own,admin:shared,khalid:team' && mb.canManage === true, 'manager: own + shared + team', JSON.stringify(mb.mailboxes));
+mb = await call('GET', '/adminapi/inbox/mailboxes', { user: 'SA0000004', expect: 200 });
+check(mb.mailboxes.length === 0 && mb.canReply === false, 'viewer without mailbox sees nothing');
+mb = await call('GET', '/adminapi/inbox/mailboxes', { expect: 200 });
+check(mb.mailboxes.map((b) => b.alias).join(',') === 'admin,sara,khalid' && mb.receiving.configured === true, 'owner: shared + all team boxes; generic token ready', JSON.stringify(mb.mailboxes.map((b) => b.alias)));
+await call('GET', '/adminapi/inbox/mailboxes', { user: 'SA0000006', expect: 403 });
+const st = await call('GET', '/adminapi/inbox/settings', { expect: 200 });
+check(st.token && st.genericUrl.includes('/inbox/webhook/generic?token=' + st.token) && st.resendUrl === 'https://naslife.app/inbox/webhook/resend' && st.shared === 'admin@naslife.app', 'settings expose webhook urls', JSON.stringify(st).slice(0, 200));
+await call('GET', '/adminapi/inbox/settings', { user: 'SA0000003', expect: 403 });
+
+// ---- الاستقبال العام
+await call('POST', '/inbox/webhook/generic', { body: { from: 'x@y.co', to: 'sara@naslife.app' }, user: null, expect: 401 });
+await call('POST', '/inbox/webhook/generic?token=' + st.token, { body: { from: 'nope' }, user: null, expect: 400 });
+let r = await call('POST', '/inbox/webhook/generic?token=' + st.token, { body: { from: 'Ahmed Client <ahmed@client.com>', to: 'Sara <sara@naslife.app>', subject: 'طلب تعاون', text: 'مرحباً سارة، نود التعاون معكم.', messageId: '<m1@client.com>' }, user: null, expect: 200 });
+check(r.ok && r.mailbox === 'sara' && r.threadId, 'inbound routed to sara mailbox', JSON.stringify(r));
+const th1 = r.threadId;
+r = await call('POST', '/inbox/webhook/generic', { body: { from: 'ahmed@client.com', to: 'sara@naslife.app', subject: 'Re: طلب تعاون', text: 'هل وصلتكم رسالتي؟', messageId: '<m2@client.com>', inReplyTo: '<m1@client.com>' }, user: null, headers: { 'x-inbox-token': st.token }, expect: 200 });
+check(r.threadId === th1, 'reply joins thread via In-Reply-To');
+r = await call('POST', '/inbox/webhook/generic?token=' + st.token, { body: { from: 'ahmed@client.com', to: 'sara@naslife.app', subject: 'RE: طلب تعاون', text: 'تذكير', messageId: '<m3@client.com>' }, user: null, expect: 200 });
+check(r.threadId === th1, 'same subject + counterpart joins thread');
+r = await call('POST', '/inbox/webhook/generic?token=' + st.token, { body: { from: 'ahmed@client.com', to: 'sara@naslife.app', subject: 'RE: طلب تعاون', text: 'تذكير', messageId: '<m3@client.com>' }, user: null, expect: 200 });
+check(r.duplicate === true, 'duplicate message-id ignored');
+r = await call('POST', '/inbox/webhook/generic?token=' + st.token, { body: { from: 'someone@gmail.com', to: ['info@naslife.app'], cc: 'khalid@naslife.app', subject: 'استفسار عام', html: '<p>هل التطبيق <b>مجاني</b>؟</p>' }, user: null, expect: 200 });
+check(r.mailbox === 'khalid', 'unknown local part skipped, cc member matched');
+r = await call('POST', '/inbox/webhook/generic?token=' + st.token, { body: { from: 'other@gmail.com', to: 'hello@naslife.app', subject: 'مرحباً', text: 'أهلاً' }, user: null, expect: 200 });
+check(r.mailbox === 'admin', 'unknown address → shared mailbox');
+check((await notes('inbox_message', 'SA0000002')).length === 4 && (await notes('inbox_message', 'SA0000003')).length === 2, 'mailbox owners notified (own boxes + shared)', JSON.stringify((await notes('inbox_message', 'SA0000002')).map((n) => n.body)));
+check((await notes('inbox_message', 'SA0000005')).length === 1 && (await notes('inbox_message', 'SA0000001')).length === 1 && (await notes('inbox_message', 'SA0000004')).length === 0, 'shared mailbox notifies inbox.reply holders only (not the viewer)');
+
+// ---- القوائم والمحادثة
+let l = await call('GET', '/adminapi/inbox?mailbox=sara', { user: 'SA0000002', expect: 200 });
+check(l.threads.length === 1 && l.threads[0].unread === 3 && l.threads[0].messages === 3 && l.threads[0].counterpartName === 'Ahmed Client' && l.threads[0].subject === 'طلب تعاون', 'sara list', JSON.stringify(l.threads[0]).slice(0, 200));
+l = await call('GET', '/adminapi/inbox?mailbox=sara', { user: 'SA0000003', expect: 200 });
+check(l.threads.length === 0, 'khalid cannot list sara mailbox');
+l = await call('GET', '/adminapi/inbox?mailbox=khalid', { user: 'SA0000002', expect: 200 });
+check(l.threads.length === 1 && l.threads[0].snippet.includes('مجاني'), 'manager lists subordinate mailbox; html stripped to snippet');
+mb = await call('GET', '/adminapi/inbox/mailboxes', { user: 'SA0000002', expect: 200 });
+check(mb.mailboxes.find((b) => b.alias === 'sara').unread === 3 && mb.mailboxes.find((b) => b.alias === 'admin').unread === 1, 'unread counts per mailbox');
+let d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+check(d.messageList.length === 3 && d.messageList[0].direction === 'in' && d.messageList[0].from.email === 'ahmed@client.com' && d.address === 'sara@naslife.app' && d.unread === 0, 'thread detail marks read', JSON.stringify(d.messageList.map((m) => m.text)));
+await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000003', expect: 403 });
+let u = await call('PATCH', `/adminapi/inbox/threads/${th1}`, { body: { starred: true, assignedTo: 'SA0000003' }, user: 'SA0000002', expect: 200 });
+check(u.starred === true && u.assignedTo === 'SA0000003' && u.assignedName === 'khalid', 'star + assign');
+check((await notes('inbox_assigned', 'SA0000003')).length === 1, 'assignee notified');
+u = await call('PATCH', `/adminapi/inbox/threads/${th1}`, { body: { assignedTo: 'SA0000006' }, user: 'SA0000002', expect: 400 });
+check(u.error === 'bad-assignee', 'cannot assign to non-member');
+l = await call('GET', '/adminapi/inbox?mailbox=sara&folder=starred', { user: 'SA0000002', expect: 200 });
+check(l.threads.length === 1, 'starred folder');
+l = await call('GET', '/adminapi/inbox?mailbox=sara&q=تعاون', { user: 'SA0000002', expect: 200 });
+check(l.threads.length === 1 && (await call('GET', '/adminapi/inbox?mailbox=sara&q=غيرموجود', { user: 'SA0000002', expect: 200 })).threads.length === 0, 'search');
+
+// ---- الرد والإنشاء
+r = await call('POST', `/adminapi/inbox/threads/${th1}/reply`, { body: { text: 'أهلاً أحمد، يسعدنا التعاون. سنرسل التفاصيل.' }, user: 'SA0000002', expect: 200 });
+check(r.ok && r.threadId === th1 && sent.length === 1, 'reply sent');
+let s = sent[0];
+check(s.from === 'sara · ناس لايف <sara@naslife.app>' && s.to[0] === 'ahmed@client.com' && s.subject === 'Re: طلب تعاون' && s.reply_to === 'sara@naslife.app' && s.headers['In-Reply-To'] === '<m3@client.com>' && s.headers['Message-ID'].endsWith('@naslife.app>'), 'reply from the member mailbox with threading headers', JSON.stringify(s).slice(0, 300));
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+check(d.messageList.length === 4 && d.messageList[3].direction === 'out' && d.messageList[3].sentByName === 'sara' && d.lastDirection === 'out', 'outgoing message stored in thread');
+await call('POST', `/adminapi/inbox/threads/${th1}/reply`, { body: { text: 'x' }, user: 'SA0000004', expect: 403 });
+await call('POST', `/adminapi/inbox/threads/${th1}/reply`, { body: { text: '' }, user: 'SA0000002', expect: 400 });
+r = await call('POST', '/adminapi/inbox/compose', { body: { mailbox: 'khalid', to: 'New@Customer.com', subject: 'متابعة طلبك', text: 'تم استلام طلبك.' }, user: 'SA0000003', expect: 200 });
+check(r.ok && sent.length === 2 && sent[1].from.endsWith('<khalid@naslife.app>') && sent[1].to[0] === 'new@customer.com', 'compose from own mailbox');
+l = await call('GET', '/adminapi/inbox?mailbox=khalid', { user: 'SA0000003', expect: 200 });
+check(l.threads.length === 2 && l.threads[0].lastDirection === 'out' && l.threads[0].counterpart === 'new@customer.com' && l.threads[0].unread === 0, 'composed thread listed');
+r = await call('POST', '/adminapi/inbox/compose', { body: { mailbox: 'sara', to: 'a@b.co', subject: 's', text: 't' }, user: 'SA0000003', expect: 403 });
+r = await call('POST', '/adminapi/inbox/compose', { body: { mailbox: 'admin', to: 'a@b.co', subject: 'من المشترك', text: 'نص' }, user: 'SA0000003', expect: 200 });
+check(sent[2].from === 'ناس لايف <admin@naslife.app>', 'shared mailbox uses the app sender name');
+// الرد على الوارد يصل إلى المحادثة نفسها
+r = await call('POST', '/inbox/webhook/generic?token=' + st.token, { body: { from: 'new@customer.com', to: 'khalid@naslife.app', subject: 'Re: متابعة طلبك', text: 'شكراً', inReplyTo: sent[1].headers['Message-ID'] }, user: null, expect: 200 });
+check(r.threadId === l.threads[0].id, 'customer reply joins the composed thread via our Message-ID');
+// أرشفة ثم رسالة جديدة تعيد المحادثة
+await call('PATCH', `/adminapi/inbox/threads/${th1}`, { body: { archived: true }, user: 'SA0000002', expect: 200 });
+check((await call('GET', '/adminapi/inbox?mailbox=sara', { user: 'SA0000002', expect: 200 })).threads.length === 0 && (await call('GET', '/adminapi/inbox?mailbox=sara&folder=archived', { user: 'SA0000002', expect: 200 })).threads.length === 1, 'archived folder');
+await call('POST', '/inbox/webhook/generic?token=' + st.token, { body: { from: 'ahmed@client.com', to: 'sara@naslife.app', subject: 'Re: طلب تعاون', text: 'وصلت، شكراً', messageId: '<m9@client.com>' }, user: null, expect: 200 });
+check((await call('GET', '/adminapi/inbox?mailbox=sara', { user: 'SA0000002', expect: 200 })).threads[0]?.id === th1, 'new inbound un-archives the thread');
+
+// ---- Resend webhook بتوقيع
+await call('PUT', '/adminapi/inbox/settings', { body: { provider: 'resend', webhookSecret: secret }, expect: 200 });
+resendEmails['em_1'] = { from: 'Lina <lina@partner.com>', to: ['sara@naslife.app'], subject: 'عرض شراكة', text: 'نص العرض الكامل', html: '<p>نص العرض الكامل</p>', headers: { 'message-id': '<r1@partner.com>' }, attachments: [{ filename: 'offer.pdf', content_type: 'application/pdf', size: 1234 }] };
+const ev = JSON.stringify({ type: 'email.received', created_at: new Date().toISOString(), data: { email_id: 'em_1', from: 'lina@partner.com', to: ['sara@naslife.app'], subject: 'عرض شراكة' } });
+r = await call('POST', '/inbox/webhook/resend', { raw: ev, user: null, headers: { 'svix-id': 'x' }, expect: 401 });
+check(r.error === 'bad-signature', 'unsigned resend event rejected');
+r = await call('POST', '/inbox/webhook/resend', { raw: ev, user: null, headers: sign(ev, 'evt_1'), expect: 200 });
+check(r.ok && r.fetched === true && r.mailbox === 'sara', 'signed resend event ingested with fetched body', JSON.stringify(r));
+r = await call('POST', '/inbox/webhook/resend', { raw: ev, user: null, headers: sign(ev, 'evt_2'), expect: 200 });
+check(r.duplicate === true, 'same email_id ignored');
+d = await call('GET', `/adminapi/inbox/threads/${(await call('GET', '/adminapi/inbox?mailbox=sara&q=شراكة', { user: 'SA0000002', expect: 200 })).threads[0].id}`, { user: 'SA0000002', expect: 200 });
+check(d.messageList[0].text === 'نص العرض الكامل' && d.messageList[0].attachments[0].name === 'offer.pdf' && d.messageList[0].from.name === 'Lina', 'fetched content + attachments stored', JSON.stringify(d.messageList[0]).slice(0, 200));
+const other = JSON.stringify({ type: 'email.sent', data: {} });
+r = await call('POST', '/inbox/webhook/resend', { raw: other, user: null, headers: sign(other, 'evt_3'), expect: 200 });
+check(r.ignored === 'email.sent', 'other event types ignored');
+const st2 = await call('GET', '/adminapi/inbox/settings', { expect: 200 });
+check(st2.received === 8 && st2.rejected === 1 && st2.hasSecret === true && st2.lastReceivedAt, 'settings counters', JSON.stringify([st2.received, st2.rejected]));
+// ================= الدفعة الأولى: القوالب، الملاحظات، الحالة والتأجيل، المرفقات، الإجمالي
+mb = await call('GET', '/adminapi/inbox/mailboxes', { user: 'SA0000002', expect: 200 });
+check(typeof mb.totalUnread === 'number' && mb.totalUnread === mb.mailboxes.reduce((s0, b) => s0 + b.unread, 0), 'totalUnread = sum of visible boxes', JSON.stringify(mb.totalUnread));
+// القوالب
+let e = await call('POST', '/adminapi/inbox/templates', { body: { title: 'ترحيب', body: 'أهلاً {{name}}، معك {{agent}} من ناس لايف. بريدك {{email}} مسجّل لدينا.' }, user: 'SA0000003', expect: 403 });
+check(e.error === 'forbidden', 'support cannot create a shared template');
+let tp = await call('POST', '/adminapi/inbox/templates', { body: { title: 'ردّي الخاص', body: 'شكراً {{name}}', shared: false }, user: 'SA0000003', expect: 200 });
+check(tp.shared === false && tp.ownerName === 'khalid', 'support creates a private template');
+const tshared = await call('POST', '/adminapi/inbox/templates', { body: { title: 'ترحيب', body: 'أهلاً {{name}}، معك {{agent}} من ناس لايف. بريدك {{email}} مسجّل، وتراسلنا على {{mailbox}}.' }, user: 'SA0000002', expect: 200 });
+check(tshared.shared === true, 'manager creates a shared template');
+let tl = await call('GET', '/adminapi/inbox/templates', { user: 'SA0000005', expect: 200 });
+check(tl.templates.length === 1 && tl.templates[0].id === tshared.id && tl.variables.includes('name'), 'others see shared only');
+tl = await call('GET', '/adminapi/inbox/templates', { user: 'SA0000003', expect: 200 });
+check(tl.templates.length === 2, 'owner sees shared + own');
+let rt = await call('POST', `/adminapi/inbox/templates/${tshared.id}/render`, { body: { threadId: th1 }, user: 'SA0000002', expect: 200 });
+check(rt.text === 'أهلاً Ahmed Client، معك sara من ناس لايف. بريدك ahmed@client.com مسجّل، وتراسلنا على sara@naslife.app.', 'template rendered with thread variables', rt.text);
+await call('PATCH', `/adminapi/inbox/templates/${tp.id}`, { body: { title: 'x' }, user: 'SA0000005', expect: 403 });
+rt = await call('PATCH', `/adminapi/inbox/templates/${tp.id}`, { body: { title: 'ردّي المعدّل' }, user: 'SA0000003', expect: 200 });
+check(rt.title === 'ردّي المعدّل', 'owner edits own template');
+await call('DELETE', `/adminapi/inbox/templates/${tp.id}`, { user: 'SA0000003', expect: 200 });
+// ملاحظة داخلية
+let nt = await call('POST', `/adminapi/inbox/threads/${th1}/notes`, { body: { text: 'العميل مهم، نرد اليوم' }, user: 'SA0000002', expect: 200 });
+check(nt.direction === 'note' && nt.sentByName === 'sara', 'note stored');
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+check(d.messageList.some((x) => x.direction === 'note' && x.text === 'العميل مهم، نرد اليوم') && d.lastDirection !== 'note' && sent.length === 3, 'note visible in thread, nothing sent, last direction unchanged', JSON.stringify([d.lastDirection, sent.length]));
+const sentBefore = sent.length;
+check((await notes('inbox_note', 'SA0000003')).length === 1, 'assignee notified of the note');
+// الحالة: الرد يجعلها بانتظار العميل، والوارد يعيدها مفتوحة
+await call('POST', `/adminapi/inbox/threads/${th1}/reply`, { body: { text: 'سنعود إليك قريباً' }, user: 'SA0000002', expect: 200 });
+d = await call('GET', `/adminapi/inbox/threads/${th1}?markRead=0`, { user: 'SA0000002', expect: 200 });
+check(d.status === 'waiting', 'thread is waiting after our reply', d.status);
+r = await call('POST', '/inbox/webhook/generic?token=' + st.token, { body: { from: 'ahmed@client.com', to: 'sara@naslife.app', subject: 'Re: طلب تعاون', text: 'تمام', messageId: '<m10@client.com>' }, user: null, expect: 200 });
+d = await call('GET', `/adminapi/inbox/threads/${th1}?markRead=0`, { user: 'SA0000002', expect: 200 });
+check(d.status === 'open', 'inbound reopens the thread');
+u = await call('PATCH', `/adminapi/inbox/threads/${th1}`, { body: { status: 'closed' }, user: 'SA0000002', expect: 200 });
+check(u.status === 'closed' && u.closedAt, 'closed');
+l = await call('GET', '/adminapi/inbox?mailbox=sara', { user: 'SA0000002', expect: 200 });
+check(!l.threads.some((x) => x.id === th1) && (await call('GET', '/adminapi/inbox?mailbox=sara&folder=closed', { user: 'SA0000002', expect: 200 })).threads.some((x) => x.id === th1), 'closed leaves inbox, appears in closed folder');
+e = await call('PATCH', `/adminapi/inbox/threads/${th1}`, { body: { status: 'nope' }, user: 'SA0000002', expect: 400 });
+check(e.error === 'bad-status', 'bad status rejected');
+// التأجيل
+u = await call('PATCH', `/adminapi/inbox/threads/${th1}`, { body: { status: 'open', snoozeUntil: new Date(Date.now() + 3600e3).toISOString() }, user: 'SA0000002', expect: 200 });
+check(u.snoozed === true && u.status === 'open', 'snoozed for an hour');
+l = await call('GET', '/adminapi/inbox?mailbox=sara', { user: 'SA0000002', expect: 200 });
+check(!l.threads.some((x) => x.id === th1) && (await call('GET', '/adminapi/inbox?mailbox=sara&folder=snoozed', { user: 'SA0000002', expect: 200 })).threads.length === 1, 'snoozed hidden from inbox, listed in snoozed folder');
+e = await call('PATCH', `/adminapi/inbox/threads/${th1}`, { body: { snoozeUntil: '2000-01-01' }, user: 'SA0000002', expect: 400 });
+check(e.error === 'bad-snooze', 'past snooze rejected');
+await pool.query("UPDATE inbox_threads SET snooze_until = now() - interval '1 minute' WHERE id=$1", [th1]);
+const sw = await globalThis.naslifeInboxSweep();
+check(sw.unsnoozed === 1, 'sweep un-snoozes due threads');
+l = await call('GET', '/adminapi/inbox?mailbox=sara', { user: 'SA0000002', expect: 200 });
+check(l.threads.some((x) => x.id === th1 && x.unread >= 1 && x.snoozed === false), 'thread back in inbox as unread');
+check((await notes('inbox_unsnoozed', 'SA0000003')).length === 1, 'assignee notified when snooze ends');
+u = await call('PATCH', `/adminapi/inbox/threads/${th1}`, { body: { tags: ['vip', 'شراكة', 'vip'] }, user: 'SA0000002', expect: 200 });
+check(u.tags.join(',') === 'vip,شراكة', 'tags stored unique');
+// مرفقات في الرد
+r = await call('POST', `/adminapi/inbox/threads/${th1}/reply`, { body: { text: 'مرفق العقد', attachments: [{ name: 'contract.pdf', url: 'https://naslife.app/chat/media/abc.pdf', type: 'application/pdf', size: 100 }, { name: 'bad', url: 'ftp://x' }] }, user: 'SA0000002', expect: 200 });
+s = sent[sent.length - 1];
+check(s.attachments && s.attachments.length === 1 && s.attachments[0].filename === 'contract.pdf' && s.attachments[0].path === 'https://naslife.app/chat/media/abc.pdf', 'reply passes attachments to Resend as paths', JSON.stringify(s.attachments));
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+const lastOut = d.messageList.filter((x) => x.direction === 'out').pop();
+check(lastOut.attachments.length === 1 && lastOut.attachments[0].downloadUrl === 'https://naslife.app/chat/media/abc.pdf', 'outgoing attachment stored with url');
+// مرفق وارد بمعرّف Resend: رابط تنزيل عبر الخادم
+const inMsg = d.messageList.find((x) => x.direction === 'in' && x.attachments.length);
+resendEmails['em_1'].attachments = [{ id: 'att_1', filename: 'offer.pdf', content_type: 'application/pdf', size: 1234 }];
+const evA = JSON.stringify({ type: 'email.received', data: { email_id: 'em_att', from: 'lina@partner.com', to: ['sara@naslife.app'], subject: 'ملف' } });
+resendEmails['em_att'] = { from: 'Lina <lina@partner.com>', to: ['sara@naslife.app'], subject: 'ملف', text: 'مرفق', headers: { 'message-id': '<r2@partner.com>' }, attachments: [{ id: 'att_1', filename: 'brief.pdf', content_type: 'application/pdf', size: 99 }] };
+await call('POST', '/inbox/webhook/resend', { raw: evA, user: null, headers: sign(evA, 'evt_att'), expect: 200 });
+const th3 = (await call('GET', '/adminapi/inbox?mailbox=sara&q=ملف', { user: 'SA0000002', expect: 200 })).threads[0].id;
+d = await call('GET', `/adminapi/inbox/threads/${th3}`, { user: 'SA0000002', expect: 200 });
+check(d.messageList[0].attachments[0].downloadUrl === `/adminapi/inbox/attachments/${d.messageList[0].id}/0`, 'inbound attachment gets a server download url');
+globalThis.fetch = (function (orig) { return async (url, init = {}) => String(url).includes('/attachments/att_1') ? { ok: true, status: 200, text: async () => JSON.stringify({ download_url: 'https://files.resend.com/att_1.pdf' }), headers: { get: () => null } } : orig(url, init); })(globalThis.fetch);
+const rd = await app.inject({ method: 'GET', url: `/adminapi/inbox/attachments/${d.messageList[0].id}/0`, headers: { 'x-user': 'SA0000002' } });
+check(rd.statusCode === 302 && rd.headers.location === 'https://files.resend.com/att_1.pdf', 'attachment download redirects to the provider url', String(rd.statusCode));
+const rd2 = await app.inject({ method: 'GET', url: `/adminapi/inbox/attachments/${d.messageList[0].id}/0`, headers: { 'x-user': 'SA0000005' } });
+check(rd2.statusCode === 403, 'attachment download respects mailbox visibility');
+
+// ==== الدفعة B
+const st3 = await call('GET', '/adminapi/inbox/settings', { expect: 200 });
+const generic = '/inbox/webhook/generic?token=' + st3.token;
+// بطاقة العميل
+await pool.query("CREATE TABLE IF NOT EXISTS login_aliases (alias TEXT PRIMARY KEY, user_id TEXT NOT NULL, nickname TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), verified BOOLEAN NOT NULL DEFAULT false)");
+await pool.query("INSERT INTO login_aliases(alias,user_id,nickname,verified) VALUES('ahmed@client.com','SA0000006','lina',true) ON CONFLICT (alias) DO UPDATE SET user_id='SA0000006'");
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+check(d.customer && d.customer.email === 'ahmed@client.com' && d.customer.userId === 'SA0000006' && d.customer.nickname === 'lina' && d.customer.verified === true && d.customer.threads >= 1 && d.customer.lastAt, 'customer card links the email to a Naslife account', JSON.stringify(d.customer));
+check(Array.isArray(d.tasks) && Array.isArray(d.viewers) && d.signature === '', 'thread detail carries tasks, viewers and signature');
+d = await call('GET', `/adminapi/inbox/threads/${th3}`, { user: 'SA0000002', expect: 200 });
+check(d.customer && d.customer.userId === null && d.customer.threads >= 2, 'unknown email: no account but contact history', JSON.stringify(d.customer));
+// التواجد: سارة فتحت المحادثة (GET) فيراها عمرو؛ ثم تكتب؛ ثم تغادر
+let pr = await call('POST', `/adminapi/inbox/threads/${th3}/presence`, { body: {}, expect: 200 });
+check(pr.others.length === 1 && pr.others[0].id === 'SA0000002' && pr.others[0].name === 'sara' && pr.others[0].typing === false, 'opening a thread registers presence', JSON.stringify(pr));
+await call('POST', `/adminapi/inbox/threads/${th3}/presence`, { body: { typing: true }, user: 'SA0000002', expect: 200 });
+pr = await call('POST', `/adminapi/inbox/threads/${th3}/presence`, { body: {}, expect: 200 });
+check(pr.others[0].typing === true, 'typing heartbeat visible to others');
+d = await call('GET', `/adminapi/inbox/threads/${th3}`, { user: 'SA0000002', expect: 200 });
+check(d.viewers.length === 1 && d.viewers[0].id === 'SA0000001', 'thread detail lists the other viewer');
+await call('POST', `/adminapi/inbox/threads/${th3}/presence`, { body: { leave: true }, user: 'SA0000002', expect: 200 });
+pr = await call('POST', `/adminapi/inbox/threads/${th3}/presence`, { body: {}, expect: 200 });
+check(pr.others.length === 0, 'leaving clears presence');
+await call('POST', `/adminapi/inbox/threads/${th3}/presence`, { body: {}, user: 'SA0000005', expect: 403 });
+// القواعد
+await call('POST', '/adminapi/inbox/rules', { body: { name: 'x', conditions: {}, actions: { star: true } }, user: 'SA0000002', expect: 400 });
+await call('POST', '/adminapi/inbox/rules', { body: { name: 'x', conditions: { subjectContains: 'a' }, actions: {} }, user: 'SA0000002', expect: 400 });
+await call('POST', '/adminapi/inbox/rules', { body: { name: 'x', conditions: { subjectContains: 'a' }, actions: { star: true } }, user: 'SA0000003', expect: 403 });
+await call('POST', '/adminapi/inbox/rules', { body: { name: 'bad', conditions: { fromContains: 'x' }, actions: { assignTo: 'SA0000009' } }, user: 'SA0000002', expect: 400 });
+const rule = await call('POST', '/adminapi/inbox/rules', { body: { name: 'شكاوى', conditions: { subjectContains: 'شكوى', mailbox: 'admin' }, actions: { tags: ['شكوى', 'عاجل', 'شكوى'], assignTo: 'SA0000003', star: true } }, user: 'SA0000002', expect: 200 });
+check(rule.id && rule.enabled === true && rule.actions.assignTo === 'SA0000003' && rule.actions.tags.join(',') === 'شكوى,عاجل' && rule.conditions.subjectContains === 'شكوى', 'rule created', JSON.stringify(rule));
+let rtest = await call('POST', '/adminapi/inbox/rules/test', { body: { from: 'x@y.com', subject: 'شكوى على الخدمة', text: '' }, user: 'SA0000002', expect: 200 });
+check(rtest.matches.length === 1 && rtest.matches[0].id === rule.id, 'rule test matches a complaint to the shared box');
+rtest = await call('POST', '/adminapi/inbox/rules/test', { body: { from: 'x@y.com', subject: 'شكوى', mailbox: 'sara' }, user: 'SA0000002', expect: 200 });
+check(rtest.matches.length === 0, 'rule test respects the mailbox condition');
+r = await call('POST', generic, { body: { from: 'Omar <omar@client.com>', to: 'admin@naslife.app', subject: 'شكوى على التطبيق', text: 'التطبيق بطيء' }, user: null, expect: 200 });
+check(r.rules && r.rules[0] === 'شكاوى' && r.autoReplied === false, 'ingest applied the rule', JSON.stringify(r));
+const thComplaint = r.threadId;
+let ct = await call('GET', `/adminapi/inbox/threads/${thComplaint}`, { expect: 200 });
+check(ct.tags.join(',') === 'شكوى,عاجل' && ct.assignedTo === 'SA0000003' && ct.starred === true, 'rule tagged, assigned and starred the thread', JSON.stringify([ct.tags, ct.assignedTo, ct.starred]));
+check((await notes('inbox_assigned', 'SA0000003')).some((n) => n.title.includes('قاعدة')) && (await notes('inbox_message', 'SA0000003')).some((n) => n.body.includes('شكوى على التطبيق')), 'assignee notified by the rule and gets the new-mail notice');
+let lst = await call('GET', '/adminapi/inbox?mailbox=admin&tag=عاجل', { expect: 200 });
+check(lst.threads.length === 1 && lst.threads[0].id === thComplaint && lst.tag === 'عاجل' && lst.tags.some((t) => t.tag === 'عاجل' && t.n === 1), 'tag filter + tag counts', JSON.stringify(lst.tags));
+lst = await call('GET', '/adminapi/inbox?mailbox=admin&q=' + encodeURIComponent('#شكوى'), { expect: 200 });
+check(lst.threads.length === 1 && lst.tag === 'شكوى', 'q starting with # filters by tag');
+const upd = await call('PATCH', `/adminapi/inbox/rules/${rule.id}`, { body: { enabled: false }, user: 'SA0000002', expect: 200 });
+check(upd.enabled === false && upd.hits === 1 && upd.name === 'شكاوى', 'rule disabled, hits counted', JSON.stringify(upd));
+r = await call('POST', generic, { body: { from: 'Omar <omar@client.com>', to: 'admin@naslife.app', subject: 'شكوى ثانية', text: 'x' }, user: null, expect: 200 });
+check(r.rules.length === 0, 'disabled rule does not fire');
+const rl = await call('GET', '/adminapi/inbox/rules', { user: 'SA0000002', expect: 200 });
+check(rl.rules.length === 1 && rl.assignees.some((a) => a.id === 'SA0000003' && a.mailbox === 'khalid') && rl.mailboxes.includes('admin') && rl.mailboxes.includes('sara'), 'rules list with assignees and mailboxes', JSON.stringify(rl.assignees));
+await call('GET', '/adminapi/inbox/rules', { user: 'SA0000003', expect: 403 });
+await call('DELETE', `/adminapi/inbox/rules/${rule.id}`, { user: 'SA0000002', expect: 200 });
+await call('DELETE', `/adminapi/inbox/rules/${rule.id}`, { user: 'SA0000002', expect: 404 });
+// مهمة مرتبطة بالمحادثة
+const task = await call('POST', '/adminapi/tasks', { body: { title: 'متابعة شكوى عمر', related: { type: 'inbox', id: thComplaint, label: 'شكوى على التطبيق' } }, user: 'SA0000002', expect: 200 });
+ct = await call('GET', `/adminapi/inbox/threads/${thComplaint}`, { expect: 200 });
+check(ct.tasks.length === 1 && ct.tasks[0].id === task.id && ct.tasks[0].status === 'todo' && ct.tasks[0].title === 'متابعة شكوى عمر', 'thread lists its linked tasks', JSON.stringify(ct.tasks));
+// التوقيع
+let me = await call('GET', '/adminapi/inbox/me', { user: 'SA0000002', expect: 200 });
+check(me.mailbox === 'sara' && me.address === 'sara@naslife.app' && me.signature === '' && me.away === false, 'me defaults', JSON.stringify(me));
+await call('PUT', '/adminapi/inbox/me', { body: { away: true, awayText: '' }, user: 'SA0000002', expect: 400 });
+await call('PUT', '/adminapi/inbox/me', { body: { awayUntil: 'not-a-date' }, user: 'SA0000002', expect: 400 });
+me = await call('PUT', '/adminapi/inbox/me', { body: { signature: 'سارة\nمديرة الدعم', away: false }, user: 'SA0000002', expect: 200 });
+check(me.signature === 'سارة\nمديرة الدعم', 'signature saved');
+let sb = sent.length;
+await call('POST', `/adminapi/inbox/threads/${th1}/reply`, { body: { text: 'تم' }, user: 'SA0000002', expect: 200 });
+s = sent[sent.length - 1];
+check(sent.length === sb + 1 && s.text === 'تم\n\n-- \nسارة\nمديرة الدعم' && String(s.html).includes('مديرة الدعم'), 'reply carries the signature', JSON.stringify(s.text));
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+check(d.signature === 'سارة\nمديرة الدعم' && d.messageList[d.messageList.length - 1].text.endsWith('مديرة الدعم'), 'stored message includes the signature; detail exposes my signature');
+await call('PUT', '/adminapi/inbox/settings', { body: { sharedSignature: 'فريق ناس لايف' }, expect: 200 });
+await call('POST', '/adminapi/inbox/compose', { body: { mailbox: 'admin', to: 'someone@x.com', subject: 'مرحبا', text: 'أهلاً' }, expect: 200 });
+s = sent[sent.length - 1];
+check(s.text === 'أهلاً\n\n-- \nفريق ناس لايف', 'shared mailbox uses the shared signature', JSON.stringify(s.text));
+// رد الغياب
+me = await call('PUT', '/adminapi/inbox/me', { body: { away: true, awayText: 'أنا في إجازة حتى الأحد', awayUntil: new Date(Date.now() + 86400000).toISOString() }, user: 'SA0000002', expect: 200 });
+check(me.away === true && !!me.awayUntil, 'away enabled');
+sb = sent.length;
+r = await call('POST', generic, { body: { from: 'Omar <omar@client.com>', to: 'sara@naslife.app', subject: 'سؤال', text: 'متى تردون؟' }, user: null, expect: 200 });
+s = sent[sent.length - 1]; const sj = JSON.stringify(s);
+check(r.autoReplied === true && sent.length === sb + 1 && sj.includes('omar@client.com') && sj.includes('sara@naslife.app') && s.subject === 'Re: سؤال' && s.text === 'أنا في إجازة حتى الأحد' && sj.includes('auto-replied'), 'away auto-reply sent from the mailbox with auto headers', sj.slice(0, 300));
+const thAuto = r.threadId;
+ct = await call('GET', `/adminapi/inbox/threads/${thAuto}`, { user: 'SA0000002', expect: 200 });
+const fr = (await pool.query('SELECT first_reply_at, status FROM inbox_threads WHERE id=$1', [thAuto])).rows[0];
+check(ct.messageList.some((m) => m.direction === 'out' && m.from.name === 'رد تلقائي') && fr.first_reply_at === null && fr.status === 'open', 'auto-reply stored in the thread without counting as a team reply', JSON.stringify(fr));
+r = await call('POST', generic, { body: { from: 'Omar <omar@client.com>', to: 'sara@naslife.app', subject: 'سؤال آخر', text: 'x' }, user: null, expect: 200 });
+check(r.autoReplied === false && sent.length === sb + 1, 'no second auto-reply within 24h');
+r = await call('POST', generic, { body: { from: 'noreply@bank.com', to: 'sara@naslife.app', subject: 'إشعار', text: 'x' }, user: null, expect: 200 });
+check(r.autoReplied === false, 'no auto-reply to automated senders');
+r = await call('POST', generic, { body: { from: 'Ali <ali@client.com>', to: 'sara@naslife.app', subject: 'مرحبا', text: 'x', headers: { 'Auto-Submitted': 'auto-generated' } }, user: null, expect: 200 });
+check(r.autoReplied === false, 'Auto-Submitted header suppresses auto-reply');
+r = await call('POST', generic, { body: { from: 'Ali <ali@client.com>', to: 'admin@naslife.app', subject: 'مرحبا', text: 'x' }, user: null, expect: 200 });
+check(r.autoReplied === false, 'shared box without away: no auto-reply');
+await call('PUT', '/adminapi/inbox/settings', { body: { sharedAway: true, sharedAwayText: '' }, expect: 400 });
+await call('PUT', '/adminapi/inbox/settings', { body: { sharedAway: true, sharedAwayText: 'نرد خلال يوم عمل', sharedAwayUntil: null }, expect: 200 });
+r = await call('POST', generic, { body: { from: 'Sami <sami@client.com>', to: 'admin@naslife.app', subject: 'مرحبا', text: 'x' }, user: null, expect: 200 });
+s = sent[sent.length - 1];
+check(r.autoReplied === true && s.text === 'نرد خلال يوم عمل', 'shared box away reply');
+const st4 = await call('GET', '/adminapi/inbox/settings', { expect: 200 });
+check(st4.sharedAway === true && st4.sharedAwayText === 'نرد خلال يوم عمل' && st4.sharedSignature === 'فريق ناس لايف', 'settings expose shared signature and away', JSON.stringify(st4).slice(0, 200));
+await call('PUT', '/adminapi/inbox/me', { body: { awayUntil: new Date(Date.now() - 1000).toISOString() }, user: 'SA0000002', expect: 200 });
+r = await call('POST', generic, { body: { from: 'Zed <zed@client.com>', to: 'sara@naslife.app', subject: 'مرحبا', text: 'x' }, user: null, expect: 200 });
+check(r.autoReplied === false, 'expired away window: no auto-reply');
+
+// ==== الدفعة C
+let swc;
+// المزعج والحظر
+r = await call('POST', generic, { body: { from: 'Spammer <promo@spam.biz>', to: 'admin@naslife.app', subject: 'عرض لا يفوّت', text: 'اشترِ الآن' }, user: null, expect: 200 });
+const thSpam = r.threadId;
+check(r.spam === false, 'first message from an unknown sender is not spam');
+let sp = await call('POST', `/adminapi/inbox/threads/${thSpam}/spam`, { body: { domain: true, reason: 'إعلانات' }, expect: 200 });
+check(sp.spam === true && sp.blocked === '@spam.biz', 'thread marked spam and the domain blocked', JSON.stringify(sp.blocked));
+sb = sent.length; await call('PUT', '/adminapi/mail', { body: { provider: 'resend', apiKey: 're_key', from: 'admin@naslife.app', fromName: 'ناس لايف' }, expect: 200 });
+r = await call('POST', generic, { body: { from: 'other@spam.biz', to: 'admin@naslife.app', subject: 'عرض آخر', text: 'x' }, user: null, expect: 200 });
+check(r.spam === true && r.rules.length === 0 && r.autoReplied === false && sent.length === sb, 'blocked domain lands in spam silently (no rules, no auto-reply, no mail)', JSON.stringify(r));
+check(!(await notes('inbox_message', 'SA0000001')).some((n) => n.body.includes('عرض آخر')), 'no notification for spam');
+lst = await call('GET', '/adminapi/inbox?mailbox=admin&folder=spam', { expect: 200 });
+check(lst.threads.length === 2 && lst.threads.every((t) => t.spam), 'spam folder lists blocked threads', String(lst.threads.length));
+lst = await call('GET', '/adminapi/inbox?mailbox=admin&folder=inbox', { expect: 200 });
+check(!lst.threads.some((t) => t.spam), 'inbox hides spam');
+mb = await call('GET', '/adminapi/inbox/mailboxes', { expect: 200 });
+check(mb.mailboxes.find((b) => b.alias === 'admin').unread === lst.threads.reduce((a, t) => a + t.unread, 0) && mb.csat === true && mb.aiEnabled === false, 'unread counter ignores spam; csat on, ai off by default');
+let bl = await call('GET', '/adminapi/inbox/blocked', { expect: 200 });
+check(bl.blocked.length === 1 && bl.blocked[0].pattern === '@spam.biz' && bl.blocked[0].hits === 1 && bl.blocked[0].reason === 'إعلانات', 'blocked list with hits', JSON.stringify(bl.blocked));
+await call('POST', '/adminapi/inbox/blocked', { body: { pattern: 'not an email' }, expect: 400 });
+await call('POST', '/adminapi/inbox/blocked', { body: { pattern: 'Bad@Actor.com', reason: 'تهديد' }, expect: 200 });
+await call('GET', '/adminapi/inbox/blocked', { user: 'SA0000003', expect: 403 });
+await call('DELETE', '/adminapi/inbox/blocked/' + encodeURIComponent('bad@actor.com'), { expect: 200 });
+await call('DELETE', '/adminapi/inbox/blocked/' + encodeURIComponent('bad@actor.com'), { expect: 404 });
+sp = await call('POST', `/adminapi/inbox/threads/${thSpam}/spam`, { body: { undo: true }, expect: 200 });
+bl = await call('GET', '/adminapi/inbox/blocked', { expect: 200 });
+check(sp.spam === false && bl.blocked.length === 0, 'undo spam unblocks the sender');
+// البحث الشامل
+let sr = await call('GET', '/adminapi/inbox/search?q=' + encodeURIComponent('نود التعاون'), { user: 'SA0000002', expect: 200 });
+check(sr.threads.length === 1 && sr.threads[0].id === th1 && sr.threads[0].match.excerpt.includes('نود التعاون') && sr.threads[0].match.direction === 'in', 'full-text search finds the message body with an excerpt', JSON.stringify(sr.threads[0]?.match));
+sr = await call('GET', '/adminapi/inbox/search?q=' + encodeURIComponent('نود التعاون'), { user: 'SA0000003', expect: 200 });
+check(sr.threads.length === 0, 'search is limited to visible mailboxes');
+sr = await call('GET', '/adminapi/inbox/search?q=x', { user: 'SA0000002', expect: 200 });
+check(sr.threads.length === 0, 'search needs at least two characters');
+// المسودات
+let dr = await call('PUT', '/adminapi/inbox/drafts', { body: { threadId: th1, text: 'مسودة ردي' }, user: 'SA0000002', expect: 200 });
+check(dr.ok && dr.threadId === th1, 'draft saved');
+await call('PUT', '/adminapi/inbox/drafts', { body: { to: 'x@y.com', subject: 'جديد', text: 'نص', mailbox: 'sara' }, user: 'SA0000002', expect: 200 });
+dr = await call('GET', '/adminapi/inbox/drafts', { user: 'SA0000002', expect: 200 });
+check(dr.drafts.length === 2 && dr.drafts.some((d) => d.threadId === th1 && d.text === 'مسودة ردي') && dr.drafts.some((d) => d.threadId === null && d.subject === 'جديد'), 'drafts list: thread draft + compose draft', JSON.stringify(dr.drafts.map((d) => d.threadId)));
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+check(d.draft && d.draft.text === 'مسودة ردي', 'thread detail carries my draft');
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { expect: 200 });
+check(d.draft === null, 'drafts are per member');
+await call('PUT', '/adminapi/inbox/drafts', { body: { threadId: th1, text: '' }, user: 'SA0000002', expect: 200 });
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+check(d.draft === null, 'empty draft clears it');
+await call('DELETE', '/adminapi/inbox/drafts', { user: 'SA0000002', expect: 200 });
+dr = await call('GET', '/adminapi/inbox/drafts', { user: 'SA0000002', expect: 200 });
+check(dr.drafts.length === 0, 'compose draft deleted');
+// الإرسال المجدول
+await call('PUT', '/adminapi/inbox/drafts', { body: { threadId: th1, text: 'سأُرسل لاحقاً' }, user: 'SA0000002', expect: 200 });
+await call('POST', `/adminapi/inbox/threads/${th1}/reply`, { body: { text: 'x', sendAt: 'not-a-date' }, user: 'SA0000002', expect: 400 });
+await call('POST', `/adminapi/inbox/threads/${th1}/reply`, { body: { text: 'x', sendAt: new Date(Date.now() - 1000).toISOString() }, user: 'SA0000002', expect: 400 });
+sb = sent.length;
+let sc = await call('POST', `/adminapi/inbox/threads/${th1}/reply`, { body: { text: 'رد مجدول', sendAt: new Date(Date.now() + 120000).toISOString() }, user: 'SA0000002', expect: 200 });
+check(sc.scheduled === true && sc.outboxId && sent.length === sb, 'reply scheduled, nothing sent yet', JSON.stringify(sc));
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+check(d.scheduled.length === 1 && d.scheduled[0].id === sc.outboxId && d.scheduled[0].text === 'رد مجدول' && d.draft === null, 'thread detail shows the scheduled reply and the draft was consumed');
+let ob = await call('GET', '/adminapi/inbox/outbox', { user: 'SA0000002', expect: 200 });
+check(ob.items.length === 1 && ob.items[0].status === 'queued', 'outbox lists queued items');
+swc = await globalThis.naslifeInboxSweep();
+check(swc.sent === 0 && sent.length === sb, 'sweep does not send before the time');
+await pool.query("UPDATE inbox_outbox SET send_at=now() - interval '1 minute' WHERE id=$1", [sc.outboxId]);
+swc = await globalThis.naslifeInboxSweep();
+s = sent[sent.length - 1];
+check(swc.sent === 1 && sent.length === sb + 1 && s.text.startsWith('رد مجدول') && s.text.includes('مديرة الدعم'), 'sweep sends the due item with the signature', JSON.stringify(s.text));
+ob = await call('GET', '/adminapi/inbox/outbox', { user: 'SA0000002', expect: 200 });
+check(ob.items[0].status === 'sent' && ob.items[0].sentAt, 'outbox item marked sent');
+d = await call('GET', `/adminapi/inbox/threads/${th1}`, { user: 'SA0000002', expect: 200 });
+check(d.scheduled.length === 0 && d.messageList[d.messageList.length - 1].text.startsWith('رد مجدول') && d.status === 'waiting', 'sent scheduled reply lands in the thread');
+sc = await call('POST', '/adminapi/inbox/compose', { body: { mailbox: 'sara', to: 'later@x.com', subject: 'لاحقاً', text: 'نص', sendAt: new Date(Date.now() + 3600000).toISOString() }, user: 'SA0000002', expect: 200 });
+check(sc.scheduled === true && sc.threadId === null, 'compose can be scheduled');
+await call('DELETE', `/adminapi/inbox/outbox/${sc.outboxId}`, { user: 'SA0000003', expect: 403 });
+await call('DELETE', `/adminapi/inbox/outbox/${sc.outboxId}`, { user: 'SA0000002', expect: 200 });
+await call('DELETE', `/adminapi/inbox/outbox/${sc.outboxId}`, { user: 'SA0000002', expect: 400 });
+// التقييم بعد الإغلاق: محادثة جديدة فيها وارد ورد
+r = await call('POST', generic, { body: { from: 'Rana <rana@client.com>', to: 'sara@naslife.app', subject: 'طلب تقييم', text: 'هل يمكن تغيير الاسم؟' }, user: null, expect: 200 });
+const thRate = r.threadId;
+await call('POST', `/adminapi/inbox/threads/${thRate}/reply`, { body: { text: 'تم الحل' }, user: 'SA0000002', expect: 200 });
+sb = sent.length;
+let cl = await call('PATCH', `/adminapi/inbox/threads/${thRate}`, { body: { status: 'closed' }, user: 'SA0000002', expect: 200 });
+s = sent[sent.length - 1];
+check(cl.ratingSent === true && cl.ratingSentAt && sent.length === sb + 1 && JSON.stringify(s).includes('/inbox/rate/') && s.subject.startsWith('كيف كانت تجربتك'), 'closing sends a rating request once', JSON.stringify(s).slice(0, 200));
+const rtoken = (JSON.stringify(s).match(/\/inbox\/rate\/([A-Za-z0-9_-]+)/) || [])[1];
+check(!!rtoken, 'rating token in the mail');
+await call('PATCH', `/adminapi/inbox/threads/${thRate}`, { body: { status: 'open' }, user: 'SA0000002', expect: 200 });
+cl = await call('PATCH', `/adminapi/inbox/threads/${thRate}`, { body: { status: 'closed' }, user: 'SA0000002', expect: 200 });
+check(cl.ratingSent === false && sent.length === sb + 1, 'second close does not resend the rating');
+let pg1 = await app.inject({ method: 'GET', url: `/inbox/rate/${rtoken}` });
+check(pg1.statusCode === 200 && pg1.headers['content-type'].includes('text/html') && pg1.body.includes('كيف كانت تجربتك'), 'public rating page renders');
+pg1 = await app.inject({ method: 'GET', url: `/inbox/rate/${rtoken}?score=4` });
+check(pg1.statusCode === 200 && pg1.body.includes('★★★★') && pg1.body.includes('<form'), 'score recorded, comment form shown');
+pg1 = await app.inject({ method: 'POST', url: `/inbox/rate/${rtoken}`, headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: 'comment=' + encodeURIComponent('خدمة ممتازة') });
+check(pg1.statusCode === 200 && pg1.body.includes('وصل تعليقك'), 'comment saved');
+const rr = (await pool.query('SELECT score, comment, agent_id FROM inbox_ratings WHERE token=$1', [rtoken])).rows[0];
+check(rr.score === 4 && rr.comment === 'خدمة ممتازة' && rr.agent_id === 'SA0000002', 'rating row: score, comment and agent', JSON.stringify(rr));
+pg1 = await app.inject({ method: 'GET', url: '/inbox/rate/nope' });
+check(pg1.statusCode === 200 && pg1.body.includes('غير صالح'), 'bad token page');
+await call('PUT', '/adminapi/inbox/settings', { body: { csat: false }, expect: 200 });
+r = await call('POST', generic, { body: { from: 'Noor <noor@client.com>', to: 'sara@naslife.app', subject: 'سؤال سريع', text: 'x' }, user: null, expect: 200 });
+sb = sent.length;
+cl = await call('PATCH', `/adminapi/inbox/threads/${r.threadId}`, { body: { status: 'closed' }, user: 'SA0000002', expect: 200 });
+check(cl.ratingSent === false && sent.length === sb, 'csat off: no rating mail');
+await call('PUT', '/adminapi/inbox/settings', { body: { csat: true }, expect: 200 });
+// المؤشرات
+let stt = await call('GET', '/adminapi/inbox/stats?days=30', { user: 'SA0000002', expect: 200 });
+check(stt.totals.received >= 5 && stt.totals.sent >= 3 && stt.totals.closed >= 2 && stt.totals.csat === 4 && stt.totals.ratings === 1 && typeof stt.totals.firstResponseMin === 'number' && typeof stt.totals.firstResponseMedianMin === 'number' && typeof stt.totals.resolutionHours === 'number' && typeof stt.totals.openUnanswered === 'number' && stt.totals.ratingsSent >= 1, 'team totals', JSON.stringify(stt.totals));
+const sa = stt.agents.find((a) => a.id === 'SA0000002');
+check(sa && sa.name === 'sara' && sa.replies >= 3 && sa.closed >= 2 && sa.csat === 4 && sa.ratings === 1, 'per-agent rows', JSON.stringify(stt.agents));
+check(stt.mailboxes.some((m) => m.mailbox === 'sara' && m.received >= 1) && stt.daily.length >= 1 && stt.days === 30, 'per-mailbox and daily series');
+stt = await call('GET', '/adminapi/inbox/stats', { user: 'SA0000003', expect: 200 });
+check(!stt.mailboxes.some((m) => m.mailbox === 'sara'), 'support sees only its own mailboxes in stats');
+// المساعد الذكي
+await call('POST', `/adminapi/inbox/threads/${th1}/ai`, { body: { kind: 'summary' }, user: 'SA0000002', expect: 400 });
+await call('PUT', '/adminapi/inbox/settings', { body: { aiKey: 'nope' }, expect: 400 });
+await call('PUT', '/adminapi/inbox/settings', { body: { aiModel: 'gpt-9' }, expect: 400 });
+let sti = await call('PUT', '/adminapi/inbox/settings', { body: { aiKey: 'sk-ant-test-123', aiModel: 'claude-sonnet-5' }, expect: 200 });
+check(sti.hasAiKey === true && sti.aiModel === 'claude-sonnet-5' && sti.aiModels.includes('claude-opus-5') && !JSON.stringify(sti).includes('sk-ant-test-123'), 'ai settings saved, key never echoed', JSON.stringify(sti).slice(0, 200));
+mb = await call('GET', '/adminapi/inbox/mailboxes', { user: 'SA0000002', expect: 200 });
+check(mb.aiEnabled === true, 'mailboxes report ai enabled');
+let ai = await call('POST', `/adminapi/inbox/threads/${th1}/ai`, { body: { kind: 'summary' }, user: 'SA0000002', expect: 200 });
+let last = aiCalls[aiCalls.length - 1];
+check(ai.kind === 'summary' && ai.text.includes('الحالة:') && last.body.model === 'claude-sonnet-5' && last.body.fallbacks === 'default' && last.headers['anthropic-version'] === '2023-06-01' && last.headers['anthropic-beta'] === 'server-side-fallback-2026-07-01' && last.headers['x-api-key'] === 'sk-ant-test-123' && last.body.messages[0].content.includes('<thread>') && last.body.messages[0].content.includes('نود التعاون') && !last.body.messages[0].content.includes('ملاحظة داخلية'), 'summary calls Claude with the transcript (no internal notes)', JSON.stringify(last.body).slice(0, 200));
+ai = await call('POST', `/adminapi/inbox/threads/${th1}/ai`, { body: { kind: 'reply' }, user: 'SA0000002', expect: 200 });
+check(ai.kind === 'reply' && ai.text.startsWith('مرحباً') && aiCalls[aiCalls.length - 1].body.messages[0].content.includes('sara'), 'reply draft names the agent');
+await call('POST', `/adminapi/inbox/threads/${th1}/ai`, { body: { kind: 'reply' }, user: 'SA0000004', expect: 403 });
+await call('PUT', '/adminapi/inbox/settings', { body: { aiKey: 'sk-ant-bad' }, expect: 200 });
+ai = await call('POST', `/adminapi/inbox/threads/${th1}/ai`, { body: { kind: 'summary' }, user: 'SA0000002', expect: 400 });
+check(ai.error === 'ai-key-invalid', 'invalid key surfaces a clear error');
+await call('PUT', '/adminapi/inbox/settings', { body: { aiKey: '' }, expect: 200 });
+mb = await call('GET', '/adminapi/inbox/mailboxes', { user: 'SA0000002', expect: 200 });
+check(mb.aiEnabled === false, 'clearing the key disables ai');
+await app.close(); await pool.end();
+console.log(fails ? `\n${fails} FAILED` : '\nALL INBOX TESTS PASSED');
+process.exit(fails ? 1 : 0);

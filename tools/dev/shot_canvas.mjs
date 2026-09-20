@@ -1,0 +1,11 @@
+import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+const [file, out] = process.argv.slice(2);
+const browser = await chromium.launch({ headless: true, executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
+const page = await browser.newPage({ viewport: { width: 2000, height: 1500 } });
+const logs = [];
+page.on('pageerror', e => logs.push('[pageerror] ' + String(e).slice(0, 200)));
+await page.goto(file, { waitUntil: 'load', timeout: 60000 });
+await page.waitForTimeout(20000);
+await page.screenshot({ path: out });
+console.log(logs.join('\n') || '(no page errors)');
+await browser.close();

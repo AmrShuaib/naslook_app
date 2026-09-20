@@ -1,0 +1,12 @@
+{
+  "name": "naslife-server-tests",
+  "private": true,
+  "type": "module",
+  "description": "حزم اختبار إضافات الخادم على Postgres محلي عبر fastify.inject؛ شغّلها بـ ./run.sh <harness.mjs> أو ./run.sh all",
+  "dependencies": {
+    "fastify": "^4.29.1",
+    "pg": "^8.23.0",
+    "web-push": "^3.6.7",
+    "http_ece": "^1.2.0"
+  }
+}

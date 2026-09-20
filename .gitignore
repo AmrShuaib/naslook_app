@@ -43,3 +43,10 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# أدوات الجلسة
+.wb/
+.scratch/
+server/test/node_modules/
+server/test/ops-test/
+server/test/package-lock.json
