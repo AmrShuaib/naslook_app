@@ -53,7 +53,7 @@
 
 ## الشركة
 
-- الشركة: أريب الرقمية (Areeb Digital)، النطاق `areebd.sa`. موقع الشركة مخطط في مستودع مستقل `areeb-site` بنفس نمط النشر (Caddy + مؤقّت سحب) على الخادم نفسه؛ البريد عبر Google Workspace.
+- الشركة: أريب الرقمية (Areeb Digital)، النطاق `areebd.sa`. موقع الشركة في المستودع المستقل `AmrShuaib/areebdigital` (فرع `main`، جلسة مستقلة تبنيه) بنفس نمط النشر (Caddy + مؤقّت سحب `areeb-pull.timer` إلى `/opt/areeb/site`) على الخادم نفسه؛ البريد عبر Google Workspace.
 - حسابات المتاجر (Apple Developer وGoogle Play) ستُفتح باسم الشركة وتحتاج رقم D-U-N-S وموقعاً باسم الشركة وصفحتي خصوصية ودعم.
 
 ## اصطلاحات
