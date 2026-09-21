@@ -2,14 +2,17 @@
 # استعادة موقع naslife.app في Caddy بعد أن فُقد من الإعداد الجاري (آمن للتكرار).
 # الأعراض: https://naslife.app يفشل في TLS (لا شهادة) و http://naslife.app يعرض «Caddy works!».
 # السبب المعتاد: إعداد naslife لم يكن محفوظاً في /etc/caddy/Caddyfile فأُعيد تحميل الملف الافتراضي عند إضافة موقع آخر.
-# التشغيل على الخادم:  ssh root@91.108.111.246 "bash -s" < server/restore-caddy.sh
-#   أو:  curl -fsSL https://raw.githubusercontent.com/AmrShuaib/naslook_app/claude/intelligent-hypatia-owb3fk/server/restore-caddy.sh | bash
+# التشغيل على الخادم (منفصلاً عن جلسة SSH حتى لا يقطعه انقطاع الاتصال، والسجل في /opt/naslife/ops/restore-caddy.log):
+#   curl -fsSL https://raw.githubusercontent.com/AmrShuaib/naslook_app/claude/intelligent-hypatia-owb3fk/server/restore-caddy.sh -o /tmp/restore-caddy.sh \
+#     && systemd-run -P --wait --collect --unit "restore-caddy-$(date +%s)" bash /tmp/restore-caddy.sh
 # متغيرات اختيارية: NASLIFE_PORT (منفذ خدمة Node، الافتراضي من وحدة systemd ثم 4000)، CADDYFILE، NASLIFE_ADMIN_HOST=1 لإضافة admin.naslife.app
 set -euo pipefail
 
 CADDYFILE="${CADDYFILE:-/etc/caddy/Caddyfile}"
 PORT="${NASLIFE_PORT:-$(systemctl show naslife -p Environment --value 2>/dev/null | tr ' ' '\n' | grep '^PORT=' | head -1 | cut -d= -f2 || true)}"
 PORT="${PORT:-4000}"
+mkdir -p /opt/naslife/ops 2>/dev/null || true
+exec > >(tee -a /opt/naslife/ops/restore-caddy.log) 2>&1
 log() { printf '[restore-caddy] %s\n' "$*"; }
 
 command -v caddy >/dev/null || { log "caddy غير مثبّت"; exit 1; }
@@ -18,8 +21,8 @@ command -v caddy >/dev/null || { log "caddy غير مثبّت"; exit 1; }
 log "خدمة naslife: $(systemctl is-active naslife 2>/dev/null || echo unknown) · المنفذ $PORT"
 if curl -fsS -m 5 "http://127.0.0.1:$PORT/settings/public" >/dev/null 2>&1; then log "Node يرد على 127.0.0.1:$PORT"; else log "تحذير: Node لا يرد على 127.0.0.1:$PORT (سأكمل إعداد Caddy، وأعد تشغيل naslife بعدها إن لزم)"; fi
 
-log "ملفات فيها naslife.app (للمعرفة فقط):"
-grep -rl "naslife.app" /etc/caddy /opt/naslife /root 2>/dev/null | grep -v "\.bak" | sed 's/^/  /' || echo "  لا شيء"
+log "ملفات إعداد فيها naslife.app (بحث محدود، للمعرفة فقط):"
+grep -l "naslife.app" /etc/caddy/* /etc/caddy/sites/* /opt/naslife/ops/* 2>/dev/null | grep -v "\.bak" | sed 's/^/  /' || echo "  لا شيء"
 ls -1 "$CADDYFILE".bak* 2>/dev/null | sed 's/^/  نسخة احتياطية: /' || true
 
 if grep -Eq '^[[:space:]]*(naslife\.app|www\.naslife\.app)[[:space:],{]' "$CADDYFILE"; then
