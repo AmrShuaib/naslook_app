@@ -18,6 +18,7 @@
 - **نشر الويب**: `flutter build web --release --pwa-strategy=none -o build/web` ثم `tools/publish_bundle.sh "رسالة"`. تحقق: `curl -sS https://naslife.app/main.dart.js | md5sum` يطابق `build/web/main.dart.js`.
 - `.github/workflows/deploy.yml` يبني الويب عند الدفع أيضاً؛ عملياً نبني محلياً وننشر بالسكربت لأنه أسرع وأدق.
 - الخادم `91.108.111.246` خلف Caddy. **لا يوجد SSH من الجلسة**؛ أي أمر على الخادم يشغّله المالك.
+- **Caddy**: كتلة `naslife.app` (تحويل www، ضغط، ترويسة CSP، تمرير عكسي إلى Node على 127.0.0.1:4000) في `/etc/caddy/Caddyfile` بين علامتي `# --- naslife.app` و`# --- end naslife.app`، وبجانبها كتلة `areebd.sa` لموقع الشركة. إن فُقدت كتلة ناس لايف (TLS internal error وصفحة «Caddy works!») يشغّل المالك `server/restore-caddy.sh` عبر `systemd-run` كما في رأس الملف. حدث ذلك في 21 سبتمبر 2026 بعد تركيب موقع الشركة لأن الإعداد لم يكن محفوظاً في الملف. أوامر SSH من PowerShell تُكتب بعلامات اقتباس مفردة وبلا `$`.
 
 ## الاختبار
 
