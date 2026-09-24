@@ -51,7 +51,12 @@ async function setup(app, opts) {
   const nickOf = async (id) => (await userRow(id))?.nickname || id;
   const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch { /* ignore */ } };
   const sar = (h) => { const v = Number(h) / 100; return (Number.isInteger(v) ? String(v) : v.toFixed(2)) + " ر.س"; };
-  const blocked = async (a, b) => { try { return (await pool.query("SELECT 1 FROM user_blocks WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1)", [a, b])).rowCount > 0; } catch { return false; } };
+  // الحظر من safety.js (يكتشف جدول النواة؛ اسمه على الخادم blocks لا user_blocks)، ثم استعلام مباشر احتياطاً
+  const blocked = async (a, b) => {
+    try { const f = globalThis.naslifeIsBlocked; if (f) return !!(await f(a, b)); } catch { /* ignore */ }
+    for (const t of ["user_blocks", "blocks"]) { try { return (await pool.query(`SELECT 1 FROM ${t} WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1)`, [a, b])).rowCount > 0; } catch { /* جدول آخر */ } }
+    return false;
+  };
   // المال داخل المحادثة (طلب مبلغ، تقسيم، إرسال): مفتاح المنصة chatPaymentsEnabled، ومطفأ دائماً في عميل iOS الأصلي
   const iosNative = (req) => /^ios\//i.test(String(req.headers["x-naslife-client"] ?? ""));
   // دفع الدردشة تحويل بين مستخدمين: يتوقف إن أُطفئت التحويلات أو مدفوعات الدردشة، ودائماً في iOS

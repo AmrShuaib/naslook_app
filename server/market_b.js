@@ -59,7 +59,12 @@ async function setup(app, opts) {
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const origin = (req) => { const proto = String(req.headers["x-forwarded-proto"] ?? req.protocol ?? "https").split(",")[0].trim(); const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim(); return `${proto}://${host}`; };
   const userByNick = async (nick) => { try { return (await pool.query("SELECT id, nickname FROM users WHERE lower(nickname)=lower($1) ORDER BY id LIMIT 1", [nick])).rows[0] ?? null; } catch { return null; } };
-  const blocked = async (a, b) => { try { return (await pool.query("SELECT 1 FROM user_blocks WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1)", [a, b])).rowCount > 0; } catch { return false; } };
+  // الحظر من safety.js (يكتشف جدول النواة؛ اسمه على الخادم blocks لا user_blocks)، ثم استعلام مباشر احتياطاً
+  const blocked = async (a, b) => {
+    try { const f = globalThis.naslifeIsBlocked; if (f) return !!(await f(a, b)); } catch { /* ignore */ }
+    for (const t of ["user_blocks", "blocks"]) { try { return (await pool.query(`SELECT 1 FROM ${t} WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1)`, [a, b])).rowCount > 0; } catch { /* جدول آخر */ } }
+    return false;
+  };
   // تصفح الضيف للبازارات (مراجِع المتجر)؛ الانضمام والإدارة بجلسة
   const optionalAuth = async (req) => { try { return (await auth(req)) || null; } catch { return null; } };
   const blockedIds = async (uid) => { try { return uid ? (await globalThis.naslifeBlockedIds?.(uid)) ?? [] : []; } catch { return []; } };

@@ -100,7 +100,7 @@ export default async function safety(app, opts) {
     blocksOk = !!(BC?.user && BC?.blocked);
   }
   await discoverBlocks();
-  if (!blocksOk) { try { app.log.warn("safety: no user blocks table found; blocking filters are inactive until the core creates user_blocks"); } catch { /* ignore */ } }
+  if (!blocksOk) { try { app.log.warn("safety: no user blocks table found (user_blocks or blocks); blocking filters are inactive"); } catch { /* ignore */ } }
   async function blockedIds(uid) {
     if (!uid) return [];
     // النواة قد تنشئ الجدول بعد إقلاعنا: نعيد الاكتشاف مرة في الدقيقة على الأكثر
