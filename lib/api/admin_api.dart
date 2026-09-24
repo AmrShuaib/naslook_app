@@ -634,10 +634,14 @@ class AdminMailLog {
 
 /// إعلان عام يظهر للمستخدمين (من الإعدادات).
 class PublicSettings {
-  final String announcement, supportHandle;
+  final String announcement, supportHandle, supportEmail;
   final bool maintenance, testTopup;
-  const PublicSettings({this.announcement = '', this.supportHandle = '', this.maintenance = false, this.testTopup = false});
-  factory PublicSettings.fromJson(Map m) => PublicSettings(announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '', maintenance: m['maintenance'] == true, testTopup: m['testTopup'] == true);
+  /// مفتاحا المنصة لتحويل المال بين المستخدمين (المحفظة) وأوامر المال في المحادثة؛ مطفآن افتراضياً (قرار تنظيمي).
+  final bool transfersEnabled, chatPaymentsEnabled;
+  const PublicSettings({this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.maintenance = false, this.testTopup = false, this.transfersEnabled = false, this.chatPaymentsEnabled = false});
+  factory PublicSettings.fromJson(Map m) => PublicSettings(
+      announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '', supportEmail: m['supportEmail']?.toString() ?? '',
+      maintenance: m['maintenance'] == true, testTopup: m['testTopup'] == true, transfersEnabled: m['transfersEnabled'] == true, chatPaymentsEnabled: m['chatPaymentsEnabled'] == true);
 }
 
 /// مسارات لوحة الإدارة (server/admin.js).

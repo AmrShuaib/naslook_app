@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
+import '../core/require_account.dart';
 import '../core/share/legal_links.dart';
 import '../state/app_state.dart';
 
@@ -34,6 +35,22 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   int _nickSeq = 0;
 
   static const _primary = Color(0xFF1565C0);
+
+  @override
+  void initState() {
+    super.initState();
+    // «أنشئ حساباً» من تبويب الزائر: نبدأ على التسجيل ثم نعيد المفتاح (لا يُعدَّل مزوّد أثناء البناء)
+    if (ref.read(loginStartsRegisterProvider)) {
+      _mode = _Mode.register;
+      WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) ref.read(loginStartsRegisterProvider.notifier).state = false; });
+    }
+  }
+
+  /// التصفّح بلا حساب: الخريطة والأماكن والسوق والفعاليات، والأفعال تطلب الدخول عند الحاجة.
+  void _browseAsGuest() {
+    ref.read(guestWantsLoginProvider.notifier).state = false;
+    ref.read(guestBrowseProvider.notifier).state = true;
+  }
 
   @override
   void dispose() {
@@ -331,7 +348,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           _link('سياسة الخصوصية', 'privacy', const Key('login-privacy-link')),
                         ]),
                       ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
+                    TextButton.icon(
+                      key: const Key('login-browse-guest'),
+                      onPressed: busy ? null : _browseAsGuest,
+                      icon: const Icon(Icons.explore_outlined, size: 20, color: _primary),
+                      label: const Text('تصفّح بدون حساب', style: TextStyle(color: _primary, fontWeight: FontWeight.w700, fontSize: 15)),
+                    ),
                     TextButton.icon(key: const Key('login-support'), onPressed: () => LegalLinks.open('support'), icon: const Icon(Icons.support_agent_rounded, size: 18, color: Colors.black54), label: const Text('الدعم والمساعدة', style: TextStyle(color: Colors.black54))),
                   ],
                 ),

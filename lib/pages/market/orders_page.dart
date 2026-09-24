@@ -12,6 +12,7 @@ import '../../api/client.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
+import '../../core/platform.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
@@ -142,7 +143,8 @@ class OwnerListingActions extends ConsumerWidget {
             OutlinedButton.icon(style: OutlinedButton.styleFrom(foregroundColor: x.status == 'active' ? Joy.danger : Joy.primary), onPressed: () => toggleListingVisibility(context, ref, x), icon: Icon(x.status == 'active' ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 18), label: Text(x.status == 'active' ? 'إخفاء العرض' : 'إظهار العرض')),
           if (x.status == 'draft') FilledButton.icon(onPressed: () => editListing(context, ref, x), icon: const Icon(Icons.publish_rounded, size: 18), label: const Text('أكمل ونشر')),
           if (x.status == 'active') OutlinedButton.icon(key: const Key('owner-bump'), onPressed: () async { try { await ref.read(apiClientProvider).bumpListing(x.id); invalidateMarket(ref); if (context.mounted) toast(context, 'رُفع عرضك إلى الأعلى'); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); } }, icon: const Icon(Icons.arrow_upward_rounded, size: 18), label: const Text('رفع للأعلى')),
-          if (x.status == 'active') FilledButton.tonalIcon(key: const Key('owner-spotlight'), onPressed: () => showSpotlightSheet(context, ref, listing: x), icon: const Icon(Icons.auto_awesome_rounded, size: 18), label: Text(x.spotlight ? 'تمديد سبوت لايت' : 'سبوت لايت')),
+          // سبوت لايت إعلان رقمي مدفوع: لا يُباع في iOS
+          if (x.status == 'active' && !isIosNative) FilledButton.tonalIcon(key: const Key('owner-spotlight'), onPressed: () => showSpotlightSheet(context, ref, listing: x), icon: const Icon(Icons.auto_awesome_rounded, size: 18), label: Text(x.spotlight ? 'تمديد سبوت لايت' : 'سبوت لايت')),
         ]),
       ]);
   Widget _stat(String l, String v) => Padding(padding: const EdgeInsets.only(left: 18), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(v, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)), Text(l, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5))]));

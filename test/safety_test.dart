@@ -122,6 +122,8 @@ void main() {
           ]),
       requestsProvider.overrideWith((ref) async => const []),
       mutesProvider.overrideWith((ref) async => const [ChatMute(peerId: 'SA0000002')]),
+      // الشارة للحسابات فقط؛ الزائر عدده صفر
+      signedInProvider.overrideWithValue(true),
     ]);
     addTearDown(container.dispose);
     await container.read(chatsProvider.future);

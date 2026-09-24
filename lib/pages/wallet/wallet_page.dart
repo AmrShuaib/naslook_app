@@ -9,6 +9,8 @@ import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/session.dart';
 import '../../core/app_theme.dart';
+import '../../core/platform.dart';
+import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
@@ -29,9 +31,12 @@ class WalletPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final w = ref.watch(walletProvider);
     final me = ref.watch(appStateProvider.select((s) => s.user));
+    // التحويل بين المستخدمين (تحويل، دفع، رمز QR) خلف مفتاح المنصة ومغلق في iOS؛ والشحن كله مخفي في iOS (قرار الإصدار الأول)
+    final transfers = ref.watch(walletTransfersEnabledProvider);
+    final ios = isIosNative;
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('المحفظة'), actions: [IconButton(icon: const Icon(Icons.qr_code_2_rounded), tooltip: 'رمزي', onPressed: () => _myQr(context, me))]),
+      appBar: AppBar(title: const Text('المحفظة'), actions: [if (transfers) IconButton(key: const Key('wallet-qr'), icon: const Icon(Icons.qr_code_2_rounded), tooltip: 'رمزي', onPressed: () => _myQr(context, me))]),
       body: w.when(
         data: (wallet) => RefreshIndicator(
           onRefresh: () async => ref.invalidate(walletProvider),
@@ -57,19 +62,24 @@ class WalletPage extends ConsumerWidget {
                   ]),
                 ]),
               ),
+              if (ios) const Padding(
+                key: Key('wallet-ios-note'),
+                padding: EdgeInsets.only(top: 10),
+                child: Text('رصيدك يُستخدم للشراء من البائعين والأماكن', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+              ),
               const SizedBox(height: 14),
               Row(children: [
-                _action(Icons.send_rounded, 'تحويل', () => _transfer(context, ref)),
-                _action(Icons.qr_code_scanner_rounded, 'دفع', () => _pay(context, ref)),
+                if (transfers) _action(Icons.send_rounded, 'تحويل', () => _transfer(context, ref), key: const Key('wallet-transfer')),
+                if (transfers) _action(Icons.qr_code_scanner_rounded, 'دفع', () => _pay(context, ref), key: const Key('wallet-pay')),
                 _action(Icons.confirmation_number_outlined, 'تذاكري', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()))),
                 _action(Icons.receipt_long_outlined, 'حجوزاتي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
                 _action(Icons.local_offer_outlined, 'عروضي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyOffersPage()))),
-                if (wallet.testTopup) _action(Icons.add_rounded, 'شحن', () => _topup(context, ref)),
-                if (ref.watch(payConfigProvider).valueOrNull?.enabled == true) _action(Icons.credit_card_rounded, 'بالبطاقة', () => _cardTopup(context, ref, ref.read(payConfigProvider).requireValue), key: const Key('wallet-card-topup')),
+                if (wallet.testTopup && !ios) _action(Icons.add_rounded, 'شحن', () => _topup(context, ref), key: const Key('wallet-test-topup')),
+                if (!ios && ref.watch(payConfigProvider).valueOrNull?.enabled == true) _action(Icons.credit_card_rounded, 'بالبطاقة', () => _cardTopup(context, ref, ref.read(payConfigProvider).requireValue), key: const Key('wallet-card-topup')),
               ]),
               const SizedBox(height: 18),
               SectionTitle('آخر الحركات', action: 'كشف الحساب', onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StatementPage()))),
-              if (wallet.recent.isEmpty) const EmptyState(icon: Icons.account_balance_wallet_outlined, title: 'لا حركات بعد', subtitle: 'رصيدك يُشحن عبر الإدارة حالياً، وتظهر هنا مشترياتك وتحويلاتك.'),
+              if (wallet.recent.isEmpty) EmptyState(icon: Icons.account_balance_wallet_outlined, title: 'لا حركات بعد', subtitle: ios ? 'تظهر هنا مشترياتك وحجوزاتك.' : 'رصيدك يُشحن عبر الإدارة حالياً، وتظهر هنا مشترياتك وتحويلاتك.'),
               JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, t) in wallet.recent.indexed) TxRow(t, last: i == wallet.recent.length - 1)])),
             ],
           ),

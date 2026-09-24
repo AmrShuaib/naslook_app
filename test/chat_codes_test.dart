@@ -80,6 +80,8 @@ Future<http.Response> _handle(http.Request req) async {
   if (req.method == 'POST' && path == '/messages') {
     return _json({'message': {'id': 'srv-${_calls.where((c) => c == key).length}', 'sender_id': 'SA0000001', 'type': 'text', 'content': _bodies[key]!['content'], 'sent_at': DateTime.now().toUtc().toIso8601String()}});
   }
+  // أوامر المال تظهر فقط حين يفعّل المدير التحويلات والدفع في المحادثة
+  if (req.method == 'GET' && path == '/settings/public') return _json({'transfersEnabled': true, 'chatPaymentsEnabled': true});
   if (req.method == 'GET' && path == '/biz') return _json([]);
   if (req.method == 'GET' && path == '/tickets') return _json([{'id': 'tk1', 'code': 'NAS-ABCD1234', 'status': 'valid', 'paid': 5000, 'eventId': '22222222-2222-2222-2222-222222222222', 'title': 'لقاء المطورين', 'tier': 'عادي', 'startsAt': DateTime.now().add(const Duration(days: 1)).toIso8601String()}]);
   if (req.method == 'GET' && path == '/notify/unread') return _json({'unread': 0});

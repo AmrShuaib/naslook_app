@@ -127,7 +127,7 @@ extension PostsApi on ApiClient {
   Future<MapPost> mapPost(String id) async => MapPost.fromJson(await get('/mapposts/$id'));
   Future<MapPost> updatePost(String id, Map<String, dynamic> patch) async => MapPost.fromJson(await patch_('/mapposts/$id', patch));
   Future<void> deletePost(String id) => delete('/mapposts/$id');
-  Future<int> viewPost(String id) async => _i((await post('/mapposts/$id/view', const {}))['views']);
+  Future<int> viewPost(String id) async => _i((await post('/mapposts/$id/view', const {}, prompt: false))['views']);
   Future<({bool liked, int likes})> likePost(String id) async {
     final d = await post('/mapposts/$id/like', const {});
     return (liked: d['liked'] == true, likes: _i(d['likes']));

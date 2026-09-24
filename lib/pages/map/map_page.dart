@@ -13,6 +13,7 @@ import '../../api/posts_api.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
+import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
 import '../../state/market_providers.dart';
@@ -159,6 +160,8 @@ class _MapPageState extends ConsumerState<MapPage> {
       } catch (_) {}
     });
     final mine = ref.watch(myPresenceProvider).value;
+    // الزائر لا يرى الأشخاص ولا الدبابيس (بيانات النواة الخاصة بالحسابات) ولا زر إظهار موقعه
+    final signedIn = ref.watch(signedInProvider);
     final loading = ref.watch(presenceProvider).isLoading || ref.watch(storiesProvider).isLoading || ref.watch(pinsProvider).isLoading || ref.watch(businessesProvider).isLoading || ref.watch(mapPostsProvider).isLoading || ref.watch(mapMarketProvider).isLoading;
     final items = _collect();
     final b = _bounds;
@@ -212,9 +215,9 @@ class _MapPageState extends ConsumerState<MapPage> {
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(children: [
-                  _chip('أشخاص', Icons.person_rounded, showPeople, () => setState(() => showPeople = !showPeople)),
+                  if (signedIn) _chip('أشخاص', Icons.person_rounded, showPeople, () => setState(() => showPeople = !showPeople)),
                   _chip('لحظات', Icons.auto_awesome_rounded, showStories, () => setState(() => showStories = !showStories)),
-                  _chip('دبابيس', Icons.push_pin_rounded, showPins, () => setState(() => showPins = !showPins)),
+                  if (signedIn) _chip('دبابيس', Icons.push_pin_rounded, showPins, () => setState(() => showPins = !showPins)),
                   _chip('متاجر', Icons.storefront_rounded, showBusinesses, () => setState(() => showBusinesses = !showBusinesses)),
                   _chip('السوق', Icons.shopping_bag_rounded, showMarket, () => setState(() => showMarket = !showMarket)),
                   if (showBusinesses) ...[
@@ -244,8 +247,8 @@ class _MapPageState extends ConsumerState<MapPage> {
                 _fab(Icons.my_location_rounded, _goToMe, tip: 'موقعي'),
                 const SizedBox(height: 8),
                 _fab(Icons.refresh_rounded, _refresh, tip: 'تحديث'),
-                const SizedBox(height: 8),
-                _fab(mine?.visible == true ? Icons.visibility_rounded : Icons.visibility_off_rounded, _togglePresence, filled: mine?.visible == true, tip: mine?.visible == true ? 'إخفاء موقعي' : 'إظهار موقعي'),
+                if (signedIn) const SizedBox(height: 8),
+                if (signedIn) _fab(mine?.visible == true ? Icons.visibility_rounded : Icons.visibility_off_rounded, _togglePresence, filled: mine?.visible == true, tip: mine?.visible == true ? 'إخفاء موقعي' : 'إظهار موقعي'),
               ]),
             ),
           ),
@@ -261,6 +264,7 @@ class _MapPageState extends ConsumerState<MapPage> {
               opacity: controlsHidden ? 0 : 1,
               child: FilledButton.icon(
                 onPressed: () async {
+                  if (!requireAccount(context)) return;
                   final gps = await DeviceLocation.browse(precise: true);
                   if (gps != null) _map.move(gps, 16);
                   if (mounted) _hereMenu(gps ?? _map.camera.center);
@@ -393,6 +397,8 @@ class _MapPageState extends ConsumerState<MapPage> {
   }
 
   Future<void> _hereMenu(LatLng at) async {
+    // كل ما في القائمة نشر: الزائر يُدعى للدخول قبل فتحها
+    if (!requireAccount(context)) return;
     final choice = await showModalBottomSheet<String>(
       context: context,
       builder: (_) => SafeArea(
@@ -499,6 +505,7 @@ class _MapPageState extends ConsumerState<MapPage> {
 
   /// منشور جديد عند مركز الخريطة الحالي.
   Future<void> _newPostHere() async {
+    if (!requireAccount(context)) return;
     final c = _map.camera.center;
     final p = await PostComposerPage.open(context, lat: c.latitude, lng: c.longitude);
     if (p != null && mounted) toast(context, 'نُشر منشورك على الخريطة');

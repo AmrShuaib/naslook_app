@@ -37,7 +37,7 @@ extension CommerceApi on ApiClient {
   /// تعديل عرضي: النصوص والسعر والصور والخيارات والمخزون، أو status: active|hidden|draft.
   Future<Listing> updateListing(String id, Map<String, dynamic> patch) async => Listing.fromJson(await patch_('/market/$id', patch));
   Future<void> bumpListing(String id) => post('/market/$id/bump', const {});
-  Future<void> viewListing(String id) => post('/market/$id/view', const {});
+  Future<void> viewListing(String id) => post('/market/$id/view', const {}, prompt: false);
 
   // ---- الطلبات بمراحلها
   Future<Map<String, dynamic>> order(String listingId, int qty, {String note = '', String? variant, String? coupon, DateTime? slot}) =>
@@ -84,7 +84,7 @@ extension CommerceApi on ApiClient {
 
   // ---- سبوت لايت
   Future<List<SpotlightItem>> spotlight() async => asList(await getList('/market/spotlight')).map(SpotlightItem.fromJson).toList();
-  Future<void> spotlightClick(String id) => post('/market/spotlight/$id/click', const {});
+  Future<void> spotlightClick(String id) => post('/market/spotlight/$id/click', const {}, prompt: false);
   Future<Map<String, dynamic>> spotlightPrice() => get('/market/spotlight/price');
   Future<List<SpotlightMine>> spotlightMine() async => asList(await getList('/market/spotlight/mine')).map(SpotlightMine.fromJson).toList();
   Future<Map<String, dynamic>> buySpotlight(String listingId, int days) => post('/market/$listingId/spotlight', {'days': days});
