@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
+import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
@@ -55,6 +56,17 @@ class _CircleDetailPageState extends ConsumerState<CircleDetailPage> {
           IconButton(tooltip: 'الأعضاء', icon: const Icon(Icons.people_alt_outlined), onPressed: () => _members(context)),
           if (v != null && v.member && v.role != 'owner')
             IconButton(tooltip: 'مغادرة', icon: const Icon(Icons.logout_rounded), onPressed: () => _leave(v)),
+          // اسم الدائرة ووصفها محتوى ينشره مستخدم (أبل 1.2): إبلاغ عنها وحظر مالكها لغير المالك
+          if (v != null && v.role != 'owner')
+            ReportMenuButton(
+              type: 'vessel',
+              id: v.id,
+              keyPrefix: 'vessel',
+              reportLabel: 'إبلاغ عن الدائرة',
+              author: v.ownerId == null || v.ownerId!.isEmpty ? null : Person(id: v.ownerId!, nickname: 'المالك'),
+              iconSize: 24,
+              color: Joy.text,
+            ),
         ],
       ),
       floatingActionButton: v != null && v.member
@@ -67,7 +79,12 @@ class _CircleDetailPageState extends ConsumerState<CircleDetailPage> {
           final blocked = ref.watch(blockedIdsProvider);
           final posts = [for (final p in all) if (!isBlockedId(blocked, p.author.id)) p];
           return RefreshIndicator(
-            onRefresh: () async => ref.invalidate(vesselDetailProvider(widget.vesselId)),
+            onRefresh: () async {
+              ref.invalidate(vesselDetailProvider(widget.vesselId));
+              // التعليقات المخفية بالإدارة أو المُعادة لا تتغيّر إلا بإعادة جلبها مع التعليقات نفسها
+              ref.invalidate(hiddenCommentsProvider);
+              ref.invalidate(commentsProvider);
+            },
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 96),
               children: [
@@ -254,6 +271,12 @@ class _Comments extends ConsumerWidget {
             decoration: const InputDecoration(hintText: 'اكتب تعليقاً…', isDense: true),
             onSubmitted: (t) async {
               if (t.trim().isEmpty) return;
+              // التعليقات تذهب إلى النواة مباشرة ولا يفحصها خادمنا، فنفحص الكلمات المحظورة قبل الإرسال
+              final banned = bannedWordIn(t, await ref.read(bannedWordsProvider.future));
+              if (banned != null) {
+                if (context.mounted) toast(context, 'النص يحتوي كلمة غير مسموحة: «$banned»', error: true);
+                return;
+              }
               try {
                 await ref.read(apiClientProvider).addComment(postId, t.trim());
                 ref.invalidate(commentsProvider(postId));

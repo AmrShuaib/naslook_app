@@ -154,7 +154,8 @@ class _AdminModerationTabState extends ConsumerState<AdminModerationTab> {
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
           child: Align(
             alignment: AlignmentDirectional.centerStart,
-            child: Text('${q.value!.open} عنصراً بانتظار المراجعة · يُخفى تلقائياً عند ${q.value!.threshold} مبلّغين', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+            // العدد من الخادم إجمالي لكل الأنواع مهما كان الفلتر، فنقول ذلك صراحة
+            child: Text('${q.value!.open} عنصراً بانتظار المراجعة (إجمالي كل الأنواع) · يُخفى تلقائياً عند ${q.value!.threshold} مبلّغين', key: const Key('mod-open-total'), style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
           ),
         ),
       Expanded(

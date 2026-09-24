@@ -7,6 +7,8 @@
 import { LEGAL_VERSION, privacyBody, termsBody, supportBody } from "./legal_content.js";
 
 const DOCS = ["terms", "privacy"];
+// بريد الدعم: نفس التعبير في admin.js حرفياً (لا استيراد بين الإضافات حتى لا يُسقط خطأ في إحداهما الأخرى)
+export const SUPPORT_EMAIL_RE = /^[^\s@<>"']+@[^\s@<>"']+\.[a-z]{2,}$/i;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // نفس ألوان المدونة والتطبيق، مع وضع داكن؛ الخطوط من أصول التطبيق نفسه
@@ -57,7 +59,7 @@ export default async function legalPages(app, opts = {}) {
     } catch (e) { app.log?.warn?.({ err: e }, "legal_pages: consents table unavailable"); }
   }
   const settings = () => globalThis.naslifeSettings ?? {};
-  const supportEmail = () => { const e = String(settings().supportEmail ?? "").trim(); return /^[^\s@<>"']+@[^\s@<>"']+\.[a-z]{2,}$/i.test(e) ? e : "support@naslife.app"; };
+  const supportEmail = () => { const e = String(settings().supportEmail ?? "").trim(); return SUPPORT_EMAIL_RE.test(e) ? e : "support@naslife.app"; };
   const supportHandle = () => String(settings().supportHandle ?? "").trim().replace(/^@/, "").replace(/[^a-z0-9_]/gi, "").slice(0, 25);
 
   const page = (key, title, body) => `<!DOCTYPE html>

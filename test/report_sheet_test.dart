@@ -23,6 +23,7 @@ class _SignedIn extends AppStateNotifier {
 }
 
 const _lid = '11111111-1111-4111-8111-111111111111';
+const _cid = '22222222-2222-4222-8222-222222222222';
 const _sara = Person(id: 'SA0000002', nickname: 'sara');
 const _me = Person(id: 'SA0000001', nickname: 'amr');
 
@@ -94,7 +95,7 @@ void main() {
   });
 
   testWidgets('"also block" reports then blocks the author and refreshes the blocked set', (tester) async {
-    final srv = await _pump(tester, type: 'vessel-comment', id: 'c-1', author: _sara);
+    final srv = await _pump(tester, type: 'vessel-comment', id: _cid, author: _sara);
     expect(find.text('حظر sara أيضاً'), findsOneWidget);
     await tester.tap(find.byKey(const Key('report-reason-1')));
     await tester.enterText(find.byKey(const Key('report-note')), 'رسائل متكررة');
@@ -102,20 +103,22 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const Key('report-submit')));
     await tester.pumpAndSettle();
-    expect(srv.bodies['POST /safety/report'], {'targetType': 'vessel-comment', 'targetId': 'c-1', 'reason': 'تحرش أو تنمر: رسائل متكررة'});
+    expect(srv.bodies['POST /safety/report'], {'targetType': 'vessel-comment', 'targetId': _cid, 'reason': 'تحرش أو تنمر: رسائل متكررة'});
     expect(srv.bodies['POST /blocks']!['blockedId'], 'SA0000002');
     expect(srv.calls.where((c) => c == 'GET /blocks').length, greaterThanOrEqualTo(2), reason: 'قائمة المحظورين أعيد جلبها');
-    expect(find.textContaining('وحُظر sara'), findsOneWidget);
+    expect(find.text('وصل بلاغك وحُظر sara'), findsOneWidget, reason: 'رسالة واحدة تجمع البلاغ والحظر');
   });
 
   testWidgets('own-content and not-found errors are explained, and own content is never blocked', (tester) async {
+    // محتواي فعلاً (الناشر أنا): لا خيار حظر، ورفض الخادم «own-content» يظهر برسالة مفهومة
     final srv = _Srv()..reportError = 'own-content';
-    await _pump(tester, type: 'post', id: _lid, author: _sara, srv: srv);
+    await _pump(tester, type: 'post', id: _lid, author: _me, srv: srv);
+    expect(find.byKey(const Key('report-also-block')), findsNothing);
     await tester.tap(find.byKey(const Key('report-reason-7')));
-    await tester.tap(find.byKey(const Key('report-also-block')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('report-submit')));
     await tester.pumpAndSettle();
+    expect(srv.bodies['POST /safety/report'], {'targetType': 'post', 'targetId': _lid, 'reason': 'أخرى'});
     expect(find.text('لا يمكنك الإبلاغ عن محتواك'), findsOneWidget);
     expect(srv.calls, isNot(contains('POST /blocks')));
 
@@ -130,7 +133,7 @@ void main() {
   });
 
   testWidgets('reporting a person goes to /reports with the message id', (tester) async {
-    final srv = await _pump(tester, type: kReportUser, id: 'SA0000002', author: _sara, messageId: 'm-9');
+    final srv = await _pump(tester, type: kReportUser, id: 'SA0000002', author: _sara, messageId: '33333333-3333-4333-8333-333333333333');
     await tester.tap(find.byKey(const Key('report-reason-4')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('report-submit')));
@@ -138,7 +141,7 @@ void main() {
     final b = srv.bodies['POST /reports']!;
     expect(b['userId'], 'SA0000002');
     expect(b['reason'], 'احتيال أو نصب');
-    expect(b['messageId'], 'm-9');
+    expect(b['messageId'], '33333333-3333-4333-8333-333333333333');
     expect(srv.calls, isNot(contains('POST /safety/report')));
   });
 

@@ -1087,6 +1087,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     try {
       await _api.blockUser(_peerId);
       if (!mounted) return;
+      // قائمة المحظورين تصفّي منشورات الدوائر وتعليقاتها وشارة «محظور» في الملف، فتُحدَّث فوراً
+      ref.invalidate(blockedUsersProvider);
       ref.invalidate(chatsProvider);
       ref.invalidate(contactsProvider);
       toast(context, 'تم حظر ${widget.peer.nickname}');

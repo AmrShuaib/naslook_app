@@ -7,6 +7,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+// بريد الدعم: نفس التعبير في legal_pages.js حرفياً، فكل عنوان تقبله الإعدادات هو ما يظهر في /support (لا يُستبدل بالافتراضي بصمت)
+export const SUPPORT_EMAIL_RE = /^[^\s@<>"']+@[^\s@<>"']+\.[a-z]{2,}$/i;
 
 const ID_RE = /^[A-Z]{2}\d{7}$/;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -703,7 +705,7 @@ export default async function admin(app, opts) {
     if (b.announcement !== undefined) patch.announcement = str(b.announcement, 300);
     if (b.maintenance !== undefined) patch.maintenance = b.maintenance === true;
     if (b.supportHandle !== undefined) patch.supportHandle = str(b.supportHandle, 40);
-    if (b.supportEmail !== undefined) { const e = str(b.supportEmail, 120); if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return bad(reply, 400, "bad-email"); patch.supportEmail = e; }
+    if (b.supportEmail !== undefined) { const e = str(b.supportEmail, 120); if (e && !SUPPORT_EMAIL_RE.test(e)) return bad(reply, 400, "bad-email"); patch.supportEmail = e; }
     if (b.transfersEnabled !== undefined) patch.transfersEnabled = b.transfersEnabled !== false;
     if (b.chatPaymentsEnabled !== undefined) patch.chatPaymentsEnabled = b.chatPaymentsEnabled !== false;
     if (b.bannedWordsDefault !== undefined) patch.bannedWordsDefault = b.bannedWordsDefault !== false;

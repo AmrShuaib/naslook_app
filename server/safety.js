@@ -14,7 +14,7 @@ const ID_RE = /^[A-Z]{2}\d{7}$/i;
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
 const CORE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export const TARGET_TYPES = ["post", "listing", "community", "vessel-post", "community-reply", "listing-question", "listing-review", "wanted", "wanted-reply",
-  "biz", "biz-review", "biz-post", "event", "vessel-comment"];
+  "biz", "biz-review", "biz-post", "event", "vessel-comment", "vessel"];
 const TARGETS = new Set(TARGET_TYPES);
 export const MOD_ACTIONS = ["dismiss", "hide", "restore", "suspend-owner"];
 const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
@@ -129,7 +129,7 @@ export default async function safety(app, opts) {
   const TYPE_NAMES = {
     post: "منشور", listing: "عرض", community: "منشور مجتمع", "vessel-post": "منشور دائرة", "community-reply": "رد في مساحة الدائرة",
     "listing-question": "سؤال على عرض", "listing-review": "تقييم في السوق", wanted: "طلب «أبحث عن»", "wanted-reply": "رد على طلب",
-    biz: "دائرة تجارية", "biz-review": "تقييم دائرة", "biz-post": "خبر دائرة", event: "فعالية", "vessel-comment": "تعليق في دائرة",
+    biz: "دائرة تجارية", "biz-review": "تقييم دائرة", "biz-post": "خبر دائرة", event: "فعالية", "vessel-comment": "تعليق في دائرة", vessel: "دائرة",
   };
   const typeName = (type) => TYPE_NAMES[type] ?? "محتوى";
 
@@ -159,10 +159,12 @@ export default async function safety(app, opts) {
     return { ok: true };
   });
 
-  // ---- الكلمات المحظورة: قائمة الإدارة للتحقق المسبق في التطبيق (القائمة الافتراضية تُطبَّق في الخادم فقط بمطابقة الكلمة الكاملة)، وفحص نص
+  // ---- الكلمات المحظورة للتحقق المسبق في التطبيق: words قائمة الإدارة (تُطابَق جزءاً من النص كما في findBanned)،
+  // وdefaultWords القائمة الافتراضية حين تكون مفعّلة (تُطابَق كلمةً كاملة مع السوابق كما في findDefaultBanned)؛
+  // defaults يبقى عدداً كما كان حتى لا تنكسر النسخ القديمة. التحقق المسبق يلزم حيث تملك النواة المسار (منشورات الدوائر وتعليقاتها)
   app.get("/safety/words", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
-    return { words: words(), threshold: threshold(), defaults: defaultsOn() ? DEFAULT_BANNED.length : 0 };
+    return { words: words(), threshold: threshold(), defaults: defaultsOn() ? DEFAULT_BANNED.length : 0, defaultWords: defaultsOn() ? DEFAULT_BANNED : [] };
   });
   app.post("/safety/check", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -175,11 +177,25 @@ export default async function safety(app, opts) {
     if (!id) return false;
     if (type === "biz") return SLUG_RE.test(id);
     if (type === "biz-review") return /^[a-z0-9-]{3,60}:[A-Z]{2}\d{7}$/i.test(id);
-    if (type === "vessel-post" || type === "vessel-comment") return CORE_ID_RE.test(id);
+    if (type === "vessel-post" || type === "vessel-comment" || type === "vessel") return CORE_ID_RE.test(id);
     return UUID_RE.test(id);
   }
   const normId = (type, id) => type === "biz-review" ? id.replace(/:(.+)$/, (_, u) => ":" + u.toUpperCase()) : id;
   const one = async (sql, params) => { try { return (await pool.query(sql, params)).rows[0] ?? null; } catch { return null; } };
+
+  // ---- جدول الدوائر في النواة (vessels): أعمدته تُكتشف كما في search.js لأن أسماءها ليست مضمونة؛
+  // وإن لم يوجد عند الإقلاع يُعاد الاكتشاف مرة في الدقيقة على الأكثر (قد تنشئه النواة بعدنا)
+  let VC = null, vcAt = 0;
+  async function vesselCols() {
+    if (VC?.ok || Date.now() - vcAt < 60000) return VC;
+    vcAt = Date.now();
+    try {
+      const cols = new Set((await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='vessels'")).rows.map((r) => r.column_name));
+      VC = { ok: cols.has("id"), name: pick(cols, "name", "title"), topic: pick(cols, "topic", "description"), pub: pick(cols, "is_public", "public"), owner: pick(cols, "owner_id", "creator_id") };
+    } catch { VC = { ok: false }; }
+    return VC;
+  }
+  const vesselModerated = async (id) => !!(await one("SELECT 1 AS x FROM content_prev_state WHERE target_type='vessel' AND target_id=$1", [id]));
 
   /// معلومات المحتوى المُبلَّغ عنه: المالك والعنوان والنص والوسائط وحالته (active|blocked) ومعرّفات مرتبطة
   async function targetInfo(type, id) {
@@ -213,6 +229,17 @@ export default async function safety(app, opts) {
           if (r) return r;
         } catch { /* ignore */ }
         return { owner: null, title: type === "vessel-post" ? "منشور في دائرة" : "تعليق في دائرة", status: "active" };
+      }
+      case "vessel": {
+        const V = await vesselCols();
+        // بلا جدول دوائر في القاعدة نفسها يُقبل البلاغ بلا تفاصيل (كمنشورات الدوائر)
+        if (!V?.ok) return { owner: null, title: "دائرة", status: "active", vessel_id: id };
+        const r = await one(`SELECT ${V.owner ? `${q(V.owner)}::text` : "NULL::text"} AS owner, ${V.name ? `${q(V.name)}::text` : "NULL::text"} AS title,
+          ${V.topic ? `${q(V.topic)}::text` : "NULL::text"} AS text, ${V.pub ? q(V.pub) : "NULL::boolean"} AS pub FROM vessels WHERE id::text=$1`, [id]);
+        if (!r) return null;
+        // «مخفية» = جعلها الإشراف خاصة (حالتها السابقة محفوظة) وما زالت خاصة؛ لو أعادها المالك عامة من النواة تظهر كما هي
+        const hidden = r.pub === false && await vesselModerated(id);
+        return { owner: r.owner, title: r.title || "دائرة", text: r.text, media: null, status: hidden ? "blocked" : "active", vessel_id: id };
       }
       default: return null;
     }
@@ -276,6 +303,23 @@ export default async function safety(app, opts) {
           return hide ? !!(await globalThis.naslifeVesselCommentHide?.(id, { postId: info?.post_id ?? "", vesselId: info?.vessel_id ?? "", by, reason })) : !!(await globalThis.naslifeVesselCommentUnhide?.(id));
         } catch { return false; }
       }
+      case "vessel": {
+        // الدائرة في النواة: الإخفاء = جعلها خاصة (تختفي من البحث والاكتشاف وعن الزوار) مع حفظ حالتها لتعيدها «إعادة الإظهار»؛
+        // بلا عمود عام/خاص لا يوجد ما يُغيَّر من هنا فيبقى «إيقاف الصاحب» (الرد يحمل hint للإدارة)
+        const V = await vesselCols();
+        if (!V?.ok || !V.pub) return false;
+        const col = q(V.pub);
+        if (hide) {
+          if (info?.status === "blocked" || await vesselModerated(id)) return false;
+          await savePrev(type, id, `SELECT CASE WHEN ${col} IS DISTINCT FROM false THEN 'true' ELSE 'false' END AS v FROM vessels WHERE id::text=$1`);
+          await upd(`UPDATE vessels SET ${col}=false WHERE id::text=$1 AND ${col} IS DISTINCT FROM false`, [id]);
+          return vesselModerated(id);
+        }
+        if (!(await vesselModerated(id))) return false;
+        const prev = await takePrev(type, id, ["true", "false"], "true");
+        await upd(`UPDATE vessels SET ${col}=$2 WHERE id::text=$1`, [id, prev === "true"]);
+        return true;
+      }
       default: return false;
     }
   }
@@ -326,8 +370,8 @@ export default async function safety(app, opts) {
     const n = (await pool.query(`SELECT count(DISTINCT reporter_id)::int AS n FROM content_reports WHERE target_type=$1 AND target_id=$2
       AND created_at > COALESCE((SELECT max(created_at) FROM content_report_actions WHERE target_type=$1 AND target_id=$2 AND action IN ('restore','dismiss')), '-infinity'::timestamptz)`, [type, id])).rows[0].n;
     let hidden = false;
-    // الدائرة التجارية لا تُخفى تلقائياً (ثلاثة حسابات لا تُسقط نشاطاً)؛ تذهب لطابور الإشراف وتُنبَّه الإدارة
-    if (type === "biz") { if (n === threshold()) await notifyAdmins({ kind: "content_reported_many", title: `${n} بلاغات على دائرة تجارية`, body: `«${info.title}» — راجعها في طابور الإشراف`, data: { targetType: type, targetId: id, reports: n } }); }
+    // الدائرة (تجارية أو دائرة النواة) لا تُخفى تلقائياً (ثلاثة حسابات لا تُسقط نشاطاً أو مجتمعاً)؛ تذهب لطابور الإشراف وتُنبَّه الإدارة
+    if (type === "biz" || type === "vessel") { if (n === threshold()) await notifyAdmins({ kind: "content_reported_many", title: `${n} بلاغات على ${typeName(type)}`, body: `«${info.title}» — راجعها في طابور الإشراف`, data: { targetType: type, targetId: id, reports: n } }); }
     else if (n >= threshold() && info.status !== "blocked") hidden = await autoHide(type, id, info, n);
     else if (n === 1) await notifyAdmins({ kind: "report_new", title: `بلاغ على ${typeName(type)}`, body: `«${info.title}»${reason ? ` — ${reason}` : ""}`, data: { targetType: type, targetId: id, reports: n }, push: false });
     return { ok: true, reports: n, hidden, threshold: threshold() };
@@ -416,6 +460,8 @@ export default async function safety(app, opts) {
     await pool.query("INSERT INTO content_report_actions(id,target_type,target_id,action,note,admin_id,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7)", [crypto.randomUUID(), type, id, action, note, uid, owner]);
     await audit(uid, `moderation.${action}`, `${type}:${id}`, { note, owner, changed });
     const now = info ? await targetInfo(type, id) : null;
-    return { ok: true, action, changed, status: now ? (now.status === "blocked" ? "hidden" : "visible") : "missing", owner };
+    // دائرة لا يمكن إخفاؤها من هنا: نقول ذلك صراحة بدل «لم يتغير» الصامت
+    const hint = type === "vessel" && action === "hide" && !changed && !(await vesselCols())?.pub ? "vessel-no-public-flag" : undefined;
+    return { ok: true, action, changed, status: now ? (now.status === "blocked" ? "hidden" : "visible") : "missing", owner, ...(hint ? { hint } : {}) };
   });
 }
