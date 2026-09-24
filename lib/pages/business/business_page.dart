@@ -12,6 +12,7 @@ import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/location.dart';
 import '../../core/nav_provider.dart';
+import '../../core/require_account.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
@@ -224,6 +225,8 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
   /// الانضمام ضغطة واحدة: يفتح العروض والخصومات والتحديثات، مع سطر إخبار بمستوى التنبيه الافتراضي (القريبة فقط) وزر تغييره.
   Future<void> _follow(Biz b, {bool joinOnly = false}) async {
     if (_busy) return;
+    // «انضم» من صفحة العروض يُستدعى من شاشة أخرى: ندعو الزائر للدخول قبل أي حوار
+    if (joinOnly && !requireAccount(context)) return;
     if (b.following && joinOnly) return;
     if (b.following) {
       final ok = await showDialog<bool>(
@@ -298,6 +301,8 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
 
   /// شراء منتج: كمية ثم تأكيد.
   Future<void> _buy(Biz b, BizItem it) async {
+    // ورقة الكمية والدفع تسبق الطلب: الزائر يُدعى للدخول أولاً
+    if (!requireAccount(context)) return;
     var qty = 1;
     final max = it.stock == null ? 20 : it.stock!.clamp(0, 20);
     if (max == 0) return;
@@ -323,6 +328,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
 
   /// حجز غرفة أو سيارة: مدة من التقويم ثم التفاصيل.
   Future<void> _book(Biz b, BizItem it) async {
+    if (!requireAccount(context)) return;
     final now = DateTime.now();
     final range = await showDateRangePicker(
       context: context,
@@ -361,6 +367,8 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
   }
 
   Future<void> _order(Biz b, BizItem it, {required int qty, DateTime? startAt, DateTime? endAt, int? guests}) async {
+    // مواعيد العيادة والعروض تطلب مباشرة، لكن قد تطلب الموقع قبل الطلب: لا نطلبه من زائر
+    if (!requireAccount(context)) return;
     try {
       // موقع الجهاز يُرسل مع الطلب فقط حين تكون للدائرة عروض، ليُفتح عرض «لمن هنا الآن» تلقائياً؛ مهلة قصيرة ثم آخر موقع معروف
       final loc = b.offers > 0 ? await DeviceLocation.current(precise: true, timeout: const Duration(seconds: 3)) : null;

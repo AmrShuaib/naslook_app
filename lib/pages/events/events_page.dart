@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../core/require_account.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
@@ -253,6 +254,7 @@ class _TierState extends ConsumerState<_Tier> {
   }
 
   Future<void> _buy() async {
+    if (!requireAccount(context)) return;
     setState(() => busy = true);
     try {
       final tickets = await ref.read(apiClientProvider).buyTickets(widget.e.id, widget.t.id, qty);

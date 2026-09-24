@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/notify/message_sound.dart';
+import '../core/platform.dart';
 import 'notify_providers.dart';
 
 import '../api/admin_api.dart';
@@ -101,6 +102,17 @@ class InboxUnreadNotifier extends StateNotifier<int> {
 final adminTeamTreeProvider = FutureProvider<List<TeamNode>>((ref) => ref.watch(apiClientProvider).adminTeamTree());
 final adminTeamPermissionsProvider = FutureProvider<List<TeamPermission>>((ref) => ref.watch(apiClientProvider).adminTeamPermissions());
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
+
+/// تحويل المال بين المستخدمين (زرّا «تحويل» و«دفع» ورمز QR في المحفظة): لا يظهر في iOS، ولا حين يطفئه المدير.
+/// قبل وصول الإعدادات أو عند تعذّرها يبقى مخفياً، لأن الخادم يرفضه أصلاً وهو مطفأ.
+final walletTransfersEnabledProvider = Provider<bool>((ref) => !isIosNative && (ref.watch(publicSettingsProvider).valueOrNull?.transfersEnabled ?? false));
+
+/// أوامر المال في المحادثة (/pay و/send و/split): تحتاج مفتاحَي التحويل والدفع في المحادثة معاً، ولا تظهر في iOS.
+final chatMoneyEnabledProvider = Provider<bool>((ref) {
+  if (isIosNative) return false;
+  final s = ref.watch(publicSettingsProvider).valueOrNull;
+  return s != null && s.transfersEnabled && s.chatPaymentsEnabled;
+});
 
 void invalidateAdmin(WidgetRef ref) {
   for (final p in [adminStatusProvider, adminOverviewProvider, adminBizProvider, adminClaimsProvider, adminFinanceProvider, adminContentProvider, adminSettingsProvider, adminAuditProvider, adminAdminsProvider, adminMailProvider, adminMailLogProvider, adminMailDomainProvider, adminTeamProvider, adminTeamTreeProvider, adminTasksProvider, adminTasksSummaryProvider, adminInboxMailboxesProvider, adminInboxProvider, adminInboxTemplatesProvider, adminInboxMeProvider, adminInboxRulesProvider, adminInboxTagsProvider, adminInboxStatsProvider, adminInboxOutboxProvider, adminInboxBlockedProvider]) {

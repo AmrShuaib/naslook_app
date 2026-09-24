@@ -10,6 +10,7 @@ import '../../api/commerce_models.dart';
 import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
+import '../../core/require_account.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
@@ -144,6 +145,8 @@ class _ListingPageState extends ConsumerState<ListingPage> {
   }
 
   Future<void> _order(Listing x) async {
+    // الزائر يُدعى للدخول قبل ورقة الملاحظة، لا بعد كتابتها
+    if (!requireAccount(context)) return;
     final note = await askText(context, title: 'ملاحظة للبائع', hint: 'مثال: الاستلام بعد المغرب', confirm: 'تأكيد الطلب', maxLines: 2);
     if (note == null || !mounted) return;
     try {
@@ -219,7 +222,7 @@ class _SellerCard extends ConsumerWidget {
               for (final b in l.sellerBadges.take(2)) BadgeChip(b),
             ]),
           ])),
-          if (!l.mine) OutlinedButton(key: const Key('message-seller'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: l.seller))), style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact), child: const Text('مراسلة')),
+          if (!l.mine) OutlinedButton(key: const Key('message-seller'), onPressed: () { if (requireAccount(context)) Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: l.seller))); }, style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact), child: const Text('مراسلة')),
         ]),
       );
 }
@@ -285,6 +288,7 @@ class _Questions extends ConsumerWidget {
         Expanded(child: TextField(key: const Key('ask-field'), controller: controller, decoration: const InputDecoration(hintText: 'اسأل البائع سؤالاً عاماً', isDense: true))),
         IconButton(key: const Key('ask-send'), icon: const Icon(Icons.send_rounded, color: Joy.primary), onPressed: () async {
           final t = controller.text.trim(); if (t.length < 3) return;
+          if (!requireAccount(context)) return;
           try { await ref.read(apiClientProvider).askQuestion(listing.id, t); controller.clear(); ref.invalidate(listingQuestionsProvider(listing.id)); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
         }),
       ]),

@@ -7,6 +7,8 @@ import '../../api/client.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
+import '../../core/platform.dart';
+import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
@@ -54,7 +56,7 @@ class SellerPage extends ConsumerWidget {
               try { x.following ? await ref.read(apiClientProvider).unfollowSeller(id) : await ref.read(apiClientProvider).followSeller(id); ref.invalidate(sellerProfileProvider(id)); if (context.mounted) toast(context, x.following ? 'ألغيت المتابعة' : 'ستصلك عروضه الجديدة'); } catch (e) { if (context.mounted) toast(context, e.toString(), error: true); }
             }, icon: Icon(x.following ? Icons.check_rounded : Icons.notifications_active_outlined, size: 18), label: Text(x.following ? 'متابَع' : 'متابعة'))),
             const SizedBox(width: 8),
-            OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: x.seller))), icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18), label: const Text('مراسلة')),
+            OutlinedButton.icon(onPressed: () { if (requireAccount(context)) Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: x.seller))); }, icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18), label: const Text('مراسلة')),
           ]),
           const SectionTitle('عروضه'),
           if (x.listings.isEmpty) const Text('لا عروض حالياً', style: TextStyle(color: Joy.textMuted)),
@@ -96,9 +98,11 @@ class SellerDashboardPage extends ConsumerWidget {
             trailing: Switch(value: c.active, onChanged: (v) async { await ref.read(apiClientProvider).setCouponActive(c.code, v); ref.invalidate(couponsProvider); }), divider: i < coupons.length - 1)])),
           const SizedBox(height: 12),
           _UpgradeCard(),
-          Row(children: [const Expanded(child: SectionTitle('سبوت لايت')), TextButton.icon(key: const Key('spotlight-buy'), onPressed: () => showSpotlightSheet(context, ref), icon: const Icon(Icons.auto_awesome_rounded, size: 18), label: const Text('اشترِ إعلاناً'))]),
-          if (spots.isEmpty) const Text('ضع عرضك في أعلى السوق ليراه كل من يدخله.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
-          JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, sp) in spots.indexed) ListRow(leading: Icon(Icons.auto_awesome_rounded, color: sp.status == 'active' ? Joy.sunText : Joy.textMuted), title: Text(sp.title, maxLines: 1, overflow: TextOverflow.ellipsis), subtitle: Text('${sp.status == 'active' ? 'نشط حتى ${sp.endsAt!.day}/${sp.endsAt!.month}' : 'انتهى'} · ${sp.views} ظهور · ${sp.clicks} نقرة${sp.granted ? ' · منحة من الإدارة' : ' · ${money(sp.paid)}'}'), divider: i < spots.length - 1)])),
+          // على iOS لا يُباع سبوت لايت (إعلان رقمي، قاعدة أبل 3.1.1): بلا زر شراء ولا مبالغ، ونعرض الإعلانات الجارية فقط إن وُجدت
+          if (!isIosNative || spots.isNotEmpty)
+            Row(children: [const Expanded(child: SectionTitle('سبوت لايت')), if (!isIosNative) TextButton.icon(key: const Key('spotlight-buy'), onPressed: () => showSpotlightSheet(context, ref), icon: const Icon(Icons.auto_awesome_rounded, size: 18), label: const Text('اشترِ إعلاناً'))]),
+          if (spots.isEmpty && !isIosNative) const Text('ضع عرضك في أعلى السوق ليراه كل من يدخله.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+          JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, sp) in spots.indexed) ListRow(leading: Icon(Icons.auto_awesome_rounded, color: sp.status == 'active' ? Joy.sunText : Joy.textMuted), title: Text(sp.title, maxLines: 1, overflow: TextOverflow.ellipsis), subtitle: Text('${sp.status == 'active' ? 'نشط حتى ${sp.endsAt!.day}/${sp.endsAt!.month}' : 'انتهى'} · ${sp.views} ظهور · ${sp.clicks} نقرة${sp.granted ? ' · منحة من الإدارة' : isIosNative ? '' : ' · ${money(sp.paid)}'}'), divider: i < spots.length - 1)])),
         ]),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(sellerDashboardProvider)),
@@ -124,6 +128,9 @@ class SellerDashboardPage extends ConsumerWidget {
 
 /// ورقة سبوت لايت: اشرح السعر، اختر عرضاً من عروضي، وعدد الأيام، وادفع من المحفظة
 Future<void> showSpotlightSheet(BuildContext context, WidgetRef ref, {Listing? listing}) async {
+  // لا شراء لسبوت لايت في iOS (والخادم يرفضه بـ iap-required)؛ الزر مخفي أصلاً وهذا حاجز أخير
+  if (isIosNative) return;
+  if (!requireAccount(context)) return;
   final api = ref.read(apiClientProvider);
   Map<String, dynamic> price = const {'perDay': 2000, 'maxDays': 30};
   List<Listing> mine = const [];

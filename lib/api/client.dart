@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
+import '../core/platform.dart' as platform;
 import 'session.dart';
 
 /// خطأ قادم من الخادم أو من الشبكة.
@@ -98,7 +99,15 @@ class ApiClient {
         // خادم Naslife يقرأ رمز الجلسة من ترويسة x-token
         if (_token != null) 'x-token': _token!,
         if (_token != null) 'Authorization': 'Bearer $_token',
+        ...clientHeaders(),
       };
+
+  /// ترويسة تعريف العميل: التطبيقات الأصلية فقط (الخادم يمنع فيها شراء سبوت لايت وأدوات المال؛ انظر core/platform.dart).
+  /// الويب لا يرسلها لأن ترويسة مخصّصة تفرض طلب CORS تمهيدياً بلا فائدة.
+  static Map<String, String> clientHeaders() {
+    final tag = platform.clientHeader;
+    return tag == null ? const {} : {'x-naslife-client': tag};
+  }
 
   // ---------------------------------------------------------------------------
   // المصادقة
@@ -202,8 +211,10 @@ class ApiClient {
   Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) =>
       _send(() => _http.get(_uri(path, query), headers: _headers(json: false)), prompt: false);
 
-  Future<Map<String, dynamic>> post(String path, Object body) => _send(
+  /// [prompt] false للطلبات الخلفية (تسجيل مشاهدة أو نقرة): رفضها لزائر لا يفتح دعوة الدخول.
+  Future<Map<String, dynamic>> post(String path, Object body, {bool prompt = true}) => _send(
         () => _http.post(_uri(path), headers: _headers(), body: jsonEncode(body)),
+        prompt: prompt,
       );
 
   Future<Map<String, dynamic>> put(String path, Object body) => _send(

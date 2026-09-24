@@ -30,6 +30,7 @@ import '../../core/media/permissions.dart';
 import '../../core/media/video_view.dart';
 import '../../core/media/voice_player.dart';
 import '../../core/media/voice_record.dart';
+import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
 import '../../state/providers.dart';
@@ -558,6 +559,11 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     if (m == null) return t;
     final cmd = m.group(1)!.toLowerCase();
     final rest = m.group(2)!.trim();
+    // أوامر المال مغلقة في iOS أو بقرار المنصة: لا تُرسل ولا تُسجَّل
+    if (isMoneyCommand(t) && !ref.read(chatMoneyEnabledProvider)) {
+      toast(context, 'غير متاح', error: true);
+      return null;
+    }
     switch (cmd) {
       case 'help':
       case 'دليل':
@@ -687,6 +693,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       case 'counter':
         _insertText('/meet ');
       case 'pay':
+        if (!ref.read(chatMoneyEnabledProvider)) { toast(context, 'غير متاح', error: true); return; }
         final r = _requests[m.id];
         if (r == null) { toast(context, 'الطلب لم يُسجَّل بعد، حاول بعد لحظة'); _metaFetched.remove(m.id); _fetchMeta(); return; }
         final ok = await showDialog<bool>(

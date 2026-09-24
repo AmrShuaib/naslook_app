@@ -143,7 +143,7 @@ void main() {
   test('feed provider filters hidden circle posts', () async {
     final srv = _Srv()..hidden.add('p-sara');
     final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle))..token = 't';
-    final container = ProviderContainer(overrides: [apiClientProvider.overrideWithValue(api)]);
+    final container = ProviderContainer(overrides: [apiClientProvider.overrideWithValue(api), signedInProvider.overrideWithValue(true)]);
     addTearDown(container.dispose);
     final feed = await container.read(feedProvider.future);
     expect(feed.map((p) => p.id), ['p-mine', 'p-lina']);

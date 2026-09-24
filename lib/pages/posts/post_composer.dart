@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../api/posts_api.dart';
+import '../../core/require_account.dart';
 import 'composer/capture_page.dart';
 import 'composer/composer_draft.dart';
 import 'composer/edit_page.dart';
@@ -22,6 +23,8 @@ class PostComposerPage {
 
   /// كـ[open] لكنه يعيد نتيجة النشر كاملة (الوجهة والمعرّفات).
   static Future<PublishOutcome?> openFull(BuildContext context, {required double lat, required double lng, String? placeName, MapPost? edit}) async {
+    // الزائر يُدعى للدخول قبل أن يرى الكاميرا أو يُسأل عن أذوناتها
+    if (!requireAccount(context)) return null;
     final nav = Navigator.of(context);
     final d = ComposerDraft(lat: lat, lng: lng, placeName: placeName ?? '', editing: edit);
     if (edit != null) {

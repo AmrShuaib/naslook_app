@@ -8,6 +8,8 @@ import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
+import '../../core/platform.dart';
+import '../../core/require_account.dart';
 import '../../api/client.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
@@ -88,10 +90,12 @@ class _MarketPageState extends ConsumerState<MarketPage> {
         title: const Text('السوق'),
         actions: [
           IconButton(key: const Key('market-wanted'), tooltip: 'طلبات المشترين', icon: Badge(isLabelVisible: (h?.wantedOpen ?? 0) > 0, label: Text('${h?.wantedOpen ?? 0}'), child: const Icon(Icons.campaign_outlined)), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WantedPage()))),
-          IconButton(key: const Key('market-mine'), tooltip: 'عروضي وطلباتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 1)))),
+          IconButton(key: const Key('market-mine'), tooltip: 'عروضي وطلباتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () { if (requireAccount(context)) Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 1))); }),
           PopupMenuButton<String>(
             tooltip: 'المزيد',
             onSelected: (v) {
+              // لوحة البائع والتنبيهات خاصة بالحساب؛ المقارنة محلية تعمل للزائر
+              if ((v == 'seller' || v == 'alerts') && !requireAccount(context)) return;
               if (v == 'seller') Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SellerDashboardPage()));
               if (v == 'alerts') showMarketAlertsSheet(context, ref);
               if (v == 'compare') Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ComparePage()));
@@ -121,7 +125,8 @@ class _MarketPageState extends ConsumerState<MarketPage> {
               ),
             ),
           )),
-          if (h != null && mq.q.isEmpty && mq.category == null) SliverToBoxAdapter(child: h.spotlight.isNotEmpty ? SpotlightStrip(items: h.spotlight) : const _SpotlightEmpty()),
+          // على iOS لا يُباع سبوت لايت (إعلان رقمي): تبقى الإعلانات الجارية ظاهرة، ويختفي سطر التعريف حين لا إعلانات
+          if (h != null && mq.q.isEmpty && mq.category == null && (h.spotlight.isNotEmpty || !isIosNative)) SliverToBoxAdapter(child: h.spotlight.isNotEmpty ? SpotlightStrip(items: h.spotlight) : const _SpotlightEmpty()),
           if (h != null && h.bazaars.isNotEmpty && mq.q.isEmpty && mq.category == null) SliverToBoxAdapter(child: BazaarStrip(items: h.bazaars)),
           SliverToBoxAdapter(child: _CategoryRow(mq: mq, counts: h?.categories ?? const {})),
           if (mq.category != null) SliverToBoxAdapter(child: _SubRow(mq: mq)),
@@ -155,7 +160,7 @@ class SpotlightStrip extends ConsumerWidget {
           const Icon(Icons.auto_awesome_rounded, size: 18, color: Joy.sunText), const SizedBox(width: 6),
           const Text('سبوت لايت', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)), const SizedBox(width: 8),
           const Text('إعلانات مميزة', style: TextStyle(color: Joy.textMuted, fontSize: 12)), const Spacer(),
-          TextButton(key: const Key('spotlight-info'), onPressed: () => showSpotlightSheet(context, ref), style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), visualDensity: VisualDensity.compact), child: const Text('اعرض إعلانك', style: TextStyle(fontSize: 12.5))),
+          if (!isIosNative) TextButton(key: const Key('spotlight-info'), onPressed: () => showSpotlightSheet(context, ref), style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), visualDensity: VisualDensity.compact), child: const Text('اعرض إعلانك', style: TextStyle(fontSize: 12.5))),
         ])),
         SizedBox(height: 168, child: ListView.separated(
           scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 20), itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(width: 10),
@@ -346,6 +351,8 @@ class ListingCard extends StatelessWidget {
 
 /// إنشاء عرض: النموذج ثم رفع الصور ثم النشر
 Future<void> createListing(BuildContext context, WidgetRef ref) async {
+  // الزائر يُدعى للدخول قبل نموذج العرض، لا بعد تعبئته
+  if (!requireAccount(context)) return;
   final d = await showListingForm(context);
   if (d == null || !context.mounted) return;
   try {

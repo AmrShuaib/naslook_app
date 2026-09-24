@@ -12,7 +12,13 @@ import '../core/nav_provider.dart';
 import '../core/notify/message_sound.dart';
 import '../api/notify_api.dart';
 import '../core/notify_open.dart';
+import '../core/require_account.dart';
+import '../core/share/legal_links.dart';
 import '../core/share/share_links.dart';
+import '../pages/business/business_list.dart';
+import '../pages/events/events_page.dart';
+import '../pages/market/market_page.dart';
+import '../ui/widgets.dart';
 import '../pages/business/business_page.dart';
 import '../pages/profile/public_profile_page.dart';
 import '../api/client.dart';
@@ -30,6 +36,8 @@ import '../api/account_api.dart';
 import '../pages/notifications/notifications_page.dart';
 import '../pages/search/search_page.dart';
 import '../pages/chat/chats_page.dart';
+
+export '../core/require_account.dart' show guestWantsLoginProvider, guestBrowseProvider;
 
 class MainApp extends ConsumerWidget {
   const MainApp({super.key});
@@ -68,8 +76,12 @@ class AuthGate extends ConsumerWidget {
       case AuthStatus.loading:
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       case AuthStatus.signedOut:
-        // رابط عام (دائرة أو حساب) بلا جلسة: نعرض الوجهة كزائر مع شريط للدخول، إلا إن طلب الزائر الدخول
-        if (pendingLink != null && !ref.watch(guestWantsLoginProvider)) return GuestShell(link: pendingLink!);
+        // رابط عام (دائرة أو حساب) بلا جلسة: نعرض الوجهة كزائر مع شريط للدخول؛ ووضع التصفّح بلا حساب يعرض تبويبات الزائر،
+        // إلا إن طلب الزائر الدخول
+        if (!ref.watch(guestWantsLoginProvider)) {
+          if (pendingLink != null) return GuestShell(link: pendingLink!);
+          if (ref.watch(guestBrowseProvider)) return const GuestShell();
+        }
         return const LoginPage();
       case AuthStatus.signedIn:
         return ref.watch(adminModeProvider) ? const AdminShell() : const HomeShell();
@@ -278,19 +290,23 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 /// وجهة رابط عام: صفحة الدائرة أو الملف العام بالنك نيم.
 Widget pendingLinkPage(PendingLink l) => l.isCircle ? BusinessPage(id: l.value) : PublicProfilePage(handle: l.value);
 
-/// الزائر ضغط «سجّل الدخول» من شريط الزائر.
-final guestWantsLoginProvider = StateProvider<bool>((ref) => false);
-
-/// تصفّح كزائر: الوجهة المشتركة مع شريط سفلي للدخول، وأي فعل يتطلب حساباً (401) يعرض دعوة للدخول.
+/// تصفّح كزائر. مع رابط مشترك: الوجهة مع شريط سفلي للدخول. بلا رابط: تبويبات عامة (الخريطة، الأماكن، السوق، الفعاليات،
+/// حسابي). أي فعل يتطلب حساباً (401 أو [requireAccount]) يعرض دعوة للدخول.
 class GuestShell extends ConsumerStatefulWidget {
-  final PendingLink link;
-  const GuestShell({super.key, required this.link});
+  final PendingLink? link;
+  const GuestShell({super.key, this.link});
+
+  static const titles = ['الخريطة', 'الأماكن', 'السوق', 'الفعاليات', 'حسابي'];
+
   @override
   ConsumerState<GuestShell> createState() => _GuestShellState();
 }
 
 class _GuestShellState extends ConsumerState<GuestShell> {
   bool _prompting = false;
+  int _tab = 0;
+  // التبويب يُبنى أول مرة يُفتح فقط، فلا تُطلب بيانات السوق والفعاليات قبل أن يزورها الزائر
+  final _visited = <int>{0};
 
   @override
   void initState() {
@@ -304,36 +320,65 @@ class _GuestShellState extends ConsumerState<GuestShell> {
     super.dispose();
   }
 
-  void _login() => ref.read(guestWantsLoginProvider.notifier).state = true;
+  void _login({bool register = false}) {
+    // صفحات فتحها الزائر (عرض، دائرة…) فوق الواجهة تُغلق، وإلا بقيت فوق شاشة الدخول وحجبتها
+    if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    ref.read(loginStartsRegisterProvider.notifier).state = register;
+    ref.read(guestWantsLoginProvider.notifier).state = true;
+  }
 
   void _promptSignIn() {
     if (_prompting || !mounted) return;
     _prompting = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      await showModalBottomSheet<void>(
-        context: context,
-        showDragHandle: true,
-        builder: (ctx) => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('هذا يحتاج حساباً', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 6),
-            const Text('سجّل الدخول أو أنشئ حساباً في ثوانٍ لتشارك وتطلب وتتابع.', style: TextStyle(color: Joy.textMuted, height: 1.5)),
-            const SizedBox(height: 14),
-            FilledButton(key: const Key('guest-login-sheet'), onPressed: () { Navigator.pop(ctx); _login(); }, child: const Text('سجّل الدخول')),
-          ]),
-        ),
-      );
+      if (!mounted) {
+        _prompting = false;
+        return;
+      }
+      await showSignInPrompt(context, onLogin: _login);
       _prompting = false;
     });
   }
 
+  Widget _screen(int i) => switch (i) {
+        0 => const MapPage(),
+        1 => Scaffold(backgroundColor: Joy.bg, appBar: AppBar(title: const Text('الأماكن')), body: const BizListView()),
+        2 => const MarketPage(),
+        3 => const EventsPage(),
+        _ => _GuestAccountTab(onLogin: () => _login(), onRegister: () => _login(register: true)),
+      };
+
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    final link = widget.link;
+    if (link != null) return _linkView(link);
+    return Scaffold(
+      key: const Key('guest-shell'),
+      body: IndexedStack(index: _tab, children: [for (var i = 0; i < GuestShell.titles.length; i++) _visited.contains(i) ? _screen(i) : const SizedBox.shrink()]),
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
+        child: NavigationBar(
+          selectedIndex: _tab,
+          onDestinationSelected: (x) => setState(() {
+            _tab = x;
+            _visited.add(x);
+          }),
+          destinations: const [
+            NavigationDestination(key: Key('guest-tab-map'), icon: Icon(Icons.map_outlined), selectedIcon: Icon(Icons.map_rounded), label: 'الخريطة'),
+            NavigationDestination(key: Key('guest-tab-places'), icon: Icon(Icons.storefront_outlined), selectedIcon: Icon(Icons.storefront_rounded), label: 'الأماكن'),
+            NavigationDestination(key: Key('guest-tab-market'), icon: Icon(Icons.shopping_bag_outlined), selectedIcon: Icon(Icons.shopping_bag_rounded), label: 'السوق'),
+            NavigationDestination(key: Key('guest-tab-events'), icon: Icon(Icons.event_outlined), selectedIcon: Icon(Icons.event_rounded), label: 'الفعاليات'),
+            NavigationDestination(key: Key('guest-tab-account'), icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded), label: 'حسابي'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _linkView(PendingLink link) => Scaffold(
         backgroundColor: Joy.bg,
         body: Column(children: [
-          Expanded(child: pendingLinkPage(widget.link)),
+          Expanded(child: pendingLinkPage(link)),
           Material(
             color: Joy.surface,
             child: SafeArea(
@@ -350,6 +395,42 @@ class _GuestShellState extends ConsumerState<GuestShell> {
                 ]),
               ),
             ),
+          ),
+        ]),
+      );
+}
+
+/// تبويب «حسابي» للزائر: الدخول أو إنشاء حساب، وروابط الخصوصية والشروط والدعم (متاحة بلا حساب كما تطلب المتاجر).
+class _GuestAccountTab extends StatelessWidget {
+  final VoidCallback onLogin, onRegister;
+  const _GuestAccountTab({required this.onLogin, required this.onRegister});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: Joy.bg,
+        appBar: AppBar(title: const Text('حسابي')),
+        body: ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 32), children: [
+          JoyCard(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const Icon(Icons.person_outline_rounded, size: 44, color: Joy.primary),
+              const SizedBox(height: 8),
+              const Text('تتصفح ناس لايف كزائر', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+              const SizedBox(height: 6),
+              const Text('الخريطة والأماكن والسوق والفعاليات متاحة لك الآن. أنشئ حساباً لتنشر وتراسل وتطلب وتتابع الأماكن.', textAlign: TextAlign.center, style: TextStyle(color: Joy.textMuted, height: 1.6)),
+              const SizedBox(height: 14),
+              FilledButton(key: const Key('guest-account-login'), onPressed: onLogin, child: const Text('سجّل الدخول')),
+              const SizedBox(height: 8),
+              OutlinedButton(key: const Key('guest-account-register'), onPressed: onRegister, child: const Text('أنشئ حساباً')),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          JoyCard(
+            padding: EdgeInsets.zero,
+            child: Column(children: [
+              ListTile(key: const Key('guest-privacy'), leading: const Icon(Icons.privacy_tip_outlined), title: const Text('سياسة الخصوصية'), trailing: const Icon(Icons.chevron_left_rounded), onTap: () => LegalLinks.open('privacy')),
+              ListTile(key: const Key('guest-terms'), leading: const Icon(Icons.description_outlined), title: const Text('شروط الاستخدام'), trailing: const Icon(Icons.chevron_left_rounded), onTap: () => LegalLinks.open('terms')),
+              ListTile(key: const Key('guest-support'), leading: const Icon(Icons.support_agent_rounded), title: const Text('الدعم والمساعدة'), trailing: const Icon(Icons.chevron_left_rounded), onTap: () => LegalLinks.open('support')),
+            ]),
           ),
         ]),
       );

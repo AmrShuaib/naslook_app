@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/require_account.dart';
 import '../../api/client.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
@@ -98,7 +99,7 @@ class UserProfilePage extends ConsumerWidget {
               )
             else
               Row(children: [
-                Expanded(child: FilledButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: Person(id: person.id, nickname: nickname, avatarUrl: avatar)))), icon: const Icon(Icons.chat_bubble_outline_rounded), label: const Text('مراسلة'))),
+                Expanded(child: FilledButton.icon(onPressed: () { if (requireAccount(context)) Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: Person(id: person.id, nickname: nickname, avatarUrl: avatar)))); }, icon: const Icon(Icons.chat_bubble_outline_rounded), label: const Text('مراسلة'))),
                 const SizedBox(width: 8),
                 Expanded(
                   child: isContact

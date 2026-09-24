@@ -19,6 +19,7 @@ import '../../api/models.dart';
 import '../../api/wishlist_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
+import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../ui/widgets.dart';
 
@@ -62,7 +63,7 @@ class _Chip extends StatelessWidget {
   final String text;
   final Color color, bg;
   final IconData? icon;
-  const _Chip(this.text, {this.color = Joy.primary, this.bg = Joy.primarySoft, this.icon});
+  const _Chip(this.text, {super.key, this.color = Joy.primary, this.bg = Joy.primarySoft, this.icon});
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -266,7 +267,11 @@ class ChatCodeCard extends StatelessWidget {
     return _frame(key: Key('card-req-${code.kind.name}'), child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
       _head(leading: _CardImage(fallback: split ? Icons.call_split_rounded : Icons.account_balance_wallet_outlined, color: Joy.accent), title: title, subtitle: sub, trailing: _statusChip()),
       _actions([
-        if (_status == 'pending' && !mine) _button(split ? 'ادفع نصيبي ${_sar(share)}' : 'ادفع ${_sar(share)}', 'pay', icon: Icons.payments_outlined, key: const Key('card-pay')),
+        // الدفع من المحفظة غير متاح في iOS أو حين يطفئه المدير: يبقى الطلب مقروءاً بلا زر دفع
+        if (_status == 'pending' && !mine)
+          Consumer(builder: (context, ref, _) => ref.watch(chatMoneyEnabledProvider)
+              ? _button(split ? 'ادفع نصيبي ${_sar(share)}' : 'ادفع ${_sar(share)}', 'pay', icon: Icons.payments_outlined, key: const Key('card-pay'))
+              : const _Chip('الدفع غير متاح', key: Key('card-pay-off'), color: Joy.textMuted, bg: Joy.surface2)),
         if (_status == 'pending' && !mine) _button('رفض', 'decline', primary: false, key: const Key('card-decline')),
         if (_status == 'pending' && mine && request != null) _button('إلغاء الطلب', 'cancel', primary: false, key: const Key('card-cancel')),
       ]),
@@ -452,7 +457,7 @@ class _CodeSuggestionsState extends ConsumerState<CodeSuggestions> {
     final gen = ++_gen;
     if (t[0] == '/') {
       final q = t.substring(1).toLowerCase();
-      final list = commandCatalog.where((c) => c.trigger.substring(1).startsWith(q)).map((c) => CodeSuggestion(
+      final list = commandsFor(money: ref.read(chatMoneyEnabledProvider)).where((c) => c.trigger.substring(1).startsWith(q)).map((c) => CodeSuggestion(
             label: c.label, subtitle: c.hint, icon: _iconFor(c.trigger), insert: c.trigger == '/loc' || c.trigger == '/me' || c.trigger == '/where' ? c.trigger : '${c.trigger} ',
             action: switch (c.trigger) { '/ticket' => 'picker:ticket', '/order' => 'picker:order', '/wish' => 'picker:wish', '/help' => 'guide', _ => null },
           )).toList();
@@ -511,6 +516,8 @@ class _CodeSuggestionsState extends ConsumerState<CodeSuggestions> {
 
   @override
   Widget build(BuildContext context) {
+    // يُبقي إعدادات المنصة محمّلة ليعرف الإكمال التلقائي هل أوامر المال متاحة؛ وتغيّرها يعيد الحساب
+    ref.listen(chatMoneyEnabledProvider, (_, __) => _compute());
     final tok = _tok;
     if (tok == null || _items.isEmpty) return const SizedBox.shrink();
     return Material(
@@ -578,16 +585,19 @@ const codeMenuItems = [
 ];
 
 /// شبكة الرموز الذكية داخل ورقة الإرفاق.
-class CodesMenuGrid extends StatelessWidget {
+class CodesMenuGrid extends ConsumerWidget {
   final void Function(String result) onPick;
   const CodesMenuGrid({super.key, required this.onPick});
   @override
-  Widget build(BuildContext context) => Padding(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final money = ref.watch(chatMoneyEnabledProvider);
+    return Padding(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Padding(padding: EdgeInsets.only(bottom: 8), child: Text('رموز ذكية', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Joy.textMuted))),
           Wrap(spacing: 8, runSpacing: 8, children: [
             for (final it in codeMenuItems)
+              if (money || !isMoneyCommand(it.result.replaceFirst('insert:', '')))
               ActionChip(
                 key: Key('code-menu-${it.result}'),
                 avatar: Icon(it.icon, size: 17, color: it.result == 'guide' ? Joy.accent : Joy.primary),
@@ -599,6 +609,7 @@ class CodesMenuGrid extends StatelessWidget {
           ]),
         ]),
       );
+  }
 }
 
 Future<String?> _pickSheet<T>(BuildContext context, {required String title, required Future<List<T>> Function() load, required Widget Function(T) tile, required String empty}) => showModalBottomSheet<String>(
@@ -688,7 +699,7 @@ String wishCode(WishItem w) {
 // -----------------------------------------------------------------------------
 
 /// دليل الرموز: القواعد، الإشارات، الأفعال، أمثلة واقعية. إن فُتح من محادثة يعيد المثال المختار ليُدرج في الحقل.
-class ChatCodesGuidePage extends StatelessWidget {
+class ChatCodesGuidePage extends ConsumerWidget {
   final bool canInsert;
   const ChatCodesGuidePage({super.key, this.canInsert = false});
 
@@ -728,7 +739,13 @@ class ChatCodesGuidePage extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // بلا أوامر المال (iOS أو مطفأة): لا تُذكر في القواعد ولا الأفعال ولا الأمثلة
+    final money = ref.watch(chatMoneyEnabledProvider);
+    final examples = [
+      for (final (title, lines) in _examples)
+        if (money) (title, lines) else if (lines.any((l) => !l.$2.contains(RegExp(r'/(pay|send|split)\b')))) (title, [for (final l in lines) if (!l.$2.contains(RegExp(r'/(pay|send|split)\b'))) l]),
+    ];
     void pick(String s) {
       if (canInsert) {
         Navigator.pop(context, s);
@@ -773,7 +790,7 @@ class ChatCodesGuidePage extends StatelessWidget {
             const SizedBox(height: 8),
             _rule('@', 'شخص أو دائرة', '@sara · @brew92'),
             _rule('#', 'صنف أو فعالية أو عرض أو منشور', '#brew92/v60 · #ev/…'),
-            _rule('/', 'فعل: مبلغ، موقع، موعد، دعوة', '/pay 45 · /meet 7م @brew92'),
+            money ? _rule('/', 'فعل: مبلغ، موقع، موعد، دعوة', '/pay 45 · /meet 7م @brew92') : _rule('/', 'فعل: موقع، موعد، دعوة', '/loc · /meet 7م @brew92'),
             const SizedBox(height: 8),
             const Text('اكتب الرمز في حقل الرسالة فيظهر اقتراح فوري، وعند الإرسال يتحوّل إلى بطاقة بزر واحد عند الطرفين. الرمز غير الصحيح يبقى نصاً عادياً.', style: TextStyle(fontSize: 13, height: 1.6)),
             if (canInsert) const Padding(padding: EdgeInsets.only(top: 6), child: Text('اضغط أي مثال ليُدرج في حقل الكتابة.', style: TextStyle(fontSize: 12.5, color: Joy.primary, fontWeight: FontWeight.w600))),
@@ -782,9 +799,9 @@ class ChatCodesGuidePage extends StatelessWidget {
         const SectionTitle('أولاً: الإشارة إلى شيء'),
         for (final e in refCatalog) Padding(padding: const EdgeInsets.only(bottom: 8), child: entry(e, e.trigger == '@' ? Icons.alternate_email_rounded : Icons.tag_rounded)),
         const SectionTitle('ثانياً: الأفعال'),
-        for (final e in commandCatalog) Padding(padding: const EdgeInsets.only(bottom: 8), child: entry(e, _CodeSuggestionsState._iconFor(e.trigger), key: Key('guide-${e.trigger}'))),
+        for (final e in commandsFor(money: money)) Padding(padding: const EdgeInsets.only(bottom: 8), child: entry(e, _CodeSuggestionsState._iconFor(e.trigger), key: Key('guide-${e.trigger}'))),
         const SectionTitle('أمثلة واقعية'),
-        for (final (title, lines) in _examples)
+        for (final (title, lines) in examples)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: JoyCard(

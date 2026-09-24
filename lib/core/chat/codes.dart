@@ -235,6 +235,18 @@ const commandCatalog = [
   CodeEntry('/help', 'دليل الرموز', '/help', '/help', 'يفتح دليل الرموز مع أمثلة.'),
 ];
 
+/// أوامر المال (طلب مبلغ، إرسال، تقسيم): تُحذف من الكتالوج والإكمال والدليل في iOS أو حين يطفئها المدير.
+const moneyCommands = {'/pay', '/send', '/split'};
+
+/// هل النص يبدأ بأمر مال؟ (/pay، /send، /split، مع أي حجج بعده)
+bool isMoneyCommand(String text) {
+  final m = RegExp(r'^(/[a-zA-Z]+)(?:\s|$)').firstMatch(text.trimLeft());
+  return m != null && moneyCommands.contains(m.group(1)!.toLowerCase());
+}
+
+/// الأفعال المتاحة: الكتالوج كاملاً، أو بلا أوامر المال حين تكون غير متاحة.
+List<CodeEntry> commandsFor({required bool money}) => money ? commandCatalog : [for (final c in commandCatalog) if (!moneyCommands.contains(c.trigger)) c];
+
 /// أشكال الإشارات (للدليل والإكمال).
 const refCatalog = [
   CodeEntry('@', 'شخص', '@النك نيم', '@sara', 'بطاقة الحساب: الصورة والاسم وزر مراسلة.'),

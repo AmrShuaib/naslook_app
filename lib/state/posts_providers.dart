@@ -10,7 +10,8 @@ import 'providers.dart';
 final mapPostsProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClientProvider).posts(bbox: ref.watch(bboxProvider)));
 /// أحدث المنشورات للشريط في الرئيسية.
 final recentPostsProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClientProvider).posts(limit: 30));
-final myPostsProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClientProvider).myPosts());
+/// منشوراتي: للزائر قائمة فارغة بلا طلب.
+final myPostsProvider = FutureProvider<List<MapPost>>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).myPosts() : const <MapPost>[]);
 
 /// نقطة الأصل للبث والأماكن الرائجة بلا طلب إذن: آخر موقع معروف للجهاز، وإلا موقع حضور المستخدم، وإلا مركز الحدود الحالية.
 final feedOriginProvider = Provider<LatLng>((ref) {
