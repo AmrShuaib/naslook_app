@@ -37,7 +37,7 @@ class _BizListViewState extends ConsumerState<BizListView> {
   Future<void> _near() async {
     if (sort == 'near') return setState(() => sort = '');
     setState(() => locating = true);
-    var l = await DeviceLocation.current(precise: false);
+    var l = await DeviceLocation.browse();
     l ??= () {
       final p = ref.read(myPresenceProvider).valueOrNull;
       return p?.lat != null && p?.lng != null ? LatLng(p!.lat!, p.lng!) : null;

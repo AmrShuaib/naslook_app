@@ -8,7 +8,7 @@ import 'providers.dart';
 
 /// موقع المستخدم للبحث والترتيب بالقرب: GPS الجهاز، وإلا موقعه المحفوظ على الخريطة، وإلا لا شيء.
 final userLocationProvider = FutureProvider<LatLng?>((ref) async {
-  final gps = await DeviceLocation.current(precise: false);
+  final gps = await DeviceLocation.browse();
   if (gps != null) return gps;
   try {
     final p = await ref.watch(myPresenceProvider.future);

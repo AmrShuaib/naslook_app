@@ -182,6 +182,10 @@ globalThis.naslifeSettings = { ...(savedSettings ?? {}), chatPaymentsEnabled: fa
 x = await call('POST', '/chat/requests', { body: { messageId: 'm-off-1', peerId: 'SA0000002', kind: 'split', amount: 4000, n: 2 }, expect: 403 });
 check(x.error === 'unavailable', 'chatPaymentsEnabled=false refuses money requests');
 await call('POST', '/chat/requests/m-ios-3/pay', { user: 'SA0000002', expect: 403 });
+// إطفاء التحويلات يوقف دفع الدردشة أيضاً (هو تحويل بين مستخدمين)
+globalThis.naslifeSettings = { ...(savedSettings ?? {}), transfersEnabled: false };
+x = await call('POST', '/chat/requests/m-ios-3/pay', { user: 'SA0000002', expect: 403 });
+check(x.error === 'unavailable', 'transfersEnabled=false also stops paying chat requests');
 globalThis.naslifeSettings = savedSettings;
 await call('POST', '/chat/requests/m-ios-3/pay', { user: 'SA0000002', expect: 200 });
 

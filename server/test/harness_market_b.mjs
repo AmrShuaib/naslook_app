@@ -133,6 +133,8 @@ globalThis.naslifePayFetch = async (url, init) => {
 process.env.PAY_EMBED = '1'; // القسم التالي يختبر النموذج المضمّن
 const cfg1 = await call('GET', '/pay/config', { user: BUYER, expect: 200 }); check(cfg1.enabled === true && cfg1.publishableKey === 'pk_test_x' && cfg1.min === 1000 && cfg1.max === 500000, 'payments enabled with publishable key and limits');
 await call('POST', '/pay/topup', { body: { amount: 500 }, user: BUYER, expect: 400 });
+// نسخة iOS الأولى بلا شحن بالبطاقة
+{ const r = await app.inject({ method: 'POST', url: '/pay/topup', headers: { 'x-user': BUYER, 'content-type': 'application/json', 'x-naslife-client': 'ios/1.0' }, payload: JSON.stringify({ amount: 15000 }) }); check(r.statusCode === 403 && r.json().error === 'unavailable', 'iOS client cannot top up by card'); }
 const tp = await call('POST', '/pay/topup', { body: { amount: 15000 }, user: BUYER, expect: 200 }); check(/\/pay\/checkout\/[0-9a-f-]{36}\?t=[0-9a-f]{24}$/.test(tp.checkoutUrl) && tp.amount === 15000, 'topup intent returns a checkout url with a nonce');
 const page = await call('GET', tp.checkoutUrl.replace(/^https?:\/\/[^/]+/, ''), { user: BUYER, expect: 200, raw: true }); check(page.includes('Moyasar.init') && page.includes('"amount":15000') && page.includes('naslife_payment'), 'checkout page embeds the Moyasar form with amount and metadata');
 check(!page.includes('applepay') && page.includes('"methods":["creditcard","stcpay"]') && page.includes('try{Moyasar.init') && page.includes('العودة إلى ناس لايف') && !page.includes('form-action'), 'checkout page: no Apple Pay without its config, init guarded, back link, CSP without form-action');

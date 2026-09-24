@@ -28,7 +28,8 @@
 - اختبارات الخادم: `server/test/run.sh harness_x.mjs` أو `all` (Postgres محلي: `pg_lsclusters | grep -q online || pg_ctlcluster 16 main start`؛ قاعدة `naslife_test`، المستخدم `postgres/pg`). الأكثر استخداماً: `harness_market_b.mjs` (السوق والمدفوعات)، `harness_posts.mjs`، `harness_admin.mjs` (فيه إخفاقات قديمة معروفة من حالة سابقة، ليست تراجعاً).
 - الفحص الحي: `tools/verify_*.sh` مع `NASLIFE_TOKEN` (رمز جلسة حساب المؤسس jeddahh/SA9954961، يُرسل في الترويسة `x-token` فقط). **لا يُكتب الرمز في أي ملف.** حساب الهاتف الفعلي للمالك هو SA8370980. حساب المنصة SA0000000.
 - Chromium داخل الجلسة لا يصل إلى naslife.app (وكيل الشبكة)، فالتحقق الحي بـ curl فقط ولقطات الشاشة تأتي من المالك.
-- بدائل الاختبار في التطبيق: `pickImageOverride`، `VoiceRecordSession.factoryOverride`، `VoicePlayer.factoryOverride`، `LiveCamera.factoryOverride`، `bakePhotoOverride`.
+- بدائل الاختبار في التطبيق: `pickImageOverride`، `pickVideoOverride`، `VoiceRecordSession.factoryOverride`، `VoicePlayer.factoryOverride`، `VideoView.factoryOverride`، `LiveCamera.factoryOverride`، `bakePhotoOverride`، `nativeShareOverride`، `MessageSound.supportedOverride`، `openAppSettingsOverride`، `tempDirOverride`، `nativeMobileOverride` (محاكاة الجوال؛ `flutter test` يعمل كسطح مكتب)، `DeviceLocation.override`/`openSettingsOverride`، `LegalLinks.openOverride`.
+- اختبارات الخادم بقاعدة مستقلة: `NASLIFE_TEST_DB=naslife_test_x server/test/run.sh all` (تتصادم الجلسات المتوازية على `naslife_test`). خمس حزم تفشل لأسباب بيئية قديمة: admin وadmin_bootstrap وchat_tools (ملفات تجهيز غير موجودة) وowner وshare.
 
 ## قيود بيئية مهمة
 

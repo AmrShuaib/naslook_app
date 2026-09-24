@@ -76,6 +76,11 @@ Future<void> showPermissionHelp(BuildContext context, MediaPermissionDenied e) =
 /// يعرض المساعدة إن كان الخطأ رفضاً للإذن ويعيد true؛ وإلا يعيد false ليعرض المستدعي خطأه المعتاد.
 bool handlePermissionError(BuildContext context, Object e) {
   if (e is! MediaPermissionDenied || !context.mounted) return false;
+  if (kIsWeb) {
+    // لا يستطيع الويب فتح إعدادات المتصفح؛ نشرح الطريق فقط
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اسمح بالوصول من إعدادات المتصفح لهذا الموقع ثم أعد المحاولة')));
+    return true;
+  }
   showPermissionHelp(context, e);
   return true;
 }

@@ -1,3 +1,4 @@
+import 'dart:io' show File;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -66,8 +67,13 @@ class _RealVoiceRecordSession implements VoiceRecordSession {
     } else {
       if (!await _native.hasPermission()) throw const MediaPermissionDenied('mic');
       final path = await nativeVoicePath();
+      try {
+        await _native.start(nativeVoiceConfig, path: path);
+      } catch (_) {
+        try { await File(path).delete(); } catch (_) {}
+        rethrow;
+      }
       _path = path;
-      await _native.start(nativeVoiceConfig, path: path);
     }
     _startedAt = DateTime.now();
   }

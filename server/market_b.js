@@ -312,6 +312,8 @@ async function setup(app, opts) {
   const basicAuth = (sk) => "Basic " + Buffer.from(`${sk}:`).toString("base64");
   app.post("/pay/topup", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    // نسخة iOS الأولى بلا شحن بالبطاقة (قرار تنظيمي معلّق وسياسة أبل للمحافظ)؛ الويب كما هو
+    if (/^ios\//i.test(String(req.headers["x-naslife-client"] ?? ""))) return bad(reply, 403, "unavailable");
     const c = PAY(); if (!c.enabled) return bad(reply, 503, "payments-disabled");
     const amount = Math.round(Number(req.body?.amount) || 0);
     if (amount < c.min || amount > c.max) return bad(reply, 400, "bad-amount", { min: c.min, max: c.max });

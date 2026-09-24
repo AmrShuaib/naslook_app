@@ -68,8 +68,12 @@ class _ListingFormPageState extends State<ListingFormPage> {
 
   Future<void> _addImage() async {
     if (imageCount >= 8) { toast(context, 'الحد ٨ صور'); return; }
-    final p = await pickImage();
-    if (p != null && mounted) setState(() => picked.add(p));
+    try {
+      final p = await pickImage();
+      if (p != null && mounted) setState(() => picked.add(p));
+    } catch (e) {
+      if (mounted && !handlePermissionError(context, e)) toast(context, 'تعذّر فتح الصور', error: true);
+    }
   }
 
   void _submit(String status) {

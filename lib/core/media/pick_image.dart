@@ -63,6 +63,8 @@ Future<PickedVideo?> pickVideo({required bool gallery, Duration? maxDuration}) a
   if (x == null) return null;
   final bytes = await x.readAsBytes();
   final sec = await _videoSeconds(x.path);
+  // image_picker ينسخ الفيديو إلى مجلد مؤقت (حتى 30 ميجا)؛ لم نعد نحتاجه بعد القراءة
+  if (isNativeMobile && x.path.isNotEmpty) { try { await File(x.path).delete(); } catch (_) {} }
   final name = x.name.isNotEmpty ? x.name : 'video.mp4';
   final ext = name.contains('.') ? name.split('.').last.toLowerCase() : 'mp4';
   final mime = x.mimeType ?? (ext == 'mov' ? 'video/quicktime' : ext == 'webm' ? 'video/webm' : 'video/mp4');

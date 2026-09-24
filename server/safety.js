@@ -77,6 +77,9 @@ export default async function safety(app, opts) {
       id UUID PRIMARY KEY, target_type TEXT NOT NULL, target_id TEXT NOT NULL, action TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
       admin_id TEXT NOT NULL, owner_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS content_report_actions_target ON content_report_actions(target_type, target_id, created_at DESC);
+    -- الحالة قبل الإخفاء: «إعادة الإظهار» ترجعها كما كانت (مسودة أو مخفي من صاحبه أو قيد المراجعة) لا «نشط» دائماً
+    CREATE TABLE IF NOT EXISTS content_prev_state (target_type TEXT NOT NULL, target_id TEXT NOT NULL, prev TEXT NOT NULL,
+      at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (target_type, target_id));
   `);
   const pick = (m, ...names) => names.find((n) => m?.has(n)) ?? null;
 
@@ -215,13 +218,30 @@ export default async function safety(app, opts) {
     }
   }
 
+  const savePrev = async (type, id, sql) => {
+    try {
+      const cur = (await pool.query(sql, [id])).rows[0]?.v;
+      if (cur != null && String(cur) !== "blocked") await pool.query("INSERT INTO content_prev_state(target_type,target_id,prev) VALUES($1,$2,$3) ON CONFLICT (target_type,target_id) DO UPDATE SET prev=EXCLUDED.prev, at=now()", [type, id, String(cur)]);
+    } catch { /* ignore */ }
+  };
+  const takePrev = async (type, id, allowed, def) => {
+    try {
+      const v = (await pool.query("DELETE FROM content_prev_state WHERE target_type=$1 AND target_id=$2 RETURNING prev", [type, id])).rows[0]?.prev;
+      return allowed.includes(v) ? v : def;
+    } catch { return def; }
+  };
+
   /// إخفاء المحتوى أو إعادته؛ يعيد true إن تغيّرت حالته الآن
   async function setHidden(type, id, hide, { by = "reports", reason = "", info = null } = {}) {
     const upd = async (sql, params) => { try { return (await pool.query(sql, params)).rowCount > 0; } catch { return false; } };
     const flag = (table, key = "id") => upd(`UPDATE ${table} SET hidden=$2 WHERE ${key}=$1 AND hidden<>$2`, [id, hide]);
     switch (type) {
-      case "post": return upd(hide ? "UPDATE map_posts SET status='blocked', updated_at=now() WHERE id=$1 AND status<>'blocked'" : "UPDATE map_posts SET status='active', updated_at=now() WHERE id=$1 AND status='blocked'", [id]);
-      case "listing": return upd(hide ? "UPDATE market_listings SET status='blocked' WHERE id=$1 AND status<>'blocked'" : "UPDATE market_listings SET status='active' WHERE id=$1 AND status='blocked'", [id]);
+      case "post":
+        if (hide) { await savePrev(type, id, "SELECT status AS v FROM map_posts WHERE id=$1"); return upd("UPDATE map_posts SET status='blocked', updated_at=now() WHERE id=$1 AND status<>'blocked'", [id]); }
+        return upd("UPDATE map_posts SET status=$2, updated_at=now() WHERE id=$1 AND status='blocked'", [id, await takePrev(type, id, ["active", "hidden"], "active")]);
+      case "listing":
+        if (hide) { await savePrev(type, id, "SELECT status AS v FROM market_listings WHERE id=$1"); return upd("UPDATE market_listings SET status='blocked' WHERE id=$1 AND status<>'blocked'", [id]); }
+        return upd("UPDATE market_listings SET status=$2 WHERE id=$1 AND status='blocked'", [id, await takePrev(type, id, ["active", "hidden", "draft", "pending", "scheduled", "sold"], "active")]);
       case "community":
         if (hide && globalThis.naslifeCommunityHide) { try { return !!(await globalThis.naslifeCommunityHide(id)); } catch { return false; } }
         return upd("UPDATE biz_community_posts SET hidden=$2, hidden_by=CASE WHEN $2 THEN $3 ELSE NULL END, updated_at=now() WHERE id=$1 AND hidden<>$2", [id, hide, str(by, 32)]);
@@ -236,9 +256,13 @@ export default async function safety(app, opts) {
         }
         return ok;
       }
-      case "wanted": return upd(hide ? "UPDATE market_wanted SET status='blocked' WHERE id=$1 AND status<>'blocked'" : "UPDATE market_wanted SET status='open' WHERE id=$1 AND status='blocked'", [id]);
+      case "wanted":
+        if (hide) { await savePrev(type, id, "SELECT status AS v FROM market_wanted WHERE id=$1"); return upd("UPDATE market_wanted SET status='blocked' WHERE id=$1 AND status<>'blocked'", [id]); }
+        return upd("UPDATE market_wanted SET status=$2 WHERE id=$1 AND status='blocked'", [id, await takePrev(type, id, ["open", "closed"], "open")]);
       case "wanted-reply": return flag("market_wanted_replies");
-      case "biz": return upd("UPDATE biz SET hidden=$2, active=NOT $2, updated_at=now() WHERE id=$1 AND hidden<>$2", [id, hide]);
+      case "biz":
+        if (hide) { await savePrev(type, id, "SELECT CASE WHEN active THEN 'true' ELSE 'false' END AS v FROM biz WHERE id=$1"); return upd("UPDATE biz SET hidden=true, active=false, updated_at=now() WHERE id=$1 AND NOT hidden", [id]); }
+        return upd("UPDATE biz SET hidden=false, active=$2, updated_at=now() WHERE id=$1 AND hidden", [id, (await takePrev(type, id, ["true", "false"], "true")) === "true"]);
       case "biz-review": { const [bizId, userId] = id.split(":"); return upd("UPDATE biz_reviews SET hidden=$3 WHERE biz_id=$1 AND user_id=$2 AND hidden<>$3", [bizId, userId, hide]); }
       case "biz-post": return flag("biz_posts");
       case "event": return flag("events");
@@ -297,10 +321,14 @@ export default async function safety(app, opts) {
     const info = await targetInfo(type, id);
     if (!info) return bad(reply, 404, "not-found");
     if (info.owner === uid) return bad(reply, 400, "own-content");
-    await pool.query("INSERT INTO content_reports(id,reporter_id,target_type,target_id,reason) VALUES($1,$2,$3,$4,$5) ON CONFLICT (reporter_id,target_type,target_id) DO UPDATE SET reason=EXCLUDED.reason", [crypto.randomUUID(), uid, type, id, reason]);
-    const n = (await pool.query("SELECT count(DISTINCT reporter_id)::int AS n FROM content_reports WHERE target_type=$1 AND target_id=$2", [type, id])).rows[0].n;
+    await pool.query("INSERT INTO content_reports(id,reporter_id,target_type,target_id,reason) VALUES($1,$2,$3,$4,$5) ON CONFLICT (reporter_id,target_type,target_id) DO UPDATE SET reason=EXCLUDED.reason, created_at=now()", [crypto.randomUUID(), uid, type, id, reason]);
+    // بعد «إعادة الإظهار» أو «التجاهل» من الإدارة يبدأ العد من جديد، وإلا يعيد بلاغ واحد إخفاء ما راجعته الإدارة
+    const n = (await pool.query(`SELECT count(DISTINCT reporter_id)::int AS n FROM content_reports WHERE target_type=$1 AND target_id=$2
+      AND created_at > COALESCE((SELECT max(created_at) FROM content_report_actions WHERE target_type=$1 AND target_id=$2 AND action IN ('restore','dismiss')), '-infinity'::timestamptz)`, [type, id])).rows[0].n;
     let hidden = false;
-    if (n >= threshold() && info.status !== "blocked") hidden = await autoHide(type, id, info, n);
+    // الدائرة التجارية لا تُخفى تلقائياً (ثلاثة حسابات لا تُسقط نشاطاً)؛ تذهب لطابور الإشراف وتُنبَّه الإدارة
+    if (type === "biz") { if (n === threshold()) await notifyAdmins({ kind: "content_reported_many", title: `${n} بلاغات على دائرة تجارية`, body: `«${info.title}» — راجعها في طابور الإشراف`, data: { targetType: type, targetId: id, reports: n } }); }
+    else if (n >= threshold() && info.status !== "blocked") hidden = await autoHide(type, id, info, n);
     else if (n === 1) await notifyAdmins({ kind: "report_new", title: `بلاغ على ${typeName(type)}`, body: `«${info.title}»${reason ? ` — ${reason}` : ""}`, data: { targetType: type, targetId: id, reports: n }, push: false });
     return { ok: true, reports: n, hidden, threshold: threshold() };
   });

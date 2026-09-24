@@ -594,6 +594,8 @@ export default async function commerce(app, opts) {
     const l = (await pool.query("SELECT * FROM market_listings WHERE id=$1 AND status='active'", [req.params.id])).rows[0];
     if (!l) return bad(reply, 404, "not-found");
     if (l.seller_id === uid) return bad(reply, 400, "own-listing");
+    // لا طلب بين طرفين بينهما حظر (بأي اتجاه)
+    if ((await blockedIds(uid)).includes(l.seller_id)) return bad(reply, 404, "not-found");
     let unit = Number(l.price); let variant = null;
     const variants = Array.isArray(l.variants) ? l.variants : [];
     if (variants.length) {

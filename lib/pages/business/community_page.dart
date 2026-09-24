@@ -912,8 +912,15 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
       toast(context, 'حتى $communityMaxImages صور في المشاركة');
       return;
     }
-    final img = await pickImage(camera: camera);
-    if (img == null || !mounted) return;
+    final PickedImage? picked;
+    try {
+      picked = await pickImage(camera: camera);
+    } catch (e) {
+      if (mounted && !handlePermissionError(context, e)) toast(context, 'تعذّر فتح الصور', error: true);
+      return;
+    }
+    if (picked == null || !mounted) return;
+    final img = picked;
     setState(() => _uploading = true);
     try {
       final up = await ref.read(apiClientProvider).uploadMedia(img.bytes, contentType: img.mime, fileName: img.name);

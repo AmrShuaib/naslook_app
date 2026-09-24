@@ -75,4 +75,26 @@ void main() {
     expect(await DeviceLocation.openSettings(), isTrue);
     expect(opened, 1);
   });
+
+  test('service area covers Jeddah and Dammam only', () {
+    expect(DeviceLocation.inServiceArea(const LatLng(21.49, 39.19)), isTrue);
+    expect(DeviceLocation.inServiceArea(const LatLng(26.29, 50.21)), isTrue, reason: 'الخبر ضمن نطاق الدمام');
+    expect(DeviceLocation.inServiceArea(const LatLng(24.71, 46.67)), isFalse, reason: 'الرياض خارج منطقة الخدمة الحالية');
+    expect(DeviceLocation.inServiceArea(const LatLng(37.33, -122.03)), isFalse);
+  });
+
+  test('browse shows Jeddah outside the service area and the real spot inside it', () async {
+    DeviceLocation.override = () async => const LatLng(37.33, -122.03); // كوبرتينو (مراجِع أبل)
+    expect(await DeviceLocation.browse(), DeviceLocation.jeddah);
+    expect(DeviceLocation.outsideServiceArea, isTrue);
+    expect(DeviceLocation.lastBrowse, DeviceLocation.jeddah);
+    DeviceLocation.resetForTest();
+    DeviceLocation.override = () async => const LatLng(26.43, 50.10);
+    expect(await DeviceLocation.browse(), const LatLng(26.43, 50.10));
+    expect(DeviceLocation.outsideServiceArea, isFalse);
+    DeviceLocation.resetForTest();
+    DeviceLocation.override = () async => null;
+    DeviceLocation.last = null;
+    expect(await DeviceLocation.browse(), isNull, reason: 'تعذّر تحديد الموقع: يقرر المستدعي البديل');
+  });
 }

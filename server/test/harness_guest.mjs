@@ -54,6 +54,10 @@ check((await call('GET', '/market/spotlight', { expect: 200 })).some((x) => x.li
 check(Array.isArray(await call('GET', `/market/${L.id}/reviews`, { expect: 200 })), 'guest: reviews');
 check((await call('GET', `/market/${L.id}/questions`, { expect: 200 })).length === 1, 'guest: questions');
 check((await call('GET', `/market/sellers/${SELLER}`, { expect: 200 })).seller.id === SELLER, 'guest: seller profile');
+// الزائر لا يستعرض ملف مستخدم ليس بائعاً (لا عروض ولا سجل بيع)؛ المسجّل يراه
+await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000977','quiet_user') ON CONFLICT (id) DO NOTHING");
+await call('GET', '/market/sellers/SA0000977', { expect: 404 });
+await call('GET', '/market/sellers/SA0000977', { user: SELLER, expect: 200 });
 check((await call('GET', '/market/bazaars', { expect: 200 })).some((x) => x.id === BZ.id), 'guest: bazaars');
 check((await call('GET', `/market/bazaars/${BZ.id}`, { expect: 200 })).id === BZ.id, 'guest: bazaar detail');
 check((await call('GET', '/events', { expect: 200 })).some((x) => x.id === EV.id), 'guest: events');

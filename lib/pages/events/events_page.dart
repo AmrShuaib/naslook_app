@@ -100,7 +100,7 @@ class _EventsPageState extends ConsumerState<EventsPage> {
       )),
     );
     if (ok != true || title.text.trim().isEmpty || !mounted) return;
-    final gps = await DeviceLocation.current(precise: false);
+    final gps = await DeviceLocation.browse();
     final pres = ref.read(myPresenceProvider).value;
     try {
       final ev = await ref.read(apiClientProvider).createEvent({

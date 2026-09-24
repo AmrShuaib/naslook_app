@@ -123,7 +123,8 @@ export default async function marketPlus(app, opts) {
     const reviews = (await pool.query("SELECT r.*, l.title FROM market_reviews r JOIN market_listings l ON l.id=r.listing_id WHERE r.seller_id=$1 AND NOT r.hidden AND NOT (r.buyer_id = ANY($2::text[])) ORDER BY r.created_at DESC LIMIT 20", [id, await blockedIds(uid)])).rows;
     const followers = (await pool.query("SELECT count(*)::int AS n FROM market_follows WHERE seller_id=$1", [id])).rows[0].n;
     const following = uid ? (await pool.query("SELECT 1 FROM market_follows WHERE user_id=$1 AND seller_id=$2", [uid, id])).rowCount > 0 : false;
-    let bio = ""; try { bio = (await pool.query("SELECT bio FROM profiles WHERE user_id=$1", [id])).rows[0]?.bio ?? ""; } catch { /* لا جدول */ }
+    // النبذة من ملف عام فقط (الملف الخاص لا تُعرض نبذته في صفحة البائع)
+    let bio = ""; try { const pr = (await pool.query("SELECT * FROM profiles WHERE user_id=$1", [id])).rows[0]; bio = pr && pr.is_public !== false ? pr.bio ?? "" : ""; } catch { /* لا جدول */ }
     return {
       seller: await person(id), bio, memberSince: u.created_at ?? null, followers, following, mine: uid === id,
       stats: { ratingAvg: s?.rating_avg == null ? null : Number(s.rating_avg), ratingCount: s?.rating_count ?? 0, completed: s?.completed ?? 0, responseHours: s?.response_hours == null ? null : Number(s.response_hours), activeListings: listings.length },
@@ -135,6 +136,8 @@ export default async function marketPlus(app, opts) {
     if (!ID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     if (req.params.id !== uid && (await blockedIds(uid)).includes(req.params.id)) return bad(reply, 404, "not-found");
     const p = await sellerProfile(req.params.id, uid); if (!p) return bad(reply, 404, "not-found");
+    // الزائر بلا حساب لا يستعرض ملفات من ليسوا بائعين (لا عروض نشطة ولا سجل بيع)
+    if (!uid && p.stats.activeListings === 0 && p.stats.completed === 0 && p.stats.ratingCount === 0) return bad(reply, 404, "not-found");
     return p;
   });
   app.post("/market/sellers/:id/follow", async (req, reply) => {

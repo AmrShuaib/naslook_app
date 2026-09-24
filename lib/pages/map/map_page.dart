@@ -82,8 +82,9 @@ class _MapPageState extends ConsumerState<MapPage> {
       if ((f - _sheetFraction).abs() > 0.004) setState(() => _sheetFraction = f);
     });
     Future.microtask(() async {
-      final gps = await DeviceLocation.current(precise: false);
+      final gps = await DeviceLocation.browse();
       if (gps != null && mounted && ref.read(myPresenceProvider).value?.lat == null) _map.move(gps, 14);
+      if (mounted && DeviceLocation.outsideServiceArea) toast(context, 'ناس لايف متاح حالياً في جدة والدمام؛ نعرض لك جدة');
     });
   }
 
@@ -260,7 +261,7 @@ class _MapPageState extends ConsumerState<MapPage> {
               opacity: controlsHidden ? 0 : 1,
               child: FilledButton.icon(
                 onPressed: () async {
-                  final gps = await DeviceLocation.current();
+                  final gps = await DeviceLocation.browse(precise: true);
                   if (gps != null) _map.move(gps, 16);
                   if (mounted) _hereMenu(gps ?? _map.camera.center);
                 },
@@ -351,11 +352,22 @@ class _MapPageState extends ConsumerState<MapPage> {
       );
 
   Future<void> _goToMe() async {
-    final gps = await DeviceLocation.current();
+    final gps = await DeviceLocation.browse(precise: true);
+    if (!mounted) return;
     if (gps == null) {
-      if (mounted) toast(context, 'لم يُسمح بالوصول إلى موقعك؛ فعّل الموقع للمتصفح ثم أعد المحاولة');
+      // رفض دائم أو خدمة الموقع مطفأة: لا يظهر طلب الإذن مجدداً، فنعرض طريق الإعدادات
+      if (DeviceLocation.deniedForever || DeviceLocation.serviceDisabled) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          key: const Key('location-settings-snack'),
+          content: Text(DeviceLocation.serviceDisabled ? 'خدمة الموقع مطفأة في جهازك' : 'لم يُسمح لناس لايف بالوصول إلى موقعك'),
+          action: SnackBarAction(label: 'افتح الإعدادات', onPressed: () => DeviceLocation.openSettings()),
+        ));
+      } else {
+        toast(context, 'تعذّر تحديد موقعك؛ اسمح بالوصول إلى الموقع ثم أعد المحاولة');
+      }
       return;
     }
+    if (DeviceLocation.outsideServiceArea) toast(context, 'ناس لايف متاح حالياً في جدة والدمام؛ نعرض لك جدة');
     _map.move(gps, 16);
   }
 

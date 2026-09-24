@@ -15,7 +15,7 @@ import '../../api/client.dart';
 
 /// يفتح محرّر منشور جديد عند موقع الجهاز، أو مكان المستخدم على الخريطة، أو مركز جدة.
 Future<MapPost?> composePostHere(BuildContext context, WidgetRef ref) async {
-  final gps = await DeviceLocation.current(precise: false);
+  final gps = await DeviceLocation.browse();
   final pres = ref.read(myPresenceProvider).valueOrNull;
   final at = gps ?? (pres?.lat != null && pres?.lng != null ? LatLng(pres!.lat!, pres.lng!) : const LatLng(21.5433, 39.1728));
   if (!context.mounted) return null;

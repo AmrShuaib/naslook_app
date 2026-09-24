@@ -1,3 +1,6 @@
+import 'dart:io' show Platform;
+
+import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../media/native_io.dart';
@@ -35,12 +38,16 @@ void soundPlay() {
   if (!isNativeMobile) return;
   () async {
     try {
+      // على iOS: لا نقاطع موسيقى أو بودكاست يسمعه المستخدم (الجرس ليس أهم منها)
+      if (Platform.isIOS && await AVAudioSession().isOtherAudioPlaying) return;
       await _ensure();
       final p = _player;
       if (p == null) return;
       await p.seek(Duration.zero);
       await p.play();
       await p.pause();
+      // نعيد الصوت لأي تطبيق آخر أوقفه الجرس
+      try { await (await AudioSession.instance).setActive(false, avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation); } catch (_) {}
     } catch (_) {
       // تعذّر التشغيل (مثلاً أثناء مكالمة): نتجاهل بصمت
     }

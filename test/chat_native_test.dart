@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:naslook/core/media/native_io.dart';
 import 'package:naslook/api/client.dart';
 import 'package:naslook/api/models.dart';
 import 'package:naslook/api/session.dart';
@@ -150,7 +151,10 @@ void main() {
     expect(opened, 1);
   });
 
-  testWidgets('a video bubble opens an in-app full-screen player', (tester) async {
+  testWidgets('a video bubble opens an in-app full-screen player on iOS/Android', (tester) async {
+    // على الجوال يُشغَّل داخل التطبيق؛ على الويب يبقى فتحه في تبويب جديد كما كان
+    nativeMobileOverride = true;
+    addTearDown(() => nativeMobileOverride = null);
     final played = <String>[];
     VideoView.factoryOverride = (url, {autoplay = false, loop = false, muted = false}) {
       played.add('$url autoplay=$autoplay');

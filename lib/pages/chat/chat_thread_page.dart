@@ -21,6 +21,7 @@ import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/posts_api.dart';
 import '../../api/safety_api.dart';
+import '../../core/media/native_io.dart' show isNativeMobile;
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/location.dart';
@@ -1487,7 +1488,7 @@ class _BubbleState extends State<_Bubble> {
         // يُشغَّل داخل التطبيق بملء الشاشة بدل فتحه خارجه
         return InkWell(
           key: const Key('chat-video'),
-          onTap: url == null ? null : () => openVideoFullScreen(context, url),
+          onTap: url == null ? null : () => isNativeMobile ? openVideoFullScreen(context, url) : launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
           child: Container(width: 220, height: 130, decoration: BoxDecoration(color: Colors.black.withValues(alpha: .08), borderRadius: BorderRadius.circular(12)), child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.play_circle_fill_rounded, size: 44, color: Joy.primary), SizedBox(height: 4), Text('فيديو · اضغط للتشغيل', style: TextStyle(fontSize: 12, color: Joy.textMuted))])),
         );
       default:

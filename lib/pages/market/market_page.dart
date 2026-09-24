@@ -26,7 +26,7 @@ export 'listing_form.dart' show showListingForm, ListingDraft;
 
 /// موقع المستخدم للسوق (بلا دقة عالية، ومهلة قصيرة حتى لا تنتظر الصفحة)؛ يُستبدل في الاختبارات.
 final marketPosProvider = FutureProvider<({double lat, double lng})?>((ref) async {
-  final gps = await DeviceLocation.current(precise: false, timeout: const Duration(seconds: 4));
+  final gps = await DeviceLocation.browse(timeout: const Duration(seconds: 4));
   if (gps != null) return (lat: gps.latitude, lng: gps.longitude);
   final p = ref.read(myPresenceProvider).valueOrNull;
   return p?.lat != null && p?.lng != null ? (lat: p!.lat!, lng: p.lng!) : null;

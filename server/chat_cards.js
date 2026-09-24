@@ -54,7 +54,8 @@ async function setup(app, opts) {
   const blocked = async (a, b) => { try { return (await pool.query("SELECT 1 FROM user_blocks WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1)", [a, b])).rowCount > 0; } catch { return false; } };
   // المال داخل المحادثة (طلب مبلغ، تقسيم، إرسال): مفتاح المنصة chatPaymentsEnabled، ومطفأ دائماً في عميل iOS الأصلي
   const iosNative = (req) => /^ios\//i.test(String(req.headers["x-naslife-client"] ?? ""));
-  const moneyOff = (req) => globalThis.naslifeSettings?.chatPaymentsEnabled === false || iosNative(req);
+  // دفع الدردشة تحويل بين مستخدمين: يتوقف إن أُطفئت التحويلات أو مدفوعات الدردشة، ودائماً في iOS
+  const moneyOff = (req) => globalThis.naslifeSettings?.chatPaymentsEnabled === false || globalThis.naslifeSettings?.transfersEnabled === false || iosNative(req);
 
   // ---- الدوائر والأصناف: المعرّف كما هو أو مع البادئة biz- (يكتب المستخدم @brew92 بدل @biz-brew92)
   const bizRow = async (slug) => {

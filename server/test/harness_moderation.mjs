@@ -195,12 +195,16 @@ check(!(await call('GET', '/posts/hidden', { user: R1, expect: 200 })).ids.inclu
 check(!!(await hiddenNote('vessel-comment')), 'owner notified (vessel-comment)');
 // الدائرة نفسها
 rep = await report3('biz', B1.id);
-check(rep.hidden === true, 'biz auto-hidden');
+check(rep.hidden === false && rep.reports === 3, 'biz is NOT auto-hidden by reports (queue only)', JSON.stringify(rep));
+await call('GET', `/biz/${B1.id}`, { user: null, expect: 200 });
+check(!!(await noted(ADMIN, 'content_reported_many', (d) => d.targetType === 'biz' && d.targetId === B1.id)), 'admins alerted when a circle reaches the threshold');
+let bh = await call('POST', `/adminapi/moderation/biz/${B1.id}`, { body: { action: 'hide', note: 'مخالف' }, user: ADMIN, expect: 200 });
+check(bh.changed === true, 'admin hides the circle from the queue');
 await call('GET', `/biz/${B1.id}`, { user: null, expect: 404 });
 check(!(await call('GET', '/biz?q=' + encodeURIComponent('مقهى منى'), { user: null, expect: 200 })).some((x) => x.id === B1.id), 'hidden biz gone from the list');
 e = await call('PATCH', `/biz/${B1.id}`, { body: { active: true }, expect: 403 });
 check(e.error === 'moderated', 'owner cannot re-activate a moderated biz');
-check(!!(await hiddenNote('biz')), 'owner notified (biz)');
+check(!!(await noted(AUTHOR, 'content_hidden', (d) => d.targetType === 'biz' && d.reason === 'moderation')), 'owner notified (biz, by moderation)');
 await globalThis.naslifeNotifyPollReports?.();
 check(!!(await noted(ADMIN, 'content_reports_new', (d) => d.source === 'content_reports' && d.count >= 3)), 'admins get a push for new content reports');
 
@@ -210,15 +214,26 @@ await call('GET', '/adminapi/moderation', { user: R1, expect: 403 });
 let mq = await call('GET', '/adminapi/moderation', { user: ADMIN, expect: 200 });
 const evItem = mq.items.find((i) => i.targetType === 'event' && i.targetId === EV.id);
 check(evItem && evItem.reports === 3 && evItem.owner?.id === AUTHOR && evItem.owner.nickname === 'monamod' && evItem.hidden === true && evItem.title === 'أمسية منى' && evItem.reasons.includes('مسيء') && evItem.typeName === 'فعالية', 'queue groups reports with owner, preview and state', JSON.stringify(evItem));
-check(mq.open >= 10 && mq.items.length === mq.open && mq.types.length === 14, 'open count and the 14 target types', `${mq.open}/${mq.items.length}`);
+check(mq.open >= 9 && mq.items.length === mq.open && mq.types.length === 14, 'open count and the 14 target types', `${mq.open}/${mq.items.length}`);
 let a = await call('POST', `/adminapi/moderation/event/${EV.id}`, { body: { action: 'restore', note: 'لا مخالفة' }, user: ADMIN, expect: 200 });
 check(a.changed === true && a.status === 'visible', 'restore brings the event back', JSON.stringify(a));
 await call('GET', `/events/${EV.id}`, { user: null, expect: 200 });
 check(!!(await noted(AUTHOR, 'content_restored', (d) => d.targetType === 'event')), 'owner told about the restore');
+// الإعادة ترجع الحالة السابقة: عرض كان مسودة يبقى مسودة ولا يُنشر
+const LD = await call('POST', '/market', { body: { kind: 'product', category: 'food', title: 'مسودة كعك', price: 700 }, user: R1, expect: 200 });
+await pool.query("UPDATE market_listings SET status='draft' WHERE id=$1", [LD.id]);
+await call('POST', `/adminapi/moderation/listing/${LD.id}`, { body: { action: 'hide' }, user: ADMIN, expect: 200 });
+check((await pool.query('SELECT status FROM market_listings WHERE id=$1', [LD.id])).rows[0].status === 'blocked', 'hidden draft listing is blocked');
+await call('POST', `/adminapi/moderation/listing/${LD.id}`, { body: { action: 'restore' }, user: ADMIN, expect: 200 });
+check((await pool.query('SELECT status FROM market_listings WHERE id=$1', [LD.id])).rows[0].status === 'draft', 'restore returns the listing to draft, not active');
 mq = await call('GET', '/adminapi/moderation', { user: ADMIN, expect: 200 });
 check(!mq.items.some((i) => i.targetId === EV.id), 'acted item leaves the open queue');
 mq = await call('GET', '/adminapi/moderation?status=all', { user: ADMIN, expect: 200 });
 check(mq.items.find((i) => i.targetId === EV.id)?.action?.action === 'restore' && mq.items.find((i) => i.targetId === EV.id).action.by.id === ADMIN, 'status=all keeps it with the last action');
+// بعد إعادة الإظهار يبدأ العد من جديد: بلاغ واحد (ولو من مبلّغ سابق) لا يعيد الإخفاء
+let again = await call('POST', '/safety/report', { body: { targetType: 'event', targetId: EV.id, reason: 'مجدداً' }, user: R1, expect: 200 });
+check(again.hidden === false && again.reports === 1, 'one report after a restore does not re-hide', JSON.stringify(again));
+await call('GET', `/events/${EV.id}`, { user: null, expect: 200 });
 await call('POST', '/safety/report', { body: { targetType: 'post', targetId: MP.id, reason: 'مضلل' }, user: R1, expect: 200 });
 a = await call('POST', `/adminapi/moderation/post/${MP.id}`, { body: { action: 'hide', note: 'مخالف للقواعد' }, user: ADMIN, expect: 200 });
 check(a.changed === true && (await pool.query('SELECT status FROM map_posts WHERE id=$1', [MP.id])).rows[0].status === 'blocked', 'hide blocks the map post');
@@ -229,7 +244,7 @@ a = await call('POST', `/adminapi/moderation/listing/${LA.id}`, { body: { action
 check(a.owner === AUTHOR && await suspendedIn(AUTHOR) && !(await suspendedIn(R2)), 'suspend-owner suspends the content owner, never the body target');
 check((await pool.query('SELECT status FROM market_listings WHERE id=$1', [LA.id])).rows[0].status === 'blocked', 'suspend-owner also hides the content');
 check((await pool.query("SELECT 1 FROM admin_audit WHERE admin_id=$1 AND action='moderation.suspend-owner' AND target=$2", [ADMIN, `listing:${LA.id}`])).rowCount === 1, 'moderation actions audited');
-check((await pool.query("SELECT count(*)::int AS n FROM content_report_actions WHERE admin_id=$1", [ADMIN])).rows[0].n === 3, 'actions recorded in content_report_actions');
+check((await pool.query("SELECT count(*)::int AS n FROM content_report_actions WHERE admin_id=$1", [ADMIN])).rows[0].n === 6, 'actions recorded in content_report_actions');
 a = await call('POST', `/adminapi/moderation/vessel-comment/${C1}`, { body: { action: 'dismiss' }, user: ADMIN, expect: 200 });
 check(a.changed === false && !(await call('GET', '/adminapi/moderation', { user: ADMIN, expect: 200 })).items.some((i) => i.targetId === C1), 'dismiss closes the item without changing it');
 a = await call('POST', `/adminapi/moderation/biz/${B1.id}`, { body: { action: 'restore' }, user: ADMIN, expect: 200 });

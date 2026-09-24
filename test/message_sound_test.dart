@@ -108,7 +108,7 @@ void main() {
     expect(MessageSound.supported, isFalse);
     expect(tile.onChanged, isNull);
     expect(tile.value, isFalse);
-    expect(find.text('متاح في نسخة الويب'), findsOneWidget);
+    expect(find.text('غير متاح على هذا الجهاز'), findsOneWidget);
     expect(find.byKey(const Key('sound-test')), findsNothing);
     // الحفظ والتحميل عبر التخزين المحلي
     await MessageSound.saveEnabled(false);
@@ -146,7 +146,7 @@ void main() {
     final tile = tester.widget<SwitchListTile>(find.byKey(const Key('sound-toggle')));
     expect(tile.onChanged, isNotNull);
     expect(tile.value, isTrue);
-    expect(find.text('متاح في نسخة الويب'), findsNothing);
+    expect(find.text('غير متاح على هذا الجهاز'), findsNothing);
     await tester.ensureVisible(find.byKey(const Key('sound-test')));
     await tester.tap(find.byKey(const Key('sound-test')));
     await tester.pump();

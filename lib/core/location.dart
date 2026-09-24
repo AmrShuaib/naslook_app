@@ -38,7 +38,7 @@ class DeviceLocation {
     }
     _flightPrecise = precise;
     late final Future<LatLng?> run;
-    run = _run(precise).whenComplete(() {
+    run = _run(precise).timeout(const Duration(seconds: 15), onTimeout: () => last).whenComplete(() {
       if (identical(_flight, run)) _flight = null;
     });
     _flight = run;
@@ -47,7 +47,11 @@ class DeviceLocation {
 
   static Future<LatLng?> _run(bool precise) async {
     final o = override;
-    if (o != null) return o();
+    if (o != null) {
+      final r = await o();
+      if (r != null) last = r;
+      return r;
+    }
     try {
       if (!await Geolocator.isLocationServiceEnabled()) {
         status = LocationStatus.serviceDisabled;
@@ -59,7 +63,7 @@ class DeviceLocation {
         status = LocationStatus.deniedForever;
         return null;
       }
-      if (perm == LocationPermission.denied || perm == LocationPermission.unableToDetermine) {
+      if (perm == LocationPermission.denied) {
         status = LocationStatus.denied;
         return null;
       }
@@ -76,6 +80,29 @@ class DeviceLocation {
       return last;
     }
   }
+
+  // ---- منطقة الخدمة: جدة والدمام. خارجها (مسافر، أو مراجِع متجر التطبيقات في بلد آخر) تُعرض جدة للتصفح
+  // بدل خريطة وبث وسوق فارغة. الاستخدامات التي تحتاج الموقع الحقيقي (مشاركة الموقع، تحديد مكان نشاط) تبقى على current().
+  static const jeddah = LatLng(21.5433, 39.1728);
+  static const dammam = LatLng(26.4207, 50.0888);
+  static const serviceRadiusKm = 150.0;
+  static bool inServiceArea(LatLng p) {
+    const d = Distance();
+    return d.as(LengthUnit.Kilometer, p, jeddah) <= serviceRadiusKm || d.as(LengthUnit.Kilometer, p, dammam) <= serviceRadiusKm;
+  }
+
+  /// آخر موقع للجهاز كان خارج منطقة الخدمة (لعرض تنبيه «نعرض جدة»).
+  static bool get outsideServiceArea => last != null && !inServiceArea(last!);
+
+  /// موقع للتصفح: موقع الجهاز داخل منطقة الخدمة، وإلا جدة؛ null إن تعذّر تحديد الموقع.
+  static Future<LatLng?> browse({bool precise = false, Duration timeout = const Duration(seconds: 14)}) async {
+    final l = await current(precise: precise, timeout: timeout);
+    if (l == null) return null;
+    return inServiceArea(l) ? l : jeddah;
+  }
+
+  /// آخر موقع معروف للتصفح (بلا طلب جديد).
+  static LatLng? get lastBrowse => last == null ? null : (inServiceArea(last!) ? last : jeddah);
 
   /// يفتح إعدادات التطبيق (بعد رفض دائم) أو إعدادات خدمة الموقع (إن كانت مطفأة).
   static Future<bool> openSettings() async {

@@ -100,9 +100,9 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   /// يبدأ فوراً من آخر موقع معروف (أو موقع الحضور أو مركز الخريطة)، ثم يطلب موقع الجهاز في الخلفية ويعيد التحميل إن اختلف.
   bool _refining = false;
   void _refineOrigin() {
-    if (_refining || DeviceLocation.last != null) return;
+    if (_refining || DeviceLocation.lastBrowse != null) return;
     _refining = true;
-    unawaited(DeviceLocation.current(precise: false).then((l) {
+    unawaited(DeviceLocation.browse().then((l) {
       if (!mounted || l == null || origin == null) return;
       if (const Distance().distance(l, origin!) > 500) _load();
     }).catchError((_) {}));
@@ -111,7 +111,7 @@ class _FeedPageState extends ConsumerState<FeedPage> {
   Future<void> _load() async {
     setState(() { loading = true; error = null; });
     try {
-      origin = DeviceLocation.last ?? ref.read(feedOriginProvider);
+      origin = DeviceLocation.lastBrowse ?? ref.read(feedOriginProvider);
       _refineOrigin();
       final s = await ref.read(apiClientProvider).postsFeed(lat: origin!.latitude, lng: origin!.longitude, place: widget.placeKey, tag: tag, radiusKm: widget.placeKey != null ? 200 : radius, authors: await _authors());
       if (!mounted) return;

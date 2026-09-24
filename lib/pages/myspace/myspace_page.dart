@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -398,7 +399,7 @@ class _SoundTile extends ConsumerWidget {
         value: on && supported,
         onChanged: supported ? (v) => ref.read(messageSoundProvider.notifier).set(v) : null,
         title: const Text('صوت الجرس للرسائل الجديدة'),
-        subtitle: Text(!supported ? 'متاح في نسخة الويب' : on ? 'يُقرع عند وصول رسالة والتطبيق مفتوح في المتصفح' : 'بلا صوت عند وصول الرسائل'),
+        subtitle: Text(!supported ? 'غير متاح على هذا الجهاز' : on ? 'يُقرع عند وصول رسالة والتطبيق مفتوح' : 'بلا صوت عند وصول الرسائل'),
         secondary: Icon(Icons.notifications_none_rounded, color: on && supported ? Joy.primary : Joy.text),
       ),
       if (supported)
@@ -474,6 +475,20 @@ class _PushTileState extends ConsumerState<_PushTile> {
   Widget build(BuildContext context) {
     final supported = PushService.supported;
     final denied = PushService.permission == 'denied';
+    final testButton = Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: Padding(
+        padding: const EdgeInsetsDirectional.only(start: 12, bottom: 4),
+        child: TextButton.icon(onPressed: _busy ? null : _test, icon: const Icon(Icons.send_outlined, size: 18), label: const Text('إرسال إشعار تجريبي')),
+      ),
+    );
+    // تطبيق الجوال: إشعارات الويب غير موجودة فيه (الإشعارات الأصلية تحتاج مفتاح أبل)، فتصل الإشعارات داخل التطبيق فقط
+    if (!kIsWeb && !supported) {
+      return Column(mainAxisSize: MainAxisSize.min, children: [
+        const ListTile(key: Key('push-in-app'), leading: Icon(Icons.notifications_active_outlined, color: Joy.text), title: Text('الإشعارات'), subtitle: Text('تصلك داخل التطبيق في صفحة الإشعارات')),
+        testButton,
+      ]);
+    }
     return Column(mainAxisSize: MainAxisSize.min, children: [
       SwitchListTile(
         value: _on,
@@ -488,13 +503,7 @@ class _PushTileState extends ConsumerState<_PushTile> {
                     : 'فعّلها لتصلك الرسائل والطلبات على هذا الجهاز'),
         secondary: Icon(Icons.notifications_active_outlined, color: _on ? Joy.primary : Joy.text),
       ),
-      Align(
-        alignment: AlignmentDirectional.centerStart,
-        child: Padding(
-          padding: const EdgeInsetsDirectional.only(start: 12, bottom: 4),
-          child: TextButton.icon(onPressed: _busy ? null : _test, icon: const Icon(Icons.send_outlined, size: 18), label: const Text('إرسال إشعار تجريبي')),
-        ),
-      ),
+      testButton,
     ]);
   }
 }

@@ -91,6 +91,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   bool _recoveryShown = false;
   StreamSubscription<Map<String, dynamic>>? _socketSub;
   late final MessageBell _bell = MessageBell(ref.read);
+  // iOS يعلّق المقبس في الخلفية؛ عند العودة نعيد الاتصال فوراً بدل انتظار مهلة إعادة المحاولة
+  late final AppLifecycleListener _life = AppLifecycleListener(onResume: () => ref.read(socketProvider)?.reconnectNow(force: true));
 
   @override
   void initState() {
@@ -101,6 +103,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAskConsent());
     // جرس الرسائل: يُفتح سياق الصوت عند أول لمسة، ويُقرع عند وصول رسالة عبر الاتصال المباشر
     MessageSound.prepare();
+    _life; // يُنشأ المستمع مع الشاشة
     // يفتح اتصال WebSocket مبكراً، ويجدّد اشتراك الإشعارات الفورية إن كان الإذن ممنوحاً
     Future.microtask(() {
       if (!mounted) return;
@@ -112,6 +115,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   void dispose() {
     _socketSub?.cancel();
+    _life.dispose();
     super.dispose();
   }
 

@@ -14,7 +14,7 @@ final myPostsProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClie
 
 /// نقطة الأصل للبث والأماكن الرائجة بلا طلب إذن: آخر موقع معروف للجهاز، وإلا موقع حضور المستخدم، وإلا مركز الحدود الحالية.
 final feedOriginProvider = Provider<LatLng>((ref) {
-  final last = DeviceLocation.last;
+  final last = DeviceLocation.lastBrowse;
   if (last != null) return last;
   final p = ref.watch(myPresenceProvider).valueOrNull;
   if (p?.lat != null && p?.lng != null) return LatLng(p!.lat!, p.lng!);
