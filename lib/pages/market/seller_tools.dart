@@ -11,6 +11,7 @@ import '../../core/platform.dart';
 import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../business/business_page.dart';
 import '../chat/chat_thread_page.dart';
@@ -33,7 +34,12 @@ class SellerPage extends ConsumerWidget {
     final p = ref.watch(sellerProfileProvider(id));
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: Text(p.valueOrNull?.seller.nickname ?? 'البائع')),
+      appBar: AppBar(title: Text(p.valueOrNull?.seller.nickname ?? 'البائع'), actions: [
+        // البائع شخص لا محتوى: البلاغ يذهب إلى بلاغات المستخدمين، والحظر يخفي عروضه ويغلق الصفحة
+        if (p.valueOrNull case final x? when !x.mine)
+          ReportMenuButton(type: kReportUser, id: x.seller.id, author: x.seller, keyPrefix: 'seller', iconSize: 24, color: Joy.text, reportLabel: 'إبلاغ عن البائع',
+            onBlocked: () { if (context.mounted) Navigator.of(context).maybePop(); }),
+      ]),
       body: p.when(
         data: (x) => ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 32), children: [
           Row(children: [

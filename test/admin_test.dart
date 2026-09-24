@@ -154,7 +154,7 @@ void main() {
     expect(b['note'], 'هدية');
   });
 
-  testWidgets('report action posts the decision with target', (tester) async {
+  testWidgets('report action posts the decision without a client-chosen target', (tester) async {
     final srv = _Srv();
     await _pump(tester, srv, const AdminShell(), width: 1200);
     await tester.tap(find.text('البلاغات'));
@@ -166,7 +166,9 @@ void main() {
     await tester.pumpAndSettle();
     final b = srv.bodies['POST /adminapi/reports/r1/action']!;
     expect(b['action'], 'warn');
-    expect(b['targetId'], 'SA0000003');
+    expect(b['note'], 'أول تحذير');
+    // الخادم يأخذ المُبلَّغ عنه من صف البلاغ نفسه
+    expect(b.containsKey('targetId'), isFalse);
   });
   testWidgets('payment gateway keys are saved from the panel, masked, tested and cleared', (tester) async {
     final srv = _Srv();

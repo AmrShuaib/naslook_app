@@ -7,12 +7,12 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../api/client.dart' show mediaUrl;
 import '../../api/commerce_models.dart';
 import '../../api/posts_api.dart';
-import '../../api/safety_api.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../business/business_page.dart';
@@ -161,10 +161,13 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     final api = ref.read(apiClientProvider);
     try {
       if (choice == 'report') {
-        final reason = await askText(context, title: 'إبلاغ عن المنشور', hint: 'ما المشكلة؟ (احتيال، محتوى مسيء، مضلل…)', confirm: 'إرسال البلاغ');
-        if (reason == null || reason.isEmpty || !mounted) return;
-        final r = await api.reportContent(type: 'post', id: p.id, reason: reason);
-        if (mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفي المنشور للمراجعة' : 'وصل بلاغك وسنراجعه');
+        paused = true;
+        final r = await showReportSheet(context, ref, type: 'post', id: p.id, author: p.user, title: 'إبلاغ عن المنشور');
+        paused = false;
+        if (r != null && (r.blocked || r.hidden)) {
+          invalidatePosts(ref);
+          if (mounted && r.blocked) Navigator.pop(context);
+        }
       } else if (choice == 'block') {
         await api.blockUser(p.user.id);
         invalidatePosts(ref);

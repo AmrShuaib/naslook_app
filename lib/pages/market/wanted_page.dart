@@ -6,7 +6,9 @@ import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../chat/chat_thread_page.dart';
 import 'market_page.dart';
@@ -48,8 +50,9 @@ class _List extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final l = ref.watch(wantedListProvider(mine));
+    final blocked = ref.watch(blockedIdsProvider);
     return l.when(
-      data: (items) => items.isEmpty ? EmptyState(icon: Icons.campaign_outlined, title: mine ? 'لم تنشر طلباً بعد' : 'لا طلبات مفتوحة حالياً', subtitle: mine ? 'اضغط «أبحث عن…» واكتب ما تحتاجه.' : 'الطلبات القريبة منك تظهر هنا ويمكنك الرد عليها بعرض.')
+      data: (all) => switch ([for (final w in all) if (!isBlockedId(blocked, w.user.id)) w]) { final items => items.isEmpty ? EmptyState(icon: Icons.campaign_outlined, title: mine ? 'لم تنشر طلباً بعد' : 'لا طلبات مفتوحة حالياً', subtitle: mine ? 'اضغط «أبحث عن…» واكتب ما تحتاجه.' : 'الطلبات القريبة منك تظهر هنا ويمكنك الرد عليها بعرض.')
           : RefreshIndicator(onRefresh: () async => ref.invalidate(wantedListProvider), child: ListView.separated(padding: const EdgeInsets.all(20), itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) {
               final w = items[i];
               return JoyCard(onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => WantedDetailPage(w.id))), child: Row(children: [
@@ -60,7 +63,7 @@ class _List extends ConsumerWidget {
                 ])),
                 Column(children: [Text('${w.replies}', style: const TextStyle(fontWeight: FontWeight.w800)), const Text('عروض', style: TextStyle(color: Joy.textMuted, fontSize: 10.5))]),
               ]));
-            })),
+            })) },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(wantedListProvider)),
     );
@@ -73,9 +76,16 @@ class WantedDetailPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final w = ref.watch(wantedProvider(id));
+    final blocked = ref.watch(blockedIdsProvider);
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('طلب مشترٍ'), actions: [if (w.valueOrNull?.mine == true && w.valueOrNull?.status == 'open') TextButton(onPressed: () async { await ref.read(apiClientProvider).closeWanted(id); ref.invalidate(wantedProvider(id)); ref.invalidate(wantedListProvider); }, child: const Text('إغلاق الطلب'))]),
+      appBar: AppBar(title: const Text('طلب مشترٍ'), actions: [
+        if (w.valueOrNull?.mine == true && w.valueOrNull?.status == 'open') TextButton(onPressed: () async { await ref.read(apiClientProvider).closeWanted(id); ref.invalidate(wantedProvider(id)); ref.invalidate(wantedListProvider); }, child: const Text('إغلاق الطلب')),
+        if (w.valueOrNull case final x? when !x.mine)
+          ReportMenuButton(type: 'wanted', id: x.id, author: x.user, keyPrefix: 'wanted', iconSize: 24, color: Joy.text, reportLabel: 'إبلاغ عن الطلب',
+            onReported: (r) { if (r.hidden || r.blocked) { ref.invalidate(wantedListProvider); if (context.mounted) Navigator.of(context).maybePop(); } },
+            onBlocked: () { ref.invalidate(wantedListProvider); if (context.mounted) Navigator.of(context).maybePop(); }),
+      ]),
       body: w.when(
         data: (x) => ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 32), children: [
           Row(children: [ProfileAvatar(person: x.user, size: 44), const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(x.user.nickname, style: const TextStyle(fontWeight: FontWeight.w700)), Text('${timeAgo(x.createdAt)} · ${x.status == 'open' ? 'مفتوح' : 'مغلق'}', style: const TextStyle(color: Joy.textMuted, fontSize: 12))]))]),
@@ -85,8 +95,10 @@ class WantedDetailPage extends ConsumerWidget {
           Padding(padding: const EdgeInsets.only(top: 6), child: Text('${marketCategories[x.category] ?? x.category}${x.budgetMax != null ? ' · الميزانية حتى ${money(x.budgetMax!)}' : ''}${x.placeName != null ? ' · ${x.placeName}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5))),
           SectionTitle('العروض (${x.replyList.length})'),
           if (x.replyList.isEmpty) const Text('لا عروض بعد', style: TextStyle(color: Joy.textMuted)),
-          for (final r in x.replyList) JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [ProfileAvatar(person: r.seller, size: 32), const SizedBox(width: 8), Expanded(child: Text(r.seller.nickname, style: const TextStyle(fontWeight: FontWeight.w600))), if (r.price != null) Text(money(r.price!), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary))]),
+          for (final r in x.replyList) if (!isBlockedId(blocked, r.seller.id)) JoyCard(key: Key('wanted-reply-${r.id}'), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [ProfileAvatar(person: r.seller, size: 32), const SizedBox(width: 8), Expanded(child: Text(r.seller.nickname, style: const TextStyle(fontWeight: FontWeight.w600))), if (r.price != null) Text(money(r.price!), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary)),
+              if (!r.mine) SizedBox(height: 32, child: ReportMenuButton(type: 'wanted-reply', id: r.id, author: r.seller, keyPrefix: 'wreply-${r.id}', reportLabel: 'إبلاغ عن الرد',
+                onReported: (o) { if (o.hidden) ref.invalidate(wantedProvider(id)); }))]),
             if (r.text.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(r.text)),
             Row(children: [
               if (r.listingId != null) TextButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(r.listingId!))), icon: const Icon(Icons.storefront_outlined, size: 18), label: Text(r.listingTitle ?? 'العرض')),

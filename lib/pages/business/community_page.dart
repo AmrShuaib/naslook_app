@@ -20,6 +20,7 @@ import '../../state/biz_providers.dart';
 import '../../state/community_providers.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/reactions.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 
 /// محتوى مشاركة أو رد جاهز للإرسال: نص و/أو صور مرفوعة و/أو تسجيل صوتي مرفوع.
@@ -221,12 +222,11 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
           if (mounted) setState(() => _removed.add(p.id));
         case 'report':
           if (!mounted) return;
-          final reason = await askText(context, title: 'إبلاغ عن المشاركة', hint: 'ما المشكلة؟ (إساءة، احتيال، محتوى مضلل…)', confirm: 'إرسال البلاغ');
-          if (reason == null || reason.isEmpty || !mounted) return;
-          final r = await api.reportContent(type: 'community', id: p.id, reason: reason);
-          if (mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفيت المشاركة للمراجعة' : 'وصل بلاغك وستراجعه إدارة الدائرة');
+          final r = await showReportSheet(context, ref, type: 'community', id: p.id, author: p.user, title: 'إبلاغ عن المشاركة');
+          if (r != null && (r.hidden || r.blocked) && mounted) _refresh();
         case 'block':
           await api.blockUser(p.user.id);
+          ref.invalidate(blockedUsersProvider);
           if (mounted) {
             toast(context, 'تم حظر ${p.user.nickname}');
             _refresh();
@@ -1218,12 +1218,11 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
           await api.communityDelete(widget.bizId, p.id);
           if (mounted) Navigator.pop(context);
         case 'report':
-          final reason = await askText(context, title: 'إبلاغ عن المشاركة', hint: 'ما المشكلة؟', confirm: 'إرسال البلاغ');
-          if (reason == null || reason.isEmpty || !mounted) return;
-          final r = await api.reportContent(type: 'community', id: p.id, reason: reason);
-          if (mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفيت المشاركة للمراجعة' : 'وصل بلاغك وستراجعه إدارة الدائرة');
+          final r = await showReportSheet(context, ref, type: 'community', id: p.id, author: p.user, title: 'إبلاغ عن المشاركة');
+          if (r != null && (r.hidden || r.blocked) && mounted) Navigator.pop(context);
         case 'block':
           await api.blockUser(p.user.id);
+          ref.invalidate(blockedUsersProvider);
           if (mounted) {
             toast(context, 'تم حظر ${p.user.nickname}');
             Navigator.pop(context);
@@ -1256,7 +1255,9 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(communityThreadProvider(_arg))),
         data: (t) {
           final p = _patched ?? t.post;
-          final replies = [for (final r in t.replies) if (!_removedReplies.contains(r.id)) _replyPatch[r.id] ?? r];
+          // ردود المحظورين لا تظهر (احتياط في التطبيق إن لم يصفّها الخادم)
+          final blocked = ref.watch(blockedIdsProvider);
+          final replies = [for (final r in t.replies) if (!_removedReplies.contains(r.id) && !isBlockedId(blocked, r.user.id)) _replyPatch[r.id] ?? r];
           return Column(children: [
             Expanded(
               child: ListView(padding: const EdgeInsets.fromLTRB(14, 10, 14, 16), children: [
@@ -1281,7 +1282,9 @@ class _CommunityThreadPageState extends ConsumerState<CommunityThreadPage> {
                   for (final r in replies)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: _ReplyTile(reply: r, onLike: () => _likeReply(r), onDelete: r.mine || t.canModerate ? () => _deleteReply(r) : null, onDoubleTap: () => _doubleTapReply(r), onLongPress: (at) => _pickReplyReaction(r, at), onReact: (e) => _reactReply(r, e), heartTrigger: _bursts[r.id] ?? 0),
+                      child: _ReplyTile(reply: r, onLike: () => _likeReply(r), onDelete: r.mine || t.canModerate ? () => _deleteReply(r) : null, onDoubleTap: () => _doubleTapReply(r), onLongPress: (at) => _pickReplyReaction(r, at), onReact: (e) => _reactReply(r, e), heartTrigger: _bursts[r.id] ?? 0,
+                        menu: r.mine ? null : ReportMenuButton(type: 'community-reply', id: r.id, author: r.user, keyPrefix: 'creply-${r.id}', iconSize: 16, reportLabel: 'إبلاغ عن الرد',
+                          onReported: (o) { if (o.hidden && mounted) setState(() => _removedReplies.add(r.id)); })),
                     ),
               ]),
             ),
@@ -1299,7 +1302,9 @@ class _ReplyTile extends StatelessWidget {
   final ValueChanged<Offset>? onLongPress;
   final ValueChanged<String>? onReact;
   final int heartTrigger;
-  const _ReplyTile({required this.reply, this.onDelete, this.onLike, this.onDoubleTap, this.onLongPress, this.onReact, this.heartTrigger = 0});
+  /// قائمة «إبلاغ/حظر» لردود الآخرين.
+  final Widget? menu;
+  const _ReplyTile({required this.reply, this.onDelete, this.onLike, this.onDoubleTap, this.onLongPress, this.onReact, this.heartTrigger = 0, this.menu});
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsetsDirectional.only(start: 26),
@@ -1322,6 +1327,7 @@ class _ReplyTile extends StatelessWidget {
                   Expanded(child: Text(reply.mine ? 'أنت' : reply.user.nickname, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13))),
                   Text(timeAgo(reply.createdAt), style: const TextStyle(fontSize: 11, color: Joy.textMuted)),
                   if (onDelete != null) SizedBox(width: 26, height: 22, child: IconButton(padding: EdgeInsets.zero, tooltip: 'حذف الرد', icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Joy.textMuted), onPressed: onDelete)),
+                  if (menu != null) SizedBox(width: 30, height: 22, child: menu),
                 ]),
                 if (reply.item != null) Padding(padding: const EdgeInsets.only(top: 6), child: CommunityQuoteChip(item: reply.item!)),
                 if (reply.text.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 3), child: Text(reply.text, style: const TextStyle(fontSize: 14.5, height: 1.5))),

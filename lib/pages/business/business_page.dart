@@ -16,7 +16,9 @@ import '../../core/require_account.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
@@ -132,6 +134,9 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
           if (b != null) IconButton(key: const Key('share-circle'), tooltip: 'مشاركة الدائرة', icon: const Icon(Icons.ios_share_rounded), onPressed: () => shareLink(context, title: b.title, url: circleLink(b.id), subtitle: 'دائرة ${b.category.label} على ناس لايف', code: circleCode(b.id))),
           if (b != null) IconButton(tooltip: 'على الخريطة', icon: const Icon(Icons.map_outlined), onPressed: () => _onMap(b)),
           IconButton(tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
+          // الدائرة ينشئها أي مستخدم: الإبلاغ عنها متاح لغير فريقها (لا تُخفى تلقائياً بل تراجعها الإدارة)
+          if (b != null && !b.canOperate)
+            ReportMenuButton(type: 'biz', id: b.id, keyPrefix: 'biz', iconSize: 24, color: Joy.text, reportLabel: 'إبلاغ عن الدائرة'),
         ],
       ),
       body: detail.when(
@@ -160,7 +165,21 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
               if (biz.posts.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 const SectionTitle('آخر التحديثات'),
-                for (final p in biz.posts) Padding(padding: const EdgeInsets.only(bottom: 10), child: PostCard(post: p, biz: biz)),
+                for (final p in biz.posts)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: biz.canOperate
+                        ? PostCard(post: p, biz: biz)
+                        : Stack(children: [
+                            PostCard(post: p, biz: biz),
+                            PositionedDirectional(
+                              top: p.imageUrl != null ? 158 : 8,
+                              end: 4,
+                              child: ReportMenuButton(type: 'biz-post', id: p.id, keyPrefix: 'bizpost-${p.id}', reportLabel: 'إبلاغ عن الخبر',
+                                onReported: (r) { if (r.hidden) ref.invalidate(bizDetailProvider(biz.id)); }),
+                            ),
+                          ]),
+                  ),
               ],
               const SizedBox(height: 16),
               SectionTitle(biz.category.catalogTitle),
@@ -1095,25 +1114,32 @@ class OrderRow extends StatelessWidget {
   }
 }
 
-class _Reviews extends StatelessWidget {
+class _Reviews extends ConsumerWidget {
   final Biz biz;
   const _Reviews({required this.biz});
   @override
-  Widget build(BuildContext context) {
-    if (biz.reviews.isEmpty) return const EmptyState(icon: Icons.star_outline_rounded, title: 'لا تقييمات بعد', subtitle: 'كن أول من يقيّم هذه الدائرة.');
+  Widget build(BuildContext context, WidgetRef ref) {
+    // تقييمات المحظورين لا تظهر (احتياط في التطبيق)
+    final blocked = ref.watch(blockedIdsProvider);
+    final reviews = [for (final r in biz.reviews) if (!isBlockedId(blocked, r.user.id)) r];
+    if (reviews.isEmpty) return const EmptyState(icon: Icons.star_outline_rounded, title: 'لا تقييمات بعد', subtitle: 'كن أول من يقيّم هذه الدائرة.');
     return JoyCard(
       padding: EdgeInsets.zero,
       child: Column(children: [
-        for (final (i, r) in biz.reviews.indexed)
+        for (final (i, r) in reviews.indexed)
           ListRow(
+            key: Key('biz-review-${r.user.id}'),
             leading: ProfileAvatar(person: r.user, size: 42),
-            title: Row(children: [Expanded(child: Text(r.user.nickname.isEmpty ? 'مستخدم' : r.user.nickname)), Row(children: [for (var s = 1; s <= 5; s++) Icon(s <= r.rating ? Icons.star_rounded : Icons.star_outline_rounded, size: 14, color: Joy.warning)])]),
+            title: Row(children: [Expanded(child: Text(r.user.nickname.isEmpty ? 'مستخدم' : r.user.nickname)), Row(children: [for (var s = 1; s <= 5; s++) Icon(s <= r.rating ? Icons.star_rounded : Icons.star_outline_rounded, size: 14, color: Joy.warning)]),
+              // معرّف تقييم الدائرة على الخادم: bizId:userId
+              if (!r.mine) SizedBox(height: 28, child: ReportMenuButton(type: 'biz-review', id: '${biz.id}:${r.user.id}', author: r.user, keyPrefix: 'bizreview-${r.user.id}', iconSize: 18, reportLabel: 'إبلاغ عن التقييم',
+                onReported: (x) { if (x.hidden) ref.invalidate(bizDetailProvider(biz.id)); }))]),
             subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(r.text.isEmpty ? timeAgo(r.createdAt) : '${r.text} · ${timeAgo(r.createdAt)}', maxLines: 3),
               if (r.reply != null)
                 Container(margin: const EdgeInsets.only(top: 6), padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(10)), child: Text('رد ${biz.title}: ${r.reply}', style: const TextStyle(color: Joy.text, fontSize: 12.5))),
             ]),
-            divider: i < biz.reviews.length - 1,
+            divider: i < reviews.length - 1,
           ),
       ]),
     );

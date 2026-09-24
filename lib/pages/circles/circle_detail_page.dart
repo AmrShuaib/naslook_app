@@ -6,7 +6,9 @@ import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import 'post_editor_page.dart';
 import '../home/home_page.dart';
@@ -17,7 +19,13 @@ final vesselDetailProvider = FutureProvider.family<(Vessel, List<Post>), String>
   return (v, hidden.isEmpty ? posts : posts.where((p) => !hidden.contains(p.id)).toList());
 });
 final vesselMembersProvider = FutureProvider.family<List<Person>, String>((ref, id) => ref.watch(apiClientProvider).vesselMembers(id));
-final commentsProvider = FutureProvider.family<List<Comment>, String>((ref, id) => ref.watch(apiClientProvider).comments(id));
+/// تعليقات منشور الدائرة بعد استبعاد ما أخفته البلاغات أو الإدارة (التعليقات في النواة فتُصفّى هنا).
+final commentsProvider = FutureProvider.family<List<Comment>, String>((ref, id) async {
+  final hiddenF = ref.watch(hiddenCommentsProvider(id).future);
+  final list = await ref.watch(apiClientProvider).comments(id);
+  final hidden = await hiddenF;
+  return hidden.isEmpty ? list : [for (final c in list) if (!hidden.contains(c.id)) c];
+});
 
 class CircleDetailPage extends ConsumerStatefulWidget {
   final String vesselId;
@@ -54,7 +62,10 @@ class _CircleDetailPageState extends ConsumerState<CircleDetailPage> {
           : null,
       body: detail.when(
         data: (d) {
-          final (vessel, posts) = d;
+          final (vessel, all) = d;
+          // احتياط في التطبيق: منشورات المحظورين لا تظهر حتى تصفّيها النواة
+          final blocked = ref.watch(blockedIdsProvider);
+          final posts = [for (final p in all) if (!isBlockedId(blocked, p.author.id)) p];
           return RefreshIndicator(
             onRefresh: () async => ref.invalidate(vesselDetailProvider(widget.vesselId)),
             child: ListView(
@@ -193,33 +204,53 @@ class _Comments extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final c = ref.watch(commentsProvider(postId));
+    final blocked = ref.watch(blockedIdsProvider);
     return Padding(
       padding: const EdgeInsetsDirectional.only(start: 16),
       child: Column(children: [
         c.when(
           data: (list) => Column(children: [
             for (final x in list)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  ProfileAvatar(person: x.author, size: 28),
-                  const SizedBox(width: 8),
-                  Expanded(child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: Joy.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: Joy.line)),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Row(children: [Text(x.author.nickname, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)), const Spacer(), Text(timeAgo(x.createdAt), style: const TextStyle(color: Joy.textMuted, fontSize: 11))]),
-                      Text(x.text, style: const TextStyle(fontSize: 13.5, height: 1.5)),
-                    ]),
-                  )),
-                ]),
-              ),
+              if (!isBlockedId(blocked, x.author.id))
+                Padding(
+                  key: Key('comment-${x.id}'),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    ProfileAvatar(person: x.author, size: 28),
+                    const SizedBox(width: 8),
+                    Expanded(child: GestureDetector(
+                      // ضغطة مطوّلة على التعليق تفتح الإبلاغ مباشرة (إضافة إلى زر ⋯)
+                      onLongPress: () => _report(context, ref, x),
+                      child: Container(
+                        padding: const EdgeInsetsDirectional.fromSTEB(12, 4, 4, 8),
+                        decoration: BoxDecoration(color: Joy.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: Joy.line)),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            Text(x.author.nickname, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+                            const Spacer(),
+                            Text(timeAgo(x.createdAt), style: const TextStyle(color: Joy.textMuted, fontSize: 11)),
+                            SizedBox(
+                              height: 28,
+                              child: ReportMenuButton(
+                                type: 'vessel-comment', id: x.id, author: x.author, keyPrefix: 'comment-${x.id}', iconSize: 18,
+                                reportLabel: 'إبلاغ عن التعليق',
+                                onReported: (r) { if (r.hidden) ref.invalidate(hiddenCommentsProvider(postId)); },
+                              ),
+                            ),
+                          ]),
+                          Text(x.text, style: const TextStyle(fontSize: 13.5, height: 1.5)),
+                        ]),
+                      ),
+                    )),
+                  ]),
+                ),
           ]),
           loading: () => const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator()),
           error: (e, _) => Text(e.toString(), style: const TextStyle(color: Joy.danger, fontSize: 12)),
         ),
         Row(children: [
           Expanded(child: TextField(
+            key: Key('comment-input-$postId'),
             decoration: const InputDecoration(hintText: 'اكتب تعليقاً…', isDense: true),
             onSubmitted: (t) async {
               if (t.trim().isEmpty) return;
@@ -235,5 +266,12 @@ class _Comments extends ConsumerWidget {
         const SizedBox(height: 6),
       ]),
     );
+  }
+
+  Future<void> _report(BuildContext context, WidgetRef ref, Comment x) async {
+    final myId = ref.read(appStateProvider).user?.id;
+    if (myId != null && myId.toUpperCase() == x.author.id.toUpperCase()) return;
+    final r = await showReportSheet(context, ref, type: 'vessel-comment', id: x.id, author: x.author, title: 'إبلاغ عن التعليق');
+    if (r != null && r.hidden) ref.invalidate(hiddenCommentsProvider(postId));
   }
 }

@@ -29,9 +29,11 @@ extension ChatToolsApi on ApiClient {
     return UploadedMedia(url: url, type: (d['type'] ?? contentType).toString(), kind: (d['kind'] ?? 'file').toString(), size: (d['size'] as num?)?.toInt() ?? bytes.length);
   }
 
-  Future<void> setMessageMeta(String messageId, {String? replyTo, MessageQuote? quote, String? forwardedFrom, Map<String, dynamic>? extra}) =>
+  /// [peerId] الطرف الآخر في المحادثة: يرسله التطبيق ليرفض الخادم البيانات بين طرفين بينهما حظر.
+  Future<void> setMessageMeta(String messageId, {String? peerId, String? replyTo, MessageQuote? quote, String? forwardedFrom, Map<String, dynamic>? extra}) =>
       post('/chat/meta', {
         'messageId': messageId,
+        if (peerId != null && peerId.isNotEmpty) 'peerId': peerId,
         if (replyTo != null) 'replyTo': replyTo,
         if (quote != null) 'quote': quote.toJson(),
         if (forwardedFrom != null) 'forwardedFrom': forwardedFrom,
@@ -40,7 +42,9 @@ extension ChatToolsApi on ApiClient {
 
   /// بيانات إضافية لمجموعة رسائل: معرّف → {replyTo, quote, forwardedFrom, extra}
   /// تفاعل بإيموجي على رسالة (فارغ يزيله)؛ يعيد تفاعلات الرسالة المحدّثة.
-  Future<List<Reaction>> chatReact(String messageId, String? emoji) async => parseReactions((await post('/chat/react', {'messageId': messageId, 'emoji': emoji ?? ''}))['reactions']);
+  /// [peerId] الطرف الآخر في المحادثة (لفحص الحظر على الخادم).
+  Future<List<Reaction>> chatReact(String messageId, String? emoji, {String? peerId}) async =>
+      parseReactions((await post('/chat/react', {'messageId': messageId, 'emoji': emoji ?? '', if (peerId != null && peerId.isNotEmpty) 'peerId': peerId}))['reactions']);
 
   Future<Map<String, Map<String, dynamic>>> messageMeta(Iterable<String> ids) async {
     final list = ids.where((s) => s.isNotEmpty).toList();

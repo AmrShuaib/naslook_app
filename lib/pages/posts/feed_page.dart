@@ -9,13 +9,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../api/commerce_models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/posts_api.dart';
-import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
 import '../../state/providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../business/business_page.dart';
@@ -184,10 +184,13 @@ class _FeedPageState extends ConsumerState<FeedPage> {
         case 'stats': await showPostStats(context, postId: p.id);
         case 'viewer': await PostViewerPage.open(context, items, index: i);
         case 'report':
-          final reason = await askText(context, title: 'إبلاغ عن اللحظة', hint: 'ما المشكلة؟ (احتيال، محتوى مسيء، مضلل…)', confirm: 'إرسال البلاغ');
-          if (reason == null || reason.isEmpty || !mounted) return;
-          final r = await api.reportContent(type: 'post', id: p.id, reason: reason);
-          if (mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفيت اللحظة للمراجعة' : 'وصل بلاغك وسنراجعه');
+          final r = await showReportSheet(context, ref, type: 'post', id: p.id, author: p.user, title: 'إبلاغ عن اللحظة');
+          if (r == null || !mounted) return;
+          if (r.blocked || r.hidden) {
+            invalidatePosts(ref);
+            // المحتوى المخفي أو الناشر المحظور يختفيان من البث فوراً
+            setState(() { items.removeWhere((x) => x.id == p.id || (r.blocked && x.user.id == p.user.id)); index = index.clamp(0, items.isEmpty ? 0 : items.length - 1); });
+          }
         case 'block':
           await api.blockUser(p.user.id);
           invalidatePosts(ref);

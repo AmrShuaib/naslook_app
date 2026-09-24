@@ -576,12 +576,30 @@ void main() {
     await _settle(tester);
     await tester.tap(find.byKey(const Key('community-menu-report')));
     await _settle(tester);
-    await tester.enterText(find.byType(TextField).last, 'محتوى مسيء');
-    await tester.tap(find.text('إرسال البلاغ'));
+    await tester.tap(find.byKey(const Key('report-reason-1')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('report-submit')));
     await _settle(tester);
     final rep = srv.bodies['POST /safety/report']!;
     expect(rep['targetType'], 'community');
     expect(rep['targetId'], 'c-2');
+    expect(rep['reason'], 'تحرش أو تنمر');
     expect(find.textContaining('وصل بلاغك'), findsOneWidget);
+  });
+
+  testWidgets('a reply from someone else can be reported as community-reply; my own reply has no report menu', (tester) async {
+    final srv = await _pump(tester, const CommunityThreadPage(bizId: 'biz-kaia', postId: 'c-3', title: 'المطار'));
+    await _settle(tester);
+    expect(find.byKey(const Key('creply-r-2-menu')), findsNothing);
+    await tester.tap(find.byKey(const Key('creply-r-1-menu')));
+    await _settle(tester);
+    expect(find.byKey(const Key('creply-r-1-block')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('creply-r-1-report')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('report-reason-0')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('report-submit')));
+    await _settle(tester);
+    expect(srv.bodies['POST /safety/report'], {'targetType': 'community-reply', 'targetId': 'r-1', 'reason': 'محتوى مسيء أو كراهية'});
   });
 }

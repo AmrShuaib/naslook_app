@@ -12,7 +12,9 @@ import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../state/posts_providers.dart';
 import '../../state/search_providers.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../circles/circle_detail_page.dart';
 import '../events/events_page.dart';
@@ -25,7 +27,6 @@ import '../posts/post_viewer.dart';
 import '../search/search_page.dart';
 import '../wallet/wallet_page.dart';
 import '../../api/client.dart';
-import '../../api/safety_api.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -47,6 +48,8 @@ class HomePage extends ConsumerWidget {
     final presence = ref.watch(presenceProvider);
     final vessels = ref.watch(myVesselsProvider);
     final feed = ref.watch(feedProvider);
+    // احتياط في التطبيق: منشورات المحظورين لا تظهر حتى لو أعادتها النواة
+    final blocked = ref.watch(blockedIdsProvider);
 
     return RefreshIndicator(
       onRefresh: () => _refresh(ref),
@@ -197,9 +200,12 @@ class HomePage extends ConsumerWidget {
           const SizedBox(height: 18),
           const SectionTitle('آخر ما في دوائرك'),
           feed.when(
-            data: (posts) => posts.isEmpty
-                ? const EmptyState(icon: Icons.forum_outlined, title: 'لا منشورات بعد', subtitle: 'انضم إلى دائرة أو انشر أول منشور فيها.')
-                : Column(children: [for (final p in posts.take(20)) Padding(padding: const EdgeInsets.only(bottom: 10), child: PostCard(p))]),
+            data: (all) {
+              final posts = [for (final p in all) if (!isBlockedId(blocked, p.author.id)) p];
+              return posts.isEmpty
+                  ? const EmptyState(icon: Icons.forum_outlined, title: 'لا منشورات بعد', subtitle: 'انضم إلى دائرة أو انشر أول منشور فيها.')
+                  : Column(children: [for (final p in posts.take(20)) Padding(padding: const EdgeInsets.only(bottom: 10), child: PostCard(p))]);
+            },
             loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
             error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(feedProvider)),
           ),
@@ -391,6 +397,8 @@ class PostCard extends ConsumerWidget {
                   PopupMenuItem(key: Key('post-remove-${post.id}'), value: 'remove', child: const ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.remove_circle_outline_rounded, color: Joy.danger), title: Text('إزالة من الدائرة', style: TextStyle(color: Joy.danger)))),
                 if (!mine)
                   PopupMenuItem(key: Key('post-report-${post.id}'), value: 'report', child: const ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.flag_outlined), title: Text('إبلاغ عن المنشور'))),
+                if (!mine && post.author.id.isNotEmpty)
+                  PopupMenuItem(key: Key('post-block-${post.id}'), value: 'block', child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر ${post.author.nickname}', style: const TextStyle(color: Joy.danger)))),
               ],
             ),
         ]),
@@ -451,11 +459,11 @@ class PostCard extends ConsumerWidget {
           _refresh(ref);
           if (context.mounted) toast(context, r.deleted ? 'حُذف المنشور من الدائرة' : 'أُخفي المنشور عن أعضاء الدائرة');
         case 'report':
-          final reason = await askText(context, title: 'إبلاغ عن المنشور', hint: 'ما المشكلة؟ (مسيء، احتيال، مضلل…)', confirm: 'إرسال البلاغ');
-          if (reason == null || reason.isEmpty || !context.mounted) return;
-          final r = await api.reportContent(type: 'vessel-post', id: post.id, reason: reason);
-          if (r.hidden) _refresh(ref);
-          if (context.mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفي المنشور للمراجعة' : 'وصل بلاغك وسنراجعه');
+          final r = await showReportSheet(context, ref, type: 'vessel-post', id: post.id, author: post.author, title: 'إبلاغ عن المنشور');
+          if (r != null && (r.hidden || r.blocked)) _refresh(ref);
+        case 'block':
+          // الحظر يحدّث قائمة المحظورين فتختفي منشوراته من البث وصفحات الدوائر
+          if (await confirmBlock(context, ref, post.author)) _refresh(ref);
       }
     } catch (e) {
       if (context.mounted) toast(context, e.toString(), error: true);

@@ -22,9 +22,9 @@ class AdminSettingsPage extends ConsumerStatefulWidget {
 }
 
 class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
-  final maxTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
+  final maxTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), supportEmail = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
   final commission = TextEditingController(), spotPrice = TextEditingController(), spotMaxDays = TextEditingController(), spotMaxActive = TextEditingController();
-  bool? testTopup, maintenance, reviewNew, blockContacts;
+  bool? testTopup, maintenance, reviewNew, blockContacts, transfers, chatPayments, bannedDefault;
   bool loaded = false, busy = false;
 
   void _load(AdminSettings s) {
@@ -33,6 +33,10 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     maxTopup.text = (s.maxTopup / 100).toStringAsFixed(0);
     announcement.text = s.announcement;
     support.text = s.supportHandle;
+    supportEmail.text = s.supportEmail;
+    transfers = s.transfersEnabled;
+    chatPayments = s.chatPaymentsEnabled;
+    bannedDefault = s.bannedWordsDefault;
     bannedWords.text = s.bannedWords;
     threshold.text = '${s.reportThreshold}';
     testTopup = s.testTopup;
@@ -57,6 +61,9 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
           JoyCard(child: Column(children: [
             SwitchListTile(contentPadding: EdgeInsets.zero, value: testTopup ?? s.testTopup, onChanged: (v) => setState(() => testTopup = v), title: const Text('الشحن التجريبي'), subtitle: const Text('يسمح لأي مستخدم بشحن محفظته بلا دفع حقيقي. عطّله قبل الإطلاق.')),
             TextField(controller: maxTopup, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أقصى شحن في المرة الواحدة (ريال)')),
+            // التحويل بين المستخدمين والدفع في المحادثة قد يُعدّان إصدار نقود إلكترونية؛ مفتاحان لإطفائهما (مطفآن دائماً في iOS)
+            SwitchListTile(key: const Key('set-transfers'), contentPadding: EdgeInsets.zero, value: transfers ?? s.transfersEnabled, onChanged: (v) => setState(() => transfers = v), title: const Text('التحويل بين المستخدمين'), subtitle: const Text('إرسال رصيد من محفظة إلى أخرى. مطفأ دائماً في تطبيق iOS', style: TextStyle(fontSize: 12))),
+            SwitchListTile(key: const Key('set-chat-payments'), contentPadding: EdgeInsets.zero, value: chatPayments ?? s.chatPaymentsEnabled, onChanged: (v) => setState(() => chatPayments = v), title: const Text('الدفع داخل المحادثة'), subtitle: const Text('طلب مبلغ وتقسيم فاتورة وإرسال مال في الدردشة. مطفأ دائماً في تطبيق iOS', style: TextStyle(fontSize: 12))),
           ])),
           const SectionTitle('بوابة الدفع (ميسر)'),
           const _PayGatewayCard(),
@@ -65,11 +72,14 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             TextField(controller: announcement, maxLines: 2, decoration: const InputDecoration(labelText: 'نص يظهر في الرئيسية لكل المستخدمين (اتركه فارغاً لإخفائه)')),
             const SizedBox(height: 8),
             TextField(controller: support, decoration: const InputDecoration(labelText: 'نك نيم حساب الدعم (اختياري)')),
+            const SizedBox(height: 8),
+            TextField(key: const Key('set-support-email'), controller: supportEmail, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'بريد الدعم', helperText: 'يظهر في «تواصل معنا» داخل التطبيق وصفحة الدعم (مثل support@areebd.sa)')),
             SwitchListTile(contentPadding: EdgeInsets.zero, value: maintenance ?? s.maintenance, onChanged: (v) => setState(() => maintenance = v), title: const Text('وضع الصيانة'), subtitle: const Text('يعرض تنبيه صيانة للمستخدمين دون إيقاف الخدمة')),
           ])),
           const SectionTitle('الأمان والإشراف'),
           JoyCard(child: Column(children: [
             TextField(controller: bannedWords, maxLines: 4, decoration: const InputDecoration(labelText: 'كلمات محظورة (كلمة في كل سطر أو مفصولة بفواصل)', helperText: 'تُرفض المنشورات والعروض والتقييمات التي تحتويها، ويُنبَّه المرسل قبل إرسال رسالة تحتويها')),
+            SwitchListTile(key: const Key('set-banned-default'), contentPadding: EdgeInsets.zero, value: bannedDefault ?? s.bannedWordsDefault, onChanged: (v) => setState(() => bannedDefault = v), title: const Text('القائمة الافتراضية للشتائم'), subtitle: const Text('قائمة مدمجة من الشتائم الصريحة بالعربية والإنجليزية تعمل مع كلماتك أعلاه', style: TextStyle(fontSize: 12))),
             const SizedBox(height: 8),
             TextField(controller: threshold, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'عدد البلاغات للإخفاء التلقائي', helperText: 'يُخفى المنشور أو العرض تلقائياً عند بلوغ هذا العدد من المبلّغين المختلفين ويُشعَر المشرفون')),
           ])),
@@ -89,16 +99,18 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
           ])),
           const SizedBox(height: 10),
           FilledButton.icon(
+            key: const Key('set-save'),
             onPressed: busy ? null : () async {
               setState(() => busy = true);
               try {
-                await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold});
+                await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold,
+                  'supportEmail': supportEmail.text.trim(), 'transfersEnabled': transfers ?? s.transfersEnabled, 'chatPaymentsEnabled': chatPayments ?? s.chatPaymentsEnabled, 'bannedWordsDefault': bannedDefault ?? s.bannedWordsDefault});
                 loaded = false;
                 invalidateAdmin(ref);
                 ref.invalidate(publicSettingsProvider);
                 if (context.mounted) toast(context, 'حُفظت الإعدادات');
               } catch (e) {
-                if (context.mounted) toast(context, adminErrText(e), error: true);
+                if (context.mounted) toast(context, '${e is ApiException ? e.body : e}'.contains('bad-email') ? 'بريد الدعم غير صحيح' : adminErrText(e), error: true);
               } finally {
                 if (mounted) setState(() => busy = false);
               }
