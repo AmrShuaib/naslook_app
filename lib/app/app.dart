@@ -25,6 +25,8 @@ import '../pages/home/home_page.dart';
 import '../pages/map/map_page.dart';
 import '../pages/circles/circles_page.dart';
 import '../pages/myspace/myspace_page.dart';
+import '../pages/myspace/consent_sheet.dart';
+import '../api/account_api.dart';
 import '../pages/notifications/notifications_page.dart';
 import '../pages/search/search_page.dart';
 import '../pages/chat/chats_page.dart';
@@ -45,7 +47,8 @@ class MainApp extends ConsumerWidget {
       builder: (context, child) {
         final mq = MediaQuery.of(context);
         return MediaQuery(
-          data: mq.copyWith(textScaler: TextScaler.linear(mq.textScaler.scale(1.0) * 1.25)),
+          // سقف للتكبير: على iOS يضاعف حجم الخط في النظام (Dynamic Type) فيتجاوز 3 أضعاف ويكسر الواجهة
+          data: mq.copyWith(textScaler: TextScaler.linear((mq.textScaler.scale(1.0) * 1.25).clamp(1.0, 1.6))),
           child: child ?? const SizedBox.shrink(),
         );
       },
@@ -95,6 +98,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowRecovery());
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingNotification());
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingLink());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAskConsent());
     // جرس الرسائل: يُفتح سياق الصوت عند أول لمسة، ويُقرع عند وصول رسالة عبر الاتصال المباشر
     MessageSound.prepare();
     // يفتح اتصال WebSocket مبكراً، ويجدّد اشتراك الإشعارات الفورية إن كان الإذن ممنوحاً
@@ -109,6 +113,24 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void dispose() {
     _socketSub?.cancel();
     super.dispose();
+  }
+
+  /// من سجّل قبل إضافة الشروط أو بعد تحديثها يوافق مرة واحدة؛ فشل الطلب لا يحبس المستخدم (يُعاد في الإقلاع التالي).
+  Future<void> _maybeAskConsent() async {
+    String? version;
+    try {
+      version = await ref.read(apiClientProvider).pendingConsent();
+    } catch (_) {
+      return;
+    }
+    if (version == null || !mounted) return;
+    final ok = await ConsentSheet.show(context);
+    if (!mounted) return;
+    if (ok == true) {
+      try { await ref.read(apiClientProvider).acceptConsent(version); } catch (_) {}
+    } else if (ok == false) {
+      await ref.read(appStateProvider.notifier).logout();
+    }
   }
 
   /// رابط عام (`/c/<دائرة>` أو `/u/<نك نيم>`) وصل عند الإقلاع: نفتح وجهته بعد الدخول.

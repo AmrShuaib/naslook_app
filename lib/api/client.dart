@@ -106,11 +106,11 @@ class ApiClient {
 
   /// تسجيل حساب جديد بالبريد الإلكتروني + اسم المستخدم + كلمة السر عبر إضافة الحسابات بالبريد (server/auth_alias.js)؛
   /// وإن لم تكن منشورة على الخادم نرجع إلى مسار النواة /register بالنك نيم فقط.
-  Future<Session> register({required String nickname, required String pin, String? email}) async {
+  Future<Session> register({required String nickname, required String pin, String? email, bool acceptTerms = false}) async {
     Map<String, dynamic> data;
     if (email != null && email.trim().isNotEmpty) {
       try {
-        data = await post('/auth/register', {'email': email.trim().toLowerCase(), 'nickname': nickname.trim(), 'password': pin.trim()});
+        data = await post('/auth/register', {'email': email.trim().toLowerCase(), 'nickname': nickname.trim(), 'password': pin.trim(), if (acceptTerms) 'acceptTerms': true});
       } on ApiException catch (e) {
         if (e.statusCode != 404) rethrow;
         data = await post('/register', {'nickname': nickname.trim(), 'password': pin.trim()});
@@ -288,6 +288,14 @@ class ApiClient {
     'auth': 'انتهت الجلسة، سجّل الدخول مجدداً',
     'not-found': 'الحساب غير موجود',
     'deleted': 'هذا الحساب محذوف',
+    'reserved': 'هذا الاسم غير متاح، اختر غيره',
+    'confirm-mismatch': 'كلمة التأكيد غير مطابقة',
+    'blocked': 'لا يمكن إتمام العملية الآن',
+    'stale-version': 'تحدّثت الشروط، أعد فتح التطبيق',
+    'delete-failed': 'تعذّر حذف الحساب، حاول مرة أخرى',
+    'iap-required': 'هذه الخدمة غير متاحة في هذا التطبيق',
+    'unavailable': 'هذه الخدمة غير متاحة حالياً',
+    'place-required': 'حدّد مكان الفعالية قبل تسعير التذاكر',
     'too-many': 'محاولات كثيرة، انتظر دقيقة ثم حاول',
     'too-many-attempts': 'محاولات كثيرة، انتظر دقيقة ثم حاول',
     'email-taken': 'هذا البريد مسجّل لحساب آخر؛ سجّل الدخول به أو استخدم «نسيت كلمة السر»',

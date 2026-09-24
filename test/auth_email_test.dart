@@ -97,9 +97,18 @@ void main() {
     await tester.enterText(find.byKey(const Key('reg-email')), 'New@Example.com');
     await tester.enterText(find.byKey(const Key('reg-nickname')), 'newuser');
     await tester.enterText(find.byKey(const Key('reg-password')), 'Password1');
+    // بدون الموافقة على الشروط لا يُرسل التسجيل
+    await tester.tap(find.byKey(const Key('auth-submit')));
+    await settle(tester);
+    expect(calls, isNot(contains('POST /auth/register')));
+    expect(find.text('يلزم الموافقة على شروط الاستخدام وسياسة الخصوصية'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('reg-terms')));
+    await tester.tap(find.byKey(const Key('reg-terms')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('auth-submit')));
     await settle(tester);
     expect(calls, contains('POST /auth/register'));
+    expect(lastBody!['acceptTerms'], isTrue, reason: 'الموافقة تُسجَّل مع التسجيل');
     expect(lastBody!['email'], 'new@example.com');
     expect(lastBody!['nickname'], 'newuser');
     expect(lastBody!['password'], 'Password1');

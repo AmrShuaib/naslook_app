@@ -109,8 +109,8 @@ class AppStateNotifier extends StateNotifier<AppState> {
   Future<bool> login(String nickname, String pin) =>
       _authenticate(() => _api.login(nickname: nickname, pin: pin));
 
-  Future<bool> register(String nickname, String pin, {String? email}) =>
-      _authenticate(() => _api.register(nickname: nickname, pin: pin, email: email));
+  Future<bool> register(String nickname, String pin, {String? email, bool acceptTerms = false}) =>
+      _authenticate(() => _api.register(nickname: nickname, pin: pin, email: email, acceptTerms: acceptTerms));
 
   /// تعيين كلمة سر جديدة بالرمز الذي وصل بالبريد ثم الدخول مباشرة.
   Future<bool> resetPassword({required String email, required String code, required String password}) =>

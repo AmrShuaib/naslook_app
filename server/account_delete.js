@@ -36,7 +36,8 @@ export default async function accountDelete(app, opts = {}) {
   const auth = opts.auth ?? globalThis.naslifeAuth ?? null;
   if (!pool) throw new Error("account_delete: pool is required");
   const opsDir = opts.opsDir ?? process.env.NASLIFE_OPS_DIR ?? "/opt/naslife/ops";
-  const key = readKey(opsDir);
+  // المفتاح نفسه الذي تستخدمه auth_alias.js (يُقرأ عند الطلب لأن ترتيب التحميل قد يتغير)، ثم الملف احتياطاً
+  const keyOf = () => { try { const k = globalThis.naslifeAuthKey?.(); if (k) return k; } catch { /* ignore */ } return readKey(opsDir); };
 
   await pool.query(`CREATE TABLE IF NOT EXISTS account_deletions (user_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'done', by_id TEXT NOT NULL,
       nick_hash TEXT, reason TEXT NOT NULL DEFAULT '', balance BIGINT NOT NULL DEFAULT 0, report JSONB NOT NULL DEFAULT '{}',
@@ -196,7 +197,7 @@ export default async function accountDelete(app, opts = {}) {
         VALUES($1,$2,$3,$4,$5,$6,$7, now() + ($8 || ' days')::interval, now() + ($9 || ' days')::interval, CASE WHEN $2='done' THEN now() ELSE NULL END)
         ON CONFLICT (user_id) DO UPDATE SET status=EXCLUDED.status, by_id=EXCLUDED.by_id, nick_hash=EXCLUDED.nick_hash, reason=EXCLUDED.reason, balance=EXCLUDED.balance,
           report=EXCLUDED.report, reserved_until=EXCLUDED.reserved_until, purge_after=EXCLUDED.purge_after, completed_at=EXCLUDED.completed_at, requested_at=now()`,
-        [uid, status, by, oldNick ? nickHash(key, oldNick) : null, String(reason ?? "").slice(0, 300), balance, JSON.stringify({ ...report, errors }), String(RESERVE_DAYS), String(PURGE_DAYS)]);
+        [uid, status, by, oldNick ? nickHash(keyOf(), oldNick) : null, String(reason ?? "").slice(0, 300), balance, JSON.stringify({ ...report, errors }), String(RESERVE_DAYS), String(PURGE_DAYS)]);
       if (T.has("admin_audit")) await run("admin_audit", "INSERT INTO admin_audit(id, admin_id, action, target, details) VALUES($2, $3, 'user.self_delete', $1, $4)", [uid, crypto.randomUUID(), by, JSON.stringify({ status, balance })]);
       await c.query("COMMIT");
       return { status, report, errors, oldNick, oldAvatar, newNick, emails };
@@ -209,6 +210,7 @@ export default async function accountDelete(app, opts = {}) {
   /// بعد المعاملة: كلمة السر القديمة تموت (تدوير بعبارة الاسترداد)، ثم تُحذف كل الجلسات والصورة، وتصل رسالة تأكيد.
   async function afterCommit(req, uid, T, res) {
     const steps = {};
+    const key = keyOf();
     if (key && T.has("account_recovery")) {
       try {
         const enc = (await pool.query("SELECT phrase_enc FROM account_recovery WHERE user_id=$1", [uid])).rows[0]?.phrase_enc;
@@ -279,7 +281,7 @@ export default async function accountDelete(app, opts = {}) {
     const n = String(nick ?? "").trim().toLowerCase();
     if (!n) return false;
     if (n.startsWith("deleted_")) return true;
-    try { return (await pool.query("SELECT 1 FROM account_deletions WHERE nick_hash=$1 AND reserved_until > now() LIMIT 1", [nickHash(key, n)])).rowCount > 0; } catch { return false; }
+    try { return (await pool.query("SELECT 1 FROM account_deletions WHERE nick_hash=$1 AND reserved_until > now() LIMIT 1", [nickHash(keyOf(), n)])).rowCount > 0; } catch { return false; }
   };
   const isAdmin = async (uid) => { try { return (await globalThis.naslifeIsAdmin?.(uid)) === true || (await globalThis.naslifeTeamCan?.(uid, "users.manage")) === true; } catch { return false; } };
   app.get("/adminapi/deletions", async (req, reply) => {
@@ -321,5 +323,5 @@ export default async function accountDelete(app, opts = {}) {
   const timer = setInterval(sweep, 6 * 3600e3); timer.unref?.();
   setTimeout(sweep, 60e3).unref?.();
   app.addHook("onClose", async () => clearInterval(timer));
-  app.get("/me/account/delete/status", async () => ({ ok: true, key: !!key, confirmWord: CONFIRM_WORD }));
+  app.get("/me/account/delete/status", async () => ({ ok: true, key: !!keyOf(), confirmWord: CONFIRM_WORD }));
 }

@@ -27,7 +27,9 @@ import '../business/owner/my_businesses_page.dart';
 import '../events/events_page.dart';
 import '../market/market_page.dart';
 import '../posts/my_posts_page.dart';
+import 'delete_account_page.dart';
 import 'safety_page.dart';
+import '../../core/share/legal_links.dart';
 import 'saved_searches_page.dart';
 import 'wishlist_page.dart';
 import '../wallet/wallet_page.dart';
@@ -177,12 +179,45 @@ class MySpacePage extends ConsumerWidget {
                 title: const Text('تسجيل الخروج', style: TextStyle(color: Joy.danger)),
                 onTap: () => ref.read(appStateProvider.notifier).logout(),
               ),
+              const Divider(indent: 16, endIndent: 16),
+              ListTile(
+                key: const Key('delete-account'),
+                leading: const Icon(Icons.delete_forever_outlined, color: Joy.danger),
+                title: const Text('حذف الحساب', style: TextStyle(color: Joy.danger)),
+                subtitle: const Text('حذف نهائي لحسابك وبياناتك'),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DeleteAccountPage())),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 14),
+          const SectionTitle('عن ناس لايف'),
+          JoyCard(
+            padding: EdgeInsets.zero,
+            child: Column(children: [
+              ListTile(key: const Key('contact-us'), leading: const Icon(Icons.support_agent_rounded, color: Joy.text), title: const Text('تواصل معنا'), subtitle: const Text(LegalLinks.supportEmail, textDirection: TextDirection.ltr, textAlign: TextAlign.end), onTap: () => _contactSheet(context)),
+              const Divider(indent: 16, endIndent: 16),
+              ListTile(key: const Key('legal-privacy'), leading: const Icon(Icons.privacy_tip_outlined, color: Joy.text), title: const Text('سياسة الخصوصية'), onTap: () => LegalLinks.open('privacy')),
+              const Divider(indent: 16, endIndent: 16),
+              ListTile(key: const Key('legal-terms'), leading: const Icon(Icons.gavel_rounded, color: Joy.text), title: const Text('شروط الاستخدام'), onTap: () => LegalLinks.open('terms')),
             ]),
           ),
         ],
       ),
     );
   }
+
+  /// وسائل التواصل مع الدعم (شرط متاجر التطبيقات: وسيلة تواصل منشورة داخل التطبيق).
+  void _contactSheet(BuildContext context) => showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (ctx) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            ListTile(key: const Key('contact-email'), leading: const Icon(Icons.email_outlined), title: const Text('راسلنا بالبريد'), subtitle: const Text(LegalLinks.supportEmail, textDirection: TextDirection.ltr, textAlign: TextAlign.end), onTap: () { Navigator.pop(ctx); LegalLinks.email(); }),
+            ListTile(key: const Key('contact-support-page'), leading: const Icon(Icons.help_outline_rounded), title: const Text('صفحة الدعم والأسئلة'), subtitle: const Text('الإبلاغ والحظر وحذف الحساب والمدفوعات'), onTap: () { Navigator.pop(ctx); LegalLinks.open('support'); }),
+            const Padding(padding: EdgeInsets.fromLTRB(16, 4, 16, 16), child: Text('نرد على البلاغات خلال 24 ساعة، وعلى بقية الطلبات خلال يومي عمل.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5))),
+          ]),
+        ),
+      );
 
   Widget _stat(String n, String l) => Expanded(child: Column(children: [Text(n, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 20)), Text(l, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5))]));
 

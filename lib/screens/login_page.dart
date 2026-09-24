@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
+import '../core/share/legal_links.dart';
 import '../state/app_state.dart';
 
 enum _Mode { login, register, forgot, reset }
@@ -26,6 +27,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _handle = TextEditingController(), _email = TextEditingController(), _nickname = TextEditingController(), _pin = TextEditingController(), _code = TextEditingController();
   _Mode _mode = _Mode.login;
   bool _showPin = false, _localBusy = false;
+  // الموافقة على الشروط وسياسة الخصوصية إلزامية لإنشاء حساب (شرط متاجر التطبيقات للمحتوى من المستخدمين)
+  bool _terms = false;
   _NickStatus _nickStatus = _NickStatus.idle;
   Timer? _nickTimer;
   int _nickSeq = 0;
@@ -67,7 +70,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         final ok = await notifier.login(_handle.text.trim().toLowerCase(), pin);
         if (!ok) _showStateError();
       case _Mode.register:
-        final ok = await notifier.register(_nickname.text.trim().toLowerCase(), pin, email: _email.text.trim().toLowerCase());
+        if (!_terms) { _toast('يلزم الموافقة على شروط الاستخدام وسياسة الخصوصية', error: true); return; }
+        final ok = await notifier.register(_nickname.text.trim().toLowerCase(), pin, email: _email.text.trim().toLowerCase(), acceptTerms: true);
         if (!ok) _showStateError();
       case _Mode.forgot:
         await _sendCode();
@@ -213,6 +217,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             ),
             const SizedBox(height: 16),
             _pinField(key: const Key('reg-password'), helper: '8 خانات على الأقل، حروف أو أرقام أو رموز', hints: const [AutofillHints.newPassword]),
+            const SizedBox(height: 10),
+            _termsRow(),
           ],
         _Mode.forgot => [
             const Text('اكتب بريدك المسجّل وسنرسل إليه رمزاً من 6 أرقام لتعيين كلمة سر جديدة.', style: TextStyle(color: Colors.black54, height: 1.5)),
@@ -232,6 +238,32 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             Align(alignment: AlignmentDirectional.centerStart, child: TextButton(key: const Key('reset-resend'), onPressed: _localBusy ? null : _sendCode, child: const Text('لم يصلك؟ إعادة الإرسال', style: TextStyle(color: _primary)))),
           ],
       };
+
+  /// مربع الموافقة مع رابطي الشروط والخصوصية (يُفتحان داخل التطبيق).
+  Widget _termsRow() => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(key: const Key('reg-terms'), value: _terms, onChanged: (v) => setState(() => _terms = v ?? false)),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
+                const Text('أوافق على ', style: TextStyle(height: 1.5)),
+                _link('شروط الاستخدام', 'terms', const Key('reg-terms-link')),
+                const Text(' و', style: TextStyle(height: 1.5)),
+                _link('سياسة الخصوصية', 'privacy', const Key('reg-privacy-link')),
+                const Text('، وأتعهد بعدم نشر أي محتوى مسيء. لا تسامح مع المحتوى المسيء أو المستخدمين المسيئين.', style: TextStyle(height: 1.5, fontSize: 12.5, color: Colors.black54)),
+              ]),
+            ),
+          ),
+        ],
+      );
+
+  Widget _link(String label, String page, Key key) => InkWell(
+        key: key,
+        onTap: () => LegalLinks.open(page),
+        child: Text(label, style: const TextStyle(color: _primary, fontWeight: FontWeight.w700, decoration: TextDecoration.underline, height: 1.5)),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -289,6 +321,18 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       )
                     else
                       TextButton(key: const Key('auth-back'), onPressed: busy ? null : () => _switch(_Mode.login), child: const Text('العودة إلى تسجيل الدخول', style: TextStyle(color: _primary))),
+                    if (_mode == _Mode.login)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Wrap(alignment: WrapAlignment.center, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                          const Text('بالدخول أنت توافق على ', style: TextStyle(fontSize: 12.5, color: Colors.black54, height: 1.5)),
+                          _link('الشروط', 'terms', const Key('login-terms-link')),
+                          const Text(' و', style: TextStyle(fontSize: 12.5, color: Colors.black54, height: 1.5)),
+                          _link('سياسة الخصوصية', 'privacy', const Key('login-privacy-link')),
+                        ]),
+                      ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(key: const Key('login-support'), onPressed: () => LegalLinks.open('support'), icon: const Icon(Icons.support_agent_rounded, size: 18, color: Colors.black54), label: const Text('الدعم والمساعدة', style: TextStyle(color: Colors.black54))),
                   ],
                 ),
               ),

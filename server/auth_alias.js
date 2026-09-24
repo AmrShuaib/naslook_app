@@ -26,15 +26,36 @@ const hashCode = (email, code) => crypto.createHash("sha256").update(`${email}:$
 const newCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, "0");
 const digits = (v) => String(v ?? "").replace(/[^0-9]/g, "");
 
-/// مفتاح التشفير: من البيئة، أو ملف في مجلد التشغيل يُنشأ مرة واحدة.
-function loadKey(opsDir) {
+/// مفتاح التشفير الدائم: من البيئة، أو ملف في مجلد التشغيل، أو جدول platform_secrets في القاعدة.
+/// كان يُنشأ في الذاكرة إن تعذّرت كتابة الملف (صلاحيات مجلد التشغيل)، فيتغيّر مع كل إعادة تشغيل وتصبح عبارات الاسترداد
+/// المحفوظة غير مقروءة. الآن: الملف إن وُجد هو المرجع ويُنسخ إلى القاعدة، وإلا فالقاعدة، وإلا مفتاح جديد يُحفظ في كليهما.
+export async function loadKeyDurable(pool, opsDir) {
+  const HEX = /^[0-9a-f]{64}$/i;
   const env = String(process.env.NASLIFE_AUTH_KEY ?? "").trim();
-  if (/^[0-9a-f]{64}$/i.test(env)) return Buffer.from(env, "hex");
+  if (HEX.test(env)) return { key: Buffer.from(env, "hex"), source: "env" };
   const file = path.join(opsDir, "auth-key");
-  try { const t = fs.readFileSync(file, "utf8").trim(); if (/^[0-9a-f]{64}$/i.test(t)) return Buffer.from(t, "hex"); } catch { /* لا ملف بعد */ }
-  const key = crypto.randomBytes(32);
-  try { fs.mkdirSync(opsDir, { recursive: true }); fs.writeFileSync(file, key.toString("hex") + "\n", { mode: 0o600 }); } catch (e) { console.warn("auth_alias: cannot persist auth-key:", e.message); }
-  return key;
+  let fileHex = null;
+  try { const t = fs.readFileSync(file, "utf8").trim(); if (HEX.test(t)) fileHex = t; } catch { /* لا ملف أو لا صلاحية */ }
+  const writeFile = (hex) => { try { fs.mkdirSync(opsDir, { recursive: true }); fs.writeFileSync(file, hex + "\n", { mode: 0o600 }); return true; } catch { return false; } };
+  let dbHex = null;
+  if (pool) {
+    try {
+      await pool.query("CREATE TABLE IF NOT EXISTS platform_secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+      if (fileHex) await pool.query("INSERT INTO platform_secrets(name, value) VALUES('auth-key', $1) ON CONFLICT (name) DO NOTHING", [fileHex]);
+      else await pool.query("INSERT INTO platform_secrets(name, value) VALUES('auth-key', $1) ON CONFLICT (name) DO NOTHING", [crypto.randomBytes(32).toString("hex")]);
+      dbHex = (await pool.query("SELECT value FROM platform_secrets WHERE name='auth-key'")).rows[0]?.value ?? null;
+    } catch (e) { console.warn("auth_alias: platform_secrets unavailable:", e.message); }
+  }
+  if (fileHex) {
+    if (dbHex && dbHex !== fileHex) console.warn("auth_alias: auth-key file differs from the database copy; using the file");
+    return { key: Buffer.from(fileHex, "hex"), source: "file" };
+  }
+  if (dbHex && HEX.test(dbHex)) { const persisted = writeFile(dbHex); return { key: Buffer.from(dbHex, "hex"), source: persisted ? "db+file" : "db" }; }
+  // لا قاعدة ولا ملف: آخر ملجأ مفتاح مؤقت (يُسجَّل تحذيراً)
+  const hex = crypto.randomBytes(32).toString("hex");
+  const persisted = writeFile(hex);
+  if (!persisted) console.warn("auth_alias: cannot persist auth-key anywhere; recovery phrases will not survive a restart");
+  return { key: Buffer.from(hex, "hex"), source: persisted ? "file" : "memory" };
 }
 export function encrypt(key, text) {
   const iv = crypto.randomBytes(12);
@@ -66,7 +87,9 @@ export default async function authAlias(app, opts = {}) {
   const pool = opts.pool ?? globalThis.naslifePool ?? null;
   const auth = opts.auth ?? globalThis.naslifeAuth ?? null;
   if (!pool) throw new Error("auth_alias: pool is required");
-  const key = loadKey(opts.opsDir ?? process.env.NASLIFE_OPS_DIR ?? "/opt/naslife/ops");
+  const { key, source: keySource } = await loadKeyDurable(pool, opts.opsDir ?? process.env.NASLIFE_OPS_DIR ?? "/opt/naslife/ops");
+  // يُشارك مع إضافة حذف الحساب (تدوير كلمة السر بعبارة الاسترداد)
+  globalThis.naslifeAuthKey = () => key;
   await pool.query(`CREATE TABLE IF NOT EXISTS login_aliases (alias TEXT PRIMARY KEY, user_id TEXT NOT NULL, nickname TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS login_aliases_user ON login_aliases(user_id);
     ALTER TABLE login_aliases ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ,
@@ -246,7 +269,7 @@ export default async function authAlias(app, opts = {}) {
     }
     const enc = await recoveryOf(row.user_id);
     if (!enc) return bad(reply, 409, "no-recovery");
-    let phrase; try { phrase = decrypt(key, enc); } catch { return bad(reply, 500, "recovery-unreadable"); }
+    let phrase; try { phrase = decrypt(key, enc); } catch { await pool.query("DELETE FROM account_recovery WHERE user_id=$1", [row.user_id]); return bad(reply, 409, "no-recovery"); }
     const nickname = (await nickOf(row.user_id)) ?? row.nickname;
     const r = await coreRecover(req, nickname, phrase, password);
     if (r.statusCode < 200 || r.statusCode >= 300) {
@@ -276,7 +299,7 @@ export default async function authAlias(app, opts = {}) {
     if (l.statusCode !== 200) return bad(reply, 403, "bad-password");
     const enc = await recoveryOf(uid);
     if (!enc) return bad(reply, 409, "no-recovery");
-    let phrase; try { phrase = decrypt(key, enc); } catch { return bad(reply, 500, "recovery-unreadable"); }
+    let phrase; try { phrase = decrypt(key, enc); } catch { await pool.query("DELETE FROM account_recovery WHERE user_id=$1", [uid]); return bad(reply, 409, "no-recovery"); }
     const r = await coreRecover(req, nickname, phrase, password);
     if (r.statusCode < 200 || r.statusCode >= 300) {
       const eb = parseBody(r);
@@ -368,6 +391,6 @@ export default async function authAlias(app, opts = {}) {
   app.get("/auth/alias/status", async () => {
     const c = (await pool.query("SELECT count(*)::int AS n, count(*) FILTER (WHERE verified)::int AS v FROM login_aliases")).rows[0];
     const r = (await pool.query("SELECT count(*)::int AS n FROM account_recovery")).rows[0];
-    return { ok: true, aliases: c.n, verified: c.v, recoverable: r.n, mailConfigured: mailOn() };
+    return { ok: true, aliases: c.n, verified: c.v, recoverable: r.n, mailConfigured: mailOn(), keyDurable: keySource !== "memory" };
   });
 }
