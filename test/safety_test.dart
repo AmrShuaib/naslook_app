@@ -188,10 +188,13 @@ void main() {
     expect(find.text('حظر sara'), findsOneWidget);
     await tester.tap(find.text('إبلاغ عن المنشور'));
     await _settle(tester);
-    await tester.enterText(find.descendant(of: find.byType(AlertDialog), matching: find.byType(TextField)), 'مضلل');
-    await tester.tap(find.text('إرسال البلاغ'));
+    // ورقة الإبلاغ الموحدة: سبب جاهز + ملاحظة اختيارية
+    await tester.tap(find.byKey(const Key('report-reason-4')));
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('report-note')), 'مضلل');
+    await tester.tap(find.byKey(const Key('report-submit')));
     await _settle(tester);
-    expect(srv.bodies['POST /safety/report'], {'targetType': 'post', 'targetId': _postId, 'reason': 'مضلل'});
+    expect(srv.bodies['POST /safety/report'], {'targetType': 'post', 'targetId': _postId, 'reason': 'احتيال أو نصب: مضلل'});
     expect(find.textContaining('وصل بلاغك'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });

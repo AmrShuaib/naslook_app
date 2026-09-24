@@ -10,7 +10,9 @@ import '../../core/chat/codes.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
@@ -49,12 +51,12 @@ class _EventsPageState extends ConsumerState<EventsPage> {
         ),
         Expanded(
           child: list.when(
-            data: (events) => events.isEmpty
+            data: (all) => switch ([for (final e in all) if (!isBlockedId(ref.watch(blockedIdsProvider), e.host.id)) e]) { final events => events.isEmpty
                 ? EmptyState(icon: Icons.event_outlined, title: tab == 0 ? 'لا فعاليات قادمة' : 'لم تنشئ فعالية بعد', subtitle: 'أنشئ فعالية ببيع تذاكر أو مجانية وشاركها في دائرتك.')
                 : RefreshIndicator(
                     onRefresh: () async { ref.invalidate(eventsProvider); ref.invalidate(myEventsProvider); },
                     child: ListView.separated(padding: const EdgeInsets.fromLTRB(20, 0, 20, 96), itemCount: events.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => EventCard(events[i])),
-                  ),
+                  ) },
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(tab == 0 ? eventsProvider : myEventsProvider)),
           ),
@@ -162,6 +164,11 @@ class EventDetailPage extends ConsumerWidget {
             if (context.mounted) toast(context, 'نُسخ الرمز ${eventCode(eventId)}، الصقه في أي محادثة');
           },
         ),
+        // أي مستخدم ينشئ فعالية فتُتاح لغير المضيف: إبلاغ عنها وحظر مضيفها
+        if (ev.valueOrNull case final e? when !e.isHost)
+          ReportMenuButton(type: 'event', id: e.id, author: e.host, keyPrefix: 'event', iconSize: 24, color: Joy.text, reportLabel: 'إبلاغ عن الفعالية',
+            onReported: (r) { if (r.hidden || r.blocked) { ref.invalidate(eventsProvider); if (context.mounted) Navigator.of(context).maybePop(); } },
+            onBlocked: () { ref.invalidate(eventsProvider); if (context.mounted) Navigator.of(context).maybePop(); }),
       ]),
       body: ev.when(
         data: (e) => ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [

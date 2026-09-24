@@ -175,4 +175,14 @@ extension NaslifeApi on ApiClient {
       return const <String>{};
     }
   }
+  /// معرّفات تعليقات الدوائر المخفية بالبلاغات أو الإدارة (server/vessel_mod.js)؛ فارغة إن لم تتوفر الخدمة.
+  Future<Set<String>> hiddenComments({String? postId, String? vesselId}) async {
+    try {
+      final r = await get('/posts/hidden', query: {'kind': 'comment', if (postId != null) 'post': postId, if (vesselId != null) 'vessel': vesselId});
+      final ids = r['ids'];
+      return ids is List ? ids.map((e) => e.toString()).toSet() : const <String>{};
+    } catch (_) {
+      return const <String>{};
+    }
+  }
 }

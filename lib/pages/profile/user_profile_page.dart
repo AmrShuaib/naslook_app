@@ -11,6 +11,8 @@ import '../../core/nav_provider.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../state/safety_providers.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../admin/user_admin_sheet.dart';
 import '../chat/chat_thread_page.dart';
@@ -45,6 +47,7 @@ class UserProfilePage extends ConsumerWidget {
     final p = profile.valueOrNull;
     final nickname = p?.nickname.isNotEmpty == true ? p!.nickname : person.nickname;
     final avatar = p?.avatarUrl ?? person.avatarUrl;
+    final blocked = !isMe && isBlockedId(ref.watch(blockedIdsProvider), person.id);
 
     return Scaffold(
       backgroundColor: Joy.bg,
@@ -58,10 +61,14 @@ class UserProfilePage extends ConsumerWidget {
           if (!isMe)
             PopupMenuButton<String>(
               tooltip: 'المزيد',
-              onSelected: (v) => v == 'report' ? _report(context, ref) : _block(context, ref),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'report', child: ListTile(leading: Icon(Icons.flag_outlined), title: Text('إبلاغ'))),
-                PopupMenuItem(value: 'block', child: ListTile(leading: Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر', style: TextStyle(color: Joy.danger)))),
+              key: const Key('profile-menu'),
+              onSelected: (v) => switch (v) { 'report' => _report(context, ref), 'unblock' => _unblock(context, ref), _ => _block(context, ref) },
+              itemBuilder: (_) => [
+                const PopupMenuItem(key: Key('profile-report'), value: 'report', child: ListTile(leading: Icon(Icons.flag_outlined), title: Text('إبلاغ'))),
+                if (blocked)
+                  const PopupMenuItem(key: Key('profile-unblock'), value: 'unblock', child: ListTile(leading: Icon(Icons.lock_open_rounded), title: Text('إلغاء الحظر')))
+                else
+                  const PopupMenuItem(key: Key('profile-block'), value: 'block', child: ListTile(leading: Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر', style: TextStyle(color: Joy.danger)))),
               ],
             ),
         ],
@@ -77,6 +84,25 @@ class UserProfilePage extends ConsumerWidget {
             Center(child: Avatar(name: nickname, url: avatar, size: 104, ring: true, online: online)),
             const SizedBox(height: 12),
             Center(child: Text(nickname, style: Theme.of(context).textTheme.headlineSmall)),
+            // المحظور يبقى ملفه قابلاً للفتح (من رابط أو بحث) فنوضح حالته ونتيح التراجع
+            if (blocked)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Center(
+                  child: Container(
+                    key: const Key('blocked-banner'),
+                    padding: const EdgeInsetsDirectional.fromSTEB(12, 2, 4, 2),
+                    decoration: BoxDecoration(color: Joy.danger.withValues(alpha: .1), borderRadius: BorderRadius.circular(999)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.block_rounded, size: 16, color: Joy.danger),
+                      const SizedBox(width: 6),
+                      const Text('محظور', style: TextStyle(color: Joy.danger, fontWeight: FontWeight.w600)),
+                      const Text(' · ', style: TextStyle(color: Joy.textMuted)),
+                      TextButton(key: const Key('unblock-btn'), onPressed: () => _unblock(context, ref), child: const Text('إلغاء الحظر')),
+                    ]),
+                  ),
+                ),
+              ),
             const SizedBox(height: 2),
             Center(
               child: Text(
@@ -195,11 +221,19 @@ class UserProfilePage extends ConsumerWidget {
   }
 
   Future<void> _report(BuildContext context, WidgetRef ref) async {
-    final reason = await askText(context, title: 'إبلاغ عن ${person.nickname}', hint: 'ما المشكلة؟', confirm: 'إرسال البلاغ');
-    if (reason == null || reason.isEmpty || !context.mounted) return;
+    final r = await showReportSheet(context, ref, type: kReportUser, id: person.id, author: person, title: 'إبلاغ عن ${person.nickname}');
+    if (r != null && r.blocked) {
+      ref.invalidate(contactsProvider);
+      ref.invalidate(chatsProvider);
+    }
+  }
+
+  Future<void> _unblock(BuildContext context, WidgetRef ref) async {
     try {
-      await ref.read(apiClientProvider).reportUser(person.id, reason);
-      if (context.mounted) toast(context, 'وصل بلاغك وسنراجعه');
+      await ref.read(apiClientProvider).unblockUser(person.id);
+      ref.invalidate(blockedUsersProvider);
+      ref.invalidate(chatsProvider);
+      if (context.mounted) toast(context, 'أُلغي حظر ${person.nickname}');
     } catch (e) {
       if (context.mounted) toast(context, errText(e), error: true);
     }
@@ -217,6 +251,7 @@ class UserProfilePage extends ConsumerWidget {
     if (ok != true || !context.mounted) return;
     try {
       await ref.read(apiClientProvider).blockUser(person.id);
+      ref.invalidate(blockedUsersProvider);
       ref.invalidate(contactsProvider);
       ref.invalidate(chatsProvider);
       if (context.mounted) { toast(context, 'تم حظر ${person.nickname}'); Navigator.of(context).pop(); }

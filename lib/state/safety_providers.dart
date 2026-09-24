@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/naslife_api.dart';
 import '../api/safety_api.dart';
 import 'app_state.dart';
 
@@ -20,3 +21,15 @@ final bannedWordsProvider = FutureProvider<List<String>>((ref) async {
 
 /// المحظورون.
 final blockedUsersProvider = FutureProvider<List<BlockedUser>>((ref) => ref.watch(apiClientProvider).blockedUsers());
+
+/// معرّفات المحظورين بأحرف كبيرة لتصفية محتواهم في القوائم احتياطاً (فارغة للزائر أو قبل وصول القائمة أو عند الخطأ).
+final blockedIdsProvider = Provider<Set<String>>((ref) {
+  if (ref.watch(appStateProvider.select((s) => s.user?.id)) == null) return const <String>{};
+  return ref.watch(blockedUsersProvider).maybeWhen(data: (l) => {for (final u in l) u.id.toUpperCase()}, orElse: () => const <String>{});
+});
+
+/// هل [id] محظور (مقارنة بلا حساسية لحالة الأحرف).
+bool isBlockedId(Set<String> blocked, String? id) => id != null && id.isNotEmpty && blocked.contains(id.toUpperCase());
+
+/// تعليقات منشور دائرة المخفية بالبلاغات أو الإدارة.
+final hiddenCommentsProvider = FutureProvider.family<Set<String>, String>((ref, postId) => ref.watch(apiClientProvider).hiddenComments(postId: postId));

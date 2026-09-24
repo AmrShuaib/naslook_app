@@ -37,6 +37,7 @@ import '../../state/safety_providers.dart';
 import '../../ui/pattern_background.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/reactions.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../business/business_page.dart';
 import '../business/community_page.dart';
@@ -445,7 +446,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     final next = wasMine ? null : emoji;
     setState(() => _reactions[m.id] = applyMyReaction(cur, next));
     try {
-      final rx = await _api.chatReact(m.id, next);
+      final rx = await _api.chatReact(m.id, next, peerId: _peerId);
       if (mounted) setState(() => _reactions[m.id] = rx);
     } catch (e) {
       if (mounted) {
@@ -795,7 +796,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         _rebuild();
       });
       if (serverId != null && (local.quote != null || local.forwardedFrom != null || extra.isNotEmpty)) {
-        _api.setMessageMeta(serverId, replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: extra).catchError((_) {});
+        _api.setMessageMeta(serverId, peerId: _peerId, replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: extra).catchError((_) {});
       }
       if (serverId != null && onSent != null) await onSent(serverId);
       ref.invalidate(chatsProvider);
@@ -906,7 +907,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     try {
       final sent = await _api.sendMessage(target.id, m.type == 'text' ? m.content : _api.absolute(m.content), type: 'text', forwardedFrom: from, extra: m.extra);
       if (sent.id.isNotEmpty && sent.senderId != 'me') {
-        _api.setMessageMeta(sent.id, forwardedFrom: from, extra: m.extra.isEmpty ? null : m.extra).catchError((_) {});
+        _api.setMessageMeta(sent.id, peerId: target.id, forwardedFrom: from, extra: m.extra.isEmpty ? null : m.extra).catchError((_) {});
         if (target.id == _peerId && mounted) setState(() { _merge([sent.copyWith(forwardedFrom: from, extra: m.extra)]); });
       }
       ref.invalidate(chatsProvider);
@@ -1024,13 +1025,12 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   }
 
   Future<void> _report({String? messageId}) async {
-    final reason = await askText(context, title: 'إبلاغ عن ${widget.peer.nickname}', hint: 'ما المشكلة؟ (إزعاج، احتيال، محتوى مسيء…)', confirm: 'إرسال البلاغ');
-    if (reason == null || reason.isEmpty || !mounted) return;
-    try {
-      await _api.reportUser(_peerId, reason, messageId: messageId);
-      if (mounted) toast(context, 'وصل بلاغك وسنراجعه');
-    } catch (e) {
-      if (mounted) toast(context, errText(e), error: true);
+    final r = await showReportSheet(context, ref, type: kReportUser, id: _peerId, author: widget.peer, messageId: messageId,
+        title: messageId != null ? 'إبلاغ عن الرسالة' : 'إبلاغ عن ${widget.peer.nickname}');
+    if (r != null && r.blocked && mounted) {
+      ref.invalidate(chatsProvider);
+      ref.invalidate(contactsProvider);
+      Navigator.of(context).pop();
     }
   }
 

@@ -33,6 +33,8 @@ final adminOverviewProvider = FutureProvider<AdminOverview>((ref) => ref.watch(a
 final adminUsersProvider = FutureProvider.family<List<AdminUser>, ({String q, String? filter})>((ref, k) => ref.watch(apiClientProvider).adminUsers(q: k.q, filter: k.filter));
 final adminUserProvider = FutureProvider.family<AdminUserDetail, String>((ref, id) => ref.watch(apiClientProvider).adminUser(id));
 final adminReportsProvider = FutureProvider.family<AdminReports, bool>((ref, all) => ref.watch(apiClientProvider).adminReports(all: all));
+/// طابور الإشراف على بلاغات المحتوى: (الكل؟، النوع أو '' للكل).
+final adminModerationProvider = FutureProvider.family<ModerationQueue, (bool, String)>((ref, a) => ref.watch(apiClientProvider).adminModeration(all: a.$1, type: a.$2));
 final adminBizProvider = FutureProvider<List<AdminBiz>>((ref) => ref.watch(apiClientProvider).adminBiz());
 final adminClaimsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) => ref.watch(apiClientProvider).adminClaims());
 final adminFinanceProvider = FutureProvider<AdminFinance>((ref) => ref.watch(apiClientProvider).adminFinance());
@@ -111,4 +113,5 @@ void invalidateAdmin(WidgetRef ref) {
   ref.invalidate(adminBlogPostProvider);
   ref.invalidate(adminUserProvider);
   ref.invalidate(adminReportsProvider);
+  ref.invalidate(adminModerationProvider);
 }

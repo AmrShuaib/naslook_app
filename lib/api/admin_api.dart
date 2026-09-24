@@ -536,18 +536,73 @@ class AdminContent {
 class AdminSettings {
   final bool testTopup, maintenance, setupCodePresent;
   final int maxTopup;
-  final String announcement, supportHandle, bannedWords;
+  final String announcement, supportHandle, supportEmail, bannedWords;
   final int reportThreshold;
+  // التحويل بين المستخدمين والدفع داخل المحادثة (يُطفآن دائماً في iOS)، والقائمة الافتراضية للكلمات المحظورة
+  final bool transfersEnabled, chatPaymentsEnabled, bannedWordsDefault;
   // السوق
   final double marketCommissionPct;
   final int spotlightPricePerDay, spotlightMaxDays, spotlightMaxActive;
   final bool marketReviewNewAccounts, marketBlockContacts;
-  const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = '', this.bannedWords = '', this.reportThreshold = 3,
+  const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
+      this.transfersEnabled = true, this.chatPaymentsEnabled = true, this.bannedWordsDefault = true,
       this.marketCommissionPct = 0, this.spotlightPricePerDay = 2000, this.spotlightMaxDays = 30, this.spotlightMaxActive = 12, this.marketReviewNewAccounts = false, this.marketBlockContacts = true});
   factory AdminSettings.fromJson(Map m) => AdminSettings(testTopup: m['testTopup'] == true, maintenance: m['maintenance'] == true, setupCodePresent: m['setupCodePresent'] == true, maxTopup: _i(m['maxTopup']), announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '',
       bannedWords: m['bannedWords']?.toString() ?? '', reportThreshold: m['reportThreshold'] == null ? 3 : _i(m['reportThreshold']),
+      supportEmail: m['supportEmail']?.toString() ?? '', transfersEnabled: m['transfersEnabled'] != false, chatPaymentsEnabled: m['chatPaymentsEnabled'] != false, bannedWordsDefault: m['bannedWordsDefault'] != false,
       marketCommissionPct: (m['marketCommissionPct'] as num?)?.toDouble() ?? 0, spotlightPricePerDay: m['spotlightPricePerDay'] == null ? 2000 : _i(m['spotlightPricePerDay']), spotlightMaxDays: m['spotlightMaxDays'] == null ? 30 : _i(m['spotlightMaxDays']), spotlightMaxActive: m['spotlightMaxActive'] == null ? 12 : _i(m['spotlightMaxActive']),
       marketReviewNewAccounts: m['marketReviewNewAccounts'] == true, marketBlockContacts: m['marketBlockContacts'] != false);
+}
+
+/// آخر إجراء إداري على عنصر في طابور الإشراف.
+class ModerationAction {
+  final String action, note;
+  final Person? by;
+  final DateTime? at;
+  const ModerationAction({required this.action, this.note = '', this.by, this.at});
+  factory ModerationAction.fromJson(Map m) => ModerationAction(action: m['action']?.toString() ?? '', note: m['note']?.toString() ?? '', by: m['by'] is Map ? Person.fromJson(_m(m['by'])) : null, at: _t(m['at']));
+  String get label => moderationActionLabel(action);
+}
+
+String moderationActionLabel(String a) => switch (a) { 'hide' => 'أُخفي', 'restore' => 'أُعيد إظهاره', 'suspend-owner' => 'أُوقف الناشر', 'dismiss' => 'تُجوهل', _ => a };
+
+/// عنصر محتوى مُبلَّغ عنه (بلاغاته مجمّعة) في طابور الإشراف (server/safety.js).
+class ModerationItem {
+  final String targetType, targetId, typeName, status;
+  final int reports;
+  final List<String> reasons;
+  final Person? owner;
+  final String? title, text, mediaUrl, bizId, listingId, wantedId, vesselId, parentId;
+  final DateTime? firstAt, lastAt;
+  final ModerationAction? action;
+  const ModerationItem({required this.targetType, required this.targetId, this.typeName = '', this.status = 'visible', this.reports = 0, this.reasons = const [], this.owner, this.title, this.text, this.mediaUrl,
+      this.bizId, this.listingId, this.wantedId, this.vesselId, this.parentId, this.firstAt, this.lastAt, this.action});
+  factory ModerationItem.fromJson(Map m) => ModerationItem(
+        targetType: m['targetType']?.toString() ?? '', targetId: m['targetId']?.toString() ?? '', typeName: m['typeName']?.toString() ?? '',
+        status: m['status']?.toString() ?? (m['hidden'] == true ? 'hidden' : 'visible'), reports: _i(m['reports']),
+        reasons: [for (final r in _strs(m['reasons'])) if (r.isNotEmpty) r],
+        owner: m['owner'] is Map ? Person.fromJson(_m(m['owner'])) : null,
+        title: m['title']?.toString(), text: m['text']?.toString(), mediaUrl: m['mediaUrl']?.toString(),
+        bizId: m['bizId']?.toString(), listingId: m['listingId']?.toString(), wantedId: m['wantedId']?.toString(), vesselId: m['vesselId']?.toString(), parentId: m['parentId']?.toString(),
+        firstAt: _t(m['firstAt']), lastAt: _t(m['lastAt']), action: m['action'] is Map ? ModerationAction.fromJson(_m(m['action'])) : null,
+      );
+  bool get hidden => status == 'hidden';
+  bool get missing => status == 'missing';
+  /// مفتاح ثابت للواجهة والاختبارات.
+  String get key => '$targetType-$targetId';
+}
+
+class ModerationQueue {
+  final String status;
+  final int open, threshold;
+  final List<ModerationItem> items;
+  final List<({String id, String name})> types;
+  const ModerationQueue({this.status = 'open', this.open = 0, this.threshold = 3, this.items = const [], this.types = const []});
+  factory ModerationQueue.fromJson(Map m) => ModerationQueue(
+        status: m['status']?.toString() ?? 'open', open: _i(m['open']), threshold: m['threshold'] == null ? 3 : _i(m['threshold']),
+        items: asList(m['items']).map(ModerationItem.fromJson).toList(),
+        types: [for (final t in asList(m['types'])) (id: t['id'].toString(), name: t['name']?.toString() ?? t['id'].toString())],
+      );
 }
 
 class AdminAudit {
@@ -655,7 +710,16 @@ extension AdminApi on ApiClient {
   /// حذف نهائي من كل الجداول؛ [confirm] هو اسم المستخدم أو المعرّف كما كتبه المدير للتأكيد. يعيد عدد الصفوف المحذوفة لكل جدول.
   Future<Map<String, dynamic>> adminDeleteUser(String id, {required String confirm}) async => asMap((await delete('/adminapi/users/$id', body: {'confirm': confirm}))['report']);
   Future<AdminReports> adminReports({bool all = false}) async => AdminReports.fromJson(await get('/adminapi/reports', query: {'status': all ? 'all' : 'open'}));
-  Future<void> adminReportAction(String id, {required String action, String note = '', String? targetId}) => post('/adminapi/reports/$id/action', {'action': action, 'note': note, if (targetId != null) 'targetId': targetId});
+  /// الخادم يأخذ المُبلَّغ عنه من صف البلاغ نفسه، فلا نرسل targetId.
+  Future<void> adminReportAction(String id, {required String action, String note = ''}) => post('/adminapi/reports/$id/action', {'action': action, 'note': note});
+  /// طابور الإشراف على بلاغات المحتوى (مفتوحة أو الكل، واختيارياً نوع واحد).
+  Future<ModerationQueue> adminModeration({bool all = false, String? type}) async =>
+      ModerationQueue.fromJson(await get('/adminapi/moderation', query: {'status': all ? 'all' : 'open', if (type != null && type.isNotEmpty) 'type': type}));
+  /// إجراء على عنصر مُبلَّغ عنه: dismiss | hide | restore | suspend-owner.
+  Future<({bool changed, String status})> adminModerate(String type, String id, {required String action, String note = ''}) async {
+    final d = await post('/adminapi/moderation/$type/${Uri.encodeComponent(id)}', {'action': action, 'note': note});
+    return (changed: d['changed'] == true, status: d['status']?.toString() ?? '');
+  }
   Future<List<AdminBiz>> adminBiz() async => asList(await getList('/adminapi/biz')).map(AdminBiz.fromJson).toList();
   Future<void> adminBizUpdate(String id, {bool? verified, bool? active, String? ownerId, bool clearOwner = false}) => post('/adminapi/biz/$id', {if (verified != null) 'verified': verified, if (active != null) 'active': active, if (ownerId != null || clearOwner) 'ownerId': ownerId});
   Future<List<Map<String, dynamic>>> adminClaims() async => asList(await getList('/adminapi/claims'));

@@ -7,12 +7,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/client.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
-import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../chat/chat_thread_page.dart';
@@ -59,10 +60,12 @@ class _ListingPageState extends ConsumerState<ListingPage> {
         IconButton(key: const Key('copy-listing-code'), tooltip: 'انسخ رمز المحادثة', icon: const Icon(Icons.bolt_rounded), onPressed: () async { await Clipboard.setData(ClipboardData(text: listingCode(widget.id))); if (context.mounted) toast(context, 'نُسخ الرمز ${listingCode(widget.id)}، الصقه في أي محادثة'); }),
         WishButton(kind: 'market', refId: widget.id),
         if (l.valueOrNull?.mine == false)
-          PopupMenuButton<String>(tooltip: 'المزيد', onSelected: (v) { if (v == 'report') { _reportListing(); } else if (v == 'compare') { _toggleCompare(l.value!); } },
+          PopupMenuButton<String>(key: const Key('listing-menu'), tooltip: 'المزيد', onSelected: (v) { if (v == 'report') { _reportListing(l.value!); } else if (v == 'block') { _blockSeller(l.value!); } else if (v == 'compare') { _toggleCompare(l.value!); } },
             itemBuilder: (_) => [
               PopupMenuItem(value: 'compare', child: ListTile(leading: const Icon(Icons.compare_arrows_rounded), title: Text(compare.any((c) => c.id == widget.id) ? 'إزالة من المقارنة' : 'أضف للمقارنة'))),
-              const PopupMenuItem(value: 'report', child: ListTile(leading: Icon(Icons.flag_outlined), title: Text('إبلاغ عن العرض'))),
+              const PopupMenuItem(key: Key('listing-report'), value: 'report', child: ListTile(leading: Icon(Icons.flag_outlined), title: Text('إبلاغ عن العرض'))),
+              if (ref.read(appStateProvider).user != null)
+                PopupMenuItem(key: const Key('listing-block'), value: 'block', child: ListTile(leading: const Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر ${l.value!.seller.nickname}', style: const TextStyle(color: Joy.danger)))),
             ]),
       ]),
       body: l.when(
@@ -169,11 +172,14 @@ class _ListingPageState extends ConsumerState<ListingPage> {
     ref.read(compareProvider.notifier).state = [...cur, x]; toast(context, 'أُضيف للمقارنة (${cur.length + 1})');
   }
 
-  Future<void> _reportListing() async {
-    final reason = await askText(context, title: 'إبلاغ عن العرض', hint: 'ما المشكلة؟ (احتيال، سلعة مخالفة، مضلل…)', confirm: 'إرسال البلاغ');
-    if (reason == null || reason.isEmpty || !mounted) return;
-    try { final r = await ref.read(apiClientProvider).reportContent(type: 'listing', id: widget.id, reason: reason); if (mounted) toast(context, r.hidden ? 'وصل بلاغك وأُخفي العرض للمراجعة' : 'وصل بلاغك وسنراجعه'); }
-    catch (e) { if (mounted) toast(context, e.toString(), error: true); }
+  Future<void> _reportListing(Listing x) async {
+    final r = await showReportSheet(context, ref, type: 'listing', id: widget.id, author: x.seller, title: 'إبلاغ عن العرض');
+    if (r != null && (r.hidden || r.blocked) && mounted) Navigator.of(context).maybePop();
+  }
+
+  /// حظر البائع: لن تظهر عروضه وأسئلته وتقييماته لك (والخادم يمنع الطلب منه ومراسلته).
+  Future<void> _blockSeller(Listing x) async {
+    if (await confirmBlock(context, ref, x.seller) && mounted) Navigator.of(context).maybePop();
   }
 }
 
@@ -267,14 +273,17 @@ class _Questions extends ConsumerWidget {
   const _Questions({required this.listing, required this.controller});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final qs = ref.watch(listingQuestionsProvider(listing.id)).valueOrNull ?? const <MarketQuestion>[];
+    final blocked = ref.watch(blockedIdsProvider);
+    final qs = [for (final q in ref.watch(listingQuestionsProvider(listing.id)).valueOrNull ?? const <MarketQuestion>[]) if (!isBlockedId(blocked, q.user.id)) q];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const SizedBox(height: 18),
       Text('أسئلة وأجوبة${qs.isEmpty ? '' : ' (${qs.length})'}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
       const SizedBox(height: 6),
       if (qs.isEmpty) const Text('لا أسئلة بعد. اسأل البائع وسيظهر الجواب للجميع.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
       for (final q in qs) Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [const Icon(Icons.help_outline_rounded, size: 16, color: Joy.textMuted), const SizedBox(width: 6), Expanded(child: Text(q.text, style: const TextStyle(fontWeight: FontWeight.w600))), Text(timeAgo(q.createdAt), style: const TextStyle(color: Joy.textMuted, fontSize: 11))]),
+        Row(children: [const Icon(Icons.help_outline_rounded, size: 16, color: Joy.textMuted), const SizedBox(width: 6), Expanded(child: Text(q.text, style: const TextStyle(fontWeight: FontWeight.w600))), Text(timeAgo(q.createdAt), style: const TextStyle(color: Joy.textMuted, fontSize: 11)),
+          SizedBox(height: 28, child: ReportMenuButton(type: 'listing-question', id: q.id, author: q.user, keyPrefix: 'question-${q.id}', iconSize: 18, reportLabel: 'إبلاغ عن السؤال',
+            onReported: (r) { if (r.hidden) ref.invalidate(listingQuestionsProvider(listing.id)); }))]),
         if (q.answer != null) Padding(padding: const EdgeInsets.only(right: 22, top: 3), child: Text(q.answer!, style: const TextStyle(color: Joy.text, height: 1.5)))
         else if (listing.mine) Padding(padding: const EdgeInsets.only(right: 22), child: TextButton(key: Key('answer-${q.id}'), onPressed: () async {
           final a = await askText(context, title: 'الجواب', confirm: 'نشر الجواب'); if (a == null || a.isEmpty) return;
@@ -297,7 +306,8 @@ class _Reviews extends ConsumerWidget {
   const _Reviews({required this.listingId, this.ratingAvg, this.count = 0});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final rs = ref.watch(listingReviewsProvider(listingId)).valueOrNull ?? const <MarketReview>[];
+    final blocked = ref.watch(blockedIdsProvider);
+    final rs = [for (final r in ref.watch(listingReviewsProvider(listingId)).valueOrNull ?? const <MarketReview>[]) if (!isBlockedId(blocked, r.buyer.id)) r];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const SizedBox(height: 18),
       Row(children: [const Text('التقييمات', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)), const SizedBox(width: 8), if (ratingAvg != null) ...[const Icon(Icons.star_rounded, size: 18, color: Joy.sunText), Text('${ratingAvg!.toStringAsFixed(1)} · $count', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5))]]),
@@ -308,12 +318,15 @@ class _Reviews extends ConsumerWidget {
   }
 }
 
-class ReviewTile extends StatelessWidget {
+class ReviewTile extends ConsumerWidget {
   final MarketReview r;
   const ReviewTile(this.r, {super.key});
   @override
-  Widget build(BuildContext context) => Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [ProfileAvatar(person: r.buyer, size: 24), const SizedBox(width: 6), Text(r.buyer.nickname, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)), const SizedBox(width: 6), Stars(r.rating), const Spacer(), Text(timeAgo(r.createdAt), style: const TextStyle(color: Joy.textMuted, fontSize: 11))]),
+  Widget build(BuildContext context, WidgetRef ref) => Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [ProfileAvatar(person: r.buyer, size: 24), const SizedBox(width: 6), Flexible(child: Text(r.buyer.nickname, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))), const SizedBox(width: 6), Stars(r.rating), const Spacer(), Text(timeAgo(r.createdAt), style: const TextStyle(color: Joy.textMuted, fontSize: 11)),
+          // معرّف تقييم العرض على الخادم هو رقم الطلب
+          SizedBox(height: 28, child: ReportMenuButton(type: 'listing-review', id: r.orderId, author: r.buyer, keyPrefix: 'review-${r.orderId}', iconSize: 18, reportLabel: 'إبلاغ عن التقييم',
+            onReported: (x) { if (x.hidden) ref.invalidate(listingReviewsProvider(r.listingId)); }))]),
         if (r.text.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 3), child: Text(r.text, style: const TextStyle(height: 1.5))),
         if (r.reply != null) Container(margin: const EdgeInsets.only(top: 6), padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(10)), child: Text('ردّ البائع: ${r.reply}', style: const TextStyle(fontSize: 12.5))),
       ]));

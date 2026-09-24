@@ -132,11 +132,12 @@ void main() {
     expect(find.text('حذف المنشور'), findsNothing);
     await tester.tap(find.text('إبلاغ عن المنشور'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, 'محتوى مسيء');
-    await tester.tap(find.widgetWithText(FilledButton, 'إرسال البلاغ'));
+    await tester.tap(find.byKey(const Key('report-reason-0')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('report-submit')));
     await _settle(tester);
-    expect(srv.bodies['POST /safety/report'], {'targetType': 'vessel-post', 'targetId': 'p-lina', 'reason': 'محتوى مسيء'});
-    expect(find.text('وصل بلاغك وسنراجعه'), findsOneWidget);
+    expect(srv.bodies['POST /safety/report'], {'targetType': 'vessel-post', 'targetId': 'p-lina', 'reason': 'محتوى مسيء أو كراهية'});
+    expect(find.text('وصل بلاغك وسنراجعه خلال 24 ساعة'), findsOneWidget);
     expect(find.text('منشور لينا'), findsOneWidget);
   });
 
