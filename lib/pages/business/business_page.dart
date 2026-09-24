@@ -12,10 +12,12 @@ import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/location.dart';
 import '../../core/nav_provider.dart';
+import '../../core/platform.dart';
 import '../../core/require_account.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
+import '../../state/providers.dart' show signedInProvider;
 import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/report_sheet.dart';
@@ -133,7 +135,9 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
           if (b != null && b.canOperate) IconButton(tooltip: 'لوحة التحكم', icon: const Icon(Icons.dashboard_customize_outlined, color: Joy.primary), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BusinessDashboardPage(id: b.id, initial: b)))),
           if (b != null) IconButton(key: const Key('share-circle'), tooltip: 'مشاركة الدائرة', icon: const Icon(Icons.ios_share_rounded), onPressed: () => shareLink(context, title: b.title, url: circleLink(b.id), subtitle: 'دائرة ${b.category.label} على ناس لايف', code: circleCode(b.id))),
           if (b != null) IconButton(tooltip: 'على الخريطة', icon: const Icon(Icons.map_outlined), onPressed: () => _onMap(b)),
-          IconButton(tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
+          // حجوزاتي تخص الحساب وتفشل للزائر (401)، فلا تظهر له
+          if (ref.watch(signedInProvider))
+            IconButton(key: const Key('biz-page-bookings'), tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
           // الدائرة ينشئها أي مستخدم: الإبلاغ عنها متاح لغير فريقها (لا تُخفى تلقائياً بل تراجعها الإدارة)
           if (b != null && !b.canOperate)
             ReportMenuButton(type: 'biz', id: b.id, keyPrefix: 'biz', iconSize: 24, color: Joy.text, reportLabel: 'إبلاغ عن الدائرة'),
@@ -168,17 +172,15 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
                 for (final p in biz.posts)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),
-                    child: biz.canOperate
-                        ? PostCard(post: p, biz: biz)
-                        : Stack(children: [
-                            PostCard(post: p, biz: biz),
-                            PositionedDirectional(
-                              top: p.imageUrl != null ? 158 : 8,
-                              end: 4,
-                              child: ReportMenuButton(type: 'biz-post', id: p.id, keyPrefix: 'bizpost-${p.id}', reportLabel: 'إبلاغ عن الخبر',
-                                onReported: (r) { if (r.hidden) ref.invalidate(bizDetailProvider(biz.id)); }),
-                            ),
-                          ]),
+                    // زر الإبلاغ داخل سطر العنوان: الموضع الثابت فوق البطاقة كان يُقص حين تفشل الصورة
+                    child: PostCard(
+                      post: p,
+                      biz: biz,
+                      trailing: biz.canOperate
+                          ? null
+                          : ReportMenuButton(type: 'biz-post', id: p.id, keyPrefix: 'bizpost-${p.id}', reportLabel: 'إبلاغ عن الخبر', iconSize: 18,
+                              onReported: (r) { if (r.hidden) ref.invalidate(bizDetailProvider(biz.id)); }),
+                    ),
                   ),
               ],
               const SizedBox(height: 16),
@@ -285,6 +287,8 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
   }
 
   Future<void> _review(Biz b) async {
+    // الزائر يُدعى للدخول قبل ورقة التقييم، وإلا كتب تقييمه ثم رفضه الخادم (401)
+    if (!requireAccount(context)) return;
     var rating = b.reviews.where((r) => r.mine).firstOrNull?.rating ?? 5;
     final text = TextEditingController(text: b.reviews.where((r) => r.mine).firstOrNull?.text ?? '');
     final ok = await showModalBottomSheet<bool>(
@@ -399,6 +403,20 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
     } catch (e) {
       if (!mounted) return;
       if (e.toString().contains('insufficient-funds')) {
+        // iOS: لا شحن في التطبيق، فلا ندعو للشحن ولا نفتح المحفظة (أبل 3.1.1 تمنع توجيه المستخدم للدفع خارج التطبيق)
+        if (isIosNative) {
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              key: const Key('biz-funds-ios'),
+              title: const Text('الرصيد غير كافٍ'),
+              content: const Text('رصيد محفظتك لا يغطي هذا المبلغ'),
+              actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('حسناً'))],
+            ),
+          );
+          return;
+        }
+        if (!mounted) return;
         final go = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(

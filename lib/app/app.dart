@@ -24,6 +24,7 @@ import '../pages/profile/public_profile_page.dart';
 import '../api/client.dart';
 import '../core/push/push_service.dart';
 import '../state/app_state.dart';
+import '../state/biz_providers.dart';
 import '../state/notify_providers.dart';
 import '../state/providers.dart';
 import '../screens/login_page.dart';
@@ -350,11 +351,16 @@ class _GuestShellState extends ConsumerState<GuestShell> {
 
   @override
   Widget build(BuildContext context) {
+    // «على الخريطة» في صفحة الدائرة يضبط موضع الخريطة؛ واجهة الزائر لا تستمع لـ navIndexProvider فننتقل لتبويب الخريطة هنا
+    ref.listen(mapFocusProvider, (_, n) {
+      if (n != null && _tab != 0) setState(() => _tab = 0);
+    });
     final link = widget.link;
     if (link != null) return _linkView(link);
     return Scaffold(
       key: const Key('guest-shell'),
-      body: IndexedStack(index: _tab, children: [for (var i = 0; i < GuestShell.titles.length; i++) _visited.contains(i) ? _screen(i) : const SizedBox.shrink()]),
+      // HeroMode: لكل من السوق والفعاليات زر عائم بوسم Hero الافتراضي؛ بقاؤهما معاً في IndexedStack يُفشل انتقال أي صفحة تُفتح
+      body: IndexedStack(index: _tab, children: [for (var i = 0; i < GuestShell.titles.length; i++) _visited.contains(i) ? HeroMode(enabled: i == _tab, child: _screen(i)) : const SizedBox.shrink()]),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
         child: NavigationBar(

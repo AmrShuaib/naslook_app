@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
+import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
@@ -30,6 +31,8 @@ class WantedPage extends ConsumerWidget {
       ));
 
   Future<void> _create(BuildContext context, WidgetRef ref) async {
+    // الزائر يُدعى للدخول قبل النموذج، وإلا ملأه ثم رفضه الخادم (401) وضاع
+    if (!requireAccount(context)) return;
     final title = TextEditingController(), desc = TextEditingController(), budget = TextEditingController(); String cat = 'services';
     final ok = await showDialog<bool>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setS) => AlertDialog(title: const Text('ماذا تبحث عنه؟'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
       TextField(key: const Key('wanted-title'), controller: title, decoration: const InputDecoration(labelText: 'مثال: مدرّس فيزياء ثانوي في الدمام'), autofocus: true),
@@ -114,6 +117,8 @@ class WantedDetailPage extends ConsumerWidget {
   }
 
   Future<void> _reply(BuildContext context, WidgetRef ref, Wanted w) async {
+    // قبل جلب عروضي وفتح النموذج: الزائر لا يملك عروضاً ولا يُقبل رده
+    if (!requireAccount(context)) return;
     final text = TextEditingController(), price = TextEditingController(); String? listingId;
     List<Listing> mine = const []; try { mine = (await ref.read(apiClientProvider).myListings()).where((l) => l.status == 'active').toList(); } catch (_) {}
     if (!context.mounted) return;

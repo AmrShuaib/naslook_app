@@ -9,8 +9,10 @@ import '../../api/commerce_models.dart';
 import '../../api/posts_api.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
@@ -50,7 +52,8 @@ Future<void> _runCta(BuildContext context, PostCta c, MapPost p) async {
     case 'market':
       if (context.mounted) Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(c.value)));
     case 'chat':
-      if (context.mounted) Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user)));
+      // المحادثة تطلب مسارات النواة فوراً؛ الزائر يُدعى للدخول قبل فتحها
+      if (context.mounted && requireAccount(context)) Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user)));
   }
 }
 
@@ -158,6 +161,8 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     );
     paused = false;
     if (!mounted || choice == null) return;
+    // الإبلاغ والحظر يحتاجان حساباً: ندعو الزائر للدخول قبل ورقة الأسباب بدل رفض 401 بعدها
+    if (!requireAccount(context)) return;
     final api = ref.read(apiClientProvider);
     try {
       if (choice == 'report') {
@@ -166,10 +171,15 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
         paused = false;
         if (r != null && (r.blocked || r.hidden)) {
           invalidatePosts(ref);
-          if (mounted && r.blocked) Navigator.pop(context);
+          if (!mounted) return;
+          if (r.blocked) return Navigator.pop(context);
+          // أُخفي المنشور تلقائياً بالبلاغ: يختفي من العارض كما يختفي من البث
+          _removeAt(i);
         }
       } else if (choice == 'block') {
         await api.blockUser(p.user.id);
+        // قائمة المحظورين تصفّي منشورات الدوائر وتعليقاتها وحالة الملف؛ بلا تحديثها يبقى محتواه ظاهراً حتى إعادة التشغيل
+        ref.invalidate(blockedUsersProvider);
         invalidatePosts(ref);
         if (mounted) {
           toast(context, 'تم حظر ${p.user.nickname}');
@@ -179,6 +189,20 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     } catch (e) {
       if (mounted) toast(context, e.toString(), error: true);
     }
+  }
+
+  /// يزيل منشوراً من العارض (حُذف أو أُخفي)، ويغلق العارض إن كان الأخير.
+  void _removeAt(int i) {
+    if (posts.length == 1) {
+      _auto?.cancel();
+      Navigator.pop(context);
+      return;
+    }
+    setState(() {
+      posts.removeAt(i);
+      index = index.clamp(0, posts.length - 1);
+    });
+    _onShown();
   }
 
   Future<void> _menu(int i) async {
@@ -231,12 +255,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
         await api.deletePost(p.id);
         invalidatePosts(ref);
         if (!mounted) return;
-        if (posts.length == 1) return Navigator.pop(context);
-        setState(() {
-          posts.removeAt(i);
-          index = index.clamp(0, posts.length - 1);
-        });
-        _onShown();
+        _removeAt(i);
       }
     } catch (e) {
       if (mounted) toast(context, e.toString(), error: true);
@@ -377,7 +396,11 @@ class PostView extends ConsumerWidget {
               if (p.mine) _action(Icons.visibility_outlined, '${p.views}', null),
               if (!p.mine && me != null) ...[
                 const SizedBox(width: 6),
-                _action(Icons.chat_bubble_outline_rounded, 'مراسلة', () { unawaited(ref.read(apiClientProvider).trackContact(p.id)); Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user))); }),
+                _action(Icons.chat_bubble_outline_rounded, 'مراسلة', () {
+                  if (!requireAccount(context)) return;
+                  unawaited(ref.read(apiClientProvider).trackContact(p.id));
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user)));
+                }),
                 const SizedBox(width: 2),
                 WishButton(kind: 'post', refId: p.id, dark: true, compact: true),
               ],

@@ -13,6 +13,7 @@ import '../../api/session.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/notify/message_sound.dart';
+import '../../core/platform.dart';
 import '../../core/share/share_links.dart';
 import '../../core/media/pick_image.dart';
 import '../../core/push/push_service.dart';
@@ -46,6 +47,7 @@ class MySpacePage extends ConsumerWidget {
     final vessels = ref.watch(myVesselsProvider).value ?? const <Vessel>[];
     final contacts = ref.watch(contactsProvider).value ?? const <Person>[];
     final p = profile.value;
+    final supportEmail = _supportEmail(ref);
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -88,7 +90,7 @@ class MySpacePage extends ConsumerWidget {
           ),
           const SizedBox(height: 14),
           JoyCard(padding: EdgeInsets.zero, child: Column(children: [
-            ListTile(leading: const Icon(Icons.account_balance_wallet_outlined, color: Joy.primary), title: const Text('المحفظة'), subtitle: const Text('الرصيد والتحويلات والدفع'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()))),
+            ListTile(leading: const Icon(Icons.account_balance_wallet_outlined, color: Joy.primary), title: const Text('المحفظة'), subtitle: Text(isIosNative ? 'الرصيد والمشتريات' : 'الرصيد والتحويلات والدفع', key: const Key('wallet-tile-subtitle')), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.confirmation_number_outlined, color: Joy.accent), title: const Text('تذاكري'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()))),
             const Divider(indent: 16, endIndent: 16),
@@ -195,7 +197,7 @@ class MySpacePage extends ConsumerWidget {
           JoyCard(
             padding: EdgeInsets.zero,
             child: Column(children: [
-              ListTile(key: const Key('contact-us'), leading: const Icon(Icons.support_agent_rounded, color: Joy.text), title: const Text('تواصل معنا'), subtitle: const Text(LegalLinks.supportEmail, textDirection: TextDirection.ltr, textAlign: TextAlign.end), onTap: () => _contactSheet(context)),
+              ListTile(key: const Key('contact-us'), leading: const Icon(Icons.support_agent_rounded, color: Joy.text), title: const Text('تواصل معنا'), subtitle: Text(supportEmail, textDirection: TextDirection.ltr, textAlign: TextAlign.end), onTap: () => _contactSheet(context, supportEmail)),
               const Divider(indent: 16, endIndent: 16),
               ListTile(key: const Key('legal-privacy'), leading: const Icon(Icons.privacy_tip_outlined, color: Joy.text), title: const Text('سياسة الخصوصية'), onTap: () => LegalLinks.open('privacy')),
               const Divider(indent: 16, endIndent: 16),
@@ -208,17 +210,32 @@ class MySpacePage extends ConsumerWidget {
   }
 
   /// وسائل التواصل مع الدعم (شرط متاجر التطبيقات: وسيلة تواصل منشورة داخل التطبيق).
-  void _contactSheet(BuildContext context) => showModalBottomSheet<void>(
+  void _contactSheet(BuildContext context, String email) {
+    showModalBottomSheet<void>(
         context: context,
         showDragHandle: true,
         builder: (ctx) => SafeArea(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            ListTile(key: const Key('contact-email'), leading: const Icon(Icons.email_outlined), title: const Text('راسلنا بالبريد'), subtitle: const Text(LegalLinks.supportEmail, textDirection: TextDirection.ltr, textAlign: TextAlign.end), onTap: () { Navigator.pop(ctx); LegalLinks.email(); }),
+            ListTile(key: const Key('contact-email'), leading: const Icon(Icons.email_outlined), title: const Text('راسلنا بالبريد'), subtitle: Text(email, textDirection: TextDirection.ltr, textAlign: TextAlign.end), onTap: () { Navigator.pop(ctx); _mailSupport(email); }),
             ListTile(key: const Key('contact-support-page'), leading: const Icon(Icons.help_outline_rounded), title: const Text('صفحة الدعم والأسئلة'), subtitle: const Text('الإبلاغ والحظر وحذف الحساب والمدفوعات'), onTap: () { Navigator.pop(ctx); LegalLinks.open('support'); }),
             const Padding(padding: EdgeInsets.fromLTRB(16, 4, 16, 16), child: Text('نرد على البلاغات خلال 24 ساعة، وعلى بقية الطلبات خلال يومي عمل.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5))),
           ]),
         ),
       );
+  }
+
+  /// بريد الدعم من إعدادات الإدارة العامة (يغيّره المدير دون إصدار جديد)، والثابت احتياطاً قبل وصولها أو إن كان فارغاً.
+  static String _supportEmail(WidgetRef ref) {
+    final e = ref.watch(publicSettingsProvider).valueOrNull?.supportEmail.trim() ?? '';
+    return e.contains('@') ? e : LegalLinks.supportEmail;
+  }
+
+  /// يفتح تطبيق البريد إلى [to] (يمر ببديل الاختبار كبقية الروابط القانونية).
+  static Future<void> _mailSupport(String to) {
+    final u = Uri(scheme: 'mailto', path: to, query: 'subject=${Uri.encodeComponent('دعم ناس لايف')}');
+    final o = LegalLinks.openOverride;
+    return o != null ? o(u) : launchUrl(u);
+  }
 
   Widget _stat(String n, String l) => Expanded(child: Column(children: [Text(n, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 20)), Text(l, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5))]));
 

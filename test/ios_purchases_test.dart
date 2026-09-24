@@ -37,6 +37,8 @@ Map<String, dynamic> _listing({bool mine = false}) => {
 
 class _Srv {
   bool spotlights = true, transfers = true, chatPay = true, testTopup = true, payEnabled = true;
+  /// إعدادات عامة متعذّرة (خطأ خادم): الويب يبقي أزرار المال والخادم يفرض المفاتيح.
+  bool settingsDown = false;
   final calls = <String>[];
   final headers = <Map<String, String>>[];
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
@@ -46,6 +48,7 @@ class _Srv {
     calls.add(key);
     headers.add(req.headers);
     switch (key) {
+      case 'GET /settings/public' when settingsDown: return _json({'error': 'down'}, 500);
       case 'GET /settings/public': return _json({'announcement': '', 'maintenance': false, 'testTopup': testTopup, 'transfersEnabled': transfers, 'chatPaymentsEnabled': chatPay});
       case 'GET /market/home': return _json({'spotlight': spotlights ? [{'id': 'sp1', 'endsAt': '2026-09-30T00:00:00Z', 'listing': _listing()}] : [], 'popular': [_listing()], 'nearby': [], 'bazaars': [], 'categories': {'food': 1}, 'wantedOpen': 0, 'spotlightPricePerDay': 2000, 'commissionPct': 5});
       case 'GET /market': return _json([_listing()]);
@@ -168,10 +171,13 @@ void main() {
       expect(find.textContaining('160 ر.س'), findsNothing, reason: 'لا مبالغ مدفوعة للإعلان في iOS');
     });
 
-    testWidgets('web: seller dashboard offers buying spotlight', (tester) async {
+    testWidgets('web: seller dashboard offers buying spotlight and shows what was paid', (tester) async {
       iosNativeOverride = false;
       await _pump(tester, const SellerDashboardPage());
       expect(find.byKey(const Key('spotlight-buy')), findsOneWidget);
+      expect(find.textContaining('120 ظهور'), findsOneWidget);
+      // نظير اختبار iOS: المبلغ نفسه يظهر على الويب، فغيابه في iOS ليس تغيّراً في التنسيق
+      expect(find.textContaining('160 ر.س'), findsOneWidget);
     });
 
     testWidgets('owner listing actions hide the spotlight button on iOS only', (tester) async {
@@ -205,6 +211,22 @@ void main() {
         expect(find.byKey(Key(k)), findsOneWidget, reason: k);
       }
       expect(find.byKey(const Key('wallet-ios-note')), findsNothing);
+    });
+
+    testWidgets('web with /settings/public failing: transfer, pay and QR stay (the server enforces the switch)', (tester) async {
+      iosNativeOverride = false;
+      await _pump(tester, const WalletPage(), srv: _Srv()..settingsDown = true);
+      for (final k in ['wallet-transfer', 'wallet-pay', 'wallet-qr']) {
+        expect(find.byKey(Key(k)), findsOneWidget, reason: k);
+      }
+    });
+
+    testWidgets('iOS with /settings/public failing: still no transfer, pay or QR', (tester) async {
+      iosNativeOverride = true;
+      await _pump(tester, const WalletPage(), srv: _Srv()..settingsDown = true);
+      for (final k in ['wallet-transfer', 'wallet-pay', 'wallet-qr']) {
+        expect(find.byKey(Key(k)), findsNothing, reason: k);
+      }
     });
 
     testWidgets('web with transfers switched off by the admin: no transfer, pay or QR', (tester) async {
@@ -263,7 +285,23 @@ void main() {
       expect(find.byKey(const Key('guide-/pay'), skipOffstage: false), findsNothing);
       expect(find.byKey(const Key('guide-/send'), skipOffstage: false), findsNothing);
       expect(find.byKey(const Key('guide-/split'), skipOffstage: false), findsNothing);
-      expect(find.textContaining('/pay', skipOffstage: false), findsNothing);
+      // الأمثلة في آخر الدليل لا تُبنى قبل التمرير إليها
+      await tester.scrollUntilVisible(find.text('أمثلة واقعية'), 300);
+      await tester.scrollUntilVisible(find.text('مسافران في مساحة المطار'), 300);
+      for (final c in ['/pay', '/send', '/split']) {
+        expect(find.textContaining(c, skipOffstage: false), findsNothing, reason: c);
+      }
+      expect(find.text('بين صديقين بعد جلسة قهوة', skipOffstage: false), findsOneWidget, reason: 'مثال غرضه ليس المال يبقى بلا سطر المال');
+      expect(find.text('رحلة عائلية وتقسيم الفاتورة', skipOffstage: false), findsNothing, reason: 'مثال غرضه المال يُحذف كله');
+    });
+
+    testWidgets('web with /settings/public failing: money commands are still suggested', (tester) async {
+      iosNativeOverride = false;
+      await _pump(tester, peer, srv: _Srv()..settingsDown = true);
+      expect(find.byKey(const Key('card-pay')), findsOneWidget);
+      await tester.enterText(find.byType(TextField), '/');
+      await tester.pump();
+      expect(find.byKey(const Key('suggest-/pay')), findsOneWidget);
     });
 
     testWidgets('web with chat payments on: money commands are suggested and the pay button shows', (tester) async {

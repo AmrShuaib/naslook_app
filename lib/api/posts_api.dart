@@ -183,6 +183,7 @@ extension PostStatsApi on ApiClient {
   Future<PostStats> myPostStats({int days = 7}) async => PostStats.fromJson(await get('/mapposts/stats/mine', query: {'days': '$days'}));
   Future<PostStats> bizPostStats(String slug, {int days = 30}) async => PostStats.fromJson(await get('/mapposts/stats/biz/$slug', query: {'days': '$days'}));
   /// تتبّع بلا انتظار: ضغطة زر الإجراء أو فتح المراسلة من المنشور.
-  Future<void> trackCta(String id) => post('/mapposts/$id/cta', const {}).then((_) {}).catchError((_) {});
-  Future<void> trackContact(String id) => post('/mapposts/$id/contact', const {}).then((_) {}).catchError((_) {});
+  /// prompt:false لأن رفض التتبّع لزائر (401) لا يجوز أن يفتح دعوة الدخول فوق إجراء لا يحتاج حساباً (واتساب، اتصال، رابط).
+  Future<void> trackCta(String id) => post('/mapposts/$id/cta', const {}, prompt: false).then((_) {}).catchError((_) {});
+  Future<void> trackContact(String id) => post('/mapposts/$id/contact', const {}, prompt: false).then((_) {}).catchError((_) {});
 }

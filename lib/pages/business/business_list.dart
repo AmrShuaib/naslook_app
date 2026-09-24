@@ -174,16 +174,19 @@ class BizRow extends StatelessWidget {
 }
 
 /// صفحة مستقلة للدوائر التجارية (من الرئيسية).
-class BusinessesPage extends StatelessWidget {
+class BusinessesPage extends ConsumerWidget {
   const BusinessesPage({super.key});
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context, WidgetRef ref) => Scaffold(
         backgroundColor: Joy.bg,
         appBar: AppBar(
           title: const Text('الدوائر التجارية'),
+          // «نشاطي التجاري» و«حجوزاتي» صفحات تخص الحساب وتفشل للزائر (401)، فلا تظهر له
           actions: [
-            IconButton(tooltip: 'نشاطي التجاري', icon: const Icon(Icons.storefront_rounded), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBusinessesPage()))),
-            IconButton(tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
+            if (ref.watch(signedInProvider)) ...[
+            IconButton(key: const Key('biz-mine'), tooltip: 'نشاطي التجاري', icon: const Icon(Icons.storefront_rounded), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBusinessesPage()))),
+            IconButton(key: const Key('biz-bookings'), tooltip: 'حجوزاتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
+            ],
           ],
         ),
         body: const BizListView(padding: EdgeInsets.fromLTRB(20, 4, 20, 24)),
