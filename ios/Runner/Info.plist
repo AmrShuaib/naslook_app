@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Naslook</string>
+	<string>ناس لايف</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>naslook</string>
+	<string>Naslife</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -31,16 +31,26 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
+	<key>CFBundleLocalizations</key>
 	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>ar</string>
+		<string>en</string>
 	</array>
+	<key>CFBundleAllowMixedLocalizations</key>
+	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>يستخدم ناس لايف الكاميرا لتصوير لحظاتك ومنشوراتك وصور عروضك في السوق.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>يستخدم ناس لايف الميكروفون لتسجيل الرسائل الصوتية وصوت الفيديو والطبقة الصوتية على منشوراتك.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>يستخدم ناس لايف معرض الصور لاختيار صور ومقاطع تنشرها أو ترسلها في المحادثات.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>يحفظ ناس لايف الصور التي تختار حفظها في معرض صورك.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>يستخدم ناس لايف موقعك أثناء استخدام التطبيق لعرض ما حولك على الخريطة وتحديد مكان منشوراتك. لا يُتتبَّع موقعك في الخلفية.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

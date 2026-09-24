@@ -1,0 +1,52 @@
+# بناء نسخة iOS الأصلية على جهاز macOS سحابي للتحقق من أنها تُترجم (بلا توقيع).
+# يعمل عند تغيير ملفات iOS أو الحزم، أو يدوياً من تبويب Actions.
+# بعد قبول حساب أبل تُضاف خطوة التوقيع والرفع إلى TestFlight بمفتاح App Store Connect API (أسرار المستودع).
+name: Naslife iOS build
+
+on:
+  push:
+    branches:
+      - claude/intelligent-hypatia-owb3fk
+    paths:
+      - 'ios/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'lib/core/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: naslife-ios
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.47.3'
+
+jobs:
+  build:
+    name: flutter build ios --no-codesign
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - name: Build iOS (release, unsigned)
+        run: flutter build ios --release --no-codesign
+      - name: Package Runner.app
+        run: |
+          cd build/ios/iphoneos
+          zip -qry Naslife-unsigned.zip Runner.app
+          ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: naslife-ios-unsigned
+          path: build/ios/iphoneos/Naslife-unsigned.zip
+          retention-days: 7
