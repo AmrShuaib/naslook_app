@@ -28,7 +28,7 @@
 - اختبارات الخادم: `server/test/run.sh harness_x.mjs` أو `all` (Postgres محلي: `pg_lsclusters | grep -q online || pg_ctlcluster 16 main start`؛ قاعدة `naslife_test`، المستخدم `postgres/pg`). الأكثر استخداماً: `harness_market_b.mjs` (السوق والمدفوعات)، `harness_posts.mjs`، `harness_admin.mjs` (فيه إخفاقات قديمة معروفة من حالة سابقة، ليست تراجعاً).
 - الفحص الحي: `tools/verify_*.sh` مع `NASLIFE_TOKEN` (رمز جلسة حساب المؤسس jeddahh/SA9954961، يُرسل في الترويسة `x-token` فقط). **لا يُكتب الرمز في أي ملف.** حساب الهاتف الفعلي للمالك هو SA8370980. حساب المنصة SA0000000.
 - Chromium داخل الجلسة لا يصل إلى naslife.app (وكيل الشبكة)، فالتحقق الحي بـ curl فقط ولقطات الشاشة تأتي من المالك.
-- بدائل الاختبار في التطبيق: `pickImageOverride`، `pickVideoOverride`، `VoiceRecordSession.factoryOverride`، `VoicePlayer.factoryOverride`، `VideoView.factoryOverride`، `LiveCamera.factoryOverride`، `bakePhotoOverride`، `nativeShareOverride`، `MessageSound.supportedOverride`، `openAppSettingsOverride`، `tempDirOverride`، `nativeMobileOverride` (محاكاة الجوال؛ `flutter test` يعمل كسطح مكتب)، `DeviceLocation.override`/`openSettingsOverride`، `LegalLinks.openOverride`.
+- بدائل الاختبار في التطبيق: `pickImageOverride`، `pickVideoOverride`، `VoiceRecordSession.factoryOverride`، `VoicePlayer.factoryOverride`، `VideoView.factoryOverride`، `LiveCamera.factoryOverride`، `bakePhotoOverride`، `nativeShareOverride`، `MessageSound.supportedOverride`، `openAppSettingsOverride`، `tempDirOverride`، `nativeMobileOverride` (محاكاة الجوال؛ `flutter test` يعمل كسطح مكتب)، `DeviceLocation.override`/`openSettingsOverride`، `LegalLinks.openOverride`، `iosNativeOverride` (محاكاة iOS لإخفاء المال وبدء وضع الضيف).
 - اختبارات الخادم بقاعدة مستقلة: `NASLIFE_TEST_DB=naslife_test_x server/test/run.sh all` (تتصادم الجلسات المتوازية على `naslife_test`). خمس حزم تفشل لأسباب بيئية قديمة: admin وadmin_bootstrap وchat_tools (ملفات تجهيز غير موجودة) وowner وshare.
 
 ## قيود بيئية مهمة
@@ -50,7 +50,8 @@
 
 - مشروع `ios/`: المعرّف `app.naslife`، الاسم «ناس لايف»، آيفون فقط وعمودي، نصوص الأذونات بالعربية، `PrivacyInfo.xcprivacy`، دورة حياة المشاهد (SceneDelegate) كقالب Flutter 3.47، أيقونة الهوية (مصدرها `tools/brand/`).
 - متطلبات المراجعة المنفّذة: حذف الحساب من التطبيق (`server/account_delete.js`، `docs/account-deletion.md`)، الخصوصية والشروط والدعم (`server/legal_pages.js`، `docs/legal-pages.md`) مع موافقة إلزامية عند التسجيل وورقة موافقة للحاليين.
-- الخطط التفصيلية لما بقي (التشغيل الأصلي، البلاغ والحظر، المشتريات الرقمية، التصفح بلا حساب، الإشعارات) في مجلد الجلسة؛ الخلاصة في `docs/ios-release.md`.
+- منفّذ أيضاً (24 سبتمبر 2026): التشغيل الأصلي (الكاميرا والصوت والفيديو والمشاركة والموقع مع جدة احتياطاً خارج منطقة الخدمة)، التصفح بلا حساب (`GuestShell` في `lib/app/app.dart`، افتراضي في iOS، و`requireAccount` في `lib/core/require_account.dart` قبل أي فعل يحتاج حساباً)، ورقة بلاغ موحّدة بأسباب جاهزة وحظر على كل محتوى (`lib/ui/report_sheet.dart`، ومنها الدائرة نفسها بنوع `vessel`)، وقائمة «بلاغات المحتوى» في لوحة الإدارة، وإخفاء المال في iOS (`lib/core/platform.dart`: الترويسة `x-naslife-client` من النسخة الأصلية فقط).
+- دليل الرفع وملاحظات المراجِع وملصق الخصوصية: `docs/ios-release.md`. المؤجّل: إشعارات APNs (تحتاج مفتاح .p8 من حساب أبل).
 - قاعدة أبل للمشتريات: «سبوت لايت» إعلان رقمي داخل التطبيق فلا يُباع في نسخة iOS (يُخفى، والخادم يرفض الطلب بترويسة `x-naslife-client: ios/...`)؛ السلع المادية والخدمات والتذاكر تبقى على المحفظة/ميسر.
 
 ## القرارات التنظيمية وحالة المدفوعات (سبتمبر 2026)
