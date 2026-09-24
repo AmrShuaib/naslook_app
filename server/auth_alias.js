@@ -159,6 +159,8 @@ export default async function authAlias(app, opts = {}) {
     const nickname = String(req.query?.nickname ?? "").trim().toLowerCase();
     if (!NICK_RE.test(nickname)) return { available: false, reason: "invalid" };
     if (limited("nick:" + ipOf(req), 60, 60000)) return bad(reply, 429, "too-many-attempts");
+    // أسماء الحسابات المحذوفة محجوزة مدة حتى لا ينتحلها أحد (server/account_delete.js)
+    if (nickname.startsWith("deleted_") || (await globalThis.naslifeNickReserved?.(nickname)) === true) return { available: false, reason: "reserved" };
     let taken = false;
     try { taken = (await pool.query("SELECT 1 FROM users WHERE lower(nickname)=$1 LIMIT 1", [nickname])).rowCount > 0; } catch { /* جدول النواة غير متاح: نعتبره متاحاً والنواة تحسم عند التسجيل */ }
     return { available: !taken, reason: taken ? "taken" : null };
@@ -169,9 +171,10 @@ export default async function authAlias(app, opts = {}) {
     const b = req.body && typeof req.body === "object" ? req.body : {};
     const email = normEmail(b.email), nickname = String(b.nickname ?? b.handle ?? "").trim().toLowerCase(), password = String(b.password ?? "");
     if (!EMAIL_RE.test(email)) return bad(reply, 400, "bad-email");
-    if (!NICK_RE.test(nickname)) return bad(reply, 400, "invalid-nickname");
+    if (!NICK_RE.test(nickname) || nickname.startsWith("deleted_")) return bad(reply, 400, "invalid-nickname");
     if (password.length < PW_MIN || password.length > PW_MAX) return bad(reply, 400, "weak-password");
     if (limited("reg:" + ipOf(req), 10, 15 * 60000)) return bad(reply, 429, "too-many-attempts");
+    if ((await globalThis.naslifeNickReserved?.(nickname)) === true) return bad(reply, 409, "nickname-taken");
     if (await rowByEmail(email)) return bad(reply, 409, "email-taken");
     const r = await coreRegister(req, nickname, password);
     if (r.statusCode < 200 || r.statusCode >= 300) return forward(reply, r);
@@ -181,6 +184,8 @@ export default async function authAlias(app, opts = {}) {
     await pool.query("INSERT INTO login_aliases(alias, user_id, nickname) VALUES($1,$2,$3) ON CONFLICT (alias) DO NOTHING", [email, userId, nickname]);
     const phrase = typeof body.recoveryPhrase === "string" && body.recoveryPhrase.trim() ? body.recoveryPhrase.trim() : null;
     if (phrase) await saveRecovery(userId, phrase, "register");
+    // الموافقة على الشروط وسياسة الخصوصية (مربع إلزامي في التطبيق) تُسجَّل بنسختها (server/legal_pages.js)
+    if (b.acceptTerms === true) { try { await globalThis.naslifeLegalConsent?.(userId, "register"); } catch { /* لا يُفشل التسجيل */ } }
     // رسالة الترحيب تحمل رمز التأكيد وبيانات الحساب وعبارة الاسترداد، فلا يُطلب من المستخدم حفظ شيء
     let codeSent = false, recoverySent = false;
     if (mailOn()) { try { await sendVerifyCode(email, { nickname, userId, phrase }); codeSent = true; recoverySent = !!phrase; } catch { /* يُعاد الإرسال من ماي سبيس */ } }

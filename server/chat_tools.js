@@ -168,6 +168,14 @@ async function setup(app, opts) {
   const bad = (reply, code, error) => reply.code(code).send({ error });
 
   // حالة الإضافة (بلا مصادقة وبلا مسارات): يفيد التحقق من النشر
+  // حذف ملف وسائط وصورته المصغّرة (عند حذف حساب أو مسح محتوى مخفي). يقبل /chat/media/<name> أو رابطاً كاملاً.
+  globalThis.naslifeMediaDelete = async (url) => {
+    const name = String(url ?? "").split("?")[0].split("/").pop();
+    if (!MEDIA_DIR || !NAME_RE.test(name)) return false;
+    await fs.unlink(path.join(MEDIA_DIR, name)).catch(() => {});
+    if (THUMB_DIR) await fs.unlink(thumbPath(name)).catch(() => {});
+    return true;
+  };
   app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, thumbs: !!MEDIA_DIR && ffmpeg, maxBytes: MAX_BYTES }));
 
   // محلل محتوى ثنائي داخل نطاق هذه الإضافة فقط؛ نتخطى أي نوع سجّله الخادم الأساسي مسبقاً (وإلا رمى Fastify خطأ FST_ERR_CTP_ALREADY_PRESENT)
