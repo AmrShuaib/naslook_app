@@ -59,11 +59,15 @@ export default async function admin(app, opts) {
     created: pick(userCols, "created_at", "createdat", "joined_at", "registered_at"), admin: pick(userCols, "is_admin"), role: pick(userCols, "role"),
     deleted: pick(userCols, "deleted_at"), bio: pick(userCols, "bio"), seen: pick(userCols, "last_seen_at", "last_seen", "last_active_at", "updated_at"),
   };
-  const reportsTable = [...tables].find((t) => /report/.test(t) && t !== "report_actions") ?? null;
+  // بلاغات المستخدمين والرسائل: جدول النواة reports صراحةً (بلاغات المحتوى لها طابور مستقل في safety.js)،
+  // والاكتشاف الاحتياطي حتمي ويستثني جداولنا حتى لا يتبدّل الاختيار بين إقلاع وآخر
+  const OWN_REPORT_TABLES = new Set(["report_actions", "content_reports", "content_report_actions"]);
+  const reportsTable = tables.has("reports") ? "reports" : [...tables].filter((t) => /report/.test(t) && !OWN_REPORT_TABLES.has(t)).sort()[0] ?? null;
   const R = reportsTable ? await colsOf(reportsTable) : new Set();
   const RC = { id: pick(R, "id"), reporter: pick(R, "reporter_id", "from_id", "user_id", "by_id"), target: pick(R, "target_id", "reported_id", "user_id_reported", "to_id", "subject_id"), reason: pick(R, "reason", "type", "category"), text: pick(R, "text", "details", "note", "message"), created: pick(R, "created_at", "createdat") };
-  const blocksTable = [...tables].find((t) => /block/.test(t)) ?? null;
-  const eventsOk = tables.has("events"), marketOk = tables.has("market_listings"), bizOk = tables.has("biz"), vesselsTable = [...tables].find((t) => /^vessels$/.test(t)) ?? null;
+  // جدول الحظر في النواة user_blocks صراحةً؛ inbox_blocked قائمة حظر البريد وليست حظر المستخدمين
+  const blocksTable = tables.has("user_blocks") ? "user_blocks" : [...tables].filter((t) => /block/.test(t) && !/report|^inbox_/.test(t)).sort()[0] ?? null;
+  const eventsOk = tables.has("events"), marketOk = tables.has("market_listings"), bizOk = tables.has("biz"), bizHiddenCol = bizOk && (await colsOf("biz")).has("hidden"), vesselsTable = [...tables].find((t) => /^vessels$/.test(t)) ?? null;
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
@@ -90,6 +94,9 @@ export default async function admin(app, opts) {
     return n;
   };
   globalThis.naslifeIsAdmin = isAdmin;
+  // الإيقاف من لوحة الإدارة (user_flags) لتستعمله الإضافات الأخرى قبل أي نشر أو دفع
+  const isSuspended = async (uid) => { if (!uid) return false; try { return (await pool.query("SELECT 1 FROM user_flags WHERE user_id=$1 AND suspended", [uid])).rowCount > 0; } catch { return false; } };
+  globalThis.naslifeIsSuspended = isSuspended;
 
   // ---- أول مدير: من NASLIFE_ADMIN_IDS، أو برمز إعداد يُكتب في مجلد التشغيل ويُطبع في السجل عند غياب أي مدير
   for (const id of String(process.env.NASLIFE_ADMIN_IDS ?? "").split(",").map((s) => s.trim().toUpperCase()).filter((s) => ID_RE.test(s))) {
@@ -137,7 +144,9 @@ export default async function admin(app, opts) {
 
   // ---- الإعدادات الحية: تُطبَّق على العملية نفسها (الشحن التجريبي وسقفه) وتُقرأ من الإضافات الأخرى
   const DEFAULT_SETTINGS = { testTopup: process.env.WALLET_TEST_TOPUP === "1", maxTopup: 10000000, announcement: "", maintenance: false, supportHandle: "", bannedWords: "", reportThreshold: 3,
-    marketCommissionPct: 0, spotlightPricePerDay: 2000, spotlightMaxDays: 30, spotlightMaxActive: 12, marketReviewNewAccounts: false, marketBlockContacts: true };
+    marketCommissionPct: 0, spotlightPricePerDay: 2000, spotlightMaxDays: 30, spotlightMaxActive: 12, marketReviewNewAccounts: false, marketBlockContacts: true,
+    // مفاتيح المال: التحويل بين المستخدمين والدفع داخل المحادثة يعملان كما هما الآن حتى يقرر المالك (يُطفآن دائماً في عميل iOS)
+    transfersEnabled: true, chatPaymentsEnabled: true, supportEmail: "", bannedWordsDefault: true };
   async function loadSettings() {
     const rows = (await pool.query("SELECT key, value FROM platform_settings")).rows;
     const s = { ...DEFAULT_SETTINGS };
@@ -151,7 +160,11 @@ export default async function admin(app, opts) {
     for (const [k, v] of Object.entries(patch)) await pool.query("INSERT INTO platform_settings(key,value,updated_at) VALUES($1,$2,now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()", [k, JSON.stringify(v)]);
     return loadSettings();
   }
-  app.get("/settings/public", async () => { const s = globalThis.naslifeSettings ?? DEFAULT_SETTINGS; return { announcement: s.announcement ?? "", maintenance: s.maintenance === true, supportHandle: s.supportHandle ?? "", testTopup: s.testTopup === true }; });
+  app.get("/settings/public", async () => {
+    const s = globalThis.naslifeSettings ?? DEFAULT_SETTINGS;
+    return { announcement: s.announcement ?? "", maintenance: s.maintenance === true, supportHandle: s.supportHandle ?? "", supportEmail: s.supportEmail ?? "", testTopup: s.testTopup === true,
+      transfersEnabled: s.transfersEnabled !== false, chatPaymentsEnabled: s.chatPaymentsEnabled !== false };
+  });
 
   const audit = async (adminId, action, target, details = {}) => { try { await pool.query("INSERT INTO admin_audit(id,admin_id,action,target,details) VALUES($1,$2,$3,$4,$5)", [crypto.randomUUID(), adminId, action, target, JSON.stringify(details)]); } catch { /* ignore */ } };
   async function ledger(client, userId, kind, amount, { peerId = null, ref = null, note = null, allowNegative = false } = {}) {
@@ -248,6 +261,11 @@ export default async function admin(app, opts) {
       const r = (await pool.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE a.report_id IS NULL)::int AS open FROM ${q(reportsTable)} r LEFT JOIN report_actions a ON a.report_id = r.${q(RC.id)}::text`)).rows[0];
       reports = { ...reports, ...r };
     }
+    // بلاغات المحتوى المفتوحة في طابور الإشراف (safety.js)
+    try {
+      reports.contentOpen = (await pool.query(`SELECT count(*)::int AS n FROM (SELECT target_type, target_id, max(created_at) AS last_at FROM content_reports GROUP BY 1, 2) g
+        WHERE NOT EXISTS (SELECT 1 FROM content_report_actions a WHERE a.target_type=g.target_type AND a.target_id=g.target_id AND a.created_at >= g.last_at)`)).rows[0].n;
+    } catch { reports.contentOpen = null; }
     const wallets = (await pool.query("SELECT count(*)::int AS accounts, COALESCE(SUM(balance),0)::bigint AS balance FROM wallet_accounts")).rows[0];
     const daily = (await pool.query(`SELECT d::date AS day,
         ${U.ok && U.created ? `(SELECT count(*) FROM users u WHERE (u.${q(U.created)} + interval '3 hours')::date = d::date)::int` : "0"} AS users,
@@ -521,7 +539,14 @@ export default async function admin(app, opts) {
     const uid = await guard(req, reply); if (!uid) return;
     const id = str(req.params.id, 60); const action = ["ignore", "warn", "suspend"].includes(req.body?.action) ? req.body.action : null; const note = str(req.body?.note, 300);
     if (!id || !action) return bad(reply, 400, "bad-request");
-    const targetId = ID_RE.test(String(req.body?.targetId ?? "").toUpperCase()) ? String(req.body.targetId).toUpperCase() : null;
+    // المستهدف يُقرأ من صف البلاغ نفسه، لا من جسم الطلب (وإلا أمكن إيقاف أي حساب ببلاغ لا علاقة له به)
+    if (!reportsTable || !RC.id) return bad(reply, 404, "not-found");
+    let row = null; try { row = (await pool.query(`SELECT * FROM ${q(reportsTable)} WHERE ${q(RC.id)}::text=$1`, [id])).rows[0] ?? null; } catch { row = null; }
+    if (!row) return bad(reply, 404, "not-found");
+    // بلاغ رسالة قد يحمل معرّف الرسالة في target_id؛ نأخذ أول عمود فيه معرّف مستخدم صالح
+    const targetId = [RC.target, "target_user_id", "reported_user_id", "reported_id", "user_id_reported", "to_id", "subject_id"].filter((c) => c && R.has(c))
+      .map((c) => String(row[c] ?? "").toUpperCase()).find((v) => ID_RE.test(v)) ?? null;
+    if (action === "suspend" && !targetId) return bad(reply, 409, "no-target");
     await pool.query("INSERT INTO report_actions(report_id,action,note,admin_id) VALUES($1,$2,$3,$4) ON CONFLICT (report_id) DO UPDATE SET action=EXCLUDED.action, note=EXCLUDED.note, admin_id=EXCLUDED.admin_id, created_at=now()", [id, action, note, uid]);
     if (action === "suspend" && targetId && targetId !== uid) await pool.query("INSERT INTO user_flags(user_id,suspended,note,updated_at) VALUES($1,true,$2,now()) ON CONFLICT (user_id) DO UPDATE SET suspended=true, note=EXCLUDED.note, updated_at=now()", [targetId, note || "بلاغ"]);
     await audit(uid, `report.${action}`, targetId ?? id, { reportId: id, note });
@@ -545,7 +570,11 @@ export default async function admin(app, opts) {
     if (!SLUG_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const sets = []; const params = [req.params.id]; const details = {};
     if (req.body?.verified !== undefined) { params.push(req.body.verified === true); sets.push(`verified=$${params.length}`); details.verified = req.body.verified === true; }
-    if (req.body?.active !== undefined) { params.push(req.body.active !== false); sets.push(`active=$${params.length}`); details.active = req.body.active !== false; }
+    if (req.body?.active !== undefined) {
+      params.push(req.body.active !== false); sets.push(`active=$${params.length}`); details.active = req.body.active !== false;
+      // تفعيل المدير لدائرة أخفاها الإشراف يرفع الإخفاء أيضاً
+      if (details.active && bizHiddenCol) sets.push("hidden=false");
+    }
     if (req.body?.ownerId !== undefined) { const o = req.body.ownerId ? String(req.body.ownerId).toUpperCase() : null; if (o && !ID_RE.test(o)) return bad(reply, 400, "bad-owner"); params.push(o); sets.push(`owner_id=$${params.length}`); details.ownerId = o; }
     if (!sets.length) return bad(reply, 400, "nothing-to-update");
     const r = await pool.query(`UPDATE biz SET ${sets.join(", ")}, updated_at=now() WHERE id=$1 RETURNING id`, params);
@@ -674,6 +703,10 @@ export default async function admin(app, opts) {
     if (b.announcement !== undefined) patch.announcement = str(b.announcement, 300);
     if (b.maintenance !== undefined) patch.maintenance = b.maintenance === true;
     if (b.supportHandle !== undefined) patch.supportHandle = str(b.supportHandle, 40);
+    if (b.supportEmail !== undefined) { const e = str(b.supportEmail, 120); if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return bad(reply, 400, "bad-email"); patch.supportEmail = e; }
+    if (b.transfersEnabled !== undefined) patch.transfersEnabled = b.transfersEnabled !== false;
+    if (b.chatPaymentsEnabled !== undefined) patch.chatPaymentsEnabled = b.chatPaymentsEnabled !== false;
+    if (b.bannedWordsDefault !== undefined) patch.bannedWordsDefault = b.bannedWordsDefault !== false;
     if (b.bannedWords !== undefined) patch.bannedWords = str(b.bannedWords, 5000);
     if (b.reportThreshold !== undefined) patch.reportThreshold = Math.max(1, Math.min(50, Math.round(Number(b.reportThreshold)) || 3));
     // السوق: العمولة بالنسبة المئوية، سعر يوم سبوت لايت بالهللة وحدوده، مراجعة عروض الحسابات الجديدة، منع أرقام التواصل والروابط

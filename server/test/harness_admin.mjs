@@ -114,7 +114,7 @@ const fin = await call('GET', '/adminapi/finance', { expect: 200 }); console.log
 const csv = await call('GET', '/adminapi/finance/export.csv?days=30', { expect: 200 }); console.log('   csv lines', String(csv).split('\n').length, String(csv).split('\n')[0].slice(1));
 // المحتوى
 await call('POST', '/wallet/topup', { body: { amount: 50000 }, user: 'SA0000002', expect: 200 });
-const ev = await call('POST', '/events', { body: { title: 'لقاء', startsAt: new Date(Date.now() + 86400000).toISOString(), tiers: [{ name: 'عادي', price: 1000, quantity: 10 }] }, user: 'SA0000002', expect: 200 });
+const ev = await call('POST', '/events', { body: { title: 'لقاء', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tiers: [{ name: 'عادي', price: 1000, quantity: 10 }] }, user: 'SA0000002', expect: 200 });
 await call('POST', '/wallet/topup', { body: { amount: 50000 }, user: 'SA0000003', expect: 200 });
 await call('POST', '/events/' + ev.id + '/tickets', { body: { tierId: ev.tiers[0].id, qty: 1 }, user: 'SA0000003', expect: 200 });
 const ct = await call('GET', '/adminapi/content', { expect: 200 }); console.log('   content events', ct.events.length, 'sold', ct.events[0].sold, 'listings', ct.listings.length);

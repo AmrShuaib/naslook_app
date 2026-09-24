@@ -52,6 +52,9 @@ async function setup(app, opts) {
   const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch { /* ignore */ } };
   const sar = (h) => { const v = Number(h) / 100; return (Number.isInteger(v) ? String(v) : v.toFixed(2)) + " ر.س"; };
   const blocked = async (a, b) => { try { return (await pool.query("SELECT 1 FROM user_blocks WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1)", [a, b])).rowCount > 0; } catch { return false; } };
+  // المال داخل المحادثة (طلب مبلغ، تقسيم، إرسال): مفتاح المنصة chatPaymentsEnabled، ومطفأ دائماً في عميل iOS الأصلي
+  const iosNative = (req) => /^ios\//i.test(String(req.headers["x-naslife-client"] ?? ""));
+  const moneyOff = (req) => globalThis.naslifeSettings?.chatPaymentsEnabled === false || iosNative(req);
 
   // ---- الدوائر والأصناف: المعرّف كما هو أو مع البادئة biz- (يكتب المستخدم @brew92 بدل @biz-brew92)
   const bizRow = async (slug) => {
@@ -186,6 +189,7 @@ async function setup(app, opts) {
     const messageId = str(b.messageId, 64); if (!messageId) return bad(reply, 400, "bad-id");
     const peerId = str(b.peerId, 16); if (!ID_RE.test(peerId) || peerId === uid) return bad(reply, 400, "bad-peer");
     const kind = str(b.kind, 10); if (!REQUEST_KINDS.includes(kind)) return bad(reply, 400, "bad-kind", { allowed: REQUEST_KINDS });
+    if (kind !== "meet" && moneyOff(req)) return bad(reply, 403, "unavailable");
     if (await blocked(uid, peerId)) return bad(reply, 403, "blocked");
     const amount = Math.round(Number(b.amount) || 0);
     const n = Math.round(Number(b.n) || 1);
@@ -221,6 +225,8 @@ async function setup(app, opts) {
     const r = await load(str(req.params.id, 64), uid, reply); if (!r) return;
     if (r.to_id !== uid) return bad(reply, 403, "not-recipient");
     if (!["pay", "split"].includes(r.kind)) return bad(reply, 400, "not-payable");
+    if (moneyOff(req)) return bad(reply, 403, "unavailable");
+    if (await blocked(uid, r.from_id)) return bad(reply, 403, "blocked");
     const cur = requestOut(r);
     if (cur.status !== "pending") return bad(reply, 409, "not-pending", { status: cur.status });
     const transfer = globalThis.naslifeWalletTransfer;

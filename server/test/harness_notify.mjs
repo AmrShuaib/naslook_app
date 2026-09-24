@@ -123,12 +123,12 @@ await call('POST', `/market/orders/${mo2.id}/cancel`, { user: 'SA0000002', expec
 n = await latest('SA0000003', 'market_status'); check(/استُرد/.test(n?.body ?? ''), 'seller cancel → buyer refund text');
 
 // ---- الفعاليات: شراء تذاكر → المضيف؛ إلغاء المضيف → الحاملون؛ إلغاء الإدارة → الحاملون والمضيف
-const ev = await call('POST', '/events', { body: { title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), tiers: [{ name: 'عادي', price: 2000, quantity: 10 }] }, user: 'SA0000002', expect: 200 });
+const ev = await call('POST', '/events', { body: { title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tiers: [{ name: 'عادي', price: 2000, quantity: 10 }] }, user: 'SA0000002', expect: 200 });
 await call('POST', `/events/${ev.id}/tickets`, { body: { tierId: ev.tiers[0].id, qty: 2 }, user: 'SA0000003', expect: 200 });
 n = await latest('SA0000002', 'ticket_sale'); check(/2 تذاكر/.test(n?.body ?? '') && /40 ر\.س/.test(n?.body ?? '') && n?.data?.eventId === ev.id, 'tickets → host');
 await call('POST', `/events/${ev.id}/cancel`, { user: 'SA0000002', expect: 200 });
 n = await latest('SA0000003', 'event_cancelled'); check(/40 ر\.س/.test(n?.body ?? ''), 'host cancel → holder refund');
-const ev2 = await call('POST', '/events', { body: { title: 'أمسية', startsAt: new Date(Date.now() + 86400000).toISOString(), tiers: [{ name: 'عادي', price: 1000, quantity: 10 }] }, user: 'SA0000002', expect: 200 });
+const ev2 = await call('POST', '/events', { body: { title: 'أمسية', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tiers: [{ name: 'عادي', price: 1000, quantity: 10 }] }, user: 'SA0000002', expect: 200 });
 await call('POST', `/events/${ev2.id}/tickets`, { body: { tierId: ev2.tiers[0].id, qty: 1 }, user: 'SA0000003', expect: 200 });
 await call('POST', `/adminapi/events/${ev2.id}/cancel`, { expect: 200 });
 n = await latest('SA0000003', 'event_cancelled'); check(/الإدارة/.test(n?.body ?? ''), 'admin cancel → holder');

@@ -111,6 +111,10 @@ export default async function business(app, opts) {
       image_url TEXT, starts_at TIMESTAMPTZ, ends_at TIMESTAMPTZ, active BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS biz_posts_biz ON biz_posts(biz_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS biz_staff (biz_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'staff', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (biz_id, user_id));
+    -- إخفاء الإشراف (safety.js): عمود مستقل عن active حتى لا يعيد المالك إظهار ما أخفته البلاغات أو الإدارة
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE biz_reviews ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE biz_posts ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
   `);
 
   // ---- بذر البيانات الأولية: استعلامان مجمّعان فقط ولا يوقفان الإقلاع. الدوائر التي صار لها مالك لا تُلمس
@@ -187,6 +191,13 @@ export default async function business(app, opts) {
     try { return (await pool.query("SELECT 1 FROM admins WHERE user_id=$1", [uid])).rowCount > 0; } catch { return false; }
   };
   const isSuspended = async (uid) => { try { return (await pool.query("SELECT 1 FROM user_flags WHERE user_id=$1 AND suspended", [uid])).rowCount > 0; } catch { return false; } };
+  // فلتر الكلمات المحظورة (safety.js) على كل نص يكتبه المستخدم؛ يعيد true إن رُفض الطلب
+  const rejectBanned = (reply, ...texts) => {
+    let w = null; try { w = globalThis.naslifeCheckText?.(...texts.flat().filter((t) => typeof t === "string")) ?? null; } catch { w = null; }
+    if (w) { reply.code(400).send({ error: "banned-words", word: w }); return true; }
+    return false;
+  };
+  const blockedIds = async (uid) => { try { return uid ? (await globalThis.naslifeBlockedIds?.(uid)) ?? [] : []; } catch { return []; } };
   const person = async (id) => {
     const u = await userRow(id);
     return u ? { id: u.id, nickname: u.nickname ?? "", avatarUrl: u.avatar_url ?? u.avatarUrl ?? null } : { id, nickname: "", avatarUrl: null };
@@ -307,7 +318,7 @@ export default async function business(app, opts) {
     startAt: o.start_at, endAt: o.end_at, units: o.units, total: Number(o.total), status: o.status, code: o.code, note: o.note, meta: o.meta ?? {}, createdAt: o.created_at, updatedAt: o.updated_at,
     cancellable: cancellable(o), offer: o.meta?.offer ?? null, ...extra,
   });
-  const postOut = (p) => ({ id: p.id, bizId: p.biz_id, kind: p.kind, title: p.title, body: p.body, imageUrl: p.image_url, startsAt: p.starts_at, endsAt: p.ends_at, active: p.active, createdAt: p.created_at });
+  const postOut = (p) => ({ id: p.id, bizId: p.biz_id, kind: p.kind, title: p.title, body: p.body, imageUrl: p.image_url, startsAt: p.starts_at, endsAt: p.ends_at, active: p.active, hidden: p.hidden === true, createdAt: p.created_at });
   // الإلغاء من العميل: المنتجات خلال 24 ساعة من الشراء، التذاكر قبل ساعتين من العرض، الغرف والسيارات قبل 24 ساعة من البداية
   function cancellable(o, now = Date.now()) {
     if (o.status !== "confirmed") return false;
@@ -320,8 +331,8 @@ export default async function business(app, opts) {
 
   const LIST_SQL = `
     SELECT b.*, (SELECT count(*) FROM biz_follows f WHERE f.biz_id=b.id) AS followers,
-      (SELECT round(avg(rating)::numeric, 1) FROM biz_reviews r WHERE r.biz_id=b.id) AS rating,
-      (SELECT count(*) FROM biz_reviews r WHERE r.biz_id=b.id) AS rating_count,
+      (SELECT round(avg(rating)::numeric, 1) FROM biz_reviews r WHERE r.biz_id=b.id AND NOT r.hidden) AS rating,
+      (SELECT count(*) FROM biz_reviews r WHERE r.biz_id=b.id AND NOT r.hidden) AS rating_count,
       (SELECT min(price) FROM biz_items i WHERE i.biz_id=b.id AND i.active) AS min_price,
       (SELECT count(*) FROM biz_items i WHERE i.biz_id=b.id AND i.active) AS items_count,
       ($1::text IS NOT NULL AND EXISTS (SELECT 1 FROM biz_follows f WHERE f.biz_id=b.id AND f.user_id=$1)) AS following,
@@ -400,8 +411,10 @@ export default async function business(app, opts) {
   }
   app.post("/biz", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     const f = bizFieldsFrom(req.body ?? {});
     if (!f.name && !f.name_ar) return bad(reply, 400, "bad-name");
+    if (rejectBanned(reply, f.name, f.name_ar, f.sector, f.description, f.address, f.hours, JSON.parse(f.highlights ?? "[]"))) return;
     if (!f.name) f.name = f.name_ar;
     if (!Number.isFinite(f.lat) || !Number.isFinite(f.lng) || Math.abs(f.lat) > 90 || Math.abs(f.lng) > 180) return bad(reply, 400, "bad-location");
     const mineCount = (await pool.query("SELECT count(*)::int AS n FROM biz WHERE owner_id=$1", [uid])).rows[0].n;
@@ -420,6 +433,9 @@ export default async function business(app, opts) {
     const g = await guard(req, reply, "manage"); if (!g) return;
     const f = bizFieldsFrom(req.body ?? {}, { partial: true });
     if ("name" in f && !f.name) delete f.name;
+    if (rejectBanned(reply, f.name, f.name_ar, f.sector, f.description, f.address, f.hours, f.highlights ? JSON.parse(f.highlights) : [])) return;
+    // دائرة أخفاها الإشراف لا يعيد إظهارها إلا مدير النظام (عبر طابور الإشراف)
+    if (g.b.hidden && f.active === true && g.role !== "admin") return bad(reply, 403, "moderated");
     if (("lat" in f || "lng" in f) && (!Number.isFinite(f.lat ?? g.b.lat) || !Number.isFinite(f.lng ?? g.b.lng))) return bad(reply, 400, "bad-location");
     if ("active" in f && !canOwn(g.role) && g.role !== "manager") delete f.active;
     const keys = Object.keys(f);
@@ -493,9 +509,11 @@ export default async function business(app, opts) {
     } catch { for (const it of items) it.discussions = 0; }
     let offersInfo = { offers: 0, offerEndsAt: null };
     try { await globalThis.naslifeOffersAnnotate?.(b.id, items, uid); offersInfo = (await globalThis.naslifeOffersCounts?.([b.id]))?.get(b.id) ?? offersInfo; } catch { /* ignore */ }
-    const reviews = await Promise.all((await pool.query("SELECT * FROM biz_reviews WHERE biz_id=$1 ORDER BY created_at DESC LIMIT 50", [b.id])).rows.map(async (x) => ({
+    // التقييمات المخفية بالإشراف ومن بين الزائر وكاتبها حظر لا تظهر (صاحبها يرى تقييمه)
+    const blocked = await blockedIds(uid);
+    const reviews = await Promise.all((await pool.query("SELECT * FROM biz_reviews WHERE biz_id=$1 AND (NOT hidden OR user_id=$2) AND NOT (user_id = ANY($3::text[])) ORDER BY created_at DESC LIMIT 50", [b.id, uid, blocked])).rows.map(async (x) => ({
       user: await person(x.user_id), rating: x.rating, text: x.text, createdAt: x.created_at, mine: x.user_id === uid, reply: x.reply, replyAt: x.reply_at })));
-    const posts = (await pool.query(`SELECT * FROM biz_posts WHERE biz_id=$1${staffView ? "" : " AND active AND (starts_at IS NULL OR starts_at <= now()) AND (ends_at IS NULL OR ends_at >= now())"} ORDER BY created_at DESC LIMIT 30`, [b.id])).rows.map(postOut);
+    const posts = (await pool.query(`SELECT * FROM biz_posts WHERE biz_id=$1${staffView ? "" : " AND active AND NOT hidden AND (starts_at IS NULL OR starts_at <= now()) AND (ends_at IS NULL OR ends_at >= now())"} ORDER BY created_at DESC LIMIT 30`, [b.id])).rows.map(postOut);
     const myOrders = uid ? (await pool.query(`${ORDER_JOIN} WHERE o.biz_id=$1 AND o.user_id=$2 ORDER BY o.created_at DESC LIMIT 50`, [b.id, uid])).rows.map((o) => orderOut(o)) : [];
     return bizOut(b, { myRole: role, items, reviews, posts, myOrders, ...offersInfo });
   });
@@ -516,6 +534,7 @@ export default async function business(app, opts) {
 
   app.post("/biz/:id/reviews", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     const rating = Math.round(Number(req.body?.rating)); const text = str(req.body?.text, 500);
     if (!(rating >= 1 && rating <= 5)) return bad(reply, 400, "bad-rating");
     const banned = globalThis.naslifeCheckText?.(text);
@@ -531,6 +550,7 @@ export default async function business(app, opts) {
     const g = await guard(req, reply, "manage"); if (!g) return;
     if (!ID_RE.test(req.params.userId)) return bad(reply, 400, "bad-id");
     const text = str(req.body?.text, 500);
+    if (rejectBanned(reply, text)) return;
     const r = await pool.query("UPDATE biz_reviews SET reply=$3, reply_at=CASE WHEN $3='' THEN NULL ELSE now() END WHERE biz_id=$1 AND user_id=$2 RETURNING 1", [g.b.id, req.params.userId, text || ""]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
     if (text) await notify(req.params.userId, { kind: "review_reply", title: "ردّ على تقييمك", body: `${bizName(g.b)}: ${text.slice(0, 120)}`, data: { bizId: g.b.id }, exclude: g.uid });
@@ -562,6 +582,7 @@ export default async function business(app, opts) {
     const g = await guard(req, reply, "manage"); if (!g) return;
     const f = itemFieldsFrom(req.body ?? {}, { category: g.b.category });
     if (!f.title) return bad(reply, 400, "bad-title");
+    if (rejectBanned(reply, f.title, f.description)) return;
     if ((f.kind === "showtime" || f.kind === "clinic") && !(JSON.parse(f.meta).times ?? []).length) return bad(reply, 400, "bad-times");
     if (f.kind !== "product" && f.stock == null) f.stock = f.kind === "showtime" ? 100 : f.kind === "clinic" ? 6 : 1;
     const count = (await pool.query("SELECT count(*)::int AS n FROM biz_items WHERE biz_id=$1", [g.b.id])).rows[0].n;
@@ -579,6 +600,7 @@ export default async function business(app, opts) {
     if (!it) return bad(reply, 404, "not-found");
     const f = itemFieldsFrom(req.body ?? {}, { partial: true });
     if ("title" in f && !f.title) delete f.title;
+    if (rejectBanned(reply, f.title, f.description)) return;
     if ((it.kind === "showtime" || it.kind === "clinic") && "meta" in f && !(JSON.parse(f.meta).times ?? []).length) return bad(reply, 400, "bad-times");
     const keys = Object.keys(f);
     if (keys.length) {
@@ -630,6 +652,7 @@ export default async function business(app, opts) {
     if (!UUID_RE.test(req.params.postId)) return bad(reply, 400, "bad-id");
     const f = postFieldsFrom(req.body ?? {}, { partial: true });
     if ("title" in f && !f.title) delete f.title;
+    if (rejectBanned(reply, f.title, f.body)) return;
     const keys = Object.keys(f);
     if (keys.length) {
       const sets = keys.map((k, i) => `${k}=$${i + 3}`).join(", ");

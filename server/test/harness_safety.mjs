@@ -2,7 +2,7 @@
 // مع الإخفاء التلقائي وإشعارات المالك والإدارة.
 import Fastify from 'fastify';
 import pg from 'pg';
-import { parseWords, findBanned } from '../safety.js';
+import { parseWords, findBanned, findDefaultBanned } from '../safety.js';
 process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0';
 let fails = 0;
 const check = (cond, label, extra = '') => { if (!cond) fails++; console.log((cond ? 'OK  ' : 'FAIL') + ' ' + label + (extra ? ' ' + extra : '')); };
@@ -10,11 +10,17 @@ const check = (cond, label, extra = '') => { if (!cond) fails++; console.log((co
 check(parseWords('احتيال, نصب\nغش،  ').join('|') === 'احتيال|نصب|غش', 'parseWords splits and normalizes', parseWords('احتيال, نصب\nغش،  ').join('|'));
 check(findBanned(parseWords('احتيال'), 'هذا العرض إحتيالٌ واضح') === 'احتيال', 'findBanned ignores hamza/tashkeel');
 check(findBanned(parseWords('scam'), 'Great SCAM here') === 'scam' && findBanned(parseWords('scam'), 'clean text') === null, 'findBanned case-insensitive');
+// القائمة الافتراضية: كلمة كاملة مع السوابق العربية، بلا رفض لكلمات عادية تحتوي الحروف نفسها
+check(findDefaultBanned('يا شرموطة') === 'شرموطه' && findDefaultBanned('والقحبة') === 'قحبه' && findDefaultBanned('what the FUCK') === 'fuck' && findDefaultBanned('ابن الكلب هذا') === 'ابن الكلب', 'default seed catches whole words and prefixes');
+check(['زبدة طازجة', 'زبون', 'class pass assess', 'Shitake', 'كلب لطيف وحمار', 'خوّل له', 'نصب', 'pornography'].every((t) => findDefaultBanned(t) === null), 'default seed avoids false positives');
 
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
 await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara'),('SA0000003','khalid'),('SA0000004','nora') ON CONFLICT DO NOTHING");
 await pool.query("CREATE TABLE IF NOT EXISTS user_blocks (user_id TEXT NOT NULL, blocked_id TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY (user_id, blocked_id))");
+// انحدار الخطأ الحي: inbox_blocked (قائمة حظر البريد في inbox.js) موجود قبل تسجيل safety.js فكان يُلتقط بدل user_blocks
+await pool.query("CREATE TABLE IF NOT EXISTS inbox_blocked (id UUID PRIMARY KEY, pattern TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+await pool.query("CREATE TABLE IF NOT EXISTS aaa_blocked_words (id UUID PRIMARY KEY, word TEXT)");
 for (const sql of ['DELETE FROM user_blocks', 'DROP TABLE IF EXISTS chat_mutes, content_reports', 'DELETE FROM app_notifications', "INSERT INTO admins(user_id,granted_by) VALUES('SA0000004','test') ON CONFLICT DO NOTHING", 'DELETE FROM map_posts', 'DELETE FROM market_listings']) { try { await pool.query(sql); } catch { /* أول تشغيل */ } }
 const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
@@ -33,7 +39,11 @@ const call = async (method, url, { body = {}, user = 'SA0000001', expect } = {})
   return j;
 };
 const st = await call('GET', '/safety/status', { user: null, expect: 200 });
-check(st.blocks === true && st.blocksTable === 'user_blocks' && st.threshold === 3, 'status: blocks table discovered, default threshold', JSON.stringify(st));
+check(st.blocks === true && st.threshold === 3, 'status: blocks table discovered despite inbox_blocked, default threshold', JSON.stringify(st));
+check(st.blocksTable === undefined && !JSON.stringify(st).includes('user_blocks'), 'public status does not expose table names', JSON.stringify(st));
+check(st.words > 20, 'default banned seed counted', String(st.words));
+const ov = await call('GET', '/adminapi/overview', { user: 'SA0000004', expect: 200 });
+check(ov.server?.blocksTable === 'user_blocks', 'admin overview pins user_blocks', ov.server?.blocksTable);
 
 // ---- الكتم
 await call('POST', '/safety/mutes', { body: { peerId: 'SA0000002' }, user: null, expect: 401 });
@@ -65,7 +75,15 @@ const okPost = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000
 e = await call('PATCH', `/mapposts/${okPost.id}`, { body: { caption: 'صار نصب' }, user: 'SA0000002', expect: 400 });
 check(e.error === 'banned-words', 'patch rejected');
 await call('POST', '/adminapi/settings', { body: { bannedWords: '' }, user: 'SA0000004', expect: 200 });
-check((await call('POST', '/safety/check', { body: { text: 'نصب' }, expect: 200 })).ok === true, 'empty list allows everything');
+check((await call('POST', '/safety/check', { body: { text: 'نصب' }, expect: 200 })).ok === true, 'empty admin list allows ordinary words');
+// القائمة الافتراضية تعمل من اليوم الأول حتى بلا قائمة من الإدارة، ويمكن إطفاؤها
+check((await call('POST', '/safety/check', { body: { text: 'يا شرموطة' }, expect: 200 })).word === 'شرموطه', 'default seed active with empty admin list');
+e = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000000', caption: 'what the fuck', lat: 21.5, lng: 39.2 }, expect: 400 });
+check(e.error === 'banned-words' && e.word === 'fuck', 'default seed rejects a map post', JSON.stringify(e));
+check((await call('POST', '/safety/check', { body: { text: 'بيتزا بالزبدة للزبون' }, expect: 200 })).ok === true, 'no false positive on زبدة/زبون');
+await call('POST', '/adminapi/settings', { body: { bannedWordsDefault: false }, user: 'SA0000004', expect: 200 });
+check((await call('POST', '/safety/check', { body: { text: 'يا شرموطة' }, expect: 200 })).ok === true, 'default seed can be switched off');
+await call('POST', '/adminapi/settings', { body: { bannedWordsDefault: true }, user: 'SA0000004', expect: 200 });
 
 // ---- تصفية المحظورين في قائمة المنشورات
 const p3 = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000000', caption: 'من خالد', lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 });
@@ -76,6 +94,13 @@ list = await call('GET', '/mapposts', { expect: 200 });
 check(!list.some((p) => p.id === p3.id) && list.some((p) => p.id === okPost.id), 'blocked user\'s post hidden from blocker');
 check(!(await call('GET', '/mapposts', { user: 'SA0000003', expect: 200 })).some((p) => p.user.id === 'SA0000001'), 'blocker hidden from the blocked too');
 check((await call('GET', '/mapposts', { user: null, expect: 200 })).some((p) => p.id === p3.id), 'anonymous sees everything');
+// الرابط المباشر لمنشور: 404 بين طرفين بينهما حظر، وظاهر لصاحبه وللآخرين
+await call('GET', `/mapposts/${p3.id}`, { user: 'SA0000001', expect: 404 });
+await call('GET', `/mapposts/${p3.id}`, { user: 'SA0000003', expect: 200 });
+await call('GET', `/mapposts/${p3.id}`, { user: 'SA0000002', expect: 200 });
+await call('GET', `/mapposts/${p3.id}`, { user: null, expect: 200 });
+const p1 = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000000', caption: 'من عمرو', lat: 21.5, lng: 39.2 }, user: 'SA0000001', expect: 200 });
+await call('GET', `/mapposts/${p1.id}`, { user: 'SA0000003', expect: 404 });
 
 // ---- بلاغات المحتوى والإخفاء التلقائي (الحد 2)
 await call('POST', '/safety/report', { body: { targetType: 'post', targetId: okPost.id }, user: 'SA0000002', expect: 400 });

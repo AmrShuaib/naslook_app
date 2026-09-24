@@ -26,6 +26,12 @@ export default async function search(app, opts) {
   const MC = membersTable ? { user: pick(tables.get(membersTable), "user_id", "member_id") } : null;
   const bizOk = tables.has("biz") && tables.has("biz_items"), marketOk = tables.has("market_listings"), eventsOk = tables.has("events") && tables.has("ticket_tiers");
   const optionalAuth = async (req) => { try { return (await auth(req)) || null; } catch { return null; } };
+  const blockedIds = async (uid) => { try { return uid ? (await globalThis.naslifeBlockedIds?.(uid)) ?? [] : []; } catch { return []; } };
+  // الملف الخاص (is_public=false) لا يظهر في بحث الأشخاص: جدول الملف في النواة يُكتشف بأعمدته
+  const profT = ["profiles", "user_profiles"].find((t) => tables.get(t)?.has("is_public") && (tables.get(t).has("user_id") || tables.get(t).has("id"))) ?? null;
+  const profKey = profT ? (tables.get(profT).has("user_id") ? "user_id" : "id") : null;
+  const eventsHidden = !!tables.get("events")?.has("hidden");
+  const reviewsHidden = !!tables.get("biz_reviews")?.has("hidden");
 
   // أشخاص بالدفعة (للبائعين والمضيفين)
   async function people(ids) {
@@ -41,8 +47,9 @@ export default async function search(app, opts) {
   const bizOut = (b) => ({ id: b.id, name: b.name, nameAr: b.name_ar, category: b.category, sector: b.sector, address: b.address, hours: b.hours, lat: b.lat, lng: b.lng, verified: b.verified, official: b.official, color: b.color, logoUrl: b.logo_url ?? null,
     followers: Number(b.followers ?? 0), rating: b.rating == null ? null : Number(b.rating), ratingCount: Number(b.rating_count ?? 0), minPrice: b.min_price == null ? null : Number(b.min_price), itemsCount: Number(b.items_count ?? 0), views: Number(b.views ?? 0),
     openNow: isOpenNow(b.hours), distanceKm: roundKm(b.distance_km), matchedItem: b.matched_item ?? null });
-  const BIZ_COLS = `b.*, (SELECT count(*) FROM biz_follows f WHERE f.biz_id=b.id) AS followers, (SELECT round(avg(rating)::numeric,1) FROM biz_reviews r WHERE r.biz_id=b.id) AS rating,
-    (SELECT count(*) FROM biz_reviews r WHERE r.biz_id=b.id) AS rating_count, (SELECT min(price) FROM biz_items i WHERE i.biz_id=b.id AND i.active) AS min_price, (SELECT count(*) FROM biz_items i WHERE i.biz_id=b.id AND i.active) AS items_count`;
+  const RV = reviewsHidden ? " AND NOT r.hidden" : "";
+  const BIZ_COLS = `b.*, (SELECT count(*) FROM biz_follows f WHERE f.biz_id=b.id) AS followers, (SELECT round(avg(rating)::numeric,1) FROM biz_reviews r WHERE r.biz_id=b.id${RV}) AS rating,
+    (SELECT count(*) FROM biz_reviews r WHERE r.biz_id=b.id${RV}) AS rating_count, (SELECT min(price) FROM biz_items i WHERE i.biz_id=b.id AND i.active) AS min_price, (SELECT count(*) FROM biz_items i WHERE i.biz_id=b.id AND i.active) AS items_count`;
   const TIERS = "(SELECT COALESCE(json_agg(json_build_object('id',t.id,'name',t.name,'description',t.description,'price',t.price,'quantity',t.quantity,'sold',t.sold,'left',t.quantity-t.sold) ORDER BY t.sort, t.price), '[]'::json) FROM ticket_tiers t WHERE t.event_id=e.id) AS tiers";
   const eventOut = (e, pm, uid) => ({ id: e.id, host: personOf(pm, e.host_id), vesselId: e.vessel_id, title: e.title, description: e.description, startsAt: e.starts_at, endsAt: e.ends_at, placeName: e.place_name, lat: e.lat, lng: e.lng, cancelled: e.cancelled,
     tiers: (e.tiers ?? []).map((t) => ({ ...t, price: Number(t.price) })), going: Number(e.going ?? 0), myTickets: 0, isHost: e.host_id === uid, distanceKm: roundKm(e.distance_km) });
@@ -72,10 +79,15 @@ export default async function search(app, opts) {
     const like = likeOf(raw), prefix = likeOf(raw).slice(1);   // بادئة الاسم تتقدم على الاحتواء
     const want = (t) => !type || type === t;
     const P = [like, prefix, per];                            // $1 like, $2 prefix, $3 limit
+    const blocked = await blockedIds(uid);
     if (want("people") && U.ok && U.nick) {
-      const rows = (await pool.query(`SELECT id, ${q(U.nick)} AS nickname ${U.avatar ? `, ${q(U.avatar)} AS avatar_url` : ""} ${U.bio ? `, ${q(U.bio)} AS bio` : ""} FROM users
-        WHERE ${U.deleted ? `${q(U.deleted)} IS NULL AND` : ""} (${NORM(q(U.nick))} LIKE $1 ${U.bio ? `OR ${NORM(q(U.bio))} LIKE $1` : ""})
-        ORDER BY (${NORM(q(U.nick))} LIKE $2) DESC, ${q(U.nick)} LIMIT $3`, P)).rows;
+      // المحظورون (في أي اتجاه) وأصحاب الملفات الخاصة لا يظهرون؛ والضيف لا يبحث في النبذة ولا يراها
+      const bio = U.bio && uid;
+      const rows = (await pool.query(`SELECT id, ${q(U.nick)} AS nickname ${U.avatar ? `, ${q(U.avatar)} AS avatar_url` : ""} ${bio ? `, ${q(U.bio)} AS bio` : ""} FROM users u
+        WHERE ${U.deleted ? `${q(U.deleted)} IS NULL AND` : ""} (${NORM(q(U.nick))} LIKE $1 ${bio ? `OR ${NORM(q(U.bio))} LIKE $1` : ""})
+        AND NOT (u.id = ANY($4::text[]))
+        ${profT ? `AND NOT EXISTS (SELECT 1 FROM ${q(profT)} pr WHERE pr.${q(profKey)}::text = u.id::text AND pr.is_public = false AND pr.${q(profKey)}::text <> COALESCE($5::text, ''))` : ""}
+        ORDER BY (${NORM(q(U.nick))} LIKE $2) DESC, ${q(U.nick)} LIMIT $3`, [...P, blocked, ...(profT ? [uid] : [])])).rows;
       out.people = rows.map((r) => ({ id: r.id, nickname: r.nickname ?? "", avatarUrl: r.avatar_url ?? null, bio: r.bio ?? "" }));
     }
     if (want("vessels")) out.vessels = await searchVessels({ like, prefix, per, uid });
@@ -94,17 +106,17 @@ export default async function search(app, opts) {
       out.items = rows.map((i) => ({ id: i.id, bizId: i.biz_id, bizName: i.name_ar || i.name, category: i.category, kind: i.kind, title: i.title, price: Number(i.price), imageUrl: i.image_url, distanceKm: roundKm(i.distance_km) }));
     }
     if (want("market") && marketOk) {
-      const rows = (await pool.query(`SELECT l.*, ${DIST("$4", "$5", "l.lat", "l.lng")} AS distance_km FROM market_listings l WHERE l.status='active'
+      const rows = (await pool.query(`SELECT l.*, ${DIST("$4", "$5", "l.lat", "l.lng")} AS distance_km FROM market_listings l WHERE l.status='active' AND NOT (l.seller_id = ANY($6::text[]))
         AND (${NORM("l.title")} LIKE $1 OR ${NORM("l.description")} LIKE $1 OR ${NORM("l.category")} LIKE $1 OR ${NORM("COALESCE(l.place_name,'')")} LIKE $1)
-        ORDER BY (${NORM("l.title")} LIKE $2) DESC, distance_km ASC NULLS LAST, l.created_at DESC LIMIT $3`, [...P, lat, lng])).rows;
+        ORDER BY (${NORM("l.title")} LIKE $2) DESC, distance_km ASC NULLS LAST, l.created_at DESC LIMIT $3`, [...P, lat, lng, blocked])).rows;
       const pm = await people(rows.map((r) => r.seller_id));
       out.market = rows.map((l) => listingOut(l, pm, uid));
     }
     if (want("events") && eventsOk) {
       const rows = (await pool.query(`SELECT e.*, ${TIERS}, (SELECT count(DISTINCT user_id) FROM tickets t WHERE t.event_id=e.id AND t.status<>'refunded') AS going, ${DIST("$4", "$5", "e.lat", "e.lng")} AS distance_km
-        FROM events e WHERE NOT e.cancelled AND e.starts_at >= now() - interval '6 hours'
+        FROM events e WHERE NOT e.cancelled ${eventsHidden ? "AND NOT e.hidden" : ""} AND NOT (e.host_id = ANY($6::text[])) AND e.starts_at >= now() - interval '6 hours'
         AND (${NORM("e.title")} LIKE $1 OR ${NORM("e.description")} LIKE $1 OR ${NORM("COALESCE(e.place_name,'')")} LIKE $1)
-        ORDER BY (${NORM("e.title")} LIKE $2) DESC, e.starts_at LIMIT $3`, [...P, lat, lng])).rows;
+        ORDER BY (${NORM("e.title")} LIKE $2) DESC, e.starts_at LIMIT $3`, [...P, lat, lng, blocked])).rows;
       const pm = await people(rows.map((r) => r.host_id));
       out.events = rows.map((e) => eventOut(e, pm, uid));
     }
@@ -126,7 +138,7 @@ export default async function search(app, opts) {
     }
     if (eventsOk) {
       const rows = (await pool.query(`SELECT e.*, ${TIERS}, (SELECT count(DISTINCT user_id) FROM tickets t WHERE t.event_id=e.id AND t.status<>'refunded') AS going, ${DIST("$1", "$2", "e.lat", "e.lng")} AS distance_km
-        FROM events e WHERE NOT e.cancelled AND e.starts_at >= now() - interval '6 hours' ORDER BY e.starts_at LIMIT 6`, [lat, lng])).rows;
+        FROM events e WHERE NOT e.cancelled ${eventsHidden ? "AND NOT e.hidden" : ""} AND e.starts_at >= now() - interval '6 hours' ORDER BY e.starts_at LIMIT 6`, [lat, lng])).rows;
       const pm = await people(rows.map((r) => r.host_id));
       out.events = rows.map((e) => eventOut(e, pm, uid));
     }

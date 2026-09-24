@@ -4,6 +4,9 @@
 // فيختفي من التطبيق (البث والدائرة) عبر GET /posts/hidden. تعرّف للإضافات الأخرى:
 //   globalThis.naslifeVesselPostHide(postId, {by, reason}) → true إن أُخفي الآن
 //   globalThis.naslifeVesselPostInfo(postId) → {owner, title, status, vessel_id} أو null
+//   globalThis.naslifeVesselPostUnhide(postId) → true إن أُعيد إظهاره
+//   globalThis.naslifeVesselCommentInfo(id) / naslifeVesselCommentHide(id, {postId, vesselId, by, reason}) / naslifeVesselCommentUnhide(id)
+//   (تعليقات منشورات الدوائر في النواة: تُخفى في جدول vessel_comment_mod وتُعرض معرّفاتها من GET /posts/hidden?kind=comment)
 // التسجيل في src/index.js قبل safety.js:
 //   await app.register((await import("./vessel_mod.js")).default, { pool, auth });
 
@@ -21,10 +24,14 @@ export default async function vesselMod(app, opts) {
       post_id TEXT PRIMARY KEY, vessel_id TEXT NOT NULL DEFAULT '', hidden_by TEXT NOT NULL DEFAULT '',
       reason TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS vessel_post_mod_vessel ON vessel_post_mod(vessel_id);
+    CREATE TABLE IF NOT EXISTS vessel_comment_mod (
+      comment_id TEXT PRIMARY KEY, post_id TEXT NOT NULL DEFAULT '', vessel_id TEXT NOT NULL DEFAULT '', hidden_by TEXT NOT NULL DEFAULT '',
+      reason TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE INDEX IF NOT EXISTS vessel_comment_mod_post ON vessel_comment_mod(post_id);
   `);
 
   // اكتشاف جدول منشورات الدوائر في النواة (إن كان في القاعدة نفسها) لقراءة المؤلف والنص
-  let PT = null;
+  let PT = null, CT = null;
   try {
     const cols = (await pool.query("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema='public'")).rows;
     const tables = new Map();
@@ -39,7 +46,17 @@ export default async function vesselMod(app, opts) {
       PT = { name, vessel, author, content: pick(m, "content", "text", "body", "caption"), deleted: pick(m, "deleted_at", "deleted") };
       break;
     }
-  } catch { PT = null; }
+    // جدول التعليقات في النواة (إن كان في القاعدة نفسها) لقراءة كاتب التعليق ونصه
+    for (const name of ["comments", "post_comments", "vessel_comments"]) {
+      const m = tables.get(name);
+      if (!m) continue;
+      const post = pick(m, "post_id", "postId");
+      const author = pick(m, "author_id", "user_id", "authorId", "owner_id");
+      if (!post || !author) continue;
+      CT = { name, post, author, content: pick(m, "content", "text", "body") };
+      break;
+    }
+  } catch { PT = null; CT = null; }
 
   const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids.filter(Boolean), payload); } catch { /* ignore */ } };
   const isAdmin = async (uid) => { try { return !!(await globalThis.naslifeIsAdmin?.(uid)); } catch { return false; } };
@@ -79,8 +96,36 @@ export default async function vesselMod(app, opts) {
       [id, str(vesselId, 64), str(by, 32), str(reason, 300)]);
     return r.rowCount > 0;
   }
+  const unhidePost = async (id) => ID_RE.test(id) && (await pool.query("DELETE FROM vessel_post_mod WHERE post_id=$1", [id])).rowCount > 0;
   globalThis.naslifeVesselPostInfo = postInfo;
   globalThis.naslifeVesselPostHide = hidePost;
+  globalThis.naslifeVesselPostUnhide = unhidePost;
+
+  /// معلومات تعليق من جدول النواة (إن وُجد) + حالة الإخفاء
+  async function commentInfo(id) {
+    if (!ID_RE.test(id)) return null;
+    const hidden = (await pool.query("SELECT post_id, vessel_id FROM vessel_comment_mod WHERE comment_id=$1", [id])).rows[0] ?? null;
+    let row = null;
+    if (CT) {
+      try {
+        row = (await pool.query(`SELECT ${q(CT.author)} AS owner, ${q(CT.post)}::text AS post_id${CT.content ? `, left(${q(CT.content)}::text, 80) AS title` : ""} FROM ${q(CT.name)} WHERE id::text=$1`, [id])).rows[0] ?? null;
+      } catch { row = null; }
+      if (!row && !hidden) return null;
+    }
+    let vesselId = hidden?.vessel_id || null;
+    if (!vesselId && row?.post_id) { try { vesselId = (await postInfo(row.post_id))?.vessel_id ?? null; } catch { vesselId = null; } }
+    return { owner: row?.owner ?? null, post_id: row?.post_id ?? hidden?.post_id ?? null, vessel_id: vesselId, title: str(row?.title, 80) || "تعليق في دائرة", text: row?.title ?? null, status: hidden ? "blocked" : "active" };
+  }
+  async function hideComment(id, { postId = "", vesselId = "", by = "", reason = "" } = {}) {
+    if (!ID_RE.test(id)) return false;
+    const r = await pool.query("INSERT INTO vessel_comment_mod(comment_id,post_id,vessel_id,hidden_by,reason) VALUES($1,$2,$3,$4,$5) ON CONFLICT (comment_id) DO NOTHING RETURNING comment_id",
+      [id, str(postId, 64), str(vesselId, 64), str(by, 32), str(reason, 300)]);
+    return r.rowCount > 0;
+  }
+  const unhideComment = async (id) => ID_RE.test(id) && (await pool.query("DELETE FROM vessel_comment_mod WHERE comment_id=$1", [id])).rowCount > 0;
+  globalThis.naslifeVesselCommentInfo = commentInfo;
+  globalThis.naslifeVesselCommentHide = hideComment;
+  globalThis.naslifeVesselCommentUnhide = unhideComment;
 
   /// الدائرة من النواة بجلسة الطالب (تعطي role وownerId)
   async function coreVessel(req, vesselId) {
@@ -94,12 +139,21 @@ export default async function vesselMod(app, opts) {
   }
   const canModerate = (uid, v) => !!v && (v.ownerId === uid || MOD_ROLES.has(String(v.role ?? "").toLowerCase()));
 
-  app.get("/vessel-mod/status", async () => ({ ok: true, postsTable: PT?.name ?? null }));
+  app.get("/vessel-mod/status", async () => ({ ok: true, postsTable: PT?.name ?? null, commentsTable: CT?.name ?? null }));
 
-  /// المنشورات المخفية (لتصفيتها في التطبيق). ?vessel= اختياري
+  /// المنشورات المخفية (لتصفيتها في التطبيق). ?vessel= اختياري. ?kind=comment للتعليقات المخفية (?post= اختياري)
   app.get("/posts/hidden", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const vessel = str(req.query?.vessel, 64);
+    if (req.query?.kind === "comment") {
+      const post = str(req.query?.post, 64);
+      const r = post
+        ? await pool.query("SELECT comment_id FROM vessel_comment_mod WHERE post_id=$1 ORDER BY created_at DESC LIMIT 5000", [post])
+        : vessel
+          ? await pool.query("SELECT comment_id FROM vessel_comment_mod WHERE vessel_id=$1 ORDER BY created_at DESC LIMIT 5000", [vessel])
+          : await pool.query("SELECT comment_id FROM vessel_comment_mod ORDER BY created_at DESC LIMIT 5000");
+      return { kind: "comment", ids: r.rows.map((x) => x.comment_id) };
+    }
     const r = vessel
       ? await pool.query("SELECT post_id FROM vessel_post_mod WHERE vessel_id=$1 ORDER BY created_at DESC LIMIT 5000", [vessel])
       : await pool.query("SELECT post_id FROM vessel_post_mod ORDER BY created_at DESC LIMIT 5000");
