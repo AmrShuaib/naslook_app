@@ -40,12 +40,13 @@ class NaslifeSocket {
         _wasConnected = true;
         _events.add({'event': '_connected'});
       }).catchError((_) {});
+      // قناة استُبدلت (reconnectNow) لا تُطلق إعادة اتصال عند إغلاقها
       ch.stream.listen((raw) {
         try {
           final j = jsonDecode(raw.toString());
           if (j is Map) _events.add(Map<String, dynamic>.from(j));
         } catch (_) {}
-      }, onDone: _onLost, onError: (_) => _onLost());
+      }, onDone: () { if (_ch == ch) _onLost(); }, onError: (_) { if (_ch == ch) _onLost(); });
       _ping?.cancel();
       _ping = Timer.periodic(const Duration(seconds: 25), (_) => send({'type': 'ping'}));
     } catch (_) {
@@ -64,6 +65,27 @@ class NaslifeSocket {
     final delay = Duration(seconds: (2 << _attempt).clamp(2, 30));
     _attempt = (_attempt + 1).clamp(0, 4);
     _reconnect = Timer(delay, connect);
+  }
+
+  /// إعادة اتصال فورية بلا انتظار التراجع الأسّي: iOS يعلّق المقابس في الخلفية، فتُستدعى عند عودة التطبيق للواجهة.
+  /// [force] يعيد الاتصال حتى لو بدا المقبس متصلاً (قد يكون ميتاً بصمت بعد التعليق).
+  void reconnectNow({bool force = false}) {
+    if (_closed) return;
+    if (_wasConnected && !force) return;
+    _attempt = 0;
+    _reconnect?.cancel();
+    _reconnect = null;
+    final old = _ch;
+    // نفصل القناة القديمة أولاً فلا يطلق إغلاقها _onLost ولا يجدول إعادة اتصال ثانية
+    _ch = null;
+    if (_wasConnected) {
+      _wasConnected = false;
+      _events.add({'event': '_disconnected'});
+    }
+    try {
+      old?.sink.close();
+    } catch (_) {}
+    connect();
   }
 
   void send(Map<String, dynamic> msg) {

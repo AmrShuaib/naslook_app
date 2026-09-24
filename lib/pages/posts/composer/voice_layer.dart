@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/app_theme.dart';
 import '../../../core/media/encode.dart';
+import '../../../core/media/permissions.dart';
 import '../../../core/media/voice_player.dart';
 import '../../../core/media/voice_record.dart';
 import '../../../ui/widgets.dart';
@@ -62,7 +63,8 @@ class _VoiceSheetState extends State<_VoiceSheet> {
     try {
       await rec.start();
     } catch (e) {
-      if (mounted) toast(context, 'تعذر بدء التسجيل: ${e.toString().replaceFirst('Bad state: ', '')}', error: true);
+      if (!mounted || handlePermissionError(context, e)) return;
+      toast(context, 'تعذر بدء التسجيل: ${e.toString().replaceFirst('Bad state: ', '')}', error: true);
       return;
     }
     if (!mounted) return;
@@ -127,7 +129,8 @@ class _VoiceSheetState extends State<_VoiceSheet> {
     if (t == null) return;
     final r = trim;
     var out = t;
-    if (r != null && (r.start > 250 || r.end < t.duration.inMilliseconds - 250)) {
+    // القصّ يعمل على الويب فقط؛ على الجهاز الأصلي لا نزعم قصّاً لم يحدث
+    if (audioTrimSupported && r != null && (r.start > 250 || r.end < t.duration.inMilliseconds - 250)) {
       setState(() => busy = true);
       try {
         final cut = await trimAudio(t.bytes, t.mime, start: Duration(milliseconds: r.start.round()), end: Duration(milliseconds: r.end.round()));
@@ -154,7 +157,7 @@ class _VoiceSheetState extends State<_VoiceSheet> {
             Text(recording ? 'يُسجَّل ${_fmt(elapsed)}' : t != null ? _fmt(t.duration) : 'حتى دقيقة واحدة', style: TextStyle(color: recording ? Joy.sun : Colors.white60, fontSize: 12.5, fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 4),
-          Text(t == null ? 'اضغط باستمرار على الميكروفون وتكلّم، وارفع إصبعك للإيقاف.' : 'اسمعه، وقصّ البداية أو النهاية إن أردت، ثم «استخدام».', style: const TextStyle(color: Colors.white54, fontSize: 12.5)),
+          Text(t == null ? 'اضغط باستمرار على الميكروفون وتكلّم، وارفع إصبعك للإيقاف.' : audioTrimSupported ? 'اسمعه، وقصّ البداية أو النهاية إن أردت، ثم «استخدام».' : 'اسمعه، ثم «استخدام» أو أعد التسجيل.', style: const TextStyle(color: Colors.white54, fontSize: 12.5)),
           const SizedBox(height: 18),
           Center(
             child: GestureDetector(
@@ -180,9 +183,9 @@ class _VoiceSheetState extends State<_VoiceSheet> {
                   IconButton(key: const Key('voice-play'), onPressed: _togglePlay, icon: Icon(_ps.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white)),
                   Expanded(child: _Wave(seed: t.duration.inMilliseconds, progress: total == 0 ? 0 : (_ps.position.inMilliseconds / total).clamp(0, 1))),
                   const SizedBox(width: 8),
-                  Text(trim == null ? _fmt(t.duration) : _fmt(Duration(milliseconds: (trim!.end - trim!.start).round())), style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700)),
+                  Text(trim == null || !audioTrimSupported ? _fmt(t.duration) : _fmt(Duration(milliseconds: (trim!.end - trim!.start).round())), style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700)),
                 ]),
-                if (total > 2000)
+                if (audioTrimSupported && total > 2000)
                   RangeSlider(
                     key: const Key('voice-trim'),
                     values: trim ?? RangeValues(0, total), min: 0, max: total, activeColor: Joy.sun, inactiveColor: Colors.white24,

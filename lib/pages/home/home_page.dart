@@ -548,11 +548,11 @@ class _TrendCard extends StatelessWidget {
   Widget _thumb() {
     final logo = place.logoUrl;
     if (logo != null && logo.isNotEmpty) {
-      final img = logo.startsWith('asset:') ? Image.asset('assets/${logo.substring(6)}', fit: BoxFit.cover) : Image.network(logo, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.storefront_rounded, color: Joy.primary));
+      final img = logo.startsWith('asset:') ? Image.asset('assets/${logo.substring(6)}', fit: BoxFit.cover) : Image.network(thumbUrl(logo), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.storefront_rounded, color: Joy.primary));
       return ClipRRect(borderRadius: BorderRadius.circular(12), child: SizedBox(width: 44, height: 44, child: img));
     }
     if (place.sampleKind == 'image' && place.sampleUrl != null) {
-      return ClipRRect(borderRadius: BorderRadius.circular(12), child: SizedBox(width: 44, height: 44, child: Image.network(place.sampleUrl!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.place_rounded, color: Joy.primary))));
+      return ClipRRect(borderRadius: BorderRadius.circular(12), child: SizedBox(width: 44, height: 44, child: Image.network(thumbUrl(place.sampleUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.place_rounded, color: Joy.primary))));
     }
     return Container(width: 44, height: 44, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(12)), child: Icon(place.bizId != null ? Icons.storefront_rounded : Icons.place_rounded, color: Joy.primary));
   }

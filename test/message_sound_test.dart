@@ -3,6 +3,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -12,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:naslook/api/client.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/core/notify/message_sound.dart';
+import 'package:naslook/core/notify/message_sound_io.dart' show messageSoundAsset;
 import 'package:naslook/pages/myspace/myspace_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
@@ -38,6 +40,7 @@ void main() {
   setUp(() {
     MessageSound.resetThrottle();
     MessageSound.playOverride = null;
+    MessageSound.supportedOverride = null;
     SharedPreferences.setMockInitialValues({});
   });
 
@@ -101,7 +104,7 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('sound-toggle')));
     await tester.pump();
     final tile = tester.widget<SwitchListTile>(find.byKey(const Key('sound-toggle')));
-    // في الاختبارات (غير الويب) الصوت غير مدعوم: المفتاح معطّل وموقوف
+    // بيئة الاختبار (Linux، لا iOS ولا Android ولا ويب) بلا مشغّل: المفتاح معطّل وموقوف
     expect(MessageSound.supported, isFalse);
     expect(tile.onChanged, isNull);
     expect(tile.value, isFalse);
@@ -113,5 +116,48 @@ void main() {
     await MessageSound.saveEnabled(true);
     expect(await MessageSound.loadEnabled(), isTrue);
     expect(plays, 0);
+  });
+
+  Future<void> pumpMySpace(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(420, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(_handle));
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        apiClientProvider.overrideWithValue(api),
+        socketProvider.overrideWithValue(null),
+        appStateProvider.overrideWith((ref) => _SignedIn(api, SessionStore())),
+        notifyPollIntervalProvider.overrideWithValue(null),
+      ],
+      child: const MaterialApp(locale: Locale('ar'), home: Scaffold(body: MySpacePage())),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.ensureVisible(find.byKey(const Key('sound-toggle')));
+    await tester.pump();
+  }
+
+  testWidgets('on iOS/Android the bell is supported: the toggle works and the test button plays the bundled sound', (tester) async {
+    var plays = 0;
+    MessageSound.playOverride = () => plays++;
+    MessageSound.supportedOverride = true; // محاكاة جهاز جوال أصلي
+    await pumpMySpace(tester);
+    final tile = tester.widget<SwitchListTile>(find.byKey(const Key('sound-toggle')));
+    expect(tile.onChanged, isNotNull);
+    expect(tile.value, isTrue);
+    expect(find.text('متاح في نسخة الويب'), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('sound-test')));
+    await tester.tap(find.byKey(const Key('sound-test')));
+    await tester.pump();
+    expect(plays, 1);
+    await tester.pump(const Duration(seconds: 4));
+  });
+
+  test('the native bell asset is bundled', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final data = await rootBundle.load(messageSoundAsset);
+    expect(data.lengthInBytes, greaterThan(1000));
+    expect(String.fromCharCodes(data.buffer.asUint8List(4, 4)), 'ftyp', reason: 'حاوية MP4/M4A');
   });
 }

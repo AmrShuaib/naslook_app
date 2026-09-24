@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:just_audio/just_audio.dart';
 
+import 'native_io.dart';
 import 'voice_player.dart';
 
 VoicePlayer createPlayer() => _NativeVoicePlayer();
@@ -11,6 +12,8 @@ VoicePlayer createPlayer() => _NativeVoicePlayer();
 class _NativeVoicePlayer extends VoicePlayerBase {
   final AudioPlayer _p = AudioPlayer();
   Future<void>? _loaded;
+  String? _tmp;
+  bool _disposed = false;
   final _subs = <StreamSubscription<dynamic>>[];
 
   _NativeVoicePlayer() {
@@ -30,8 +33,19 @@ class _NativeVoicePlayer extends VoicePlayerBase {
   @override
   void setSource({String? url, Uint8List? bytes, String? mime}) {
     Future<Duration?>? f;
+    final old = _tmp;
+    _tmp = null;
+    deleteQuietly(old);
     if (bytes != null) {
-      f = _p.setAudioSource(AudioSource.uri(Uri.dataFromBytes(bytes, mimeType: mime ?? 'audio/webm')));
+      // just_audio على iOS/Android لا يدعم روابط data:، فنكتب البايتات في ملف مؤقت ونشغّله
+      f = writeTempFile(bytes, prefix: 'vp', ext: audioExt(mime)).then((path) {
+        if (_disposed) {
+          deleteQuietly(path);
+          throw StateError('disposed');
+        }
+        _tmp = path;
+        return _p.setFilePath(path);
+      });
     } else if (url != null) {
       f = _p.setUrl(url);
     }
@@ -62,10 +76,13 @@ class _NativeVoicePlayer extends VoicePlayerBase {
 
   @override
   void dispose() {
+    _disposed = true;
     for (final s in _subs) {
       s.cancel();
     }
     _p.dispose();
+    deleteQuietly(_tmp);
+    _tmp = null;
     super.dispose();
   }
 }

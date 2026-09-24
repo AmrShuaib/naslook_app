@@ -1,19 +1,16 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../../core/app_theme.dart';
 import '../../../core/media/camera.dart';
-import '../../../core/media/media.dart';
 import '../../../core/media/pick_image.dart';
 import '../../../ui/widgets.dart';
 import 'composer_draft.dart';
 import 'text_board.dart';
 
-/// الحد الأقصى للفيديو القصير.
-const int kPostVideoMaxBytes = 25 * 1024 * 1024;
+/// الحد الأقصى للفيديو القصير: مطابق لحد الرفع في الخادم (chat_tools.js، 30 م.ب)، والخادم يعيد ترميزه إلى 720p.
+const int kPostVideoMaxBytes = 30 * 1024 * 1024;
 const Duration kPostVideoMax = Duration(seconds: 30);
 const int kMaxShots = 8;
 
@@ -102,7 +99,7 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
   Future<void> _startVideo() async {
     if (busy || recording || mode == 'text') return;
     final cam = _cam;
-    if (!camReady || cam == null) return _systemVideo();
+    if (!camReady || cam == null) return _systemVideo(gallery: false);
     try {
       await cam.startVideo();
     } catch (e) {
@@ -126,7 +123,7 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
     try {
       final v = await cam.stopVideo();
       if (v == null || (v.durationSec ?? recSec) < 1) { if (mounted) toast(context, 'المقطع قصير جداً؛ اضغط باستمرار أثناء التصوير'); return; }
-      if (v.bytes.length > kPostVideoMaxBytes) { if (mounted) toast(context, 'الفيديو أكبر من 25 م.ب؛ صوّر مقطعاً أقصر', error: true); return; }
+      if (v.bytes.length > kPostVideoMaxBytes) { if (mounted) toast(context, 'الفيديو أكبر من 30 م.ب؛ صوّر مقطعاً أقصر', error: true); return; }
       _finish(kind: 'video', video: (bytes: v.bytes, mime: v.mime, name: v.name), videoSec: v.durationSec ?? recSec);
     } finally {
       if (mounted) setState(() => busy = false);
@@ -134,35 +131,43 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
   }
 
   // ---------------------------------------------------------------- البدائل: كاميرا النظام والمعرض
+  /// يعرض طريق الإعدادات إن رُفض الإذن، وإلا الخطأ نفسه.
+  void _pickFailed(Object e) {
+    if (!mounted || handlePermissionError(context, e)) return;
+    toast(context, e.toString(), error: true);
+  }
+
   Future<void> _systemCamera() async {
-    final img = await pickImage(camera: true);
-    if (img == null) return;
-    _addShot((bytes: img.bytes, mime: img.mime, name: img.name));
+    try {
+      final img = await pickImage(camera: true);
+      if (img == null) return;
+      _addShot((bytes: img.bytes, mime: img.mime, name: img.name));
+    } catch (e) {
+      _pickFailed(e);
+    }
   }
 
   Future<void> _gallery() async {
-    if (mode == 'video') return _systemVideo();
-    final img = await pickImage();
-    if (img == null) return;
-    _addShot((bytes: img.bytes, mime: img.mime, name: img.name));
+    if (mode == 'video') return _systemVideo(gallery: true);
+    try {
+      final img = await pickImage();
+      if (img == null) return;
+      _addShot((bytes: img.bytes, mime: img.mime, name: img.name));
+    } catch (e) {
+      _pickFailed(e);
+    }
   }
 
-  Future<void> _systemVideo() async {
+  /// فيديو من المعرض ([gallery]) أو من كاميرا النظام؛ المصدر صريح لأن الكاميرا الحية غير موجودة على الجهاز الأصلي.
+  Future<void> _systemVideo({required bool gallery}) async {
     try {
-      Shot? v; int? sec;
-      if (kIsWeb && WebMedia.available) {
-        final m = await WebMedia.pick('video');
-        if (m == null) return;
-        v = (bytes: m.bytes, mime: m.mime, name: m.name);
-      } else {
-        final x = await ImagePicker().pickVideo(source: camReady ? ImageSource.gallery : ImageSource.camera, maxDuration: kPostVideoMax);
-        if (x == null) return;
-        v = (bytes: await x.readAsBytes(), mime: x.mimeType ?? 'video/mp4', name: x.name);
-      }
-      if (v.bytes.length > kPostVideoMaxBytes) { if (mounted) toast(context, 'الفيديو أكبر من 25 م.ب؛ اختر مقطعاً أقصر (حتى 30 ثانية)', error: true); return; }
-      _finish(kind: 'video', video: v, videoSec: sec);
+      final v = await pickVideo(gallery: gallery, maxDuration: kPostVideoMax);
+      if (v == null) return;
+      if (v.bytes.length > kPostVideoMaxBytes) { if (mounted) toast(context, 'الفيديو أكبر من 30 م.ب؛ اختر مقطعاً أقصر (حتى 30 ثانية)', error: true); return; }
+      if (v.durationSec != null && v.durationSec! > kPostVideoMax.inSeconds + 1) { if (mounted) toast(context, 'الفيديو أطول من 30 ثانية؛ اختر مقطعاً أقصر', error: true); return; }
+      _finish(kind: 'video', video: (bytes: v.bytes, mime: v.mime, name: v.name), videoSec: v.durationSec);
     } catch (e) {
-      if (mounted) toast(context, e.toString(), error: true);
+      _pickFailed(e);
     }
   }
 
@@ -275,12 +280,12 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
             : Column(mainAxisSize: MainAxisSize.min, children: [
                 const Icon(Icons.photo_camera_outlined, size: 56, color: Colors.white38),
                 const SizedBox(height: 12),
-                Text(LiveCamera.supported ? 'لم يُسمح بالكاميرا داخل ناس لايف' : 'الكاميرا الحية غير متاحة على هذا الجهاز', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16), textAlign: TextAlign.center),
+                Text(LiveCamera.supported ? 'لم يُسمح بالكاميرا داخل ناس لايف' : mode == 'video' ? 'صوّر مقطعاً أو اختره من المعرض' : 'صوّر أو اختر من المعرض', key: const Key('cam-fallback-title'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16), textAlign: TextAlign.center),
                 const SizedBox(height: 6),
-                Text(LiveCamera.supported ? 'اسمح بالوصول إلى الكاميرا من إعدادات المتصفح، أو استخدم كاميرا الجهاز.' : 'استخدم كاميرا الجهاز أو اختر من المعرض.', style: const TextStyle(color: Colors.white60, fontSize: 13), textAlign: TextAlign.center),
+                Text(LiveCamera.supported ? 'اسمح بالوصول إلى الكاميرا من الإعدادات، أو استخدم كاميرا الجهاز.' : mode == 'video' ? 'مقطع حتى ٣٠ ثانية بكاميرا الجهاز أو من صورك.' : 'التقط صورة بكاميرا الجهاز أو اختر من صورك.', style: const TextStyle(color: Colors.white60, fontSize: 13), textAlign: TextAlign.center),
                 const SizedBox(height: 18),
                 Wrap(spacing: 10, runSpacing: 10, alignment: WrapAlignment.center, children: [
-                  FilledButton.icon(key: const Key('cam-system'), style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black), onPressed: mode == 'video' ? _systemVideo : _systemCamera, icon: const Icon(Icons.photo_camera_rounded), label: Text(mode == 'video' ? 'صوّر فيديو بكاميرا الجهاز' : 'كاميرا الجهاز')),
+                  FilledButton.icon(key: const Key('cam-system'), style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black), onPressed: mode == 'video' ? () => _systemVideo(gallery: false) : _systemCamera, icon: const Icon(Icons.photo_camera_rounded), label: Text(mode == 'video' ? 'صوّر فيديو بكاميرا الجهاز' : 'كاميرا الجهاز')),
                   OutlinedButton.icon(key: const Key('cam-pick'), style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: const BorderSide(color: Colors.white38)), onPressed: _gallery, icon: const Icon(Icons.photo_library_outlined), label: const Text('من المعرض')),
                   if (LiveCamera.supported) TextButton(key: const Key('cam-retry'), onPressed: () => _startCamera(), child: const Text('إعادة المحاولة', style: TextStyle(color: Colors.white70))),
                 ]),

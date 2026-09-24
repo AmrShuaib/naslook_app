@@ -13,7 +13,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:naslook/api/client.dart';
 import 'package:naslook/api/posts_api.dart';
 import 'package:naslook/api/session.dart';
+import 'package:image/image.dart' as img;
 import 'package:naslook/core/media/camera.dart';
+import 'package:naslook/core/media/encode.dart';
 import 'package:naslook/core/media/filters.dart';
 import 'package:naslook/core/media/pick_image.dart';
 import 'package:naslook/core/media/voice_player.dart';
@@ -164,10 +166,11 @@ void main() {
     expect(filterMatrix(filterById('mono'), const PhotoAdjust())[0], closeTo(filterMatrix(filterById('mono'), const PhotoAdjust())[5], 1e-9), reason: 'الأبيض والأسود يساوي بين القنوات');
     final same = await bakePhoto(_png, filter: filterById('none'));
     expect(same.bytes, same_(_png));
-    // خبز حقيقي: فلتر + قصّ مربع + دوران → صورة PNG جديدة (على غير الويب)
+    // خبز حقيقي: فلتر + قصّ مربع + دوران → صورة JPEG جديدة (حزمة image على غير الويب بدل PNG كبير)
     final baked = await bakePhoto(_png, filter: filterById('warm'), frame: const PhotoFrame(aspect: 1, quarterTurns: 1));
-    expect(baked.mime, 'image/png');
-    expect(baked.bytes.sublist(0, 4), [0x89, 0x50, 0x4E, 0x47], reason: 'توقيع PNG');
+    expect(baked.mime, 'image/jpeg');
+    expect(baked.name, 'photo.jpg');
+    expect(baked.bytes.sublist(0, 3), [0xFF, 0xD8, 0xFF], reason: 'توقيع JPEG');
     expect(baked.bytes, isNot(same_(_png)));
   });
 
@@ -340,6 +343,84 @@ void main() {
     expect(body['tag'], 'offer');
     expect(body['price'], 1500);
     expect(body.containsKey('mediaUrl'), isFalse, reason: 'لم تتغير الصورة');
+  });
+
+  test('the bake clamps the long side to 2048 and encodes JPEG', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final big = Uint8List.fromList(img.encodePng(img.Image(width: 3000, height: 1000)));
+    final baked = await bakePhoto(big, filter: filterById('warm'));
+    expect(baked.mime, 'image/jpeg');
+    final out = img.decodeJpg(baked.bytes)!;
+    expect(out.width, kBakeMaxSide);
+    expect(out.height, closeTo(683, 1));
+  });
+
+  testWidgets('native fallback: neutral copy, and in video mode the gallery button picks from the gallery with its duration', (tester) async {
+    final sources = <bool>[];
+    pickVideoOverride = ({required bool gallery}) async {
+      sources.add(gallery);
+      return (bytes: Uint8List.fromList([7, 7, 7]), mime: 'video/mp4', name: 'clip.mp4', durationSec: 12);
+    };
+    addTearDown(() => pickVideoOverride = null);
+    final srv = await _pump(tester, liveCamera: false);
+    expect(find.textContaining('غير متاحة'), findsNothing, reason: 'لا نقول إن الكاميرا غير متاحة على الجهاز الأصلي');
+    expect(find.byKey(const Key('cam-fallback-title')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('mode-video')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('cam-pick')));
+    await _settle(tester);
+    expect(sources, [true], reason: 'زر المعرض يطلب المعرض صراحة');
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    final body = srv.bodies['POST /mapposts']!;
+    expect(body['kind'], 'video');
+    expect(body['durationSec'], 12);
+  });
+
+  testWidgets('video mode: the system camera button asks for the camera source', (tester) async {
+    final sources = <bool>[];
+    pickVideoOverride = ({required bool gallery}) async {
+      sources.add(gallery);
+      return null;
+    };
+    addTearDown(() => pickVideoOverride = null);
+    await _pump(tester, liveCamera: false);
+    await tester.tap(find.byKey(const Key('mode-video')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('cam-system')));
+    await _settle(tester);
+    expect(sources, [false]);
+  });
+
+  testWidgets('a denied camera shows the settings help and its button opens app settings', (tester) async {
+    var opened = 0;
+    openAppSettingsOverride = () async => opened++;
+    addTearDown(() => openAppSettingsOverride = null);
+    await _pump(tester, liveCamera: false);
+    pickImageOverride = ({bool camera = false}) async => throw const MediaPermissionDenied('camera');
+    await tester.tap(find.byKey(const Key('cam-system')));
+    await _settle(tester);
+    expect(find.byKey(const Key('perm-help')), findsOneWidget);
+    expect(find.text('اسمح بالوصول من الإعدادات'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('perm-open-settings')));
+    await _settle(tester);
+    expect(opened, 1);
+    expect(find.byKey(const Key('perm-help')), findsNothing);
+  });
+
+  testWidgets('without a real trim on this platform the voice sheet hides the trim handles', (tester) async {
+    expect(audioTrimSupported, isFalse, reason: 'الاختبارات تعمل على Dart VM حيث القصّ الأصلي غير منفّذ');
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('mode-text')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('board-voice')));
+    await _settle(tester);
+    await tester.longPress(find.byKey(const Key('voice-hold')));
+    await _settle(tester);
+    expect(find.byKey(const Key('voice-use')), findsOneWidget, reason: 'التسجيل (3 ث) جاهز');
+    expect(find.byKey(const Key('voice-trim')), findsNothing, reason: 'لا مقابض قصّ لا تقصّ فعلاً');
   });
 }
 
