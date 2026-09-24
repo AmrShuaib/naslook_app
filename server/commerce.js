@@ -237,25 +237,38 @@ export default async function commerce(app, opts) {
     });
     return eventOut((await pool.query("SELECT * FROM events WHERE id=$1", [id])).rows[0], uid);
   });
+  // الضيف (بلا جلسة) لا يرى فعاليات الدوائر الخاصة: عمود الخصوصية في جدول الدوائر بالنواة يُكتشف مرة واحدة
+  let vesselPubCol;
+  const guestEventsSql = async (uid, alias = "events") => {
+    if (uid) return "";
+    if (vesselPubCol === undefined) {
+      try {
+        const cols = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='vessels'")).rows.map((r) => r.column_name);
+        vesselPubCol = cols.includes("id") ? (["is_public", "public"].find((c) => cols.includes(c)) ?? null) : null;
+      } catch { vesselPubCol = null; }
+    }
+    return vesselPubCol ? ` AND (${alias}.vessel_id IS NULL OR NOT EXISTS (SELECT 1 FROM vessels gv WHERE gv.id::text = ${alias}.vessel_id::text AND gv."${vesselPubCol}" = false))` : "";
+  };
   app.get("/events", async (req, reply) => {
     const uid = await optionalAuth(req);
     const bb = bbox(req.query?.bbox); const mine = req.query?.mine === "1"; const vessel = UUID_RE.test(req.query?.vessel ?? "") ? req.query.vessel : null;
     if (mine && !uid) return unauthorized(reply);
     // الفعاليات المخفية بالإشراف ومضيفوها المحظورون لا تظهر في القوائم العامة
     const blocked = await blockedIds(uid);
+    const g = await guestEventsSql(uid);
     const r = mine
       ? await pool.query("SELECT * FROM events WHERE host_id=$1 ORDER BY starts_at DESC LIMIT 100", [uid])
       : vessel
-        ? await pool.query("SELECT * FROM events WHERE vessel_id=$1 AND NOT cancelled AND NOT hidden AND NOT (host_id = ANY($2::text[])) ORDER BY starts_at LIMIT 100", [vessel, blocked])
+        ? await pool.query(`SELECT * FROM events WHERE vessel_id=$1 AND NOT cancelled AND NOT hidden AND NOT (host_id = ANY($2::text[]))${g} ORDER BY starts_at LIMIT 100`, [vessel, blocked])
         : bb
-          ? await pool.query("SELECT * FROM events WHERE NOT cancelled AND NOT hidden AND NOT (host_id = ANY($5::text[])) AND starts_at > now() - interval '6 hours' AND lat BETWEEN $2 AND $4 AND lng BETWEEN $1 AND $3 ORDER BY starts_at LIMIT 100", [bb.minLng, bb.minLat, bb.maxLng, bb.maxLat, blocked])
-          : await pool.query("SELECT * FROM events WHERE NOT cancelled AND NOT hidden AND NOT (host_id = ANY($1::text[])) AND starts_at > now() - interval '6 hours' ORDER BY starts_at LIMIT 100", [blocked]);
+          ? await pool.query(`SELECT * FROM events WHERE NOT cancelled AND NOT hidden AND NOT (host_id = ANY($5::text[])) AND starts_at > now() - interval '6 hours' AND lat BETWEEN $2 AND $4 AND lng BETWEEN $1 AND $3${g} ORDER BY starts_at LIMIT 100`, [bb.minLng, bb.minLat, bb.maxLng, bb.maxLat, blocked])
+          : await pool.query(`SELECT * FROM events WHERE NOT cancelled AND NOT hidden AND NOT (host_id = ANY($1::text[])) AND starts_at > now() - interval '6 hours'${g} ORDER BY starts_at LIMIT 100`, [blocked]);
     return Promise.all(r.rows.map((e) => eventOut(e, uid)));
   });
   app.get("/events/:id", async (req, reply) => {
     const uid = await optionalAuth(req);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const r = await pool.query("SELECT * FROM events WHERE id=$1", [req.params.id]);
+    const r = await pool.query(`SELECT * FROM events WHERE id=$1${await guestEventsSql(uid)}`, [req.params.id]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
     const e = r.rows[0];
     if (e.host_id !== uid && (e.hidden || (await blockedIds(uid)).includes(e.host_id)) && !(await isAdmin(uid))) return bad(reply, 404, "not-found");

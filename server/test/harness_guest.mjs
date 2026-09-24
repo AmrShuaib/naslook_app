@@ -12,6 +12,9 @@ const OURS = `('${ADMIN}','${SELLER}','${BUYER}')`;
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
 await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now()");
+// جدول الدوائر كما في النواة (مثل harness_search): فعاليات الدائرة الخاصة لا تظهر للضيف
+await pool.query("CREATE TABLE IF NOT EXISTS vessels (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT, topic TEXT, kind TEXT DEFAULT 'general', is_public BOOLEAN DEFAULT true, owner_id TEXT, created_at TIMESTAMPTZ DEFAULT now())");
+const PRIV = (await pool.query("INSERT INTO vessels(name,is_public,owner_id) VALUES('دائرة الضيف الخاصة',false,'SA0000312') RETURNING id")).rows[0].id;
 await pool.query(`INSERT INTO users(id,nickname,created_at) VALUES('${ADMIN}','guestadmin',now()-interval '60 days'),('${SELLER}','guestseller',now()-interval '60 days'),('${BUYER}','guestbuyer',now()-interval '60 days')
   ON CONFLICT (id) DO UPDATE SET nickname=EXCLUDED.nickname, created_at=EXCLUDED.created_at`);
 for (const sql of [`DELETE FROM market_spotlight WHERE seller_id IN ${OURS}`, `DELETE FROM market_listings WHERE seller_id IN ${OURS}`, `DELETE FROM events WHERE host_id IN ${OURS}`, `DELETE FROM user_flags WHERE user_id IN ${OURS}`,
@@ -62,6 +65,11 @@ check((await call('GET', '/market/bazaars', { expect: 200 })).some((x) => x.id =
 check((await call('GET', `/market/bazaars/${BZ.id}`, { expect: 200 })).id === BZ.id, 'guest: bazaar detail');
 check((await call('GET', '/events', { expect: 200 })).some((x) => x.id === EV.id), 'guest: events');
 check((await call('GET', `/events/${EV.id}`, { expect: 200 })).isHost === false, 'guest: event detail');
+const PEV = await call('POST', '/events', { body: { title: 'لقاء أعضاء الدائرة', vesselId: PRIV, startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tiers: [{ name: 'دخول', price: 0, quantity: 20 }] }, user: SELLER, expect: 200 });
+check(!(await call('GET', '/events', { expect: 200 })).some((x) => x.id === PEV.id), 'guest: private-circle event not listed');
+check((await call('GET', `/events?vessel=${PRIV}`, { expect: 200 })).length === 0, 'guest: private-circle events by vessel empty');
+await call('GET', `/events/${PEV.id}`, { expect: 404 });
+check((await call('GET', '/events', { user: BUYER, expect: 200 })).some((x) => x.id === PEV.id), 'signed-in: private-circle event listed as before');
 // مشاهدات سبوت لايت للمستخدمين فقط
 const views = async () => (await pool.query('SELECT views FROM market_spotlight WHERE listing_id=$1', [L.id])).rows[0].views;
 const v0 = await views();

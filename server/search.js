@@ -27,11 +27,13 @@ export default async function search(app, opts) {
   const bizOk = tables.has("biz") && tables.has("biz_items"), marketOk = tables.has("market_listings"), eventsOk = tables.has("events") && tables.has("ticket_tiers");
   const optionalAuth = async (req) => { try { return (await auth(req)) || null; } catch { return null; } };
   const blockedIds = async (uid) => { try { return uid ? (await globalThis.naslifeBlockedIds?.(uid)) ?? [] : []; } catch { return []; } };
-  // الملف الخاص (is_public=false) لا يظهر في بحث الأشخاص: جدول الملف في النواة يُكتشف بأعمدته
-  const profT = ["profiles", "user_profiles"].find((t) => tables.get(t)?.has("is_public") && (tables.get(t).has("user_id") || tables.get(t).has("id"))) ?? null;
+  // الملف الخاص (is_public=false) لا يظهر في بحث الأشخاص: العمود في users أولاً كما في admin.js، ثم جدول الملف
+  const profT = ["users", "profiles", "user_profiles"].find((t) => tables.get(t)?.has("is_public") && (tables.get(t).has("user_id") || tables.get(t).has("id"))) ?? null;
   const profKey = profT ? (tables.get(profT).has("user_id") ? "user_id" : "id") : null;
   const eventsHidden = !!tables.get("events")?.has("hidden");
   const reviewsHidden = !!tables.get("biz_reviews")?.has("hidden");
+  // الضيف لا يرى فعاليات الدوائر الخاصة (كما في GET /events)
+  const guestEv = (uid) => (uid || !V.ok || !V.pub ? "" : `AND (e.vessel_id IS NULL OR NOT EXISTS (SELECT 1 FROM vessels gv WHERE gv.id::text = e.vessel_id::text AND gv.${q(V.pub)} = false))`);
 
   // أشخاص بالدفعة (للبائعين والمضيفين)
   async function people(ids) {
@@ -114,7 +116,7 @@ export default async function search(app, opts) {
     }
     if (want("events") && eventsOk) {
       const rows = (await pool.query(`SELECT e.*, ${TIERS}, (SELECT count(DISTINCT user_id) FROM tickets t WHERE t.event_id=e.id AND t.status<>'refunded') AS going, ${DIST("$4", "$5", "e.lat", "e.lng")} AS distance_km
-        FROM events e WHERE NOT e.cancelled ${eventsHidden ? "AND NOT e.hidden" : ""} AND NOT (e.host_id = ANY($6::text[])) AND e.starts_at >= now() - interval '6 hours'
+        FROM events e WHERE NOT e.cancelled ${eventsHidden ? "AND NOT e.hidden" : ""} AND NOT (e.host_id = ANY($6::text[])) ${guestEv(uid)} AND e.starts_at >= now() - interval '6 hours'
         AND (${NORM("e.title")} LIKE $1 OR ${NORM("e.description")} LIKE $1 OR ${NORM("COALESCE(e.place_name,'')")} LIKE $1)
         ORDER BY (${NORM("e.title")} LIKE $2) DESC, e.starts_at LIMIT $3`, [...P, lat, lng, blocked])).rows;
       const pm = await people(rows.map((r) => r.host_id));
@@ -138,7 +140,8 @@ export default async function search(app, opts) {
     }
     if (eventsOk) {
       const rows = (await pool.query(`SELECT e.*, ${TIERS}, (SELECT count(DISTINCT user_id) FROM tickets t WHERE t.event_id=e.id AND t.status<>'refunded') AS going, ${DIST("$1", "$2", "e.lat", "e.lng")} AS distance_km
-        FROM events e WHERE NOT e.cancelled ${eventsHidden ? "AND NOT e.hidden" : ""} AND e.starts_at >= now() - interval '6 hours' ORDER BY e.starts_at LIMIT 6`, [lat, lng])).rows;
+        FROM events e WHERE NOT e.cancelled ${eventsHidden ? "AND NOT e.hidden" : ""} AND NOT (e.host_id = ANY($3::text[])) ${guestEv(uid)}
+        AND e.starts_at >= now() - interval '6 hours' ORDER BY e.starts_at LIMIT 6`, [lat, lng, await blockedIds(uid)])).rows;
       const pm = await people(rows.map((r) => r.host_id));
       out.events = rows.map((e) => eventOut(e, pm, uid));
     }

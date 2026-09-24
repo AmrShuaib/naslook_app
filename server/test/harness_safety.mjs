@@ -19,7 +19,8 @@ await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nicknam
 await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara'),('SA0000003','khalid'),('SA0000004','nora') ON CONFLICT DO NOTHING");
 await pool.query("CREATE TABLE IF NOT EXISTS user_blocks (user_id TEXT NOT NULL, blocked_id TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY (user_id, blocked_id))");
 // انحدار الخطأ الحي: inbox_blocked (قائمة حظر البريد في inbox.js) موجود قبل تسجيل safety.js فكان يُلتقط بدل user_blocks
-await pool.query("CREATE TABLE IF NOT EXISTS inbox_blocked (id UUID PRIMARY KEY, pattern TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+// بنفس بنية inbox.js حتى لا يكسر inbox.js إن سبقه هذا الاختبار في القاعدة نفسها؛ الاستثناء في safety.js بالاسم (^inbox_) لا بالترتيب
+await pool.query("CREATE TABLE IF NOT EXISTS inbox_blocked (pattern TEXT PRIMARY KEY, reason TEXT NOT NULL DEFAULT '', created_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), hits INT NOT NULL DEFAULT 0)");
 await pool.query("CREATE TABLE IF NOT EXISTS aaa_blocked_words (id UUID PRIMARY KEY, word TEXT)");
 for (const sql of ['DELETE FROM user_blocks', 'DROP TABLE IF EXISTS chat_mutes, content_reports', 'DELETE FROM app_notifications', "INSERT INTO admins(user_id,granted_by) VALUES('SA0000004','test') ON CONFLICT DO NOTHING", 'DELETE FROM map_posts', 'DELETE FROM market_listings']) { try { await pool.query(sql); } catch { /* أول تشغيل */ } }
 const auth = async (req) => req.headers['x-user'] || null;
