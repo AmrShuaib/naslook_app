@@ -1,6 +1,8 @@
 // التصفّح بلا حساب: زر «تصفّح بدون حساب» في شاشة الدخول يفتح تبويبات الزائر (الخريطة، الأماكن، السوق، الفعاليات، حسابي)،
 // وفي iOS الأصلي يبدأ التطبيق زائراً. مسارات النواة الخاصة بالحسابات (القصص، الحضور، الدبابيس، المحادثات…) لا تُطلب أبداً
-// بلا جلسة، وتسجيل المشاهدة لا يفتح دعوة الدخول، أما الطلب من عرض في السوق فيدعو للدخول قبل أي طلب.
+// بلا جلسة (قائمة سماح بالمسارات العامة)، وتسجيل المشاهدة والنقرة لا يفتح دعوة الدخول، أما الطلب والمراسلة والتقييم
+// والتذاكر والملف الشخصي فتدعو للدخول قبل أي طلب أو نموذج.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -10,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:naslook/api/client.dart';
+import 'package:naslook/api/posts_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/app/app.dart';
 import 'package:naslook/core/location.dart';
@@ -17,13 +20,20 @@ import 'package:naslook/core/platform.dart';
 import 'package:naslook/core/require_account.dart';
 import 'package:naslook/core/share/legal_links.dart';
 import 'package:naslook/core/share/share_links.dart';
+import 'package:naslook/pages/business/business_list.dart';
+import 'package:naslook/pages/business/business_page.dart';
+import 'package:naslook/pages/business/owner/dashboard_posts.dart';
+import 'package:naslook/pages/chat/chat_thread_page.dart';
 import 'package:naslook/pages/events/events_page.dart';
 import 'package:naslook/pages/map/map_page.dart';
 import 'package:naslook/pages/market/market_page.dart';
+import 'package:naslook/pages/posts/post_viewer.dart';
+import 'package:naslook/pages/profile/user_profile_page.dart';
 import 'package:naslook/screens/login_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
 import 'package:naslook/state/providers.dart';
+import 'package:naslook/ui/widgets.dart';
 
 class _SignedOut extends AppStateNotifier {
   _SignedOut(super.api, super.store) {
@@ -37,22 +47,44 @@ Map<String, dynamic> _listing() => {
       'imageUrl': null, 'images': [], 'status': 'active', 'lat': 21.5, 'lng': 39.1, 'mine': false, 'createdAt': '2026-09-10T08:00:00Z',
     };
 
-/// مسارات النواة التي لا يجوز أن يطلبها زائر.
-const _coreOnly = ['/stories', '/map/presence', '/map/pins', '/businesses', '/me/map-presence', '/vessels/mine', '/vessels/feed', '/posts/hidden', '/contacts', '/requests', '/chats', '/chat/mutes', '/mapposts/mine'];
+/// المسارات العامة الوحيدة التي يجوز أن يطلبها زائر (قائمة سماح): أي مسار آخر يعني طلباً لمسار حساب أو نواة.
+bool _publicRoute(Uri u) {
+  final p = u.path;
+  // ما يخص حساب الزائر حتى تحت البادئات العامة
+  if (u.queryParameters['mine'] == '1' || p.endsWith('/mine') || p.startsWith('/biz/orders') || p.startsWith('/market/orders')) return false;
+  return p == '/biz' || p.startsWith('/biz/') || p.startsWith('/mapposts') || p.startsWith('/market') || p.startsWith('/events') ||
+      p == '/settings/public' || p == '/safety/words' || p.startsWith('/legal/');
+}
+
+const _bizId = 'biz-ikea';
+Map<String, dynamic> _biz() => {
+      'id': _bizId, 'name': 'IKEA', 'nameAr': 'إيكيا', 'category': 'brand', 'sector': 'أثاث', 'description': 'وصف', 'lat': 21.5, 'lng': 39.2, 'address': 'جدة', 'hours': '24 ساعة',
+      'highlights': [], 'verified': false, 'official': false, 'followers': 3, 'rating': 4.5, 'ratingCount': 0, 'items': [], 'reviews': [], 'myOrders': [], 'ownerId': 'SA0000009',
+      'posts': [{'id': 'bp1', 'bizId': _bizId, 'kind': 'news', 'title': 'افتتاح فرع جديد', 'body': 'تفاصيل', 'imageUrl': 'https://test.local/none.jpg', 'createdAt': '2026-09-10T08:00:00Z'}],
+    };
+
+Map<String, dynamic> _mapPost(String id, Map<String, dynamic> cta) => {
+      'id': id, 'user': {'id': 'SA0000002', 'nickname': 'sara'}, 'kind': 'text', 'caption': 'لحظة $id', 'bg': '#0A6E78', 'overlays': [], 'tag': 'moment', 'cta': cta,
+      'lat': 21.5, 'lng': 39.1, 'status': 'active', 'views': 1, 'likes': 0, 'liked': false, 'mine': false, 'expired': false, 'createdAt': DateTime.now().toUtc().toIso8601String(),
+    };
 
 class _Srv {
   final calls = <String>[];
+  /// طلبات خارج قائمة السماح.
+  final denied = <String>[];
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   Future<http.Response> handle(http.Request req) async {
     final path = req.url.path;
     final key = '${req.method} $path';
     calls.add(key);
     final signed = req.headers.containsKey('x-token');
+    if (!signed && !_publicRoute(req.url)) denied.add('$key${req.url.hasQuery ? '?${req.url.query}' : ''}');
     // النواة وكل ما يخص الحساب: 401 بلا جلسة
-    if (!signed && (_coreOnly.contains(path) || req.method != 'GET')) return _json({'error': 'auth'}, 401);
+    if (!signed && (!_publicRoute(req.url) || req.method != 'GET')) return _json({'error': 'auth'}, 401);
     switch (key) {
       case 'GET /settings/public': return _json({'announcement': '', 'maintenance': false});
-      case 'GET /biz': return _json([]);
+      case 'GET /biz': return _json([_biz()]);
+      case 'GET /biz/$_bizId': return _json(_biz());
       case 'GET /mapposts': return _json([]);
       case 'GET /market/home': return _json({'spotlight': [], 'popular': [_listing()], 'nearby': [], 'bazaars': [], 'categories': {'food': 1}, 'wantedOpen': 0, 'spotlightPricePerDay': 2000, 'commissionPct': 5});
       case 'GET /market': return _json([_listing()]);
@@ -89,6 +121,11 @@ Future<void> _settle(WidgetTester tester, [int n = 4]) async {
   for (var i = 0; i < n; i++) {
     await tester.pump(const Duration(milliseconds: 300));
   }
+}
+
+Future<void> _dismissSheet(WidgetTester tester) async {
+  Navigator.of(tester.element(find.byKey(const Key('guest-login-sheet')))).pop();
+  await _settle(tester);
 }
 
 Future<void> _tab(WidgetTester tester, String key) async {
@@ -162,7 +199,7 @@ void main() {
     expect(find.byKey(const Key('guest-shell')), findsOneWidget);
   });
 
-  testWidgets('guests never request core-only routes (stories, presence, pins, chats…)', (tester) async {
+  testWidgets('guests request only public routes: tabs, post viewer, call-to-action, profile and event tickets', (tester) async {
     iosNativeOverride = true;
     final srv = await _pump(tester);
     // الخريطة تطلب طبقاتها العامة فقط
@@ -173,10 +210,86 @@ void main() {
     }
     expect(srv.calls, contains('GET /mapposts'));
     expect(srv.calls, contains('GET /market/home'));
-    for (final p in _coreOnly) {
-      expect(srv.calls.where((c) => c.endsWith(' $p')), isEmpty, reason: p);
-    }
     expect(find.text('هذا يحتاج حساباً'), findsNothing, reason: 'القراءات الخلفية لا تزعج الزائر');
+
+    // الفعاليات: لا «فعالياتي»، و«تذاكري» و«فعالية» يدعوان للدخول قبل أي طلب أو نموذج
+    await _tab(tester, 'guest-tab-events');
+    expect(find.text('فعالياتي'), findsNothing);
+    await tester.tap(find.byKey(const Key('events-tickets')));
+    await _settle(tester);
+    expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+    await _dismissSheet(tester);
+    await tester.tap(find.byKey(const Key('events-create')));
+    await _settle(tester);
+    expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+    expect(find.text('فعالية جديدة'), findsNothing, reason: 'لا نموذج قبل الدخول');
+    await _dismissSheet(tester);
+
+    // عارض منشورات الخريطة: زر «راسلني» يدعو للدخول ولا يفتح المحادثة
+    await _tab(tester, 'guest-tab-map');
+    unawaited(PostViewerPage.open(tester.element(find.byType(MapPage)), [MapPost.fromJson(_mapPost('p1', {'type': 'chat', 'label': 'راسلني'}))]));
+    await _settle(tester);
+    await tester.tap(find.text('راسلني'));
+    await _settle(tester);
+    expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+    expect(find.byType(ChatThreadPage), findsNothing);
+    await _dismissSheet(tester);
+
+    // الملف الشخصي من العارض: الاسم والصورة ودعوة للدخول، بلا إبلاغ ولا مراسلة ولا طلبات نواة
+    await tester.tap(find.text('sara').first);
+    await _settle(tester);
+    expect(find.byType(UserProfilePage), findsOneWidget);
+    expect(find.byKey(const Key('guest-profile-card')), findsOneWidget);
+    expect(find.text('سجّل الدخول لرؤية الملف'), findsOneWidget);
+    expect(find.byKey(const Key('profile-menu')), findsNothing);
+    expect(find.text('مراسلة'), findsNothing);
+    expect(find.byType(ErrorState), findsNothing, reason: 'لا «تعذر جلب البيانات» بلا مخرج');
+    await tester.tap(find.byKey(const Key('guest-profile-login')));
+    await _settle(tester);
+    expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+
+    expect(srv.denied, isEmpty, reason: 'مسارات خارج قائمة السماح طُلبت بلا جلسة');
+  });
+
+  testWidgets("a guest's call-to-action tap is tracked silently (no sign-in sheet over it)", (tester) async {
+    iosNativeOverride = true;
+    final srv = await _pump(tester);
+    unawaited(PostViewerPage.open(tester.element(find.byType(MapPage)), [MapPost.fromJson(_mapPost('p2', {'type': 'biz', 'value': _bizId, 'label': 'زورونا'}))]));
+    await _settle(tester);
+    await tester.tap(find.text('زورونا'));
+    await _settle(tester);
+    expect(srv.calls, contains('POST /mapposts/p2/cta'));
+    expect(find.byType(BusinessPage), findsOneWidget);
+    expect(find.text('هذا يحتاج حساباً'), findsNothing, reason: 'رفض تسجيل النقرة (401) لا يفتح دعوة الدخول');
+    expect(srv.denied, isEmpty);
+  });
+
+  testWidgets('guest on a circle page: review asks to sign in, no bookings, «على الخريطة» switches to the map tab', (tester) async {
+    iosNativeOverride = true;
+    final srv = await _pump(tester);
+    await _tab(tester, 'guest-tab-places');
+    await tester.tap(find.byType(BizRow).first);
+    await _settle(tester);
+    expect(find.byType(BusinessPage), findsOneWidget);
+    expect(find.byKey(const Key('biz-page-bookings')), findsNothing);
+    // زر الإبلاغ عن الخبر داخل البطاقة حتى حين تفشل الصورة
+    expect(find.descendant(of: find.byType(PostCard), matching: find.byKey(const Key('bizpost-bp1-menu'))), findsOneWidget);
+    await tester.ensureVisible(find.text('قيّم'));
+    await tester.tap(find.text('قيّم'));
+    await _settle(tester);
+    expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+    expect(find.text('قيّم إيكيا'), findsNothing, reason: 'لا ورقة تقييم قبل الدخول');
+    await _dismissSheet(tester);
+    await tester.tap(find.byTooltip('على الخريطة'));
+    await _settle(tester);
+    expect(find.byType(BusinessPage), findsNothing);
+    expect(tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex, 0, reason: 'واجهة الزائر تنتقل إلى الخريطة');
+    // «الدوائر التجارية» المستقلة لا تعرض «نشاطي التجاري» ولا «حجوزاتي» للزائر
+    unawaited(Navigator.of(tester.element(find.byType(MapPage))).push(MaterialPageRoute(builder: (_) => const BusinessesPage())));
+    await _settle(tester);
+    expect(find.byKey(const Key('biz-mine')), findsNothing);
+    expect(find.byKey(const Key('biz-bookings')), findsNothing);
+    expect(srv.denied, isEmpty);
   });
 
   testWidgets('posting from the map asks a guest to sign in before the composer opens', (tester) async {

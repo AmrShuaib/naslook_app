@@ -40,26 +40,34 @@ class _EventsPageState extends ConsumerState<EventsPage> {
   int tab = 0;
   @override
   Widget build(BuildContext context) {
-    final list = ref.watch(tab == 0 ? eventsProvider : myEventsProvider);
+    // «فعالياتي» تطلب ?mine=1 وترفض بلا جلسة (401)، فلا تظهر للزائر
+    final signed = ref.watch(signedInProvider);
+    final shown = signed ? tab : 0;
+    final list = ref.watch(shown == 0 ? eventsProvider : myEventsProvider);
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('الفعاليات'), actions: [IconButton(icon: const Icon(Icons.confirmation_number_outlined), tooltip: 'تذاكري', onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage())))]),
-      floatingActionButton: FloatingActionButton.extended(onPressed: _create, backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: const Text('فعالية')),
+      appBar: AppBar(title: const Text('الفعاليات'), actions: [
+        IconButton(key: const Key('events-tickets'), icon: const Icon(Icons.confirmation_number_outlined), tooltip: 'تذاكري', onPressed: () {
+          // التذاكر تخص الحساب: الزائر يُدعى للدخول بدل صفحة خطأ
+          if (requireAccount(context)) Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()));
+        }),
+      ]),
+      floatingActionButton: FloatingActionButton.extended(key: const Key('events-create'), onPressed: _create, backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: const Text('فعالية')),
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
-          child: Row(children: [for (final (i, l) in ['القادمة', 'فعالياتي'].indexed) Padding(padding: const EdgeInsets.only(left: 8), child: ChoiceChip(label: Text(l, style: TextStyle(color: tab == i ? Joy.primaryOn : Joy.text)), selected: tab == i, onSelected: (_) => setState(() => tab = i), showCheckmark: false, selectedColor: Joy.primary))]),
+          child: Row(children: [for (final (i, l) in ['القادمة', if (signed) 'فعالياتي'].indexed) Padding(padding: const EdgeInsets.only(left: 8), child: ChoiceChip(label: Text(l, style: TextStyle(color: shown == i ? Joy.primaryOn : Joy.text)), selected: shown == i, onSelected: (_) => setState(() => tab = i), showCheckmark: false, selectedColor: Joy.primary))]),
         ),
         Expanded(
           child: list.when(
             data: (all) => switch ([for (final e in all) if (!isBlockedId(ref.watch(blockedIdsProvider), e.host.id)) e]) { final events => events.isEmpty
-                ? EmptyState(icon: Icons.event_outlined, title: tab == 0 ? 'لا فعاليات قادمة' : 'لم تنشئ فعالية بعد', subtitle: 'أنشئ فعالية ببيع تذاكر أو مجانية وشاركها في دائرتك.')
+                ? EmptyState(icon: Icons.event_outlined, title: shown == 0 ? 'لا فعاليات قادمة' : 'لم تنشئ فعالية بعد', subtitle: 'أنشئ فعالية ببيع تذاكر أو مجانية وشاركها في دائرتك.')
                 : RefreshIndicator(
                     onRefresh: () async { ref.invalidate(eventsProvider); ref.invalidate(myEventsProvider); },
                     child: ListView.separated(padding: const EdgeInsets.fromLTRB(20, 0, 20, 96), itemCount: events.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => EventCard(events[i])),
                   ) },
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(tab == 0 ? eventsProvider : myEventsProvider)),
+            error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(shown == 0 ? eventsProvider : myEventsProvider)),
           ),
         ),
       ]),
@@ -67,6 +75,8 @@ class _EventsPageState extends ConsumerState<EventsPage> {
   }
 
   Future<void> _create() async {
+    // الزائر يُدعى للدخول قبل النموذج، وإلا ملأه كله ثم رفضه الخادم وضاع
+    if (!requireAccount(context)) return;
     final title = TextEditingController(), desc = TextEditingController(), place = TextEditingController();
     final tierName = TextEditingController(text: 'عادي'), tierPrice = TextEditingController(text: '0'), tierQty = TextEditingController(text: '50');
     DateTime starts = DateTime.now().add(const Duration(days: 1));

@@ -11,9 +11,11 @@ import '../../api/naslife_api.dart';
 import '../../api/posts_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
+import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
 import '../../state/providers.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
@@ -184,6 +186,8 @@ class _FeedPageState extends ConsumerState<FeedPage> {
         case 'stats': await showPostStats(context, postId: p.id);
         case 'viewer': await PostViewerPage.open(context, items, index: i);
         case 'report':
+          // الإبلاغ يحتاج حساباً: ندعو الزائر للدخول قبل ورقة الأسباب بدل رفض 401 بعدها
+          if (!requireAccount(context)) return;
           final r = await showReportSheet(context, ref, type: 'post', id: p.id, author: p.user, title: 'إبلاغ عن اللحظة');
           if (r == null || !mounted) return;
           if (r.blocked || r.hidden) {
@@ -192,7 +196,10 @@ class _FeedPageState extends ConsumerState<FeedPage> {
             setState(() { items.removeWhere((x) => x.id == p.id || (r.blocked && x.user.id == p.user.id)); index = index.clamp(0, items.isEmpty ? 0 : items.length - 1); });
           }
         case 'block':
+          if (!requireAccount(context)) return;
           await api.blockUser(p.user.id);
+          // قائمة المحظورين تصفّي منشورات الدوائر وتعليقاتها وحالة الملف؛ بلا تحديثها يبقى محتواه ظاهراً حتى إعادة التشغيل
+          ref.invalidate(blockedUsersProvider);
           invalidatePosts(ref);
           if (!mounted) return;
           toast(context, 'تم حظر ${p.user.nickname}');
@@ -374,7 +381,12 @@ class _FeedItemViewState extends ConsumerState<FeedItemView> {
             _Rail(key: Key('feed-like-${p.id}'), icon: p.liked ? Icons.favorite_rounded : Icons.favorite_outline_rounded, label: '${p.likes}', color: p.liked ? Joy.accent : Colors.white, onTap: widget.onLike),
             if (!p.mine && me != null) ...[
               const SizedBox(height: 14),
-              _Rail(icon: Icons.chat_bubble_outline_rounded, label: 'مراسلة', onTap: () { unawaited(ref.read(apiClientProvider).trackContact(p.id)); Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user))); }),
+              _Rail(key: Key('feed-chat-${p.id}'), icon: Icons.chat_bubble_outline_rounded, label: 'مراسلة', onTap: () {
+                // المحادثة تطلب مسارات النواة فوراً؛ الزائر يُدعى للدخول قبل فتحها
+                if (!requireAccount(context)) return;
+                unawaited(ref.read(apiClientProvider).trackContact(p.id));
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user)));
+              }),
               const SizedBox(height: 14),
               WishButton(kind: 'post', refId: p.id, dark: true, compact: true),
             ],

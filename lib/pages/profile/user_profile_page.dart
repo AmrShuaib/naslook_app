@@ -39,6 +39,8 @@ class UserProfilePage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // الزائر: الملف والحضور وصلاحية الإدارة مسارات نواة ترفض بلا جلسة (401)، فلا نطلبها ونعرض الاسم والصورة فقط
+    if (!ref.watch(signedInProvider)) return _guest(context);
     final me = ref.watch(appStateProvider.select((s) => s.user));
     final isMe = me?.id == person.id;
     final profile = ref.watch(userProfileProvider(person.id));
@@ -175,6 +177,38 @@ class UserProfilePage extends ConsumerWidget {
       ),
     );
   }
+
+  /// ملف الزائر: الصورة والاسم من [person] وبطاقة تدعو للدخول، بلا إبلاغ ولا مراسلة (كلاهما يحتاج حساباً).
+  Widget _guest(BuildContext context) => Scaffold(
+        backgroundColor: Joy.bg,
+        appBar: AppBar(
+          title: Text(person.nickname),
+          actions: [
+            IconButton(key: const Key('share-profile'), tooltip: 'مشاركة الحساب', icon: const Icon(Icons.ios_share_rounded), onPressed: () => shareLink(context, title: person.nickname, url: profileLink(person.nickname), subtitle: 'حساب على ناس لايف', code: userCode(person.nickname))),
+          ],
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+          children: [
+            Center(child: Avatar(name: person.nickname, url: person.avatarUrl, size: 104, ring: true)),
+            const SizedBox(height: 12),
+            Center(child: Text(person.nickname, style: Theme.of(context).textTheme.headlineSmall)),
+            const SizedBox(height: 20),
+            JoyCard(
+              key: const Key('guest-profile-card'),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                const Icon(Icons.lock_outline_rounded, size: 36, color: Joy.primary),
+                const SizedBox(height: 8),
+                const Text('سجّل الدخول لرؤية الملف', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                const SizedBox(height: 6),
+                const Text('النبذة والعروض والمراسلة متاحة للأعضاء.', textAlign: TextAlign.center, style: TextStyle(color: Joy.textMuted, height: 1.5)),
+                const SizedBox(height: 12),
+                FilledButton(key: const Key('guest-profile-login'), onPressed: () => requireAccount(context), child: const Text('سجّل الدخول')),
+              ]),
+            ),
+          ],
+        ),
+      );
 
   static String _since(DateTime t) {
     final d = DateTime.now().difference(t);

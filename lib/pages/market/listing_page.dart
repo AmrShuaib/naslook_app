@@ -176,6 +176,8 @@ class _ListingPageState extends ConsumerState<ListingPage> {
   }
 
   Future<void> _reportListing(Listing x) async {
+    // البلاغ يحتاج حساباً (الخادم يرفضه 401)؛ ندعو الزائر للدخول قبل أن يختار السبب ويكتب
+    if (!requireAccount(context)) return;
     final r = await showReportSheet(context, ref, type: 'listing', id: widget.id, author: x.seller, title: 'إبلاغ عن العرض');
     if (r != null && (r.hidden || r.blocked) && mounted) Navigator.of(context).maybePop();
   }

@@ -742,9 +742,14 @@ class ChatCodesGuidePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // بلا أوامر المال (iOS أو مطفأة): لا تُذكر في القواعد ولا الأفعال ولا الأمثلة
     final money = ref.watch(chatMoneyEnabledProvider);
+    final moneyRe = RegExp(r'/(pay|send|split)\b');
     final examples = [
       for (final (title, lines) in _examples)
-        if (money) (title, lines) else if (lines.any((l) => !l.$2.contains(RegExp(r'/(pay|send|split)\b')))) (title, [for (final l in lines) if (!l.$2.contains(RegExp(r'/(pay|send|split)\b'))) l]),
+        if (money)
+          (title, lines)
+        // مثال يبدأ بأمر مال غرضه المال (مثل «تقسيم الفاتورة»)؛ إبقاء بقية سطوره يترك عنواناً مالياً بلا معنى
+        else if (!moneyRe.hasMatch(lines.first.$2) && lines.any((l) => !moneyRe.hasMatch(l.$2)))
+          (title, [for (final l in lines) if (!moneyRe.hasMatch(l.$2)) l]),
     ];
     void pick(String s) {
       if (canInsert) {

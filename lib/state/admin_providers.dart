@@ -106,14 +106,16 @@ final adminTeamPermissionsProvider = FutureProvider<List<TeamPermission>>((ref) 
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
 
 /// تحويل المال بين المستخدمين (زرّا «تحويل» و«دفع» ورمز QR في المحفظة): لا يظهر في iOS، ولا حين يطفئه المدير.
-/// قبل وصول الإعدادات أو عند تعذّرها يبقى مخفياً، لأن الخادم يرفضه أصلاً وهو مطفأ.
-final walletTransfersEnabledProvider = Provider<bool>((ref) => !isIosNative && (ref.watch(publicSettingsProvider).valueOrNull?.transfersEnabled ?? false));
+/// على غير iOS يبقى ظاهراً قبل وصول الإعدادات أو عند تعذّرها: الخادم يفرض المفتاح بنفسه، وإخفاؤه عند فشل طلب واحد
+/// كان يُسقط أزرار المال طوال جلسة الويب.
+final walletTransfersEnabledProvider = Provider<bool>((ref) => !isIosNative && (ref.watch(publicSettingsProvider).valueOrNull?.transfersEnabled ?? true));
 
 /// أوامر المال في المحادثة (/pay و/send و/split): تحتاج مفتاحَي التحويل والدفع في المحادثة معاً، ولا تظهر في iOS.
+/// بلا إعدادات (تحميل أو خطأ) تبقى ظاهرة على الويب للسبب نفسه: الخادم يرفضها إن كانت مطفأة.
 final chatMoneyEnabledProvider = Provider<bool>((ref) {
   if (isIosNative) return false;
   final s = ref.watch(publicSettingsProvider).valueOrNull;
-  return s != null && s.transfersEnabled && s.chatPaymentsEnabled;
+  return s == null || (s.transfersEnabled && s.chatPaymentsEnabled);
 });
 
 void invalidateAdmin(WidgetRef ref) {

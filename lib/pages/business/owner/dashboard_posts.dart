@@ -40,7 +40,9 @@ class PostCard extends ConsumerWidget {
   final BizPost post;
   final Biz biz;
   final bool editable;
-  const PostCard({super.key, required this.post, required this.biz, this.editable = false});
+  /// عنصر في آخر سطر العنوان (زر الإبلاغ للزوار): داخل التخطيط فلا يُقص إن فشلت الصورة ولا يغطي العنوان.
+  final Widget? trailing;
+  const PostCard({super.key, required this.post, required this.biz, this.editable = false, this.trailing});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final off = !post.active || post.expired;
@@ -60,6 +62,7 @@ class PostCard extends ConsumerWidget {
                 const SizedBox(width: 8),
                 Expanded(child: Text(post.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
                 if (editable && off) Text(post.expired ? 'منتهٍ' : 'مخفي', style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
+                if (trailing != null) SizedBox(height: 28, child: trailing),
               ]),
               if (post.body.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(post.body, style: const TextStyle(height: 1.5, fontSize: 13.5))),
               const SizedBox(height: 6),
