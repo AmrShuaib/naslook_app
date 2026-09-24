@@ -50,3 +50,6 @@ app.*.map.json
 server/test/node_modules/
 server/test/ops-test/
 server/test/package-lock.json
+
+# نسخ عمل مؤقتة لوكلاء الجلسة
+.claude/worktrees/

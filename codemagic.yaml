@@ -1,0 +1,67 @@
+# بناء تطبيق ناس لايف لـ iOS على Codemagic (أجهزة ماك سحابية، ولها حصة مجانية شهرية).
+# بديل عن GitHub Actions الذي يرفض تشغيل المهام في هذا المستودع منذ 16 سبتمبر 2026 (المهام لا تبدأ أصلاً).
+# الإعداد مرة واحدة: سجّل في codemagic.io بحساب GitHub، أضف المستودع AmrShuaib/naslook_app، وسيقرأ هذا الملف تلقائياً.
+#
+# 1) ios-unsigned: يتحقق أن النسخة الأصلية تُترجم وتُبنى (بلا توقيع) عند كل دفع إلى فرع التطوير.
+# 2) ios-testflight: يوقّع ويرفع إلى TestFlight. يعمل بعد قبول حساب Apple Developer وإنشاء التطبيق في App Store Connect:
+#    - في Codemagic: Teams → Integrations → App Store Connect: أضف مفتاح API باسم naslife_asc (Issuer ID وKey ID وملف .p8).
+#    - في Codemagic: Code signing identities: اسمح له بإنشاء شهادة التوزيع وملف التعريف لـ app.naslife تلقائياً.
+#    - ضع رقم التطبيق في App Store Connect (Apple ID الرقمي للتطبيق) في APP_STORE_APPLE_ID أدناه.
+workflows:
+  ios-unsigned:
+    name: Naslife iOS · unsigned build
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: 3.47.3
+      xcode: latest
+      cocoapods: default
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: claude/intelligent-hypatia-owb3fk
+          include: true
+      cancel_previous_builds: true
+    scripts:
+      - name: Packages
+        script: flutter pub get
+      - name: Analyze
+        script: flutter analyze
+      - name: Widget tests
+        script: flutter test
+      - name: Build iOS (release, unsigned)
+        script: flutter build ios --release --no-codesign
+    artifacts:
+      - build/ios/iphoneos/*.app
+
+  ios-testflight:
+    name: Naslife iOS · TestFlight
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: naslife_asc
+    environment:
+      flutter: 3.47.3
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: app.naslife
+      vars:
+        APP_STORE_APPLE_ID: 0000000000 # يُستبدل برقم التطبيق من App Store Connect
+    scripts:
+      - name: Signing profiles
+        script: xcode-project use-profiles
+      - name: Packages
+        script: flutter pub get
+      - name: Build IPA (next build number)
+        script: |
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" || echo 0)
+          flutter build ipa --release --build-number=$((LATEST + 1)) --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
