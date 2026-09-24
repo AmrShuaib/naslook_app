@@ -10,8 +10,10 @@ final mutesProvider = FutureProvider<List<ChatMute>>((ref) => ref.watch(apiClien
 /// معرّفات الأطراف المكتومة (فارغة حتى تصل القائمة).
 final mutedPeersProvider = Provider<Set<String>>((ref) => ref.watch(mutesProvider).maybeWhen(data: (l) => {for (final m in l) m.peerId}, orElse: () => const <String>{}));
 
-/// الكلمات المحظورة للتحقق المسبق قبل إرسال رسالة (تُجلب مرة واحدة).
+/// الكلمات المحظورة للتحقق المسبق قبل الإرسال (رسالة، منشور دائرة، تعليق): قائمة الإدارة والقائمة الافتراضية معاً
+/// ([BannedWords])، فيطابق التحقق في التطبيق ما يرفضه الخادم. تُجلب مرة لكل حساب.
 final bannedWordsProvider = FutureProvider<List<String>>((ref) async {
+  if (ref.watch(appStateProvider.select((s) => s.user?.id)) == null) return const [];
   try {
     return await ref.watch(apiClientProvider).bannedWords();
   } catch (_) {
@@ -19,8 +21,12 @@ final bannedWordsProvider = FutureProvider<List<String>>((ref) async {
   }
 });
 
-/// المحظورون.
-final blockedUsersProvider = FutureProvider<List<BlockedUser>>((ref) => ref.watch(apiClientProvider).blockedUsers());
+/// المحظورون للحساب الحالي. يراقب معرّف المستخدم فلا يرث حساب آخر (بعد الخروج والدخول في الجلسة نفسها) قائمة سابقه؛ فارغة للزائر.
+final blockedUsersProvider = FutureProvider<List<BlockedUser>>((ref) async {
+  final uid = ref.watch(appStateProvider.select((s) => s.user?.id));
+  if (uid == null) return const [];
+  return ref.watch(apiClientProvider).blockedUsers();
+});
 
 /// معرّفات المحظورين بأحرف كبيرة لتصفية محتواهم في القوائم احتياطاً (فارغة للزائر أو قبل وصول القائمة أو عند الخطأ).
 final blockedIdsProvider = Provider<Set<String>>((ref) {

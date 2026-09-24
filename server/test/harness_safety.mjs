@@ -2,7 +2,9 @@
 // مع الإخفاء التلقائي وإشعارات المالك والإدارة.
 import Fastify from 'fastify';
 import pg from 'pg';
-import { parseWords, findBanned, findDefaultBanned } from '../safety.js';
+import { parseWords, findBanned, findDefaultBanned, DEFAULT_BANNED } from '../safety.js';
+import { SUPPORT_EMAIL_RE as ADMIN_EMAIL_RE } from '../admin.js';
+import { SUPPORT_EMAIL_RE as LEGAL_EMAIL_RE } from '../legal_pages.js';
 process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0';
 let fails = 0;
 const check = (cond, label, extra = '') => { if (!cond) fails++; console.log((cond ? 'OK  ' : 'FAIL') + ' ' + label + (extra ? ' ' + extra : '')); };
@@ -32,6 +34,7 @@ app.register((await import('../business.js')).default, { pool, auth });
 app.register((await import('../map_posts.js')).default, { pool, auth });
 app.register((await import('../safety.js')).default, { pool, auth });
 app.register((await import('../admin.js')).default, { pool, auth, webappDir: dir + 'webapp', opsDir: dir + 'ops' });
+app.register((await import('../legal_pages.js')).default, { pool, auth });
 await app.ready(); await new Promise((r) => setTimeout(r, 500));
 const call = async (method, url, { body = {}, user = 'SA0000001', expect } = {}) => {
   const r = await app.inject({ method, url, headers: { ...(user ? { 'x-user': user } : {}), 'content-type': 'application/json', host: 'naslife.app' }, payload: method === 'GET' ? undefined : JSON.stringify(body) });
@@ -82,9 +85,28 @@ check((await call('POST', '/safety/check', { body: { text: 'يا شرموطة' }
 e = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000000', caption: 'what the fuck', lat: 21.5, lng: 39.2 }, expect: 400 });
 check(e.error === 'banned-words' && e.word === 'fuck', 'default seed rejects a map post', JSON.stringify(e));
 check((await call('POST', '/safety/check', { body: { text: 'بيتزا بالزبدة للزبون' }, expect: 200 })).ok === true, 'no false positive on زبدة/زبون');
+// القائمة الافتراضية تصل للتطبيق في defaultWords (للتحقق المسبق حيث تملك النواة المسار)، وdefaults يبقى عدداً للنسخ القديمة
+w = await call('GET', '/safety/words', { expect: 200 });
+check(Array.isArray(w.words) && Array.isArray(w.defaultWords) && w.defaultWords.length === DEFAULT_BANNED.length && w.defaultWords.includes('شرموطه') && w.defaults === DEFAULT_BANNED.length,
+  '/safety/words returns the default list when on (defaults stays a count)', JSON.stringify({ n: w.defaultWords?.length, d: w.defaults }));
 await call('POST', '/adminapi/settings', { body: { bannedWordsDefault: false }, user: 'SA0000004', expect: 200 });
 check((await call('POST', '/safety/check', { body: { text: 'يا شرموطة' }, expect: 200 })).ok === true, 'default seed can be switched off');
+w = await call('GET', '/safety/words', { expect: 200 });
+check(Array.isArray(w.defaultWords) && w.defaultWords.length === 0 && w.defaults === 0, '/safety/words has no default list when switched off', JSON.stringify(w));
 await call('POST', '/adminapi/settings', { body: { bannedWordsDefault: true }, user: 'SA0000004', expect: 200 });
+
+// ---- بريد الدعم: ما تقبله الإعدادات هو نفسه ما يظهر في /support (تعبير واحد في الملفين)
+check(String(ADMIN_EMAIL_RE) === String(LEGAL_EMAIL_RE), 'admin.js and legal_pages.js share the support email pattern', `${ADMIN_EMAIL_RE} vs ${LEGAL_EMAIL_RE}`);
+for (const bad of ['a@b.c', 'x"y@areebd.sa', 'help@areebd', 'no-at.sa']) {
+  e = await call('POST', '/adminapi/settings', { body: { supportEmail: bad }, user: 'SA0000004', expect: 400 });
+  check(e.error === 'bad-email', `admin refuses support email ${bad} that /support would drop`);
+}
+await call('POST', '/adminapi/settings', { body: { supportEmail: 'help@areebd.sa' }, user: 'SA0000004', expect: 200 });
+let sp = await app.inject({ method: 'GET', url: '/support', headers: { host: 'naslife.app' } });
+check(sp.statusCode === 200 && sp.body.includes('help@areebd.sa') && !sp.body.includes('support@naslife.app'), 'accepted support email is the one shown on /support');
+await call('POST', '/adminapi/settings', { body: { supportEmail: '' }, user: 'SA0000004', expect: 200 });
+sp = await app.inject({ method: 'GET', url: '/support', headers: { host: 'naslife.app' } });
+check(sp.body.includes('support@naslife.app'), 'empty support email falls back to the default on /support');
 
 // ---- تصفية المحظورين في قائمة المنشورات
 const p3 = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000000', caption: 'من خالد', lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 });

@@ -109,9 +109,9 @@ Account deletion (5.1.1(v))
 
 User-generated content (1.2)
   - Users accept the Terms (zero tolerance for objectionable content and abusive users) when they register.
-  - Report: the "⋯" menu on any post, listing, comment, review, circle, event or profile > "إبلاغ" (Report), then pick a reason.
-  - Block: the "⋯" menu on a post or profile > "حظر" (Block). Blocked users' content disappears for both sides.
-  - A profanity filter rejects offensive words on posts, listings, comments and reviews.
+  - Report: the "⋯" menu on any post, listing, comment, review, event or profile, or at the top of a circle's screen ("إبلاغ عن الدائرة") > "إبلاغ" (Report), then pick a reason. The report sheet can also block the author in the same step.
+  - Block: the "⋯" menu on a post, comment, circle, profile or chat > "حظر" (Block). Content from people you blocked is hidden from you everywhere in the app; on map posts, the marketplace, events and search the block also works the other way (they no longer see your content). Blocked users are listed in My Space and can be unblocked there.
+  - A profanity filter rejects offensive words in map posts, listings, reviews, questions, events and circle comments (circle comments are checked before sending).
   - Reports are reviewed within 24 hours in our admin moderation queue; content reported by several users is hidden automatically, and offending accounts are suspended.
   - Contact: My Space > "تواصل معنا" (Contact us), and https://naslife.app/support
 

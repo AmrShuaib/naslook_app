@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'client.dart';
 import 'models.dart';
 
@@ -34,16 +36,63 @@ String normalizeArabic(String s) => s
     .replaceAll(RegExp('[ً-ْـ]'), '')
     .trim();
 
+/// كلمات الإدارة (تُطابَق جزءاً من النص) ومعها القائمة الافتراضية [defaults] (تُطابَق كلمةً كاملة).
+/// قائمة عادية لمن يقرأ الكلمات فقط، فتبقى نداءات bannedWordIn(text, list) القديمة كما هي وتشمل الافتراضية تلقائياً.
+class BannedWords extends UnmodifiableListView<String> {
+  final List<String> defaults;
+  BannedWords(super.words, {this.defaults = const []});
+}
+
+final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
+final _prefix1 = RegExp(r'^(?:يا|و|ف|ب|ل)(.{2,})$', unicode: true);
+final _prefix2 = RegExp(r'^(?:ال|لل)(.{2,})$', unicode: true);
+
+/// أول كلمة من القائمة الافتراضية تظهر كلمةً كاملة (مع السوابق و/ف/ب/ل/يا ثم ال/لل)، بنفس قواعد findDefaultBanned في server/safety.js
+/// حتى لا يرفض التطبيق «زبدة» أو «class» بينما يقبلها الخادم.
+String? defaultBannedIn(String text, List<String> defaults) {
+  if (defaults.isEmpty) return null;
+  final t = normalizeArabic(text);
+  if (t.isEmpty) return null;
+  final single = <String>{}, phrases = <String>[];
+  for (final w in defaults) {
+    final n = normalizeArabic(w);
+    if (n.isEmpty) continue;
+    n.contains(' ') ? phrases.add(n) : single.add(n);
+  }
+  final tokens = t.split(_nonWord).where((x) => x.isNotEmpty).toList();
+  for (final tok in tokens) {
+    final cands = <String>{tok};
+    for (final c in cands.toList()) {
+      final m = _prefix1.firstMatch(c);
+      if (m != null) cands.add(m.group(1)!);
+    }
+    for (final c in cands.toList()) {
+      final m = _prefix2.firstMatch(c);
+      if (m != null) cands.add(m.group(1)!);
+    }
+    for (final c in cands) {
+      if (single.contains(c)) return c;
+    }
+  }
+  final padded = ' ${tokens.join(' ')} ';
+  for (final ph in phrases) {
+    if (padded.contains(' $ph ')) return ph;
+  }
+  return null;
+}
+
 /// أول كلمة محظورة في النص أو null (تحقق مسبق قبل الإرسال؛ الخادم يتحقق أيضاً في المنشورات والعروض).
+/// إن كانت [words] من نوع [BannedWords] تُفحص القائمة الافتراضية أيضاً كما في الخادم.
 String? bannedWordIn(String text, List<String> words) {
-  if (words.isEmpty) return null;
+  final defaults = words is BannedWords ? words.defaults : const <String>[];
+  if (words.isEmpty && defaults.isEmpty) return null;
   final t = normalizeArabic(text);
   if (t.isEmpty) return null;
   for (final w in words) {
     final n = normalizeArabic(w);
     if (n.length >= 2 && t.contains(n)) return w;
   }
-  return null;
+  return defaultBannedIn(text, defaults);
 }
 
 extension SafetyApi on ApiClient {
@@ -51,10 +100,11 @@ extension SafetyApi on ApiClient {
   Future<ChatMute> mute(String peerId, {int? hours}) async => ChatMute.fromJson(await post('/safety/mutes', {'peerId': peerId, if (hours != null) 'hours': hours}));
   Future<void> unmute(String peerId) => delete('/safety/mutes/$peerId');
 
-  /// قائمة الكلمات المحظورة (مطبّعة) وحدّ البلاغات.
-  Future<List<String>> bannedWords() async {
-    final raw = (await get('/safety/words'))['words'];
-    return raw is List ? [for (final w in raw) w.toString()] : const [];
+  /// الكلمات المحظورة (مطبّعة): قائمة الإدارة ومعها القائمة الافتراضية (defaultWords) حين تكون مفعّلة في الخادم.
+  Future<BannedWords> bannedWords() async {
+    final d = await get('/safety/words');
+    List<String> list(Object? raw) => raw is List ? [for (final w in raw) w.toString()] : const [];
+    return BannedWords(list(d['words']), defaults: list(d['defaultWords']));
   }
 
   /// بلاغ عن منشور خريطة أو عرض سوق؛ يعيد عدد المبلّغين وهل أُخفي تلقائياً.

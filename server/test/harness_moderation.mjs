@@ -22,11 +22,13 @@ await pool.query("CREATE TABLE IF NOT EXISTS reports (id UUID PRIMARY KEY DEFAUL
 // الملف الخاص يُكتشف في search.js عند التسجيل؛ وتعليقات الدوائر في النواة يُكتشف جدولها في vessel_mod.js
 await pool.query("DROP TABLE IF EXISTS profiles; CREATE TABLE profiles (user_id TEXT PRIMARY KEY, bio TEXT NOT NULL DEFAULT '', is_public BOOLEAN NOT NULL DEFAULT true)");
 await pool.query("DROP TABLE IF EXISTS comments; CREATE TABLE comments (id UUID PRIMARY KEY, post_id UUID NOT NULL, author_id TEXT NOT NULL, content TEXT NOT NULL DEFAULT '')");
+// دوائر النواة (بنية harness_search نفسها) لبلاغ «vessel»
+await pool.query("CREATE TABLE IF NOT EXISTS vessels (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT, topic TEXT, kind TEXT DEFAULT 'general', is_public BOOLEAN DEFAULT true, owner_id TEXT, created_at TIMESTAMPTZ DEFAULT now())");
 const ids = `('${OURS.join("','")}')`;
 for (const sql of ['DELETE FROM content_reports', 'DELETE FROM content_report_actions', `DELETE FROM user_blocks WHERE user_id IN ${ids} OR blocked_id IN ${ids}`, `DELETE FROM user_flags WHERE user_id IN ${ids}`,
   `DELETE FROM app_notifications WHERE user_id IN ${ids}`, `DELETE FROM biz_reviews WHERE user_id IN ${ids}`, `DELETE FROM biz WHERE owner_id IN ${ids}`, `DELETE FROM market_listings WHERE seller_id IN ${ids}`,
   `DELETE FROM market_wanted WHERE user_id IN ${ids}`, `DELETE FROM events WHERE host_id IN ${ids}`, `DELETE FROM map_posts WHERE user_id IN ${ids}`, `DELETE FROM market_reviews WHERE buyer_id IN ${ids}`,
-  'DELETE FROM vessel_comment_mod', `DELETE FROM admins WHERE user_id IN ${ids}`]) { try { await pool.query(sql); } catch { /* أول تشغيل */ } }
+  'DELETE FROM vessel_comment_mod', `DELETE FROM admins WHERE user_id IN ${ids}`, `DELETE FROM vessels WHERE owner_id IN ${ids}`, "DELETE FROM content_prev_state WHERE target_type='vessel'"]) { try { await pool.query(sql); } catch { /* أول تشغيل */ } }
 
 const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
@@ -214,7 +216,7 @@ await call('GET', '/adminapi/moderation', { user: R1, expect: 403 });
 let mq = await call('GET', '/adminapi/moderation', { user: ADMIN, expect: 200 });
 const evItem = mq.items.find((i) => i.targetType === 'event' && i.targetId === EV.id);
 check(evItem && evItem.reports === 3 && evItem.owner?.id === AUTHOR && evItem.owner.nickname === 'monamod' && evItem.hidden === true && evItem.title === 'أمسية منى' && evItem.reasons.includes('مسيء') && evItem.typeName === 'فعالية', 'queue groups reports with owner, preview and state', JSON.stringify(evItem));
-check(mq.open >= 9 && mq.items.length === mq.open && mq.types.length === 14, 'open count and the 14 target types', `${mq.open}/${mq.items.length}`);
+check(mq.open >= 9 && mq.items.length === mq.open && mq.types.length === 15 && mq.types.some((t) => t.id === 'vessel' && t.name === 'دائرة'), 'open count and the 15 target types (with vessel)', `${mq.open}/${mq.items.length}`);
 let a = await call('POST', `/adminapi/moderation/event/${EV.id}`, { body: { action: 'restore', note: 'لا مخالفة' }, user: ADMIN, expect: 200 });
 check(a.changed === true && a.status === 'visible', 'restore brings the event back', JSON.stringify(a));
 await call('GET', `/events/${EV.id}`, { user: null, expect: 200 });
@@ -282,7 +284,64 @@ check(!!(await noted(ADMIN, 'report_new', (d) => d.source === 'reports')), 'admi
 const ov = await call('GET', '/adminapi/overview', { user: ADMIN, expect: 200 });
 check(ov.server.reportsTable === 'reports' && typeof ov.reports.contentOpen === 'number', 'overview: core reports table and open content reports', JSON.stringify(ov.reports));
 
+// ================= الدائرة نفسها (vessel في النواة): بلاغ، لا إخفاء تلقائي، طابور، إخفاء = خاصة، إعادة = حالتها السابقة =================
 await pool.query(`DELETE FROM user_flags WHERE user_id IN ${ids}`);
+const VS = (await pool.query("INSERT INTO vessels(name,topic,is_public,owner_id) VALUES('دائرة منى المزعجة','نقاش عام',true,$1) RETURNING id", [AUTHOR])).rows[0].id;
+const VP = (await pool.query("INSERT INTO vessels(name,topic,is_public,owner_id) VALUES('دائرة منى الخاصة','خاصة',false,$1) RETURNING id", [AUTHOR])).rows[0].id;
+e = await call('POST', '/safety/report', { body: { targetType: 'vessel', targetId: VS }, user: AUTHOR, expect: 400 });
+check(e.error === 'own-content', 'owner cannot report own circle');
+await call('POST', '/safety/report', { body: { targetType: 'vessel', targetId: crypto.randomUUID() }, user: R1, expect: 404 });
+await call('POST', '/safety/report', { body: { targetType: 'vessel', targetId: 'not a/core id' }, user: R1, expect: 404 });
+rep = await report3('vessel', VS);
+check(rep.hidden === false && rep.reports === 3, 'vessel is NOT auto-hidden by reports (queue only)', JSON.stringify(rep));
+check((await pool.query('SELECT is_public FROM vessels WHERE id=$1', [VS])).rows[0].is_public === true, 'reported circle stays public');
+check(!!(await noted(ADMIN, 'content_reported_many', (d) => d.targetType === 'vessel' && d.targetId === VS)), 'admins alerted when a vessel reaches the threshold');
+mq = await call('GET', '/adminapi/moderation?type=vessel', { user: ADMIN, expect: 200 });
+const vItem = mq.items.find((i) => i.targetId === VS);
+check(vItem && vItem.targetType === 'vessel' && vItem.typeName === 'دائرة' && vItem.title === 'دائرة منى المزعجة' && vItem.text === 'نقاش عام' && vItem.owner?.id === AUTHOR && vItem.hidden === false && vItem.vesselId === VS,
+  'vessel listed in the queue with name, topic and owner', JSON.stringify(vItem));
+a = await call('POST', `/adminapi/moderation/vessel/${VS}`, { body: { action: 'hide', note: 'اسم مسيء' }, user: ADMIN, expect: 200 });
+check(a.changed === true && a.status === 'hidden' && a.owner === AUTHOR, 'admin hides the circle', JSON.stringify(a));
+check((await pool.query('SELECT is_public FROM vessels WHERE id=$1', [VS])).rows[0].is_public === false, 'hide makes the circle private');
+check(!!(await noted(AUTHOR, 'content_hidden', (d) => d.targetType === 'vessel' && d.reason === 'moderation' && d.vesselId === VS)), 'owner notified (vessel, by moderation)');
+a = await call('POST', `/adminapi/moderation/vessel/${VS}`, { body: { action: 'hide' }, user: ADMIN, expect: 200 });
+check(a.changed === false, 'hiding twice keeps the saved previous state');
+a = await call('POST', `/adminapi/moderation/vessel/${VS}`, { body: { action: 'restore' }, user: ADMIN, expect: 200 });
+check(a.changed === true && a.status === 'visible' && (await pool.query('SELECT is_public FROM vessels WHERE id=$1', [VS])).rows[0].is_public === true, 'restore makes it public again', JSON.stringify(a));
+check(!!(await noted(AUTHOR, 'content_restored', (d) => d.targetType === 'vessel')), 'owner told about the vessel restore');
+// دائرة كانت خاصة أصلاً: الإعادة تبقيها خاصة (الحالة السابقة لا «عامة» دائماً)
+await call('POST', '/safety/report', { body: { targetType: 'vessel', targetId: VP }, user: R1, expect: 200 });
+a = await call('POST', `/adminapi/moderation/vessel/${VP}`, { body: { action: 'hide' }, user: ADMIN, expect: 200 });
+check(a.changed === true && a.status === 'hidden', 'a private circle can be marked hidden');
+a = await call('POST', `/adminapi/moderation/vessel/${VP}`, { body: { action: 'restore' }, user: ADMIN, expect: 200 });
+check(a.changed === true && (await pool.query('SELECT is_public FROM vessels WHERE id=$1', [VP])).rows[0].is_public === false, 'restore returns a private circle to private, not public');
+a = await call('POST', `/adminapi/moderation/vessel/${VS}`, { body: { action: 'suspend-owner', note: 'دائرة مسيئة' }, user: ADMIN, expect: 200 });
+check(a.owner === AUTHOR && await suspendedIn(AUTHOR), 'suspend-owner works from a circle report');
+
+// ================= كل نوع بلاغ يرسله التطبيق معروف في الخادم (قراءة lib/**/*.dart) =================
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { TARGET_TYPES } = await import('../safety.js');
+  const libDir = path.join(dir, '..', '..', 'lib');
+  const files = []; const walk = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, f.name); if (f.isDirectory()) walk(p); else if (p.endsWith('.dart')) files.push(p); } };
+  walk(libDir);
+  const used = new Set();
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8');
+    for (const m of src.matchAll(/(?:showReportSheet|ReportMenuButton)\(/g)) {
+      // وسائط النداء حتى القوس المقابل
+      let depth = 0, i = m.index + m[0].length - 1, end = i;
+      for (; i < src.length; i++) { if (src[i] === '(') depth++; else if (src[i] === ')' && --depth === 0) { end = i; break; } }
+      for (const t of src.slice(m.index, end).matchAll(/\btype:\s*'([^']+)'/g)) used.add(t[1]);
+    }
+  }
+  const unknown = [...used].filter((t) => !TARGET_TYPES.includes(t));
+  check(used.size >= 15 && used.has('vessel') && unknown.length === 0, 'every report type used in lib/ is in TARGET_TYPES', `used=${[...used].join(',')} unknown=${unknown.join(',')}`);
+}
+
+await pool.query(`DELETE FROM user_flags WHERE user_id IN ${ids}`);
+await pool.query(`DELETE FROM vessels WHERE owner_id IN ${ids}`);
 await pool.query('DROP TABLE IF EXISTS comments');
 await pool.query("DELETE FROM platform_settings WHERE key = ANY($1)", [['bannedWords', 'reportThreshold', 'bannedWordsDefault', 'marketReviewNewAccounts', 'testTopup']]);
 await app.close(); await pool.end();

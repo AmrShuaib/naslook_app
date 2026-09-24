@@ -8,6 +8,7 @@ import '../api/models.dart';
 import '../api/naslife_api.dart';
 import '../api/safety_api.dart';
 import '../core/app_theme.dart';
+import '../core/require_account.dart';
 import '../state/app_state.dart';
 import '../state/safety_providers.dart';
 import 'widgets.dart';
@@ -63,8 +64,13 @@ Future<ReportOutcome?> showReportSheet(
   String title = 'إبلاغ',
   String? messageId,
 }) async {
+  // الزائر يرى دعوة الدخول بدل ورقة تنتهي برفض 401 بعد اختيار السبب
+  if (!requireAccount(context)) return null;
   final myId = ref.read(appStateProvider).user?.id;
-  final blocked = ref.read(blockedIdsProvider);
+  // قائمة المحظورين قد لا تكون حُمّلت في هذه الشاشة (الخلاصة، المحادثة، رابط مباشر)، فننتظرها قبل عرض «حظر أيضاً»
+  final blockedList = await ref.read(blockedUsersProvider.future).catchError((_) => const <BlockedUser>[]);
+  if (!context.mounted) return null;
+  final blocked = {for (final u in blockedList) u.id.toUpperCase()};
   // خيار الحظر فقط حين نعرف الناشر وليس أنا ولم يُحظر بعد
   final canBlock = myId != null && author != null && author.id.isNotEmpty && author.id.toUpperCase() != myId.toUpperCase() && !blocked.contains(author.id.toUpperCase());
   final choice = await showModalBottomSheet<_Choice>(
@@ -76,6 +82,7 @@ Future<ReportOutcome?> showReportSheet(
   if (choice == null || !context.mounted) return null;
   final api = ref.read(apiClientProvider);
   var out = const ReportOutcome();
+  Object? reportError;
   try {
     if (type == kReportUser) {
       await api.reportUser(id, choice.text, messageId: messageId);
@@ -85,26 +92,32 @@ Future<ReportOutcome?> showReportSheet(
       out = ReportOutcome(sent: true, hidden: r.hidden);
     }
   } catch (e) {
-    final own = e is ApiException && e.body?['error'] == 'own-content';
-    if (context.mounted) toast(context, reportErrorText(e), error: true);
-    if (own || !choice.block) return out;
+    reportError = e;
   }
-  if (choice.block && canBlock) {
+  // محتواي لا يُحظر صاحبه أبداً (أنا)، فلا نكمل إلى الحظر
+  final own = reportError is ApiException && reportError.body?['error'] == 'own-content';
+  Object? blockError;
+  if (choice.block && canBlock && !own) {
     try {
       await api.blockUser(author.id);
       ref.invalidate(blockedUsersProvider);
       out = ReportOutcome(sent: out.sent, hidden: out.hidden, blocked: true);
     } catch (e) {
-      if (context.mounted) toast(context, reportErrorText(e), error: true);
-      return out;
+      blockError = e;
     }
   }
-  if (!context.mounted || !out.sent && !out.blocked) return out;
-  final parts = <String>[
-    if (out.sent) out.hidden ? 'وصل بلاغك وأُخفي المحتوى للمراجعة' : 'وصل بلاغك وسنراجعه خلال 24 ساعة',
-    if (out.blocked) 'وحُظر ${author!.nickname}',
-  ];
-  toast(context, parts.join(' '));
+  if (!context.mounted) return out;
+  // رسالة واحدة تصف ما حدث فعلاً (لا خطأ يمحوه تأكيد يبدأ بـ«و»)
+  final name = author?.nickname ?? '';
+  if (reportError != null) {
+    toast(context, out.blocked ? 'تعذّر إرسال البلاغ (${reportErrorText(reportError)}) لكن حُظر $name' : reportErrorText(reportError), error: true);
+  } else if (blockError != null) {
+    toast(context, 'وصل بلاغك، لكن تعذّر حظر $name: ${reportErrorText(blockError)}', error: true);
+  } else if (out.blocked) {
+    toast(context, out.hidden ? 'وصل بلاغك وأُخفي المحتوى للمراجعة، وحُظر $name' : 'وصل بلاغك وحُظر $name');
+  } else {
+    toast(context, out.hidden ? 'وصل بلاغك وأُخفي المحتوى للمراجعة' : 'وصل بلاغك وسنراجعه خلال 24 ساعة');
+  }
   return out;
 }
 
