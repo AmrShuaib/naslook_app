@@ -108,10 +108,13 @@ const photoAspects = <(String, double?)>[('أصلي', null), ('مربع', 1), ('
 
 typedef BakedPhoto = ({Uint8List bytes, String mime, String name});
 
+/// أقصى ضلع للصورة المخبوزة: يكفي للعرض ويبقي الرفع صغيراً على الجوال.
+const int kBakeMaxSide = 2048;
+
 /// بديل للاختبارات: فكّ الصور ورسمها يحتاج زمناً حقيقياً لا يتوفر في اختبارات الودجات.
 Future<BakedPhoto> Function(Uint8List src, {required PhotoFilter filter, PhotoAdjust adjust, PhotoFrame frame, String name, String mime})? bakePhotoOverride;
 
-/// يخبز الفلتر والضبط والقصّ والدوران في الصورة ويعيد JPEG (على الويب) أو PNG (غيره).
+/// يخبز الفلتر والضبط والقصّ والدوران في الصورة ويعيد JPEG، بضلع أطول لا يتجاوز [kBakeMaxSide].
 /// تُعاد البايتات الأصلية كما هي إن لم يكن هناك أي تعديل.
 Future<BakedPhoto> bakePhoto(Uint8List src, {required PhotoFilter filter, PhotoAdjust adjust = const PhotoAdjust(), PhotoFrame frame = const PhotoFrame(), String name = 'photo.jpg', String mime = 'image/jpeg'}) async {
   if (isIdentityLook(filter, adjust) && frame.isNeutral) return (bytes: src, mime: mime, name: name);
@@ -137,8 +140,12 @@ Future<BakedPhoto> bakePhoto(Uint8List src, {required PhotoFilter filter, PhotoA
       }
     }
     final ox = (rw - cw) / 2, oy = (rh - ch) / 2;
+    // تصغير إن تجاوز الضلع الأطول الحد
+    final longSide = cw > ch ? cw : ch;
+    final scale = longSide > kBakeMaxSide ? kBakeMaxSide / longSide : 1.0;
     final rec = ui.PictureRecorder();
     final canvas = Canvas(rec);
+    if (scale != 1.0) canvas.scale(scale);
     final paint = Paint()..filterQuality = FilterQuality.high;
     final cf = colorFilterFor(filter, adjust);
     if (cf != null) paint.colorFilter = cf;
@@ -149,7 +156,7 @@ Future<BakedPhoto> bakePhoto(Uint8List src, {required PhotoFilter filter, PhotoA
     canvas.translate(-sw / 2, -sh / 2);
     canvas.drawImage(img, Offset.zero, paint);
     final pic = rec.endRecording();
-    final out = await pic.toImage(cw.round().clamp(1, 8000), ch.round().clamp(1, 8000));
+    final out = await pic.toImage((cw * scale).round().clamp(1, kBakeMaxSide), (ch * scale).round().clamp(1, kBakeMaxSide));
     try {
       final enc = await encodeImage(out);
       return (bytes: enc.bytes, mime: enc.mime, name: enc.mime == 'image/png' ? 'photo.png' : 'photo.jpg');

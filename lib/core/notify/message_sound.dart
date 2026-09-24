@@ -1,11 +1,11 @@
-/// جرس الرسائل الجديدة على الويب: نغمة قصيرة تُولَّد ببرمجة الصوت في المتصفح (بلا ملف صوتي) عند وصول رسالة عبر الاتصال المباشر.
-/// المتصفحات لا تسمح بالصوت قبل أول تفاعل من المستخدم مع الصفحة، فيُفتح سياق الصوت عند أول لمسة أو ضغطة مفتاح ثم يبقى جاهزاً.
-/// على غير الويب لا يفعل شيئاً.
+/// جرس الرسائل الجديدة عند وصول رسالة عبر الاتصال المباشر.
+/// على الويب: نغمة تُولَّد ببرمجة الصوت في المتصفح، ويُفتح سياق الصوت عند أول لمسة أو ضغطة مفتاح (شرط المتصفحات).
+/// على iOS/Android: ملف صغير مضمّن يُشغَّل عبر just_audio. على سطح المكتب لا يفعل شيئاً.
 library;
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'message_sound_stub.dart' if (dart.library.js_interop) 'message_sound_web.dart' as impl;
+import 'message_sound_stub.dart' if (dart.library.js_interop) 'message_sound_web.dart' if (dart.library.io) 'message_sound_io.dart' as impl;
 
 class MessageSound {
   static const prefKey = 'naslife.sound.messages';
@@ -14,8 +14,10 @@ class MessageSound {
   static DateTime? _last;
   /// يُبدَّل في الاختبارات لالتقاط نداءات التشغيل.
   static void Function()? playOverride;
+  /// يُبدَّل في الاختبارات لمحاكاة جهاز يدعم الجرس (بيئة الاختبار ليست iOS ولا Android).
+  static bool? supportedOverride;
 
-  static bool get supported => impl.soundSupported();
+  static bool get supported => supportedOverride ?? impl.soundSupported();
 
   /// يسجّل مستمعي أول تفاعل (لمسة/مفتاح) لفتح سياق الصوت؛ يُستدعى مرة عند بدء التطبيق.
   static void prepare() => impl.soundPrepare();

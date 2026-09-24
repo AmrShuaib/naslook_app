@@ -71,3 +71,5 @@ Uint8List _wav(Float32List samples, int rate) {
   }
   return out.buffer.asUint8List();
 }
+
+const bool audioTrimSupported = true;

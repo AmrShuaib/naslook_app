@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/admin_blog_api.dart';
 import '../../api/chat_tools_api.dart';
+import '../../api/client.dart' show mediaUrl, thumbUrl;
 import '../../core/app_theme.dart';
 import '../../core/media/pick_image.dart';
 import '../../core/share/share_links.dart';
@@ -171,7 +172,7 @@ class _AdminBlogPageState extends ConsumerState<AdminBlogPage> {
                     key: Key('blog-row-${p.id}'),
                     onTap: () => _open(p),
                     leading: p.coverUrl != null
-                        ? ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.network(p.coverUrl!, width: 48, height: 48, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _KindBox(p.kind)))
+                        ? ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.network(thumbUrl(p.coverUrl!), width: 48, height: 48, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _KindBox(p.kind)))
                         : _KindBox(p.kind),
                     title: Row(children: [
                       if (p.pinned) const Padding(padding: EdgeInsetsDirectional.only(end: 4), child: Icon(Icons.push_pin_rounded, size: 14, color: Joy.primary)),
@@ -518,7 +519,7 @@ class _BlogEditorPageState extends ConsumerState<BlogEditorPage> {
           if (c != null) TextButton(key: const Key('blog-cover-remove'), onPressed: () => setState(() { _cover = null; _dirty = true; }), child: const Text('إزالة', style: TextStyle(color: Joy.danger))),
         ]),
         if (c != null)
-          ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.network(c, height: 150, width: double.infinity, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(height: 60, alignment: Alignment.center, color: Joy.surface2, child: Text(c, textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 12, color: Joy.textMuted), maxLines: 1, overflow: TextOverflow.ellipsis))))
+          ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.network(mediaUrl(c), height: 150, width: double.infinity, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(height: 60, alignment: Alignment.center, color: Joy.surface2, child: Text(c, textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 12, color: Joy.textMuted), maxLines: 1, overflow: TextOverflow.ellipsis))))
         else
           Row(children: [
             OutlinedButton.icon(key: const Key('blog-cover-upload'), onPressed: _uploading ? null : _uploadCover, icon: _uploading ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.upload_rounded, size: 18), label: const Text('رفع صورة')),
@@ -537,7 +538,7 @@ class _BlogEditorPageState extends ConsumerState<BlogEditorPage> {
       child: JoyCard(
         padding: EdgeInsets.zero,
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          if (_cover != null) ClipRRect(borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), child: Image.network(_cover!, height: 180, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())),
+          if (_cover != null) ClipRRect(borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), child: Image.network(mediaUrl(_cover!), height: 180, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())),
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

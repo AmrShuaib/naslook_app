@@ -472,7 +472,7 @@ class _InboxThreadSheetState extends ConsumerState<InboxThreadSheet> {
                   margin: const EdgeInsets.symmetric(vertical: 6), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
                   child: Row(children: [
-                    CircleAvatar(radius: 16, backgroundColor: c.known ? Joy.primarySoft : Joy.surface, backgroundImage: c.avatarUrl != null && c.avatarUrl!.isNotEmpty ? NetworkImage(c.avatarUrl!) : null, child: c.avatarUrl != null && c.avatarUrl!.isNotEmpty ? null : Icon(c.known ? Icons.person_rounded : Icons.person_outline, size: 18, color: c.known ? Joy.primary : Joy.textMuted)),
+                    CircleAvatar(radius: 16, backgroundColor: c.known ? Joy.primarySoft : Joy.surface, backgroundImage: c.avatarUrl != null && c.avatarUrl!.isNotEmpty ? NetworkImage(thumbUrl(c.avatarUrl!)) : null, child: c.avatarUrl != null && c.avatarUrl!.isNotEmpty ? null : Icon(c.known ? Icons.person_rounded : Icons.person_outline, size: 18, color: c.known ? Joy.primary : Joy.textMuted)),
                     const SizedBox(width: 10),
                     Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(children: [

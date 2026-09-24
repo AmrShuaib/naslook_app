@@ -198,7 +198,7 @@ class _Viewer extends StatelessWidget {
   const _Viewer({required this.images, required this.initial});
   @override
   Widget build(BuildContext context) => Scaffold(backgroundColor: Colors.black, appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
-      body: PageView.builder(controller: PageController(initialPage: initial), itemCount: images.length, itemBuilder: (_, i) => InteractiveViewer(child: Center(child: Image.network(images[i], fit: BoxFit.contain)))));
+      body: PageView.builder(controller: PageController(initialPage: initial), itemCount: images.length, itemBuilder: (_, i) => InteractiveViewer(child: Center(child: Image.network(mediaUrl(images[i]), fit: BoxFit.contain)))));
 }
 
 /// بطاقة البائع: تقييم وشارات ومتابعة ومراسلة

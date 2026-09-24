@@ -48,6 +48,11 @@ dependencies:
   just_audio: ^0.10.6
   scrollable_positioned_list: ^0.3.8
   web: ^1.1.1
+  share_plus: ^13.3.0
+  image: ^4.10.1
+  path_provider: ^2.1.6
+  audio_session: ^0.2.4
+  video_player: ^2.14.0
 
 dev_dependencies:
   flutter_test:
@@ -74,6 +79,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/biz/
+    - assets/sounds/
 
   # assets:
   #   - images/a_dot_burr.jpeg

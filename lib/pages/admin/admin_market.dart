@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../api/client.dart' show thumbUrl;
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
@@ -39,7 +40,7 @@ class AdminMarketPage extends ConsumerWidget {
         if (o.pending.isNotEmpty) ...[
           SectionTitle('بانتظار المراجعة (${o.pending.length})'),
           JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, l) in o.pending.indexed) ListRow(
-            leading: Container(width: 40, height: 40, clipBehavior: Clip.antiAlias, decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(10)), child: l.imageUrl != null ? Image.network(l.imageUrl!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox()) : null),
+            leading: Container(width: 40, height: 40, clipBehavior: Clip.antiAlias, decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(10)), child: l.imageUrl != null ? Image.network(thumbUrl(l.imageUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox()) : null),
             title: Text(l.title), subtitle: Text('${l.seller.nickname} · ${money(l.price)} · ${marketCategories[l.category] ?? l.category}'),
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
               IconButton(key: Key('am-approve-${l.id}'), tooltip: 'قبول', icon: const Icon(Icons.check_circle_outline_rounded, color: Joy.success), onPressed: () => _pending(context, ref, l, true)),

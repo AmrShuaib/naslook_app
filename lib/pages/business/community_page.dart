@@ -705,7 +705,7 @@ class _CommunityVoiceState extends State<CommunityVoice> {
   void _fail(Object e) {
     if (!mounted || _err != null) return;
     setState(() => _err = e);
-    toast(context, 'تعذر تشغيل التسجيل على هذا الجهاز، اضغط عليه مجدداً لفتحه في المتصفح', error: true);
+    toast(context, 'تعذر تشغيل التسجيل على هذا الجهاز، اضغط عليه مجدداً لفتحه خارجياً', error: true);
   }
 
   @override
@@ -939,7 +939,8 @@ class _CommunityComposerState extends ConsumerState<CommunityComposer> {
     try {
       await rec.start();
     } catch (e) {
-      if (mounted) toast(context, 'تعذر بدء التسجيل: ${e.toString().replaceFirst('Bad state: ', '')}', error: true);
+      if (!mounted || handlePermissionError(context, e)) return;
+      toast(context, 'تعذر بدء التسجيل: ${e.toString().replaceFirst('Bad state: ', '')}', error: true);
       return;
     }
     if (!mounted) return;

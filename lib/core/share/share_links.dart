@@ -6,7 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../api/client.dart';
 import '../../ui/widgets.dart';
 import '../app_theme.dart';
-import 'share_stub.dart' if (dart.library.js_interop) 'share_web.dart' as impl;
+import 'share_stub.dart' if (dart.library.js_interop) 'share_web.dart' if (dart.library.io) 'share_io.dart' as impl;
 
 /// رابط عام وصل عند الإقلاع: دائرة (`/c/<id>`) أو حساب (`/u/<نك نيم>`)، بالمسار أو بالجزء (`#/c/…`).
 class PendingLink {
