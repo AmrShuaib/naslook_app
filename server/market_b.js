@@ -60,6 +60,9 @@ async function setup(app, opts) {
   const origin = (req) => { const proto = String(req.headers["x-forwarded-proto"] ?? req.protocol ?? "https").split(",")[0].trim(); const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "naslife.app").split(",")[0].trim(); return `${proto}://${host}`; };
   const userByNick = async (nick) => { try { return (await pool.query("SELECT id, nickname FROM users WHERE lower(nickname)=lower($1) ORDER BY id LIMIT 1", [nick])).rows[0] ?? null; } catch { return null; } };
   const blocked = async (a, b) => { try { return (await pool.query("SELECT 1 FROM user_blocks WHERE (user_id=$1 AND blocked_id=$2) OR (user_id=$2 AND blocked_id=$1)", [a, b])).rowCount > 0; } catch { return false; } };
+  // تصفح الضيف للبازارات (مراجِع المتجر)؛ الانضمام والإدارة بجلسة
+  const optionalAuth = async (req) => { try { return (await auth(req)) || null; } catch { return null; } };
+  const blockedIds = async (uid) => { try { return uid ? (await globalThis.naslifeBlockedIds?.(uid)) ?? [] : []; } catch { return []; } };
   const ORDER_SQL = "SELECT o.*, l.title, l.image_url, l.kind, (r.order_id IS NOT NULL) AS reviewed FROM market_orders o JOIN market_listings l ON l.id=o.listing_id LEFT JOIN market_reviews r ON r.order_id=o.id";
   const loadOrder = async (id) => (UUID_RE.test(id) ? (await pool.query(`${ORDER_SQL} WHERE o.id=$1`, [id])).rows[0] ?? null : null);
 
@@ -100,18 +103,19 @@ async function setup(app, opts) {
   const BAZAAR_SQL = (uid) => `SELECT b.*, (SELECT count(*)::int FROM market_listings l WHERE l.bazaar_id=b.id AND l.status='active') AS n, (SELECT count(*)::int FROM market_listings l WHERE l.bazaar_id=b.id AND l.seller_id=${uid}) AS mine FROM market_bazaars b`;
   const activeBazaars = async (uid) => (await pool.query(`${BAZAAR_SQL("$1")} WHERE b.active AND b.ends_at > now() ORDER BY (b.starts_at <= now()) DESC, b.starts_at ASC LIMIT 6`, [uid])).rows.map((b) => bazaarOut(b, uid));
   globalThis.naslifeMarketBazaars = activeBazaars;
-  app.get("/market/bazaars", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+  app.get("/market/bazaars", async (req) => {
+    const uid = await optionalAuth(req);
     return activeBazaars(uid);
   });
   app.get("/market/bazaars/:id", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const uid = await optionalAuth(req);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const b = (await pool.query(`${BAZAAR_SQL("$2")} WHERE b.id=$1`, [req.params.id, uid])).rows[0]; if (!b) return bad(reply, 404, "not-found");
     const lat = Number(req.query?.lat), lng = Number(req.query?.lng); const hasPos = Number.isFinite(lat) && Number.isFinite(lng);
     const dist = hasPos ? "(CASE WHEN lat IS NULL OR lng IS NULL THEN NULL ELSE 6371 * acos(least(1::float8, cos(radians($2)) * cos(radians(lat)) * cos(radians(lng) - radians($3)) + sin(radians($2)) * sin(radians(lat)))) END)" : "NULL::float8";
     const r = await pool.query(`SELECT *, ${dist} AS dist FROM market_listings WHERE bazaar_id=$1 AND status='active' ORDER BY (spotlight_until > now()) DESC NULLS LAST, bumped_at DESC LIMIT 200`, hasPos ? [b.id, lat, lng] : [b.id]);
-    return { ...bazaarOut(b, uid), items: await Promise.all(r.rows.map((l) => listingOut(l, uid, { dist: l.dist }))) };
+    const hide = new Set(await blockedIds(uid));
+    return { ...bazaarOut(b, uid), items: await Promise.all(r.rows.filter((l) => !hide.has(l.seller_id)).map((l) => listingOut(l, uid, { dist: l.dist }))) };
   });
   app.post("/market/bazaars/:id/join", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);

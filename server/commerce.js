@@ -74,10 +74,23 @@ export default async function commerce(app, opts) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE TABLE IF NOT EXISTS market_views (listing_id UUID NOT NULL, user_id TEXT NOT NULL, day DATE NOT NULL, PRIMARY KEY (listing_id, user_id, day));
   `);
+  // إخفاء الإشراف (safety.js): الأسئلة والتقييمات وردود الطلبات والفعاليات تُخفى بعمود مستقل لا يملكه صاحبها
+  await pool.query(`
+    ALTER TABLE market_reviews ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE market_questions ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE market_wanted_replies ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE events ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
+  `);
   try { await pool.query(String.raw`UPDATE market_listings SET image_url = regexp_replace(image_url, '^(https?://)www\.', '\1', 'i') WHERE image_url ~* '^https?://www\.'`); } catch { /* عمود غير موجود أو جدول قديم */ }
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
+  // تصفح الضيف (مراجِع المتجر يرى المحتوى قبل التسجيل): القراءة العامة بلا جلسة، والكتابة والقوائم الشخصية تبقى بجلسة
+  const optionalAuth = async (req) => { try { return (await auth(req)) || null; } catch { return null; } };
+  // عميل iOS الأصلي يرسل x-naslife-client: ios/<version>؛ لا تحويلات ولا شحن تجريبي فيه (قواعد آبل للمدفوعات)
+  const iosNative = (req) => /^ios\//i.test(String(req.headers["x-naslife-client"] ?? ""));
+  const blockedIds = async (uid) => { try { return uid ? (await globalThis.naslifeBlockedIds?.(uid)) ?? [] : []; } catch { return []; } };
+  const bannedIn = (...texts) => { try { return globalThis.naslifeCheckText?.(...texts.filter((t) => typeof t === "string")) ?? null; } catch { return null; } };
   const userRow = async (id) => { try { return (await pool.query("SELECT * FROM users WHERE id=$1", [id])).rows[0] ?? null; } catch { return null; } };
   // مدير النظام: عمود في جدول المستخدمين أو جدول admins الذي تديره لوحة الإدارة (server/admin.js)
   const isAdmin = async (uid) => {
@@ -135,6 +148,7 @@ export default async function commerce(app, opts) {
   app.post("/wallet/topup", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (process.env.WALLET_TEST_TOPUP !== "1" && !(await isAdmin(uid))) return bad(reply, 403, "topup-disabled");
+    if (iosNative(req) && !(await isAdmin(uid))) return bad(reply, 403, "unavailable");
     const amount = SAR(req.body?.amount);
     // حتى 100,000 ر.س للشحن التجريبي الواحد (أسعار الفنادق والسيارات تتجاوز السقف القديم 5,000)
     const maxTopup = Number(globalThis.naslifeSettings?.maxTopup) || 10000000;
@@ -170,6 +184,8 @@ export default async function commerce(app, opts) {
   globalThis.naslifeWalletTransfer = transfer;
   app.post("/wallet/transfer", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    // مفتاح المنصة transfersEnabled (قرار المالك التنظيمي) ولا تحويلات في عميل iOS
+    if (globalThis.naslifeSettings?.transfersEnabled === false || iosNative(req)) return bad(reply, 403, "unavailable");
     const { to } = req.body ?? {};
     try {
       await transfer({ from: uid, to, amount: req.body?.amount, note: req.body?.note });
@@ -204,6 +220,12 @@ export default async function commerce(app, opts) {
     const lat = b.lat == null ? null : Number(b.lat), lng = b.lng == null ? null : Number(b.lng);
     const tiers = Array.isArray(b.tiers) && b.tiers.length ? b.tiers : [{ name: "عادي", price: 0, quantity: 100 }];
     if (tiers.length > 6) return bad(reply, 400, "too-many-tiers");
+    if (await isSuspended(uid)) return bad(reply, 403, "suspended");
+    const bannedE = bannedIn(title, String(b.description ?? ""), b.placeName ? String(b.placeName) : "", ...tiers.flatMap((t) => [String(t?.name ?? ""), String(t?.description ?? "")]));
+    if (bannedE) return bad(reply, 400, "banned-words", { word: bannedE });
+    // التذكرة المدفوعة لفعالية حضورية فقط (مكان أو إحداثيات)، فلا تُباع محتويات رقمية عبر المحفظة
+    const hasPlace = !!String(b.placeName ?? "").trim() || (Number.isFinite(lat) && Number.isFinite(lng) && lat !== null && lng !== null);
+    if (tiers.some((t) => SAR(t?.price) > 0) && !hasPlace) return bad(reply, 400, "place-required");
     const id = crypto.randomUUID();
     await tx(async (c) => {
       await c.query("INSERT INTO events(id,host_id,vessel_id,title,description,starts_at,ends_at,place_name,lat,lng) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
@@ -216,23 +238,28 @@ export default async function commerce(app, opts) {
     return eventOut((await pool.query("SELECT * FROM events WHERE id=$1", [id])).rows[0], uid);
   });
   app.get("/events", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const uid = await optionalAuth(req);
     const bb = bbox(req.query?.bbox); const mine = req.query?.mine === "1"; const vessel = UUID_RE.test(req.query?.vessel ?? "") ? req.query.vessel : null;
+    if (mine && !uid) return unauthorized(reply);
+    // الفعاليات المخفية بالإشراف ومضيفوها المحظورون لا تظهر في القوائم العامة
+    const blocked = await blockedIds(uid);
     const r = mine
       ? await pool.query("SELECT * FROM events WHERE host_id=$1 ORDER BY starts_at DESC LIMIT 100", [uid])
       : vessel
-        ? await pool.query("SELECT * FROM events WHERE vessel_id=$1 AND NOT cancelled ORDER BY starts_at LIMIT 100", [vessel])
+        ? await pool.query("SELECT * FROM events WHERE vessel_id=$1 AND NOT cancelled AND NOT hidden AND NOT (host_id = ANY($2::text[])) ORDER BY starts_at LIMIT 100", [vessel, blocked])
         : bb
-          ? await pool.query("SELECT * FROM events WHERE NOT cancelled AND starts_at > now() - interval '6 hours' AND lat BETWEEN $2 AND $4 AND lng BETWEEN $1 AND $3 ORDER BY starts_at LIMIT 100", [bb.minLng, bb.minLat, bb.maxLng, bb.maxLat])
-          : await pool.query("SELECT * FROM events WHERE NOT cancelled AND starts_at > now() - interval '6 hours' ORDER BY starts_at LIMIT 100");
+          ? await pool.query("SELECT * FROM events WHERE NOT cancelled AND NOT hidden AND NOT (host_id = ANY($5::text[])) AND starts_at > now() - interval '6 hours' AND lat BETWEEN $2 AND $4 AND lng BETWEEN $1 AND $3 ORDER BY starts_at LIMIT 100", [bb.minLng, bb.minLat, bb.maxLng, bb.maxLat, blocked])
+          : await pool.query("SELECT * FROM events WHERE NOT cancelled AND NOT hidden AND NOT (host_id = ANY($1::text[])) AND starts_at > now() - interval '6 hours' ORDER BY starts_at LIMIT 100", [blocked]);
     return Promise.all(r.rows.map((e) => eventOut(e, uid)));
   });
   app.get("/events/:id", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const uid = await optionalAuth(req);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const r = await pool.query("SELECT * FROM events WHERE id=$1", [req.params.id]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
-    return eventOut(r.rows[0], uid);
+    const e = r.rows[0];
+    if (e.host_id !== uid && (e.hidden || (await blockedIds(uid)).includes(e.host_id)) && !(await isAdmin(uid))) return bad(reply, 404, "not-found");
+    return eventOut(e, uid);
   });
   app.post("/events/:id/tickets", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -243,7 +270,7 @@ export default async function commerce(app, opts) {
     try {
       sale = await tx(async (c) => {
         const ev = (await c.query("SELECT * FROM events WHERE id=$1", [req.params.id])).rows[0];
-        if (!ev || ev.cancelled) throw Object.assign(new Error(), { code: "not-found" });
+        if (!ev || ev.cancelled || ev.hidden) throw Object.assign(new Error(), { code: "not-found" });
         const tier = (await c.query("SELECT * FROM ticket_tiers WHERE id=$1 AND event_id=$2 FOR UPDATE", [tierId, ev.id])).rows[0];
         if (!tier) throw Object.assign(new Error(), { code: "not-found" });
         if (tier.sold + qty > tier.quantity) throw Object.assign(new Error(), { code: "sold-out" });
@@ -416,7 +443,7 @@ export default async function commerce(app, opts) {
 
   // البحث: نص، تصنيف وفرعي، نوع، سعر من/إلى، توصيل، حالة، بائع، قرب (lat/lng/radius كم) وترتيب، وصفحات
   app.get("/market", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const uid = await optionalAuth(req);
     const qy = req.query ?? {};
     const q = String(qy.q ?? "").trim().slice(0, 60);
     const cat = CATEGORY_SET.has(qy.category) ? qy.category : null;
@@ -437,6 +464,8 @@ export default async function commerce(app, opts) {
     if (min != null) where.push(`price >= ${p(min)}`); if (max != null) where.push(`price <= ${p(max)}`);
     if (qy.delivery === "1") where.push("delivery = true"); if (condition) where.push(`condition=${p(condition)}`); if (seller) where.push(`seller_id=${p(seller)}`);
     if (qy.spotlight === "1") where.push("spotlight_until > now()");
+    const blocked = await blockedIds(uid);
+    if (blocked.length) where.push(`NOT (seller_id = ANY(${p(blocked)}::text[]))`);
     if (bb) where.push(`(lat BETWEEN ${p(bb.minLat)} AND ${p(bb.maxLat)} AND lng BETWEEN ${p(bb.minLng)} AND ${p(bb.maxLng)})`);
     let dist = "NULL::float8";
     if (hasPos) {
@@ -538,12 +567,13 @@ export default async function commerce(app, opts) {
     return orderOut(o, uid);
   });
   app.get("/market/:id", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const uid = await optionalAuth(req);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const r = await pool.query("SELECT * FROM market_listings WHERE id=$1", [req.params.id]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
     const l = r.rows[0];
     if (!["active"].includes(l.status) && l.seller_id !== uid && !(await isAdmin(uid))) return bad(reply, 404, "not-found");
+    if (l.seller_id !== uid && (await blockedIds(uid)).includes(l.seller_id)) return bad(reply, 404, "not-found");
     return listingOut(l, uid);
   });
   app.delete("/market/:id", async (req, reply) => {

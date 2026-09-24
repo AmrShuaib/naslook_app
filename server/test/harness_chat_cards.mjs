@@ -157,6 +157,33 @@ check(r.request.status === 'paid' && r.request.resolvedAt, 'send matched the led
 // ---- المحظورون
 await pool.query("INSERT INTO user_blocks(user_id,blocked_id) VALUES('SA0000003','SA0000001')");
 await call('POST', '/chat/requests', { body: { messageId: 'm-pay-9', peerId: 'SA0000003', kind: 'pay', amount: 1000 }, expect: 403 });
+// الحظر في بيانات الرسائل والتفاعلات (chat_tools.js): الطرف الآخر من peerId أو كاتب الرسالة المقتبسة
+let x = await call('POST', '/chat/meta', { body: { messageId: 'm-blk-1', peerId: 'SA0000003', replyTo: 'm-0' }, expect: 403 });
+check(x.error === 'blocked', 'meta refused between a blocked pair');
+await call('POST', '/chat/meta', { body: { messageId: 'm-blk-2', quote: { id: 'm-0', senderId: 'SA0000003', content: 'مرحبا' } }, expect: 403 });
+await call('POST', '/chat/react', { body: { messageId: 'm-blk-1', peerId: 'SA0000003', emoji: '👍' }, user: 'SA0000001', expect: 403 });
+const okMsg = 'm-ok-' + Date.now();
+await call('POST', '/chat/meta', { body: { messageId: okMsg, peerId: 'SA0000002', replyTo: 'm-0' }, expect: 200 });
+x = await call('POST', '/chat/react', { body: { messageId: okMsg, peerId: 'SA0000002', emoji: '👍' }, expect: 200 });
+check(x.ok === true && x.reactions?.length === 1, 'meta and react still work between unblocked users');
+
+// ---- مفاتيح المال في المحادثة: عميل iOS الأصلي لا يطلب مالاً ولا يدفع، والمفتاح chatPaymentsEnabled يطفئها للجميع
+const inj = async (method, url, user, body, headers = {}) => { const r = await app.inject({ method, url, headers: { 'x-user': user, 'content-type': 'application/json', ...headers }, payload: JSON.stringify(body ?? {}) }); let j; try { j = r.json(); } catch { j = r.body; } return { code: r.statusCode, j }; };
+const IOS = { 'x-naslife-client': 'ios/1.0.0' };
+x = await inj('POST', '/chat/requests', 'SA0000001', { messageId: 'm-ios-1', peerId: 'SA0000002', kind: 'pay', amount: 1000 }, IOS);
+check(x.code === 403 && x.j.error === 'unavailable', 'iOS client cannot create a pay request', JSON.stringify(x));
+x = await inj('POST', '/chat/requests', 'SA0000001', { messageId: 'm-ios-2', peerId: 'SA0000002', kind: 'meet', when: '8م' }, IOS);
+check(x.code === 200, 'iOS client can still propose a meeting', JSON.stringify(x));
+await call('POST', '/chat/requests', { body: { messageId: 'm-ios-3', peerId: 'SA0000002', kind: 'pay', amount: 1000 }, expect: 200 });
+x = await inj('POST', '/chat/requests/m-ios-3/pay', 'SA0000002', {}, IOS);
+check(x.code === 403 && x.j.error === 'unavailable', 'iOS recipient cannot pay a request', JSON.stringify(x));
+const savedSettings = globalThis.naslifeSettings;
+globalThis.naslifeSettings = { ...(savedSettings ?? {}), chatPaymentsEnabled: false };
+x = await call('POST', '/chat/requests', { body: { messageId: 'm-off-1', peerId: 'SA0000002', kind: 'split', amount: 4000, n: 2 }, expect: 403 });
+check(x.error === 'unavailable', 'chatPaymentsEnabled=false refuses money requests');
+await call('POST', '/chat/requests/m-ios-3/pay', { user: 'SA0000002', expect: 403 });
+globalThis.naslifeSettings = savedSettings;
+await call('POST', '/chat/requests/m-ios-3/pay', { user: 'SA0000002', expect: 200 });
 
 // ---- المعلّقة لي
 const pend = await call('GET', '/chat/requests/pending', { user: 'SA0000002', expect: 200 });

@@ -83,7 +83,9 @@ export default async function notify(app, opts) {
   const pick = (m, ...names) => names.find((n) => m?.has(n)) ?? null;
   const userCols = tables.get("users") ?? new Map();
   const U = { ok: userCols.has("id"), admin: pick(userCols, "is_admin"), role: pick(userCols, "role"), nick: pick(userCols, "nickname", "name", "handle", "username") };
-  const reportsTable = [...tables.keys()].find((t) => /report/.test(t) && t !== "report_actions") ?? null;
+  // بلاغات المستخدمين والرسائل في جدول النواة reports صراحةً؛ بلاغات المحتوى (content_reports من safety.js) تُراقب معها أدناه
+  const OWN_REPORT_TABLES = new Set(["report_actions", "content_reports", "content_report_actions"]);
+  const reportsTable = tables.has("reports") ? "reports" : [...tables.keys()].filter((t) => /report/.test(t) && !OWN_REPORT_TABLES.has(t)).sort()[0] ?? null;
   const RC = { created: pick(tables.get(reportsTable), "created_at", "createdat"), reporter: pick(tables.get(reportsTable), "reporter_id", "from_id", "user_id", "by_id"), target: pick(tables.get(reportsTable), "target_id", "reported_id", "user_id_reported", "to_id", "subject_id"), reason: pick(tables.get(reportsTable), "reason", "type", "category") };
   let S = null;   // جدول الاشتراكات
   for (const [t, m] of tables) {
@@ -212,36 +214,46 @@ export default async function notify(app, opts) {
   globalThis.naslifeNotifyAdmins = sendAdmins;
   globalThis.naslifeNotifyPushStatus = () => ({ ...push, priv: undefined, pub: undefined });
 
-  // ---- مراقبة البلاغات الجديدة في جدول الخادم الأساسي (لا نملك مساره) وإبلاغ المديرين
+  // ---- مراقبة البلاغات الجديدة وإبلاغ المديرين: جدول النواة (لا نملك مساره) وبلاغات المحتوى (safety.js).
+  // كل مصدر له مؤشر وقت مستقل في notify_state. content_reports قد يُنشأ بعد هذه الإضافة، فيُفحص وجوده عند كل دورة.
   let timer = null;
-  if (reportsTable && RC.created && POLL_MS > 0) {
-    const key = "reports.seen";
-    let since = null;
+  const sources = [];
+  if (reportsTable && RC.created) sources.push({ key: "reports.seen", table: reportsTable, created: RC.created, kind: "report_new", one: "بلاغ جديد", many: (n) => `${n} بلاغات جديدة`, body: "افتح قسم البلاغات في لوحة الإدارة للمراجعة" });
+  if (reportsTable !== "content_reports") sources.push({ key: "content_reports.seen", table: "content_reports", created: "created_at", kind: "content_reports_new", one: "بلاغ محتوى جديد", many: (n) => `${n} بلاغات محتوى جديدة`, body: "افتح طابور الإشراف في لوحة الإدارة للمراجعة", optional: true });
+  if (POLL_MS > 0) {
+    const since = new Map();
     // آخر وقت مُعالج يُحفظ نصاً كما يعيده Postgres (بالميكروثانية)؛ تحويله إلى Date يفقد الدقة فيتكرر البلاغ نفسه
-    const load = async () => {
-      const r = (await pool.query("SELECT value FROM notify_state WHERE key=$1", [key])).rows[0];
-      since = r ? String(r.value.at) : (await pool.query("SELECT now()::text AS t")).rows[0].t;
-      if (!r) await pool.query("INSERT INTO notify_state(key,value) VALUES($1,$2) ON CONFLICT DO NOTHING", [key, JSON.stringify({ at: since })]);
+    const load = async (src) => {
+      const r = (await pool.query("SELECT value FROM notify_state WHERE key=$1", [src.key])).rows[0];
+      const at = r ? String(r.value.at) : (await pool.query("SELECT now()::text AS t")).rows[0].t;
+      if (!r) await pool.query("INSERT INTO notify_state(key,value) VALUES($1,$2) ON CONFLICT DO NOTHING", [src.key, JSON.stringify({ at })]);
+      since.set(src.key, at);
+    };
+    const tickOne = async (src) => {
+      if (src.optional && !(await pool.query("SELECT to_regclass($1) AS t", [src.table])).rows[0].t) return;
+      if (!since.has(src.key)) await load(src);
+      const r = (await pool.query(`SELECT count(*)::int AS n, max(${q(src.created)})::text AS last FROM ${q(src.table)} WHERE ${q(src.created)} > $1::timestamptz`, [since.get(src.key)])).rows[0];
+      if (!r.n) return;
+      since.set(src.key, String(r.last));
+      await pool.query("INSERT INTO notify_state(key,value,updated_at) VALUES($1,$2,now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()", [src.key, JSON.stringify({ at: String(r.last) })]);
+      await sendAdmins({ kind: src.kind, title: r.n === 1 ? src.one : src.many(r.n), body: src.body, data: { count: r.n, source: src.table } });
     };
     const tick = async () => {
-      try {
-        if (!since) await load();
-        const r = (await pool.query(`SELECT count(*)::int AS n, max(${q(RC.created)})::text AS last FROM ${q(reportsTable)} WHERE ${q(RC.created)} > $1::timestamptz`, [since])).rows[0];
-        if (!r.n) return;
-        since = String(r.last);
-        await pool.query("INSERT INTO notify_state(key,value,updated_at) VALUES($1,$2,now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()", [key, JSON.stringify({ at: since })]);
-        await sendAdmins({ kind: "report_new", title: r.n === 1 ? "بلاغ جديد" : `${r.n} بلاغات جديدة`, body: "افتح قسم البلاغات في لوحة الإدارة للمراجعة", data: { count: r.n } });
-      } catch (e) { log("warn", { err: e?.message }, "notify: reports poll failed"); }
+      for (const src of sources) {
+        try { await tickOne(src); } catch (e) { log("warn", { err: e?.message, table: src.table }, "notify: reports poll failed"); }
+      }
     };
-    timer = setInterval(tick, POLL_MS); timer.unref?.();
-    app.addHook("onClose", async () => { if (timer) clearInterval(timer); });
-    globalThis.naslifeNotifyPollReports = tick;
+    if (sources.length) {
+      timer = setInterval(tick, POLL_MS); timer.unref?.();
+      app.addHook("onClose", async () => { if (timer) clearInterval(timer); });
+      globalThis.naslifeNotifyPollReports = tick;
+    }
   }
 
   // ---- المسارات
   app.get("/notify/status", async () => ({
     ok: true, push: { ready: push.ready, ok: push.ok, reason: push.reason, source: push.source ? push.source.replace(/:.*/, "") : null, subscriptions: S ? { table: S.table, keys: S.p256dh ? "columns" : S.json ? "json:" + S.json : "none" } : null, sent: push.sent, failed: push.failed, pruned: push.pruned, lastError: push.lastError },
-    reports: { table: reportsTable, polling: !!timer, everyMs: timer ? POLL_MS : 0 },
+    reports: { table: reportsTable, sources: sources.map((x) => x.table), polling: !!timer, everyMs: timer ? POLL_MS : 0 },
   }));
   app.get("/notify", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);

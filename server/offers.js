@@ -298,6 +298,11 @@ export default async function offers(app, opts = {}) {
     if (!ID_RE.test(to)) return bad(reply, 400, "bad-user");
     if (to === uid) return bad(reply, 400, "self");
     if (!(await person(to))) return bad(reply, 404, "user-not-found");
+    // لا هدايا بين طرفين بينهما حظر، ولا من حساب موقوف
+    let bl = []; try { bl = (await globalThis.naslifeBlockedIds?.(uid)) ?? []; } catch { bl = []; }
+    if (bl.includes(to)) return bad(reply, 403, "blocked");
+    let susp = false; try { susp = !!(await globalThis.naslifeIsSuspended?.(uid)); } catch { susp = false; }
+    if (susp) return bad(reply, 403, "suspended");
     if (!o.transferable || !["coupon", "checkin"].includes(o.kind)) return bad(reply, 409, "not-transferable");
     if (!live(o)) return bad(reply, 409, "ended");
     const member = await isMember(b.id, uid);

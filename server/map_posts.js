@@ -246,6 +246,8 @@ export default async function posts(app, opts) {
     const p = (await pool.query(`${SELECT} WHERE p.id=$2`, [uid, req.params.id])).rows[0];
     if (!p) return bad(reply, 404, "not-found");
     if (p.status !== "active" && p.user_id !== uid && !(await isAdmin(uid))) return bad(reply, 404, "not-found");
+    // رابط مباشر لمنشور كاتبه محظور (في أي اتجاه) يُعامل كأنه غير موجود
+    if (uid && p.user_id !== uid) { let bl = []; try { bl = (await globalThis.naslifeBlockedIds?.(uid)) ?? []; } catch { bl = []; } if (bl.includes(p.user_id)) return bad(reply, 404, "not-found"); }
     return out(p, uid);
   });
 

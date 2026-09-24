@@ -242,6 +242,32 @@ async function setup(app, opts) {
 
   // ---- بيانات إضافية للرسائل: رد مقتبس، إعادة توجيه، مدة الصوت… تُحفظ بمعرّف الرسالة بعد إرسالها
   const metaOut = (r) => ({ replyTo: r.reply_to, quote: r.quote, forwardedFrom: r.forwarded_from, extra: r.extra });
+  // الحظر بين طرفي المحادثة: الطرف الآخر من peerId في الطلب، أو كاتب الرسالة المقتبسة، أو صف الرسالة في النواة إن كان جدولها في القاعدة نفسها
+  let MSG = null;
+  try {
+    const mc = new Set((await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='messages'")).rows.map((r) => r.column_name));
+    const from = ["sender_id", "from_id", "user_id", "author_id"].find((c) => mc.has(c)), to = ["recipient_id", "to_id", "receiver_id", "peer_id"].find((c) => mc.has(c));
+    if (mc.has("id") && from) MSG = { from, to: to ?? null };
+  } catch { MSG = null; }
+  const peersOf = async (uid, messageId, ...hints) => {
+    const out = new Set(hints.map((h) => String(h ?? "").toUpperCase()).filter((h) => /^[A-Z]{2}\d{7}$/.test(h)));
+    if (MSG && messageId) {
+      try {
+        const m = (await pool.query(`SELECT "${MSG.from}" AS a${MSG.to ? `, "${MSG.to}" AS b` : ""} FROM messages WHERE id::text=$1`, [messageId])).rows[0];
+        for (const v of [m?.a, m?.b]) if (v) out.add(String(v));
+      } catch { /* ignore */ }
+    }
+    out.delete(uid);
+    return [...out];
+  };
+  const blockedWith = async (uid, messageId, ...hints) => {
+    const peers = await peersOf(uid, messageId, ...hints);
+    if (!peers.length) return false;
+    let list = [];
+    try { list = (await globalThis.naslifeBlockedIds?.(uid)) ?? []; } catch { list = []; }
+    if (!list.length) { try { list = (await pool.query("SELECT user_id, blocked_id FROM user_blocks WHERE user_id=$1 OR blocked_id=$1", [uid])).rows.flatMap((r) => [r.user_id, r.blocked_id]); } catch { list = []; } }
+    return peers.some((p) => list.includes(p));
+  };
   app.post("/chat/meta", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const b = req.body ?? {};
@@ -255,6 +281,7 @@ async function setup(app, opts) {
     }
     const forwardedFrom = b.forwardedFrom ? String(b.forwardedFrom).slice(0, 40) : null;
     const extra = b.extra && typeof b.extra === "object" ? JSON.parse(JSON.stringify(b.extra).slice(0, 2000)) : null;
+    if (await blockedWith(uid, id, b.peerId, quote?.senderId)) return bad(reply, 403, "blocked");
     await pool.query(
       `INSERT INTO chat_message_meta(message_id,user_id,reply_to,quote,forwarded_from,extra) VALUES($1,$2,$3,$4,$5,$6)
        ON CONFLICT (message_id) DO UPDATE SET reply_to=COALESCE(EXCLUDED.reply_to, chat_message_meta.reply_to),
@@ -285,6 +312,7 @@ async function setup(app, opts) {
     if (!id || id.length > 64) return bad(reply, 400, "bad-id");
     const raw = String(req.body?.emoji ?? "").trim();
     if (raw && !REACTIONS.includes(raw)) return bad(reply, 400, "bad-emoji", { allowed: REACTIONS });
+    if (raw && await blockedWith(uid, id, req.body?.peerId)) return bad(reply, 403, "blocked");
     if (!raw) await pool.query("DELETE FROM chat_reactions WHERE message_id=$1 AND user_id=$2", [id, uid]);
     else {
       const cur = (await pool.query("SELECT emoji FROM chat_reactions WHERE message_id=$1 AND user_id=$2", [id, uid])).rows[0];

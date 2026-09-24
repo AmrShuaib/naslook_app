@@ -22,6 +22,17 @@ export default async function marketPlus(app, opts) {
   const orderOut = (o, uid) => globalThis.naslifeMarketOrderOut(o, uid);
   const sar = (h) => W().sar(h);
   const userRow = async (id) => { try { return (await pool.query("SELECT * FROM users WHERE id=$1", [id])).rows[0] ?? null; } catch { return null; } };
+  // تصفح الضيف: القراءة العامة بلا جلسة (مراجِع المتجر)، والكتابة والقوائم الشخصية بجلسة
+  const optionalAuth = async (req) => { try { return (await auth(req)) || null; } catch { return null; } };
+  // عميل iOS الأصلي: سبوت لايت منتج رقمي يُشترى داخل التطبيق فيحتاج مشتريات آبل
+  const iosNative = (req) => /^ios\//i.test(String(req.headers["x-naslife-client"] ?? ""));
+  const blockedIds = async (uid) => { try { return uid ? (await globalThis.naslifeBlockedIds?.(uid)) ?? [] : []; } catch { return []; } };
+  const suspended = async (uid) => { try { if (globalThis.naslifeIsSuspended) return !!(await globalThis.naslifeIsSuspended(uid)); return (await pool.query("SELECT 1 FROM user_flags WHERE user_id=$1 AND suspended", [uid])).rowCount > 0; } catch { return false; } };
+  const bannedReply = (reply, ...texts) => {
+    let w = null; try { w = globalThis.naslifeCheckText?.(...texts) ?? null; } catch { w = null; }
+    if (w) { reply.code(400).send({ error: "banned-words", word: w }); return true; }
+    return false;
+  };
   const distSql = (la, ln) => `(CASE WHEN lat IS NULL OR lng IS NULL THEN NULL ELSE 6371 * acos(least(1::float8, cos(radians(${la})) * cos(radians(lat)) * cos(radians(lng) - radians(${ln})) + sin(radians(${la})) * sin(radians(lat)))) END)`;
 
   // ---- حماية: حساب جديد (أقل من ٢٤ ساعة) حتى ٣ عروض، ولا تكرار لعرض نشط بالعنوان والسعر نفسيهما
@@ -35,7 +46,7 @@ export default async function marketPlus(app, opts) {
 
   // ---- شارات البائع وإحصاءاته (تُعاد كتابتها بعد كل تقييم أو اكتمال طلب)
   const recompute = async (sellerId) => {
-    const r = (await pool.query("SELECT avg(rating)::real AS avg, count(*)::int AS n FROM market_reviews WHERE seller_id=$1", [sellerId])).rows[0];
+    const r = (await pool.query("SELECT avg(rating)::real AS avg, count(*)::int AS n FROM market_reviews WHERE seller_id=$1 AND NOT hidden", [sellerId])).rows[0];
     const o = (await pool.query(`SELECT count(*) FILTER (WHERE status='completed')::int AS done, count(*) FILTER (WHERE status IN ('cancelled','refunded') AND updated_at > now() - interval '90 days')::int AS cancelled,
       avg(EXTRACT(EPOCH FROM (accepted_at - created_at)) / 3600) FILTER (WHERE accepted_at IS NOT NULL)::real AS resp FROM market_orders WHERE seller_id=$1`, [sellerId])).rows[0];
     let verified = false; try { verified = (await pool.query("SELECT 1 FROM login_aliases WHERE user_id=$1 AND verified", [sellerId])).rowCount > 0; } catch { /* لا جدول */ }
@@ -70,6 +81,7 @@ export default async function marketPlus(app, opts) {
   app.post("/market/orders/:id/review", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    if (await suspended(uid)) return bad(reply, 403, "suspended");
     const o = (await pool.query("SELECT o.*, l.title FROM market_orders o JOIN market_listings l ON l.id=o.listing_id WHERE o.id=$1", [req.params.id])).rows[0];
     if (!o) return bad(reply, 404, "not-found");
     if (o.buyer_id !== uid) return bad(reply, 403, "buyer-only");
@@ -79,7 +91,7 @@ export default async function marketPlus(app, opts) {
     const banned = globalThis.naslifeCheckText?.(text); if (banned) return reply.code(400).send({ error: "banned-words", word: banned });
     const ins = await pool.query("INSERT INTO market_reviews(order_id, listing_id, seller_id, buyer_id, rating, text) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (order_id) DO NOTHING RETURNING order_id", [o.id, o.listing_id, o.seller_id, uid, rating, text]);
     if (!ins.rowCount) return bad(reply, 409, "already-reviewed");
-    await pool.query("UPDATE market_listings SET rating_avg=(SELECT avg(rating) FROM market_reviews WHERE listing_id=$1), rating_count=(SELECT count(*) FROM market_reviews WHERE listing_id=$1) WHERE id=$1", [o.listing_id]);
+    await pool.query("UPDATE market_listings SET rating_avg=(SELECT avg(rating) FROM market_reviews WHERE listing_id=$1 AND NOT hidden), rating_count=(SELECT count(*) FROM market_reviews WHERE listing_id=$1 AND NOT hidden) WHERE id=$1", [o.listing_id]);
     await recompute(o.seller_id);
     await notify(o.seller_id, { kind: "market_review", title: `تقييم جديد ${"★".repeat(rating)}`, body: `${o.title}${text ? ": " + text.slice(0, 100) : ""}`, data: { orderId: o.id, listingId: o.listing_id } });
     return { ok: true };
@@ -88,16 +100,18 @@ export default async function marketPlus(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.orderId)) return bad(reply, 400, "bad-id");
     const text = String(req.body?.text ?? "").trim().slice(0, 400); if (!text) return bad(reply, 400, "empty");
+    if (bannedReply(reply, text)) return;
     const r = await pool.query("UPDATE market_reviews SET reply=$2, reply_at=now() WHERE order_id=$1 AND seller_id=$3 RETURNING buyer_id, listing_id", [req.params.orderId, text, uid]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
     await notify(r.rows[0].buyer_id, { kind: "market_review", title: "ردّ البائع على تقييمك", body: text.slice(0, 120), data: { listingId: r.rows[0].listing_id } });
     return { ok: true };
   });
   const reviewOut = async (r) => ({ orderId: r.order_id, listingId: r.listing_id, listingTitle: r.title ?? null, rating: r.rating, text: r.text, reply: r.reply, replyAt: r.reply_at, buyer: await person(r.buyer_id), createdAt: r.created_at });
+  // التقييمات والأسئلة المخفية بالإشراف لا تظهر إلا لكاتبها، وما كتبه محظور بينه وبين الزائر لا يظهر
   app.get("/market/:id/reviews", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const uid = await optionalAuth(req);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const r = await pool.query("SELECT r.*, l.title FROM market_reviews r JOIN market_listings l ON l.id=r.listing_id WHERE r.listing_id=$1 ORDER BY r.created_at DESC LIMIT 50", [req.params.id]);
+    const r = await pool.query("SELECT r.*, l.title FROM market_reviews r JOIN market_listings l ON l.id=r.listing_id WHERE r.listing_id=$1 AND (NOT r.hidden OR r.buyer_id=$2) AND NOT (r.buyer_id = ANY($3::text[])) ORDER BY r.created_at DESC LIMIT 50", [req.params.id, uid, await blockedIds(uid)]);
     return Promise.all(r.rows.map(reviewOut));
   });
 
@@ -106,7 +120,7 @@ export default async function marketPlus(app, opts) {
     const u = await userRow(id); if (!u) return null;
     const s = (await pool.query("SELECT * FROM market_seller_stats WHERE seller_id=$1", [id])).rows[0] ?? null;
     const listings = (await pool.query("SELECT * FROM market_listings WHERE seller_id=$1 AND status='active' ORDER BY bumped_at DESC NULLS LAST LIMIT 60", [id])).rows;
-    const reviews = (await pool.query("SELECT r.*, l.title FROM market_reviews r JOIN market_listings l ON l.id=r.listing_id WHERE r.seller_id=$1 ORDER BY r.created_at DESC LIMIT 20", [id])).rows;
+    const reviews = (await pool.query("SELECT r.*, l.title FROM market_reviews r JOIN market_listings l ON l.id=r.listing_id WHERE r.seller_id=$1 AND NOT r.hidden AND NOT (r.buyer_id = ANY($2::text[])) ORDER BY r.created_at DESC LIMIT 20", [id, await blockedIds(uid)])).rows;
     const followers = (await pool.query("SELECT count(*)::int AS n FROM market_follows WHERE seller_id=$1", [id])).rows[0].n;
     const following = uid ? (await pool.query("SELECT 1 FROM market_follows WHERE user_id=$1 AND seller_id=$2", [uid, id])).rowCount > 0 : false;
     let bio = ""; try { bio = (await pool.query("SELECT bio FROM profiles WHERE user_id=$1", [id])).rows[0]?.bio ?? ""; } catch { /* لا جدول */ }
@@ -117,8 +131,9 @@ export default async function marketPlus(app, opts) {
     };
   };
   app.get("/market/sellers/:id", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const uid = await optionalAuth(req);
     if (!ID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    if (req.params.id !== uid && (await blockedIds(uid)).includes(req.params.id)) return bad(reply, 404, "not-found");
     const p = await sellerProfile(req.params.id, uid); if (!p) return bad(reply, 404, "not-found");
     return p;
   });
@@ -142,14 +157,15 @@ export default async function marketPlus(app, opts) {
   // ---- أسئلة وأجوبة عامة على العرض
   const qOut = async (q) => ({ id: q.id, listingId: q.listing_id, user: await person(q.user_id), text: q.text, answer: q.answer, answeredAt: q.answered_at, createdAt: q.created_at });
   app.get("/market/:id/questions", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const uid = await optionalAuth(req);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const r = await pool.query("SELECT * FROM market_questions WHERE listing_id=$1 ORDER BY created_at DESC LIMIT 50", [req.params.id]);
+    const r = await pool.query("SELECT * FROM market_questions WHERE listing_id=$1 AND (NOT hidden OR user_id=$2) AND NOT (user_id = ANY($3::text[])) ORDER BY created_at DESC LIMIT 50", [req.params.id, uid, await blockedIds(uid)]);
     return Promise.all(r.rows.map(qOut));
   });
   app.post("/market/:id/questions", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    if (await suspended(uid)) return bad(reply, 403, "suspended");
     const l = (await pool.query("SELECT id, seller_id, title FROM market_listings WHERE id=$1 AND status='active'", [req.params.id])).rows[0]; if (!l) return bad(reply, 404, "not-found");
     const text = String(req.body?.text ?? "").trim().slice(0, 400); if (text.length < 3) return bad(reply, 400, "empty");
     const banned = globalThis.naslifeCheckText?.(text); if (banned) return reply.code(400).send({ error: "banned-words", word: banned });
@@ -162,6 +178,7 @@ export default async function marketPlus(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.qid)) return bad(reply, 400, "bad-id");
     const text = String(req.body?.text ?? "").trim().slice(0, 600); if (!text) return bad(reply, 400, "empty");
+    if (bannedReply(reply, text)) return;
     const r = await pool.query("UPDATE market_questions q SET answer=$2, answered_at=now() FROM market_listings l WHERE q.id=$1 AND l.id=q.listing_id AND l.seller_id=$3 RETURNING q.user_id, q.listing_id, l.title", [req.params.qid, text, uid]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
     await notify(r.rows[0].user_id, { kind: "market_question", title: "أجاب البائع على سؤالك", body: `${r.rows[0].title}: ${text.slice(0, 120)}`, data: { listingId: r.rows[0].listing_id } });
@@ -180,6 +197,7 @@ export default async function marketPlus(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const qy = req.query ?? {}; const params = []; const p = (v) => { params.push(v); return `$${params.length}`; };
     const where = ["status='open'"]; if (CATEGORY_SET.has(qy.category)) where.push(`category=${p(qy.category)}`); if (qy.mine === "1") { where.length = 0; where.push(`user_id=${p(uid)}`); }
+    else { const blocked = await blockedIds(uid); if (blocked.length) where.push(`NOT (user_id = ANY(${p(blocked)}::text[]))`); }
     const lat = Number(qy.lat), lng = Number(qy.lng); const hasPos = Number.isFinite(lat) && Number.isFinite(lng);
     const dist = hasPos ? distSql(p(lat), p(lng)) : "NULL::float8";
     const r = await pool.query(`SELECT *, ${dist} AS dist FROM market_wanted WHERE ${where.join(" AND ")} ORDER BY ${hasPos ? `${dist} ASC NULLS LAST,` : ""} created_at DESC LIMIT 100`, params);
@@ -187,6 +205,7 @@ export default async function marketPlus(app, opts) {
   });
   app.post("/market/wanted", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (await suspended(uid)) return bad(reply, 403, "suspended");
     const b = req.body ?? {}; const title = String(b.title ?? "").trim().slice(0, 100); if (title.length < 3) return bad(reply, 400, "bad-title");
     const category = CATEGORY_SET.has(b.category) ? b.category : "other"; const sub = subOk(category, b.subcategory) ? b.subcategory : null;
     const description = String(b.description ?? "").slice(0, 1000);
@@ -205,11 +224,14 @@ export default async function marketPlus(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const w = (await pool.query("SELECT * FROM market_wanted WHERE id=$1", [req.params.id])).rows[0]; if (!w) return bad(reply, 404, "not-found");
-    const replies = (await pool.query("SELECT r.*, l.title AS listing_title, l.image_url FROM market_wanted_replies r LEFT JOIN market_listings l ON l.id=r.listing_id WHERE r.wanted_id=$1 ORDER BY r.created_at ASC", [w.id])).rows;
+    const blocked = await blockedIds(uid);
+    if (w.user_id !== uid && (w.status === "blocked" || blocked.includes(w.user_id))) return bad(reply, 404, "not-found");
+    const replies = (await pool.query("SELECT r.*, l.title AS listing_title, l.image_url FROM market_wanted_replies r LEFT JOIN market_listings l ON l.id=r.listing_id WHERE r.wanted_id=$1 AND (NOT r.hidden OR r.seller_id=$2) AND NOT (r.seller_id = ANY($3::text[])) ORDER BY r.created_at ASC", [w.id, uid, blocked])).rows;
     return { ...(await wantedOut(w, uid)), replyList: await Promise.all(replies.map(async (r) => ({ id: r.id, seller: await person(r.seller_id), text: r.text, price: r.price == null ? null : Number(r.price), listingId: r.listing_id, listingTitle: r.listing_title, imageUrl: r.image_url, mine: r.seller_id === uid, createdAt: r.created_at }))) };
   });
   app.post("/market/wanted/:id/replies", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (await suspended(uid)) return bad(reply, 403, "suspended");
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const w = (await pool.query("SELECT * FROM market_wanted WHERE id=$1 AND status='open'", [req.params.id])).rows[0]; if (!w) return bad(reply, 404, "not-found");
     if (w.user_id === uid) return bad(reply, 400, "own-request");
@@ -226,7 +248,8 @@ export default async function marketPlus(app, opts) {
   app.patch("/market/wanted/:id", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const status = req.body?.status === "closed" ? "closed" : "open";
-    await pool.query("UPDATE market_wanted SET status=$2 WHERE id=$1 AND user_id=$3", [req.params.id, status, uid]);
+    // الطلب الذي أخفاه الإشراف (status=blocked) لا يعيد صاحبه فتحه
+    await pool.query("UPDATE market_wanted SET status=$2 WHERE id=$1 AND user_id=$3 AND status<>'blocked'", [req.params.id, status, uid]);
     return { ok: true, status };
   });
 
@@ -284,13 +307,14 @@ export default async function marketPlus(app, opts) {
   const spotMaxDays = () => Math.min(90, Math.max(1, Number(settings().spotlightMaxDays) || 30));
   const spotOut = async (s, uid, l) => ({ id: s.id, listing: l ? await listingOut(l, uid) : null, startsAt: s.starts_at, endsAt: s.ends_at, days: s.days, paid: Number(s.paid), status: s.status, views: s.views, clicks: s.clicks, granted: !!s.granted_by });
   app.get("/market/spotlight", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
-    const r = await pool.query("SELECT s.*, l.* , s.id AS sid, s.status AS sstatus FROM market_spotlight s JOIN market_listings l ON l.id=s.listing_id WHERE s.status='active' AND s.ends_at > now() AND l.status='active' ORDER BY random() LIMIT 12");
-    if (r.rowCount) await pool.query("UPDATE market_spotlight SET views=views+1 WHERE id = ANY($1::uuid[])", [r.rows.map((x) => x.sid)]);
+    const uid = await optionalAuth(req);
+    const r = await pool.query("SELECT s.*, l.* , s.id AS sid, s.status AS sstatus FROM market_spotlight s JOIN market_listings l ON l.id=s.listing_id WHERE s.status='active' AND s.ends_at > now() AND l.status='active' AND NOT (l.seller_id = ANY($1::text[])) ORDER BY random() LIMIT 12", [await blockedIds(uid)]);
+    // مشاهدات الضيوف لا تُحسب (يدفع البائع مقابل وصول لمستخدمين حقيقيين)
+    if (r.rowCount && uid) await pool.query("UPDATE market_spotlight SET views=views+1 WHERE id = ANY($1::uuid[])", [r.rows.map((x) => x.sid)]);
     return Promise.all(r.rows.map(async (x) => ({ id: x.sid, endsAt: x.ends_at, listing: await listingOut({ ...x, id: x.listing_id, status: x.status }, uid) })));
   });
   app.post("/market/spotlight/:id/click", async (req, reply) => { const uid = await auth(req); if (!uid) return unauthorized(reply); if (UUID_RE.test(req.params.id)) await pool.query("UPDATE market_spotlight SET clicks=clicks+1 WHERE id=$1", [req.params.id]); return { ok: true }; });
-  app.get("/market/spotlight/price", async (req, reply) => { const uid = await auth(req); if (!uid) return unauthorized(reply); return { perDay: spotPrice(), maxDays: spotMaxDays() }; });
+  app.get("/market/spotlight/price", async (req, reply) => { const uid = await auth(req); if (!uid) return unauthorized(reply); return { perDay: spotPrice(), maxDays: spotMaxDays(), purchasable: !iosNative(req) }; });
   app.get("/market/spotlight/mine", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const r = await pool.query("SELECT s.*, l.title, l.image_url FROM market_spotlight s JOIN market_listings l ON l.id=s.listing_id WHERE s.seller_id=$1 ORDER BY s.created_at DESC LIMIT 50", [uid]);
@@ -312,6 +336,8 @@ export default async function marketPlus(app, opts) {
   };
   app.post("/market/:id/spotlight", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    // شراء إعلان رقمي من داخل تطبيق iOS يحتاج مشتريات آبل؛ حتى تُربط يُرفض من عميل iOS
+    if (iosNative(req)) return bad(reply, 403, "iap-required");
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const l = (await pool.query("SELECT * FROM market_listings WHERE id=$1", [req.params.id])).rows[0]; if (!l) return bad(reply, 404, "not-found");
     if (l.seller_id !== uid) return bad(reply, 403, "forbidden");
@@ -350,12 +376,13 @@ export default async function marketPlus(app, opts) {
 
   // ---- الصفحة الرئيسية للسوق: سبوت لايت، الأكثر طلباً، الأقرب، وعدّاد كل تصنيف
   app.get("/market/home", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const uid = await optionalAuth(req);
     const lat = Number(req.query?.lat), lng = Number(req.query?.lng); const hasPos = Number.isFinite(lat) && Number.isFinite(lng);
-    const spot = await pool.query("SELECT s.id AS sid, s.ends_at, l.* FROM market_spotlight s JOIN market_listings l ON l.id=s.listing_id WHERE s.status='active' AND s.ends_at > now() AND l.status='active' ORDER BY random() LIMIT 12");
-    if (spot.rowCount) await pool.query("UPDATE market_spotlight SET views=views+1 WHERE id = ANY($1::uuid[])", [spot.rows.map((x) => x.sid)]);
-    const popular = await pool.query("SELECT * FROM market_listings WHERE status='active' AND (publish_at IS NULL OR publish_at <= now()) ORDER BY (sold * 3 + views) DESC, bumped_at DESC LIMIT 8");
-    const nearby = hasPos ? await pool.query(`SELECT *, ${distSql("$1", "$2")} AS dist FROM market_listings WHERE status='active' AND lat IS NOT NULL ORDER BY dist ASC LIMIT 8`, [lat, lng]) : { rows: [] };
+    const blocked = await blockedIds(uid);
+    const spot = await pool.query("SELECT s.id AS sid, s.ends_at, l.* FROM market_spotlight s JOIN market_listings l ON l.id=s.listing_id WHERE s.status='active' AND s.ends_at > now() AND l.status='active' AND NOT (l.seller_id = ANY($1::text[])) ORDER BY random() LIMIT 12", [blocked]);
+    if (spot.rowCount && uid) await pool.query("UPDATE market_spotlight SET views=views+1 WHERE id = ANY($1::uuid[])", [spot.rows.map((x) => x.sid)]);
+    const popular = await pool.query("SELECT * FROM market_listings WHERE status='active' AND (publish_at IS NULL OR publish_at <= now()) AND NOT (seller_id = ANY($1::text[])) ORDER BY (sold * 3 + views) DESC, bumped_at DESC LIMIT 8", [blocked]);
+    const nearby = hasPos ? await pool.query(`SELECT *, ${distSql("$1", "$2")} AS dist FROM market_listings WHERE status='active' AND lat IS NOT NULL AND NOT (seller_id = ANY($3::text[])) ORDER BY dist ASC LIMIT 8`, [lat, lng, blocked]) : { rows: [] };
     const counts = (await pool.query("SELECT category, count(*)::int AS n FROM market_listings WHERE status='active' GROUP BY category")).rows;
     const wanted = (await pool.query("SELECT count(*)::int AS n FROM market_wanted WHERE status='open'")).rows[0].n;
     return {
@@ -363,7 +390,7 @@ export default async function marketPlus(app, opts) {
       popular: await Promise.all(popular.rows.map((l) => listingOut(l, uid))), nearby: await Promise.all(nearby.rows.map((l) => listingOut(l, uid, { dist: l.dist }))),
       categories: Object.fromEntries(CATEGORIES.map((c) => [c, counts.find((x) => x.category === c)?.n ?? 0])), subcategories: SUBCATEGORIES, wantedOpen: wanted,
       bazaars: await (globalThis.naslifeMarketBazaars?.(uid).catch(() => []) ?? []),
-      spotlightPricePerDay: spotPrice(), commissionPct: Number(settings().marketCommissionPct) || 0,
+      spotlightPricePerDay: spotPrice(), spotlightPurchasable: !iosNative(req), commissionPct: Number(settings().marketCommissionPct) || 0,
     };
   });
 

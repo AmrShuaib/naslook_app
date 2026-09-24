@@ -206,5 +206,8 @@ check(await n('SELECT count(*)::int AS n FROM map_posts WHERE id=$1', [post]) ==
 check((await pool.query('SELECT purged_at FROM account_deletions WHERE user_id=$1', [mona])).rows[0].purged_at !== null, 'purge recorded');
 
 console.log(fails ? `${fails} FAILED` : 'ALL OK');
-await app.close(); await pool.end();
+await app.close();
+// جداول هذه الحزمة مختصرة؛ تُحذف كي تنشئها الإضافات كاملة في الحزم التالية (run.sh all)
+await pool.query(`DROP TABLE IF EXISTS sessions, profiles, push_subscriptions, contacts, user_flags, admins, team_members, admin_audit, wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders CASCADE`);
+await pool.end();
 process.exit(fails ? 1 : 0);

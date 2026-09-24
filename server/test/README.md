@@ -7,3 +7,5 @@
 - `harness_posts.mjs` و`harness_market_b.mjs` و`harness_admin.mjs` هي الأكثر استخداماً عند تعديل السوق والمدفوعات والمنشورات.
 - `fake_smtp.mjs` خادم SMTP وهمي تستخدمه اختبارات البريد، و`blog_local.mjs` يشغّل المدونة محلياً.
 - الإضافات تُحمَّل بمسارات نسبية (`../commerce.js`)، فلا تنقل المجلد خارج `server/`.
+- الجلسات المتوازية تتصادم على `naslife_test` (كل حزمة تحذف جداولها). `NASLIFE_TEST_DB=naslife_test_x server/test/run.sh all` يوجّه كل `pg.Pool` إلى قاعدة مستقلة عبر `db_env.mjs`، والسجلات في `/tmp/naslife_test_x/`.
+- `harness_moderation.mjs` (طابور الإشراف وأنواع البلاغ والحظر) و`harness_guest.mjs` (تصفح الضيف وحراسة iOS ومفاتيح المال). التفاصيل في `docs/moderation.md`.

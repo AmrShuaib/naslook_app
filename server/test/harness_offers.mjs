@@ -108,6 +108,12 @@ snd = await call('POST', `/biz/${B}/offers/${first.id}/send`, { body: { toUserId
 check(snd.error === 'already-has', 'member who still holds an allowance cannot receive');
 snd = await call('POST', `/biz/${B}/offers/${deal.id}/send`, { body: { toUserId: NORA }, user: SARA, expect: 409 });
 check(snd.error === 'not-transferable', 'deals are not transferable');
+// لا هدية بين طرفين بينهما حظر (قائمة المحظورين من safety.js؛ هنا بديل ثابت)
+const savedBlocked = globalThis.naslifeBlockedIds;
+globalThis.naslifeBlockedIds = async (u) => (u === SARA ? [NORA] : u === NORA ? [SARA] : []);
+snd = await call('POST', `/biz/${B}/offers/${first.id}/send`, { body: { toUserId: NORA }, user: SARA, expect: 403 });
+check(snd.error === 'blocked', 'gift refused between a blocked pair');
+globalThis.naslifeBlockedIds = savedBlocked;
 snd = await call('POST', `/biz/${B}/offers/${first.id}/send`, { body: { toUserId: NORA }, user: SARA, expect: 200 });
 check(snd.ok && snd.to.id === NORA, 'coupon sent to a non-member');
 check((await notes('offer_received', NORA)).length === 1, 'recipient notified');

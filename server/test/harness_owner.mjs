@@ -4,7 +4,8 @@ import pg from 'pg';
 process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0';
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false)");
-await pool.query("INSERT INTO users(id,nickname,is_admin) VALUES('SA0000001','amr',false),('SA0000002','sara',false),('SA0000003','khalid',false),('SA0000009','admin',true) ON CONFLICT DO NOTHING");
+// SA0000009 قد يكون موجوداً من حزمة أخرى (newbie في harness_market2) فيُفرض كونه مديراً هنا ويُعاد في النهاية
+await pool.query("INSERT INTO users(id,nickname,is_admin) VALUES('SA0000001','amr',false),('SA0000002','sara',false),('SA0000003','khalid',false),('SA0000009','admin',true) ON CONFLICT (id) DO UPDATE SET is_admin=EXCLUDED.is_admin");
 const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
 app.register((await import('../commerce.js')).default, { pool, auth });
@@ -102,4 +103,5 @@ await call('POST', '/biz/biz-ikea/verify', { body: { verified: true }, user: ADM
 await call('POST', '/biz/' + BIZ + '/transfer', { body: { userId: CUST }, expect: 200 });
 await call('GET', '/biz/' + BIZ, { user: OWNER, expect: 200 }).then(b => console.log('   after transfer my role', b.myRole, 'owner', b.ownerId));
 console.log(fails ? `\n${fails} FAILED` : '\nALL OK');
+await pool.query("UPDATE users SET is_admin=false WHERE id='SA0000009'");
 await app.close(); await pool.end();
