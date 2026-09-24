@@ -4,7 +4,7 @@
 
 ## الحظر بين المستخدمين
 
-- جدول الحظر هو جدول النواة `user_blocks(user_id, blocked_id)`، مثبّت بالاسم في `server/safety.js` و`server/admin.js`. قبل هذا الإصلاح كان الاكتشاف يلتقط `inbox_blocked` (قائمة حظر البريد) فيتعطل الحظر كله في الإنتاج (`/safety/status` كان يعيد `blocks:false`).
+- جدول الحظر في النواة: `user_blocks(user_id, blocked_id)` إن وُجد وإلا جدول آخر فيه `block` (في الإنتاج اسمه `blocks`)، والاختيار في `server/safety.js` و`server/admin.js`. قبل هذا الإصلاح كان الاكتشاف يلتقط `inbox_blocked` (قائمة حظر البريد) فيتعطل الحظر كله في الإنتاج (`/safety/status` كان يعيد `blocks:false`).
 - إن لم يوجد `user_blocks` يُبحث احتياطاً عن جدول آخر فيه `block` بترتيب أبجدي ثابت، مع استثناء `inbox_*` وجداول البلاغات، ويُعاد الفحص كل دقيقة إن لم يوجد شيء.
 - `GET /safety/status` عام ويعيد فقط `{ok, blocks, words, threshold}` بلا أسماء جداول. اسم الجدول يظهر للإدارة في `GET /adminapi/overview` (`server.blocksTable`).
 - الحظر يعمل في الاتجاهين (من حظرته ومن حظرك) ويُطبَّق على:
