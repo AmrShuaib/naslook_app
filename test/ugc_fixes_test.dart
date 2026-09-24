@@ -376,8 +376,9 @@ void main() {
     srv.routes['GET /adminapi/settings'] = (_, __) => {'testTopup': false, 'maxTopup': 100000, 'announcement': '', 'maintenance': false, 'supportHandle': '', 'supportEmail': '', 'bannedWords': '', 'reportThreshold': 3};
     srv.routes['GET /adminapi/payments/config'] = (_, __) => {'enabled': false, 'provider': 'moyasar'};
     await _pump(tester, srv, const Scaffold(body: AdminSettingsPage()), size: const Size(600, 3000));
+    // «تواصل معنا» في ماي سبيس يقرأ البريد من الإعدادات العامة، فالنص يذكر المكانين
     expect(find.textContaining('صفحات الدعم والخصوصية والشروط'), findsOneWidget);
-    expect(find.textContaining('يظهر في «تواصل معنا» داخل التطبيق'), findsNothing);
+    expect(find.textContaining('يظهر في «تواصل معنا» داخل التطبيق'), findsOneWidget);
   });
 
   // ================= أنواع البلاغ في التطبيق = أنواع الخادم =================

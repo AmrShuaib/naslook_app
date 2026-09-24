@@ -306,6 +306,10 @@ check((await pool.query('SELECT is_public FROM vessels WHERE id=$1', [VS])).rows
 check(!!(await noted(AUTHOR, 'content_hidden', (d) => d.targetType === 'vessel' && d.reason === 'moderation' && d.vesselId === VS)), 'owner notified (vessel, by moderation)');
 a = await call('POST', `/adminapi/moderation/vessel/${VS}`, { body: { action: 'hide' }, user: ADMIN, expect: 200 });
 check(a.changed === false, 'hiding twice keeps the saved previous state');
+// المالك أعادها عامة من النواة بعد الإخفاء: إخفاء جديد يعمل (لا يعلق على الحالة المحفوظة) والإعادة ترجع الحالة الأصلية
+await pool.query('UPDATE vessels SET is_public=true WHERE id=$1', [VS]);
+a = await call('POST', `/adminapi/moderation/vessel/${VS}`, { body: { action: 'hide' }, user: ADMIN, expect: 200 });
+check(a.changed === true && (await pool.query('SELECT is_public FROM vessels WHERE id=$1', [VS])).rows[0].is_public === false, 'owner re-publicised circle can be hidden again', JSON.stringify(a));
 a = await call('POST', `/adminapi/moderation/vessel/${VS}`, { body: { action: 'restore' }, user: ADMIN, expect: 200 });
 check(a.changed === true && a.status === 'visible' && (await pool.query('SELECT is_public FROM vessels WHERE id=$1', [VS])).rows[0].is_public === true, 'restore makes it public again', JSON.stringify(a));
 check(!!(await noted(AUTHOR, 'content_restored', (d) => d.targetType === 'vessel')), 'owner told about the vessel restore');

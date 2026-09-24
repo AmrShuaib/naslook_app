@@ -278,10 +278,14 @@ class _ModerationCardState extends ConsumerState<_ModerationCard> {
     }
     setState(() => busy = true);
     try {
-      await ref.read(apiClientProvider).adminModerate(it.targetType, it.targetId, action: action, note: note.text.trim());
+      final r = await ref.read(apiClientProvider).adminModerate(it.targetType, it.targetId, action: action, note: note.text.trim());
       ref.invalidate(adminModerationProvider);
       ref.invalidate(adminOverviewProvider);
-      if (mounted) toast(context, switch (action) { 'hide' => 'أُخفي المحتوى', 'restore' => 'أُعيد إظهار المحتوى', 'suspend-owner' => 'أُوقف الناشر وأُخفي المحتوى', _ => 'تُجوهلت البلاغات' });
+      // إخفاء لم يغيّر شيئاً (مخفي أصلاً، أو دائرة بلا عمود عام/خاص) لا يُعلَن كنجاح حتى لا يظن المشرف أن المحتوى اختفى
+      final msg = action == 'hide' && !r.changed
+          ? (r.hint == 'vessel-no-public-flag' ? 'تعذّر إخفاء هذه الدائرة من هنا؛ استخدم «إيقاف الناشر»' : 'لم يتغيّر شيء: المحتوى مخفي أصلاً أو لا يمكن إخفاؤه')
+          : switch (action) { 'hide' => 'أُخفي المحتوى', 'restore' => 'أُعيد إظهار المحتوى', 'suspend-owner' => 'أُوقف الناشر وأُخفي المحتوى', _ => 'تُجوهلت البلاغات' };
+      if (mounted) toast(context, msg);
     } catch (e) {
       if (mounted) toast(context, adminErrText(e), error: true);
     } finally {

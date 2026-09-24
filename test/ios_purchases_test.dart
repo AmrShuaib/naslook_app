@@ -213,11 +213,11 @@ void main() {
       expect(find.byKey(const Key('wallet-ios-note')), findsNothing);
     });
 
-    testWidgets('web with /settings/public failing: transfer, pay and QR stay (the server enforces the switch)', (tester) async {
+    testWidgets('web with /settings/public failing: transfer, pay and QR stay hidden until the switch is known', (tester) async {
       iosNativeOverride = false;
       await _pump(tester, const WalletPage(), srv: _Srv()..settingsDown = true);
       for (final k in ['wallet-transfer', 'wallet-pay', 'wallet-qr']) {
-        expect(find.byKey(Key(k)), findsOneWidget, reason: k);
+        expect(find.byKey(Key(k)), findsNothing, reason: k);
       }
     });
 
@@ -295,13 +295,13 @@ void main() {
       expect(find.text('رحلة عائلية وتقسيم الفاتورة', skipOffstage: false), findsNothing, reason: 'مثال غرضه المال يُحذف كله');
     });
 
-    testWidgets('web with /settings/public failing: money commands are still suggested', (tester) async {
+    testWidgets('web with /settings/public failing: money commands stay hidden until the switches are known', (tester) async {
       iosNativeOverride = false;
       await _pump(tester, peer, srv: _Srv()..settingsDown = true);
-      expect(find.byKey(const Key('card-pay')), findsOneWidget);
+      expect(find.byKey(const Key('card-pay')), findsNothing);
       await tester.enterText(find.byType(TextField), '/');
       await tester.pump();
-      expect(find.byKey(const Key('suggest-/pay')), findsOneWidget);
+      expect(find.byKey(const Key('suggest-/pay')), findsNothing);
     });
 
     testWidgets('web with chat payments on: money commands are suggested and the pay button shows', (tester) async {

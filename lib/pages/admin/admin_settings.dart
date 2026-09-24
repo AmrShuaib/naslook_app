@@ -73,7 +73,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             const SizedBox(height: 8),
             TextField(controller: support, decoration: const InputDecoration(labelText: 'نك نيم حساب الدعم (اختياري)')),
             const SizedBox(height: 8),
-            TextField(key: const Key('set-support-email'), controller: supportEmail, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'بريد الدعم', helperText: 'يظهر في صفحات الدعم والخصوصية والشروط على naslife.app (مثل support@areebd.sa). «تواصل معنا» داخل التطبيق يبقى support@naslife.app', helperMaxLines: 3)),
+            TextField(key: const Key('set-support-email'), controller: supportEmail, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'بريد الدعم', helperText: 'يظهر في «تواصل معنا» داخل التطبيق وفي صفحات الدعم والخصوصية والشروط على naslife.app (مثل support@areebd.sa)', helperMaxLines: 3)),
             SwitchListTile(contentPadding: EdgeInsets.zero, value: maintenance ?? s.maintenance, onChanged: (v) => setState(() => maintenance = v), title: const Text('وضع الصيانة'), subtitle: const Text('يعرض تنبيه صيانة للمستخدمين دون إيقاف الخدمة')),
           ])),
           const SectionTitle('الأمان والإشراف'),

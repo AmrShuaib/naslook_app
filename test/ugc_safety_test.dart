@@ -316,6 +316,28 @@ void main() {
     expect(srv.bodies['POST /chat/meta'], {'messageId': 'm-2', 'peerId': 'SA0000003', 'replyTo': 'm-1'});
   });
 
+  testWidgets('admin hide that changes nothing on a circle says so instead of claiming success', (tester) async {
+    final srv = _Srv();
+    const vid = 'bbbbbbbb-0000-4000-8000-000000000011';
+    srv.routes['GET /adminapi/reports'] = (_, __) => {'available': true, 'items': []};
+    srv.routes['GET /adminapi/moderation'] = (req, _) => {
+          'status': 'open', 'open': 1, 'threshold': 3, 'actions': ['dismiss', 'hide', 'restore', 'suspend-owner'],
+          'types': [{'id': 'vessel', 'name': 'دائرة'}],
+          'items': [
+            {'targetType': 'vessel', 'targetId': vid, 'typeName': 'دائرة', 'reports': 3, 'reasons': ['محتوى مسيء أو كراهية'], 'firstAt': _now, 'lastAt': _now,
+              'owner': {'id': 'SA0000002', 'nickname': 'sara'}, 'title': 'دائرة مزعجة', 'text': '', 'mediaUrl': null, 'status': 'visible', 'hidden': false, 'action': null},
+          ],
+        };
+    srv.routes['POST /adminapi/moderation/vessel/$vid'] = (_, b) => {'ok': true, 'action': 'hide', 'changed': false, 'status': 'visible', 'owner': 'SA0000002', 'hint': 'vessel-no-public-flag'};
+    await _pump(tester, srv, const Scaffold(body: AdminReportsPage()), size: const Size(700, 1200));
+    await tester.tap(find.byKey(const Key('reports-tab-content')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('mod-hide-vessel-$vid')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('إيقاف الناشر'), findsWidgets);
+    expect(find.text('أُخفي المحتوى'), findsNothing);
+  });
+
   testWidgets('admin moderation tab lists grouped content reports and hides one with a note', (tester) async {
     final srv = _Srv();
     const pid = 'aaaaaaaa-0000-4000-8000-000000000077';

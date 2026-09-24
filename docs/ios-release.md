@@ -96,7 +96,7 @@ Naslife is a local social and marketplace app for Jeddah and Dammam, Saudi Arabi
 Demo account
   Username/email: <demo account email>
   Password: <demo password>
-The account has a small wallet balance so the marketplace purchase flow can be tested. No two-factor step.
+The account has a wallet balance so marketplace orders, event tickets and circle bookings can be tested; the iOS app does not offer wallet top-up. No two-factor step.
 
 Browsing without an account
   The app opens in guest mode on iOS: map, places, marketplace and events work without signing in.
@@ -111,7 +111,7 @@ User-generated content (1.2)
   - Users accept the Terms (zero tolerance for objectionable content and abusive users) when they register.
   - Report: the "⋯" menu on any post, listing, comment, review, event or profile, or at the top of a circle's screen ("إبلاغ عن الدائرة") > "إبلاغ" (Report), then pick a reason. The report sheet can also block the author in the same step.
   - Block: the "⋯" menu on a post, comment, circle, profile or chat > "حظر" (Block). Content from people you blocked is hidden from you everywhere in the app; on map posts, the marketplace, events and search the block also works the other way (they no longer see your content). Blocked users are listed in My Space and can be unblocked there.
-  - A profanity filter rejects offensive words in map posts, listings, reviews, questions, events and circle comments (circle comments are checked before sending).
+  - A profanity filter rejects offensive words in map posts, listings, reviews, questions, events, circle posts and circle comments (circle posts, circle comments and chat messages are checked before sending).
   - Reports are reviewed within 24 hours in our admin moderation queue; content reported by several users is hidden automatically, and offending accounts are suspended.
   - Contact: My Space > "تواصل معنا" (Contact us), and https://naslife.app/support
 

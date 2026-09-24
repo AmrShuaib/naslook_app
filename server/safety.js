@@ -310,10 +310,12 @@ export default async function safety(app, opts) {
         if (!V?.ok || !V.pub) return false;
         const col = q(V.pub);
         if (hide) {
-          if (info?.status === "blocked" || await vesselModerated(id)) return false;
-          await savePrev(type, id, `SELECT CASE WHEN ${col} IS DISTINCT FROM false THEN 'true' ELSE 'false' END AS v FROM vessels WHERE id::text=$1`);
-          await upd(`UPDATE vessels SET ${col}=false WHERE id::text=$1 AND ${col} IS DISTINCT FROM false`, [id]);
-          return vesselModerated(id);
+          if (info?.status === "blocked") return false;
+          // إن أعادها المالك عامةً بعد إخفاء سابق تبقى الحالة المحفوظة الأولى (الأصلية) ويُعاد إخفاؤها
+          const had = await vesselModerated(id);
+          if (!had) await savePrev(type, id, `SELECT CASE WHEN ${col} IS DISTINCT FROM false THEN 'true' ELSE 'false' END AS v FROM vessels WHERE id::text=$1`);
+          const flipped = await upd(`UPDATE vessels SET ${col}=false WHERE id::text=$1 AND ${col} IS DISTINCT FROM false`, [id]);
+          return flipped || (!had && vesselModerated(id));
         }
         if (!(await vesselModerated(id))) return false;
         const prev = await takePrev(type, id, ["true", "false"], "true");

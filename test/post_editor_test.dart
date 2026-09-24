@@ -98,6 +98,7 @@ void main() {
         posted = jsonDecode(req.body) as Map<String, dynamic>;
         return _json({'id': 'p9', 'vesselId': 'v1', 'type': 'text', 'content': posted!['content'], 'caption': '', 'kind': posted!['kind'], 'author': {'id': 'SA0000001', 'nickname': 'amr'}, 'createdAt': DateTime.now().toIso8601String(), 'supports': 0, 'comments': 0});
       }
+      if (key == 'GET /safety/words') return _json({'words': ['كلمةممنوعة'], 'defaultWords': []});
       if (req.method == 'GET') return _json([]);
       return _json({'ok': true});
     }
@@ -164,6 +165,19 @@ void main() {
       expect(find.byKey(const Key('editor-body')), findsNothing, reason: 'أُغلق المحرر بعد النشر');
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString(PostEditorPage.draftKey('v1')), isNull, reason: 'المسودة تُمسح بعد النشر');
+    });
+
+    testWidgets('a banned word blocks publishing before anything reaches the core, and the text stays', (tester) async {
+      await pump(tester);
+      await tester.enterText(find.byKey(const Key('editor-title')), 'تحديث');
+      await tester.enterText(find.byKey(const Key('editor-body')), 'نص فيه كلمةممنوعة هنا');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('editor-publish')));
+      await tester.pumpAndSettle();
+      expect(posted, isNull, reason: 'لا طلب نشر');
+      expect(find.textContaining('كلمة غير مسموحة'), findsOneWidget);
+      expect(tester.widget<TextField>(find.byKey(const Key('editor-body'))).controller!.text, 'نص فيه كلمةممنوعة هنا');
+      expect(tester.widget<FilledButton>(find.byKey(const Key('editor-publish'))).onPressed, isNotNull, reason: 'يمكن التعديل والنشر مجدداً');
     });
 
     testWidgets('draft is saved on close and restored on reopen', (tester) async {

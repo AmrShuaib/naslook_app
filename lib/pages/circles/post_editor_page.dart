@@ -9,11 +9,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../api/naslife_api.dart';
+import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/text/markup_edit.dart';
 import '../../core/text/post_markup.dart';
 import '../../ui/markup_toolbar.dart';
 import '../../state/app_state.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/widgets.dart';
 
 export '../../core/text/markup_edit.dart' show MarkupEdit;
@@ -105,6 +107,15 @@ class _PostEditorPageState extends ConsumerState<PostEditorPage> {
     setState(() => _publishing = true);
     try {
       final text = MarkupEdit.compose(title: _title.text, body: _body.text);
+      // منشورات الدوائر تذهب إلى النواة مباشرة ولا يفحصها خادمنا، فنفحص الكلمات المحظورة قبل الإرسال (المسودة تبقى)
+      final banned = bannedWordIn('${_title.text} ${_body.text}', await ref.read(bannedWordsProvider.future));
+      if (banned != null) {
+        if (mounted) {
+          setState(() => _publishing = false);
+          toast(context, 'النص يحتوي كلمة غير مسموحة: «$banned»', error: true);
+        }
+        return;
+      }
       final post = await ref.read(apiClientProvider).createPost(widget.vesselId, text, kind: _kind);
       await _clearDraft();
       if (mounted) Navigator.of(context).pop(post);

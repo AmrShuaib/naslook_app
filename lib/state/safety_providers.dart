@@ -4,8 +4,11 @@ import '../api/naslife_api.dart';
 import '../api/safety_api.dart';
 import 'app_state.dart';
 
-/// المحادثات المكتومة للمستخدم الحالي.
-final mutesProvider = FutureProvider<List<ChatMute>>((ref) => ref.watch(apiClientProvider).mutes());
+/// المحادثات المكتومة للمستخدم الحالي. يراقب معرّف المستخدم كقائمة المحظورين فلا يرثها حساب آخر في الجلسة نفسها.
+final mutesProvider = FutureProvider<List<ChatMute>>((ref) async {
+  if (ref.watch(appStateProvider.select((s) => s.user?.id)) == null) return const [];
+  return ref.watch(apiClientProvider).mutes();
+});
 
 /// معرّفات الأطراف المكتومة (فارغة حتى تصل القائمة).
 final mutedPeersProvider = Provider<Set<String>>((ref) => ref.watch(mutesProvider).maybeWhen(data: (l) => {for (final m in l) m.peerId}, orElse: () => const <String>{}));

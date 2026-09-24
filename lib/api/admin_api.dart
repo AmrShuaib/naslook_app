@@ -720,9 +720,9 @@ extension AdminApi on ApiClient {
   Future<ModerationQueue> adminModeration({bool all = false, String? type}) async =>
       ModerationQueue.fromJson(await get('/adminapi/moderation', query: {'status': all ? 'all' : 'open', if (type != null && type.isNotEmpty) 'type': type}));
   /// إجراء على عنصر مُبلَّغ عنه: dismiss | hide | restore | suspend-owner.
-  Future<({bool changed, String status})> adminModerate(String type, String id, {required String action, String note = ''}) async {
+  Future<({bool changed, String status, String? hint})> adminModerate(String type, String id, {required String action, String note = ''}) async {
     final d = await post('/adminapi/moderation/$type/${Uri.encodeComponent(id)}', {'action': action, 'note': note});
-    return (changed: d['changed'] == true, status: d['status']?.toString() ?? '');
+    return (changed: d['changed'] == true, status: d['status']?.toString() ?? '', hint: d['hint']?.toString());
   }
   Future<List<AdminBiz>> adminBiz() async => asList(await getList('/adminapi/biz')).map(AdminBiz.fromJson).toList();
   Future<void> adminBizUpdate(String id, {bool? verified, bool? active, String? ownerId, bool clearOwner = false}) => post('/adminapi/biz/$id', {if (verified != null) 'verified': verified, if (active != null) 'active': active, if (ownerId != null || clearOwner) 'ownerId': ownerId});
