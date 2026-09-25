@@ -28,6 +28,7 @@ import '../state/biz_providers.dart';
 import '../state/notify_providers.dart';
 import '../state/providers.dart';
 import '../screens/login_page.dart';
+import '../screens/verify_email_page.dart';
 import '../pages/home/home_page.dart';
 import '../pages/map/map_page.dart';
 import '../pages/circles/circles_page.dart';
@@ -84,6 +85,9 @@ class AuthGate extends ConsumerWidget {
           if (ref.watch(guestBrowseProvider)) return const GuestShell();
         }
         return const LoginPage();
+      case AuthStatus.pendingVerification:
+        // بوابة التأكيد: كلمة السر صحيحة أو الحساب أُنشئ للتو، ولا دخول قبل رمز البريد
+        return const VerifyEmailPage();
       case AuthStatus.signedIn:
         return ref.watch(adminModeProvider) ? const AdminShell() : const HomeShell();
     }

@@ -108,7 +108,12 @@ export default async function authAlias(app, opts = {}) {
   const rowByEmail = async (email) => (await pool.query("SELECT alias, user_id, nickname, verified, reset_hash, reset_exp, reset_sent_at, reset_attempts FROM login_aliases WHERE alias=$1", [email])).rows[0] ?? null;
   const recoveryOf = async (uid) => (await pool.query("SELECT phrase_enc FROM account_recovery WHERE user_id=$1", [uid])).rows[0]?.phrase_enc ?? null;
   const saveRecovery = (uid, phrase, source) => pool.query("INSERT INTO account_recovery(user_id, phrase_enc, source, updated_at) VALUES($1,$2,$3,now()) ON CONFLICT (user_id) DO UPDATE SET phrase_enc=EXCLUDED.phrase_enc, source=EXCLUDED.source, updated_at=now()", [uid, encrypt(key, phrase), source]);
-  const info = (row) => ({ email: row?.alias ?? null, verified: row?.verified === true, mailConfigured: mailOn(), codeSentAt: row?.code_sent_at ?? null, codePending: !!(row?.code_hash && row.code_exp && new Date(row.code_exp) > new Date()) });
+  // ---- بوابة التأكيد (قرار المالك): لا جلسة قبل تأكيد البريد. إعداد المنصة requireEmailVerification (افتراضياً مفعّل)،
+  // ويُشترط أن تكون خدمة البريد مضبوطة وإلا لا وسيلة للتأكيد فتبقى الجلسات كما هي حتى لا يُقفل الباب على الجميع.
+  const gateOn = () => mailOn() && globalThis.naslifeSettings?.requireEmailVerification !== false;
+  /// يلغي جلسة أصدرتها النواة للتو (تسجيل أو دخول قبل التأكيد) عبر مسار الخروج نفسه الذي يستخدمه التطبيق.
+  const coreLogout = async (token) => { if (!token) return; try { await app.inject({ method: "POST", url: "/logout", headers: { "x-token": String(token), "content-type": "application/json" }, payload: "{}" }); } catch { /* ignore */ } };
+  const info = (row) => ({ email: row?.alias ?? null, verified: row?.verified === true, mailConfigured: mailOn(), required: gateOn(), codeSentAt: row?.code_sent_at ?? null, codePending: !!(row?.code_hash && row.code_exp && new Date(row.code_exp) > new Date()) });
   const parseBody = (r) => { try { return r.json(); } catch { return {}; } };
 
   // ---- طلبات داخلية إلى النواة
@@ -211,7 +216,13 @@ export default async function authAlias(app, opts = {}) {
     if (b.acceptTerms === true) { try { await globalThis.naslifeLegalConsent?.(userId, "register"); } catch { /* لا يُفشل التسجيل */ } }
     // رسالة الترحيب تحمل رمز التأكيد وبيانات الحساب وعبارة الاسترداد، فلا يُطلب من المستخدم حفظ شيء
     let codeSent = false, recoverySent = false;
-    if (mailOn()) { try { await sendVerifyCode(email, { nickname, userId, phrase }); codeSent = true; recoverySent = !!phrase; } catch { /* يُعاد الإرسال من ماي سبيس */ } }
+    if (mailOn()) { try { await sendVerifyCode(email, { nickname, userId, phrase }); codeSent = true; recoverySent = !!phrase; } catch { /* يُعاد الإرسال من شاشة التأكيد */ } }
+    if (gateOn()) {
+      // البوابة: تُلغى جلسة النواة الصادرة الآن ويُرد 202 بلا رمز جلسة؛ التطبيق يعرض شاشة الرمز ثم يدخل بكلمة السر
+      await coreLogout(body.token);
+      const { token: _omit, ...rest } = body;
+      return reply.code(202).send({ ...rest, email, verified: false, pending: true, codeSent, recoverySent });
+    }
     return reply.code(r.statusCode).send({ ...body, email, verified: false, codeSent, recoverySent });
   });
 
@@ -227,7 +238,60 @@ export default async function authAlias(app, opts = {}) {
       if (!row) return bad(reply, 401, "bad-credentials");
       handle = (await nickOf(row.user_id)) ?? row.nickname; // النك نيم الحالي إن تغيّر
     }
-    return forward(reply, await coreLogin(req, handle, password));
+    const r = await coreLogin(req, handle, password);
+    if (r.statusCode < 200 || r.statusCode >= 300 || !gateOn()) return forward(reply, r);
+    // كلمة السر صحيحة لكن البريد غير مؤكد: تُلغى الجلسة الصادرة، ويُعاد إرسال الرمز (مرة كل دقيقة)، ويكمل التطبيق بشاشة التأكيد.
+    // الحسابات القديمة بلا بريد أصلاً تمر كما هي (لا شيء يمكن تأكيده).
+    const out = parseBody(r);
+    const userId = String(out.id ?? out.user?.id ?? "").toUpperCase();
+    const row = ID_RE.test(userId) ? await rowOf(userId) : null;
+    if (!row || row.verified) return forward(reply, r);
+    await coreLogout(out.token);
+    const since = row.code_sent_at ? (Date.now() - new Date(row.code_sent_at).getTime()) / 1000 : Infinity;
+    let codeSent = false;
+    if (since >= RESEND_SECONDS) { try { await sendVerifyCode(row.alias); codeSent = true; } catch { /* يعيد التطبيق الطلب */ } }
+    return bad(reply, 403, "email-unverified", { email: row.alias, codeSent, retryIn: codeSent || since === Infinity ? 0 : Math.ceil(RESEND_SECONDS - since) });
+  });
+
+  // ================= تأكيد البريد بلا جلسة (بوابة الدخول) =================
+  const rowFullByEmail = async (email) => (await pool.query("SELECT alias, user_id, nickname, verified, code_hash, code_exp, code_sent_at, attempts FROM login_aliases WHERE alias=$1", [email])).rows[0] ?? null;
+  /// يطابق الرمز مع تجزئته ويحدّث المحاولات: null عند النجاح (ويُعلَّم البريد مؤكداً)، وإلا {code, error, extra}. خمس محاولات ثم رمز جديد.
+  async function checkCode(row, raw) {
+    const code = digits(raw);
+    if (!row.code_hash || !row.code_exp) return { code: 400, error: "no-code" };
+    if (new Date(row.code_exp) < new Date()) return { code: 410, error: "code-expired" };
+    if (row.attempts >= CODE_MAX_ATTEMPTS) return { code: 429, error: "too-many-attempts" };
+    if (code.length !== 6 || hashCode(row.alias, code) !== row.code_hash) {
+      const r = await pool.query("UPDATE login_aliases SET attempts=attempts+1 WHERE alias=$1 RETURNING attempts", [row.alias]);
+      return { code: 400, error: "bad-code", extra: { attemptsLeft: Math.max(0, CODE_MAX_ATTEMPTS - (r.rows[0]?.attempts ?? CODE_MAX_ATTEMPTS)) } };
+    }
+    await pool.query("UPDATE login_aliases SET verified=true, verified_at=now(), code_hash=NULL, code_exp=NULL, attempts=0 WHERE alias=$1", [row.alias]);
+    return null;
+  }
+  /// إعادة إرسال رمز التأكيد لبريد غير مؤكد. الرد عام لبريد مجهول أو مؤكد كي لا يُكشف وجود الحساب.
+  app.post("/auth/resend", async (req, reply) => {
+    const email = normEmail(req.body?.email);
+    if (!EMAIL_RE.test(email)) return bad(reply, 400, "bad-email");
+    if (limited("resend:" + ipOf(req), 10, 15 * 60000)) return bad(reply, 429, "too-many-attempts");
+    if (!mailOn()) return bad(reply, 503, "mail-not-configured");
+    const row = await rowFullByEmail(email);
+    if (!row || row.verified) return { ok: true };
+    const since = row.code_sent_at ? (Date.now() - new Date(row.code_sent_at).getTime()) / 1000 : Infinity;
+    if (since < RESEND_SECONDS) return bad(reply, 429, "too-soon", { retryIn: Math.ceil(RESEND_SECONDS - since) });
+    try { await sendVerifyCode(email); } catch (e) { return bad(reply, 502, "send-failed", { detail: String(e?.message ?? e).slice(0, 200) }); }
+    return { ok: true, expiresIn: CODE_TTL_MIN * 60 };
+  });
+  /// التحقق من الرمز بالبريد بلا جلسة؛ بعده يدخل التطبيق بكلمة السر (لا تُصدر جلسة من هنا حتى لا يكفي الرمز وحده للدخول).
+  app.post("/auth/verify", async (req, reply) => {
+    const email = normEmail(req.body?.email);
+    if (!EMAIL_RE.test(email)) return bad(reply, 400, "bad-email");
+    if (limited("verify:" + ipOf(req), 30, 15 * 60000)) return bad(reply, 429, "too-many-attempts");
+    const row = await rowFullByEmail(email);
+    if (!row) return bad(reply, 400, "bad-code"); // بريد مجهول يُعامل كرمز خاطئ
+    if (row.verified) return { ok: true, verified: true };
+    const err = await checkCode(row, req.body?.code);
+    if (err) return bad(reply, err.code, err.error, err.extra ?? {});
+    return { ok: true, verified: true };
   });
 
   // ================= نسيت كلمة السر =================
@@ -378,19 +442,13 @@ export default async function authAlias(app, opts = {}) {
     const row = await rowOf(uid);
     if (!row) return bad(reply, 400, "no-email");
     if (row.verified) return { ok: true, ...info(row) };
-    if (!row.code_hash || !row.code_exp) return bad(reply, 400, "no-code");
-    if (new Date(row.code_exp) < new Date()) return bad(reply, 410, "code-expired");
-    if (row.attempts >= CODE_MAX_ATTEMPTS) return bad(reply, 429, "too-many-attempts");
-    if (code.length !== 6 || hashCode(row.alias, code) !== row.code_hash) {
-      const r = await pool.query("UPDATE login_aliases SET attempts=attempts+1 WHERE alias=$1 RETURNING attempts", [row.alias]);
-      return bad(reply, 400, "bad-code", { attemptsLeft: Math.max(0, CODE_MAX_ATTEMPTS - (r.rows[0]?.attempts ?? CODE_MAX_ATTEMPTS)) });
-    }
-    await pool.query("UPDATE login_aliases SET verified=true, verified_at=now(), code_hash=NULL, code_exp=NULL, attempts=0 WHERE alias=$1", [row.alias]);
+    const err = await checkCode(row, code);
+    if (err) return bad(reply, err.code, err.error, err.extra ?? {});
     return { ok: true, ...info(await rowOf(uid)) };
   });
   app.get("/auth/alias/status", async () => {
     const c = (await pool.query("SELECT count(*)::int AS n, count(*) FILTER (WHERE verified)::int AS v FROM login_aliases")).rows[0];
     const r = (await pool.query("SELECT count(*)::int AS n FROM account_recovery")).rows[0];
-    return { ok: true, aliases: c.n, verified: c.v, recoverable: r.n, mailConfigured: mailOn(), keyDurable: keySource !== "memory" };
+    return { ok: true, aliases: c.n, verified: c.v, recoverable: r.n, mailConfigured: mailOn(), requireVerification: gateOn(), keyDurable: keySource !== "memory" };
   });
 }

@@ -115,7 +115,8 @@ class ApiClient {
 
   /// تسجيل حساب جديد بالبريد الإلكتروني + اسم المستخدم + كلمة السر عبر إضافة الحسابات بالبريد (server/auth_alias.js)؛
   /// وإن لم تكن منشورة على الخادم نرجع إلى مسار النواة /register بالنك نيم فقط.
-  Future<Session> register({required String nickname, required String pin, String? email, bool acceptTerms = false}) async {
+  /// مع بوابة التأكيد يرد الخادم 202 بلا جلسة (`pending`) فتكون النتيجة «بانتظار الرمز».
+  Future<AuthOutcome> register({required String nickname, required String pin, String? email, bool acceptTerms = false}) async {
     Map<String, dynamic> data;
     if (email != null && email.trim().isNotEmpty) {
       try {
@@ -127,13 +128,22 @@ class ApiClient {
     } else {
       data = await post('/register', {'nickname': nickname.trim(), 'password': pin.trim()});
     }
+    if (data['pending'] == true && data['email'] != null) {
+      return AuthOutcome.pending(data['email'].toString(), codeSent: data['codeSent'] == true, recoveryPhrase: data['recoveryPhrase']?.toString(), recoverySent: data['recoverySent'] == true);
+    }
     final session = Session.fromJson(data);
     if (!session.isValid) {
       throw ApiException(500, 'الخادم لم يُرجع رمز جلسة', body: data);
     }
     token = session.token;
-    return session;
+    return AuthOutcome.signedIn(session);
   }
+
+  /// تأكيد البريد بالرمز بلا جلسة (بوابة الدخول)؛ بعده يُعاد الدخول بكلمة السر.
+  Future<void> verifyEmailCode({required String email, required String code}) => post('/auth/verify', {'email': email.trim().toLowerCase(), 'code': code.trim()});
+
+  /// إعادة إرسال رمز التأكيد لبريد غير مؤكد (مرة كل دقيقة).
+  Future<void> resendVerification(String email) => post('/auth/resend', {'email': email.trim().toLowerCase()});
 
   /// هل اسم المستخدم متاح؟ (server/auth_alias.js) يعيد null إن لم يكن الخادم يدعم الفحص.
   Future<bool?> nicknameAvailable(String nickname) async {
@@ -167,13 +177,18 @@ class ApiClient {
   }
 
   /// الدخول بالنك نيم أو البريد + الرقم السري: عبر إضافة الدخول بالبريد (server/auth_alias.js)، وإن لم تكن
-  /// منشورة على الخادم نرجع إلى مسار النواة /login بالنك نيم.
-  Future<Session> login({required String nickname, required String pin}) async {
+  /// منشورة على الخادم نرجع إلى مسار النواة /login بالنك نيم. بريد غير مؤكد يرد 403 `email-unverified` فتكون
+  /// النتيجة «بانتظار الرمز» (كلمة السر صحيحة لكن لا جلسة قبل التأكيد).
+  Future<AuthOutcome> login({required String nickname, required String pin}) async {
     final body = {'handle': nickname.trim(), 'password': pin.trim()};
     Map<String, dynamic> data;
     try {
       data = await post('/auth/login', body);
     } on ApiException catch (e) {
+      if (e.statusCode == 403 && e.body is Map && (e.body as Map)['error'] == 'email-unverified') {
+        final b = e.body as Map;
+        return AuthOutcome.pending(b['email']?.toString() ?? nickname.trim().toLowerCase(), codeSent: b['codeSent'] == true);
+      }
       if (e.statusCode != 404) rethrow;
       data = await post('/login', body);
     }
@@ -182,7 +197,7 @@ class ApiClient {
       throw ApiException(500, 'الخادم لم يُرجع رمز جلسة', body: data);
     }
     token = session.token;
-    return session;
+    return AuthOutcome.signedIn(session);
   }
 
   /// بيانات المستخدم الحالي (للتحقق من صلاحية الجلسة المحفوظة).
@@ -310,6 +325,7 @@ class ApiClient {
     'too-many': 'محاولات كثيرة، انتظر دقيقة ثم حاول',
     'too-many-attempts': 'محاولات كثيرة، انتظر دقيقة ثم حاول',
     'email-taken': 'هذا البريد مسجّل لحساب آخر؛ سجّل الدخول به أو استخدم «نسيت كلمة السر»',
+    'email-unverified': 'أكّد بريدك بالرمز المرسل إليه قبل الدخول',
     'bad-email': 'صيغة البريد الإلكتروني غير صحيحة',
     'bad-code': 'الرمز غير صحيح',
     'code-expired': 'انتهت صلاحية الرمز؛ اطلب رمزاً جديداً',
@@ -410,4 +426,17 @@ String thumbUrl(String url, {String? base}) {
 
 class _TokenBox {
   String? value;
+}
+
+/// نتيجة التسجيل أو الدخول: جلسة، أو «بانتظار تأكيد البريد» بلا جلسة (قرار المالك: لا دخول قبل التأكيد).
+class AuthOutcome {
+  final Session? session;
+  final String? pendingEmail;
+  final bool codeSent;
+  /// عبارة الاسترداد وهل أُرسلت بالبريد (من رد التسجيل) لتُعرض بعد الدخول كما كان.
+  final String? recoveryPhrase;
+  final bool recoverySent;
+  const AuthOutcome.signedIn(Session this.session) : pendingEmail = null, codeSent = false, recoveryPhrase = null, recoverySent = false;
+  const AuthOutcome.pending(String this.pendingEmail, {this.codeSent = false, this.recoveryPhrase, this.recoverySent = false}) : session = null;
+  bool get isPending => pendingEmail != null;
 }

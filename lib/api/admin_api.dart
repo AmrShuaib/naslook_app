@@ -540,16 +540,18 @@ class AdminSettings {
   final int reportThreshold;
   // التحويل بين المستخدمين والدفع داخل المحادثة (يُطفآن دائماً في iOS)، والقائمة الافتراضية للكلمات المحظورة
   final bool transfersEnabled, chatPaymentsEnabled, bannedWordsDefault;
+  /// تأكيد البريد قبل الدخول (لا جلسة قبل الرمز)
+  final bool requireEmailVerification;
   // السوق
   final double marketCommissionPct;
   final int spotlightPricePerDay, spotlightMaxDays, spotlightMaxActive;
   final bool marketReviewNewAccounts, marketBlockContacts;
   const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
-      this.transfersEnabled = true, this.chatPaymentsEnabled = true, this.bannedWordsDefault = true,
+      this.transfersEnabled = true, this.chatPaymentsEnabled = true, this.bannedWordsDefault = true, this.requireEmailVerification = true,
       this.marketCommissionPct = 0, this.spotlightPricePerDay = 2000, this.spotlightMaxDays = 30, this.spotlightMaxActive = 12, this.marketReviewNewAccounts = false, this.marketBlockContacts = true});
   factory AdminSettings.fromJson(Map m) => AdminSettings(testTopup: m['testTopup'] == true, maintenance: m['maintenance'] == true, setupCodePresent: m['setupCodePresent'] == true, maxTopup: _i(m['maxTopup']), announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '',
       bannedWords: m['bannedWords']?.toString() ?? '', reportThreshold: m['reportThreshold'] == null ? 3 : _i(m['reportThreshold']),
-      supportEmail: m['supportEmail']?.toString() ?? '', transfersEnabled: m['transfersEnabled'] != false, chatPaymentsEnabled: m['chatPaymentsEnabled'] != false, bannedWordsDefault: m['bannedWordsDefault'] != false,
+      supportEmail: m['supportEmail']?.toString() ?? '', transfersEnabled: m['transfersEnabled'] != false, chatPaymentsEnabled: m['chatPaymentsEnabled'] != false, bannedWordsDefault: m['bannedWordsDefault'] != false, requireEmailVerification: m['requireEmailVerification'] != false,
       marketCommissionPct: (m['marketCommissionPct'] as num?)?.toDouble() ?? 0, spotlightPricePerDay: m['spotlightPricePerDay'] == null ? 2000 : _i(m['spotlightPricePerDay']), spotlightMaxDays: m['spotlightMaxDays'] == null ? 30 : _i(m['spotlightMaxDays']), spotlightMaxActive: m['spotlightMaxActive'] == null ? 12 : _i(m['spotlightMaxActive']),
       marketReviewNewAccounts: m['marketReviewNewAccounts'] == true, marketBlockContacts: m['marketBlockContacts'] != false);
 }

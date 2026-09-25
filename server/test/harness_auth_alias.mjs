@@ -24,6 +24,7 @@ const issue = (nick) => { for (const [t, n] of sessions) if (n === nick) session
 const newPhrase = () => 'عبارة جديدة رقم ' + (++phraseSeq) + ' كلمات ست';
 app.post('/register', async (req, reply) => { const { nickname, password } = req.body ?? {}; if (!/^[a-z0-9_]{3,32}$/.test(nickname ?? '')) return reply.code(400).send({ error: 'invalid-nickname' }); if (accounts[nickname]) return reply.code(409).send({ error: 'nickname-taken' }); if (String(password ?? '').length < 8) return reply.code(400).send({ error: 'weak-password' }); const id = 'SA00000' + (++seq); accounts[nickname] = { id, password, phrase: newPhrase() }; await pool.query('INSERT INTO users(id,nickname) VALUES($1,$2)', [id, nickname]); return { id, nickname, token: issue(nickname), recoveryPhrase: accounts[nickname].phrase, hasRecovery: true }; });
 app.post('/login', async (req, reply) => { const { handle, password } = req.body ?? {}; const a = accounts[handle]; if (a && a.password === password) return { id: a.id, nickname: handle, token: issue(handle) }; return reply.code(401).send({ error: 'bad-credentials' }); });
+app.post('/logout', async (req) => { sessions.delete(req.headers['x-token']); return { ok: true }; });
 app.post('/recover', async (req, reply) => { const { handle, recoveryPhrase, newPassword } = req.body ?? {}; const a = accounts[handle]; if (!a || a.phrase !== recoveryPhrase) return reply.code(401).send({ error: 'bad-code' }); if (String(newPassword ?? '').length < 8) return reply.code(400).send({ error: 'weak-password' }); a.password = newPassword; a.phrase = newPhrase(); return { id: a.id, nickname: handle, token: issue(handle), recoveryPhrase: a.phrase, hasRecovery: true }; });
 const auth = async (req) => { const h = req.headers['x-user']; if (h) return h; const t = req.headers['x-token']; const n = t && sessions.get(t); return n ? accounts[n].id : null; };
 app.register((await import('../auth_alias.js')).default, { pool, auth, opsDir: OPS });
@@ -80,7 +81,52 @@ check(r.code === 503 && r.json.error === 'mail-not-configured', 'forgot refused 
 r = await call('PUT', '/adminapi/mail', { ...ADMIN, body: { provider: 'smtp', host: '127.0.0.1', port: smtp.port, user: 'mailer', pass: 'secret', from: 'no-reply@naslife.app' } });
 check(r.code === 200 && r.json.configured === true, 'admin enables SMTP');
 r = await call('POST', '/auth/register', { body: { email: 'second@example.com', nickname: 'second', password: 'Password2' } });
-check(r.code === 200 && r.json.codeSent === true && r.json.recoverySent === true && smtp.messages.length === 1 && smtp.messages[0].to[0] === 'second@example.com', 'register with mail on sends the welcome mail and reports recoverySent');
+check(r.code === 202 && r.json.pending === true && !r.json.token && r.json.codeSent === true && r.json.recoverySent === true && smtp.messages.length === 1 && smtp.messages[0].to[0] === 'second@example.com', 'register with mail on: welcome mail sent, no session until the email is verified (gate)', JSON.stringify(r.json).slice(0, 200));
+check(![...sessions.values()].includes('second'), 'the core session issued at registration was revoked');
+const secondReg = r; // يُستعاد بعد فحوص البوابة لأن ما يلي يقرأ r.json.id ورسالة الترحيب الأولى
+// ---- بوابة التأكيد: الدخول مرفوض قبل الرمز، ثم /auth/verify بلا جلسة، ثم الدخول يعمل
+r = await call('POST', '/auth/login', { body: { handle: 'second@example.com', password: 'wrong' } });
+check(r.code === 401 && r.json.error === 'bad-credentials', 'gate: wrong password is still 401 (no code resend for guessers)');
+r = await call('POST', '/auth/login', { body: { handle: 'second', password: 'Password2' } });
+check(r.code === 403 && r.json.error === 'email-unverified' && r.json.email === 'second@example.com' && r.json.codeSent === false && r.json.retryIn > 0 && !r.json.token && ![...sessions.values()].includes('second'), 'gate: right password before verification -> 403 email-unverified, no session, no duplicate code within a minute', JSON.stringify(r.json));
+r = await call('POST', '/auth/resend', { body: { email: 'second@example.com' } });
+check(r.code === 429 && r.json.error === 'too-soon' && r.json.retryIn > 0, 'gate: resend within a minute -> too-soon');
+r = await call('POST', '/auth/resend', { body: { email: 'nobody@example.com' } });
+check(r.code === 200 && r.json.ok === true && smtp.messages.length === 1, 'gate: resend for an unknown email answers ok without sending (no enumeration)');
+r = await call('POST', '/auth/verify', { body: { email: 'second@example.com', code: '000000' } });
+check(r.code === 400 && r.json.error === 'bad-code' && r.json.attemptsLeft === 4, 'gate: wrong code counts an attempt');
+r = await call('POST', '/auth/verify', { body: { email: 'nobody@example.com', code: '123456' } });
+check(r.code === 400 && r.json.error === 'bad-code', 'gate: unknown email behaves like a wrong code');
+r = await call('POST', '/auth/verify', { body: { email: 'Second@Example.com', code: codeOf(0) } });
+check(r.code === 200 && r.json.verified === true && !r.json.token, 'gate: right code verifies the email (any case) and issues no session by itself');
+r = await call('POST', '/auth/login', { body: { handle: 'second@example.com', password: 'Password2' } });
+check(r.code === 200 && r.json.token?.startsWith('tok-second'), 'gate: login works after verification');
+r = await call('POST', '/auth/verify', { body: { email: 'second@example.com', code: '111111' } });
+check(r.code === 200 && r.json.verified === true, 'gate: verify on an already verified email is a no-op ok');
+// المفتاح مطفأ من الإعدادات: التسجيل يعيد الجلسة فوراً كما كان
+globalThis.naslifeSettings = { requireEmailVerification: false };
+r = await call('POST', '/auth/register', { body: { email: 'third@example.com', nickname: 'third', password: 'Password3' } });
+check(r.code === 200 && r.json.token?.startsWith('tok-third') && r.json.codeSent === true, 'gate off (admin setting): register returns the session as before');
+r = await call('POST', '/auth/login', { body: { handle: 'third', password: 'Password3' } });
+check(r.code === 200 && r.json.token, 'gate off: unverified account logs in');
+delete globalThis.naslifeSettings;
+r = await call('POST', '/auth/login', { body: { handle: 'third', password: 'Password3' } });
+check(r.code === 403 && r.json.error === 'email-unverified' && r.json.codeSent === false, 'gate on again: the same account is asked to verify (code sent a moment ago, not resent)');
+r = await call('GET', '/auth/alias/status');
+check(r.json.requireVerification === true, 'status reports requireVerification');
+// نعود إلى حساب second: التحقق بجلسة ماي سبيس ما زال يعمل للحسابات القائمة
+r = await call('POST', '/auth/register', { body: { email: 'second2@example.com', nickname: 'second2', password: 'Password2' } });
+const secondGateId = r.json.id;
+r = await call('POST', '/auth/login', { body: { handle: 'second', password: 'Password2' } });
+check(r.code === 200 && r.json.token, 'verified account keeps logging in');
+r = await call('GET', '/me/login-email', { user: secondGateId });
+check(r.code === 200 && r.json.verified === false && r.json.required === true, 'login-email info exposes required=true for the app bootstrap gate', JSON.stringify(r.json));
+r = await call('POST', '/me/login-email/verify', { user: secondGateId, body: { code: codeOf(smtp.messages.length - 1) } });
+check(r.code === 200 && r.json.verified === true, 'session-based verify (MySpace / bootstrap gate) still works');
+r = await call('POST', '/auth/register', { body: { email: 'second3@example.com', nickname: 'second3', password: 'Password2' } });
+check(r.code === 202, 'register keeps returning 202 while the gate is on');
+smtp.messages.length = 1; // نُبقي رسالة الترحيب الأولى فقط لفحوص الرسالة أدناه
+r = secondReg;
 { const secondId = r.json.id; const txt = plainTextOf(smtp.messages[0].raw); const raw = smtp.messages[0].raw;
   check(txt.includes('أهلاً بك في ناس لايف، second') && txt.includes(secondId) && txt.includes('second@example.com') && txt.includes('عبارة جديدة رقم') && /\b\d{6}\b/.test(txt), 'welcome mail carries the code, account data and the recovery phrase', txt.slice(0, 120).replace(/\n/g, ' | '));
   const htmlPart = Buffer.from((raw.split(/Content-Type: text\/html[^\r\n]*\r?\nContent-Transfer-Encoding: base64\r?\n\r?\n/)[1] || '').split(/\r?\n--/)[0].replace(/\s+/g, ''), 'base64').toString('utf8');
@@ -161,6 +207,6 @@ check(r.code === 200 && r.json.verified === true, 'verify my email');
 r = await call('DELETE', '/me/login-email', SARA);
 check(r.code === 200 && (await call('POST', '/auth/login', { body: { handle: 'sara@example.com', password: 'secret' } })).code === 401, 'delete my login email');
 r = await call('GET', '/auth/alias/status');
-check(r.json.recoverable === 3, 'status counts recoverable accounts', JSON.stringify(r.json));
+check(r.json.recoverable === 6, 'status counts recoverable accounts (3 original + third, second2, second3 from the gate checks)', JSON.stringify(r.json));
 console.log(fails ? `\n${fails} FAILED` : '\nALL AUTH ALIAS TESTS PASSED');
 await app.close(); await smtp.close(); await pool.end(); process.exit(fails ? 1 : 0);

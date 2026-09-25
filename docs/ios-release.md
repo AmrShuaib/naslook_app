@@ -34,7 +34,7 @@
    - أطفئ «الشحن التجريبي» (`testTopup`) واخفض `maxTopup`.
    - قرّر مفتاحي «التحويل بين المستخدمين» و«المدفوعات في الدردشة» (يفضَّل إطفاؤهما حتى يُحسم المسار التنظيمي في `CLAUDE.md`).
 4. **حساب المراجِع** (ليس حساب المؤسس):
-   - أنشئ حساباً جديداً باسم مثل `applereview` وكلمة سر قوية، وأكّد بريده.
+   - أنشئ حساباً جديداً باسم مثل `applereview` وكلمة سر قوية، **وأكّد بريده بالرمز** (بلا تأكيد لا يدخل المراجِع).
    - اشحن محفظته من الإدارة بمبلغ صغير (مسار الإضافة اليدوية للرصيد، لا الشحن التجريبي) ليجرب الشراء من السوق.
    - من حساب ثانٍ: انشر قرب جدة منشوراً على الخريطة، وعرضاً في السوق، ومنشوراً وتعليقاً في دائرة، حتى يجرّب المراجِع الإبلاغ والحظر.
    - لا يُكتب اسم الحساب ولا كلمة سره في المستودع؛ تُكتب في App Store Connect فقط.
@@ -98,7 +98,8 @@ Naslife is a local social and marketplace app for Jeddah and Dammam, Saudi Arabi
 Demo account
   Username/email: <demo account email>
   Password: <demo password>
-The account has a wallet balance so marketplace orders, event tickets and circle bookings can be tested; the iOS app does not offer wallet top-up. No two-factor step.
+The account has a wallet balance so marketplace orders, event tickets and circle bookings can be tested; the iOS app does not offer wallet top-up. Its email is already verified, so there is no code step when signing in.
+  New accounts must verify their email with a 6-digit code sent at registration before they can sign in; use any email address you can read to test registration.
 
 Browsing without an account
   The app opens in guest mode on iOS: map, places, marketplace and events work without signing in.

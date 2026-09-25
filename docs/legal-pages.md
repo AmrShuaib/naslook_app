@@ -15,6 +15,7 @@
 
 ## الموافقة
 
+- التسجيل يتطلب تأكيد البريد بالرمز قبل الدخول (`docs/email-verification.md`).
 - التسجيل: مربع إلزامي `reg-terms` في `lib/screens/login_page.dart`، ويُرسل `acceptTerms: true` فيسجّل `auth_alias.js` الموافقة في `legal_consents`.
 - المستخدمون الحاليون: `GET /legal/consent` يعيد `needs: true` فتظهر ورقة الموافقة مرة واحدة (`lib/pages/myspace/consent_sheet.dart`): موافقة أو تسجيل خروج. `POST /legal/consent {version}` يسجّلها.
 - شاشة الدخول: روابط الشروط والخصوصية ورابط «الدعم والمساعدة».

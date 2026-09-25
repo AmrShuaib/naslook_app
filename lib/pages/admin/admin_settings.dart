@@ -24,7 +24,7 @@ class AdminSettingsPage extends ConsumerStatefulWidget {
 class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
   final maxTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), supportEmail = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
   final commission = TextEditingController(), spotPrice = TextEditingController(), spotMaxDays = TextEditingController(), spotMaxActive = TextEditingController();
-  bool? testTopup, maintenance, reviewNew, blockContacts, transfers, chatPayments, bannedDefault;
+  bool? testTopup, maintenance, reviewNew, blockContacts, transfers, chatPayments, bannedDefault, requireVerify;
   bool loaded = false, busy = false;
 
   void _load(AdminSettings s) {
@@ -37,6 +37,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     transfers = s.transfersEnabled;
     chatPayments = s.chatPaymentsEnabled;
     bannedDefault = s.bannedWordsDefault;
+    requireVerify = s.requireEmailVerification;
     bannedWords.text = s.bannedWords;
     threshold.text = '${s.reportThreshold}';
     testTopup = s.testTopup;
@@ -62,6 +63,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             SwitchListTile(contentPadding: EdgeInsets.zero, value: testTopup ?? s.testTopup, onChanged: (v) => setState(() => testTopup = v), title: const Text('الشحن التجريبي'), subtitle: const Text('يسمح لأي مستخدم بشحن محفظته بلا دفع حقيقي. عطّله قبل الإطلاق.')),
             TextField(controller: maxTopup, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أقصى شحن في المرة الواحدة (ريال)')),
             // التحويل بين المستخدمين والدفع في المحادثة قد يُعدّان إصدار نقود إلكترونية؛ مفتاحان لإطفائهما (مطفآن دائماً في iOS)
+            SwitchListTile(key: const Key('set-require-verify'), contentPadding: EdgeInsets.zero, value: requireVerify ?? s.requireEmailVerification, onChanged: (v) => setState(() => requireVerify = v), title: const Text('تأكيد البريد قبل الدخول'), subtitle: const Text('لا يدخل أي حساب قبل إدخال الرمز المرسل إلى بريده (الجديد عند التسجيل، والقديم غير المؤكد عند دخوله). يعمل فقط حين تكون خدمة البريد مضبوطة', style: TextStyle(fontSize: 12))),
             SwitchListTile(key: const Key('set-transfers'), contentPadding: EdgeInsets.zero, value: transfers ?? s.transfersEnabled, onChanged: (v) => setState(() => transfers = v), title: const Text('التحويل بين المستخدمين'), subtitle: const Text('إرسال رصيد من محفظة إلى أخرى. مطفأ دائماً في تطبيق iOS', style: TextStyle(fontSize: 12))),
             SwitchListTile(key: const Key('set-chat-payments'), contentPadding: EdgeInsets.zero, value: chatPayments ?? s.chatPaymentsEnabled, onChanged: (v) => setState(() => chatPayments = v), title: const Text('الدفع داخل المحادثة'), subtitle: const Text('طلب مبلغ وتقسيم فاتورة وإرسال مال في الدردشة. مطفأ دائماً في تطبيق iOS', style: TextStyle(fontSize: 12))),
           ])),
@@ -104,7 +106,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
               setState(() => busy = true);
               try {
                 await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold,
-                  'supportEmail': supportEmail.text.trim(), 'transfersEnabled': transfers ?? s.transfersEnabled, 'chatPaymentsEnabled': chatPayments ?? s.chatPaymentsEnabled, 'bannedWordsDefault': bannedDefault ?? s.bannedWordsDefault});
+                  'supportEmail': supportEmail.text.trim(), 'transfersEnabled': transfers ?? s.transfersEnabled, 'chatPaymentsEnabled': chatPayments ?? s.chatPaymentsEnabled, 'bannedWordsDefault': bannedDefault ?? s.bannedWordsDefault, 'requireEmailVerification': requireVerify ?? s.requireEmailVerification});
                 loaded = false;
                 invalidateAdmin(ref);
                 ref.invalidate(publicSettingsProvider);

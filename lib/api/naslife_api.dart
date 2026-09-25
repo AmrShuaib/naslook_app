@@ -6,9 +6,11 @@ class LoginEmailInfo {
   final String? email;
   /// مؤكَّد بالرمز؟ · خدمة البريد مفعّلة على الخادم؟ · يوجد رمز صالح بانتظار الإدخال؟ · أُرسل رمز الآن؟
   final bool verified, mailConfigured, codePending, codeSent;
+  /// بوابة الدخول مفعّلة على الخادم (لا دخول قبل التأكيد)؟
+  final bool required;
   final String? sendError;
-  const LoginEmailInfo({this.email, this.verified = false, this.mailConfigured = false, this.codePending = false, this.codeSent = false, this.sendError});
-  factory LoginEmailInfo.fromJson(Map m) => LoginEmailInfo(email: m['email']?.toString(), verified: m['verified'] == true, mailConfigured: m['mailConfigured'] == true, codePending: m['codePending'] == true, codeSent: m['codeSent'] == true, sendError: m['sendError']?.toString());
+  const LoginEmailInfo({this.email, this.verified = false, this.mailConfigured = false, this.codePending = false, this.codeSent = false, this.required = false, this.sendError});
+  factory LoginEmailInfo.fromJson(Map m) => LoginEmailInfo(email: m['email']?.toString(), verified: m['verified'] == true, mailConfigured: m['mailConfigured'] == true, codePending: m['codePending'] == true, codeSent: m['codeSent'] == true, required: m['required'] == true, sendError: m['sendError']?.toString());
 }
 
 /// حالة الاستعادة بالبريد لحساب المستخدم (server/auth_alias.js).

@@ -148,7 +148,9 @@ export default async function admin(app, opts) {
   const DEFAULT_SETTINGS = { testTopup: process.env.WALLET_TEST_TOPUP === "1", maxTopup: 10000000, announcement: "", maintenance: false, supportHandle: "", bannedWords: "", reportThreshold: 3,
     marketCommissionPct: 0, spotlightPricePerDay: 2000, spotlightMaxDays: 30, spotlightMaxActive: 12, marketReviewNewAccounts: false, marketBlockContacts: true,
     // مفاتيح المال: التحويل بين المستخدمين والدفع داخل المحادثة يعملان كما هما الآن حتى يقرر المالك (يُطفآن دائماً في عميل iOS)
-    transfersEnabled: true, chatPaymentsEnabled: true, supportEmail: "", bannedWordsDefault: true };
+    transfersEnabled: true, chatPaymentsEnabled: true, supportEmail: "", bannedWordsDefault: true,
+    // تأكيد البريد قبل الدخول (auth_alias.js): لا جلسة قبل إدخال الرمز؛ يعمل فقط حين تكون خدمة البريد مضبوطة
+    requireEmailVerification: true };
   async function loadSettings() {
     const rows = (await pool.query("SELECT key, value FROM platform_settings")).rows;
     const s = { ...DEFAULT_SETTINGS };
@@ -165,7 +167,7 @@ export default async function admin(app, opts) {
   app.get("/settings/public", async () => {
     const s = globalThis.naslifeSettings ?? DEFAULT_SETTINGS;
     return { announcement: s.announcement ?? "", maintenance: s.maintenance === true, supportHandle: s.supportHandle ?? "", supportEmail: s.supportEmail ?? "", testTopup: s.testTopup === true,
-      transfersEnabled: s.transfersEnabled !== false, chatPaymentsEnabled: s.chatPaymentsEnabled !== false };
+      transfersEnabled: s.transfersEnabled !== false, chatPaymentsEnabled: s.chatPaymentsEnabled !== false, requireEmailVerification: s.requireEmailVerification !== false };
   });
 
   const audit = async (adminId, action, target, details = {}) => { try { await pool.query("INSERT INTO admin_audit(id,admin_id,action,target,details) VALUES($1,$2,$3,$4,$5)", [crypto.randomUUID(), adminId, action, target, JSON.stringify(details)]); } catch { /* ignore */ } };
@@ -709,6 +711,7 @@ export default async function admin(app, opts) {
     if (b.transfersEnabled !== undefined) patch.transfersEnabled = b.transfersEnabled !== false;
     if (b.chatPaymentsEnabled !== undefined) patch.chatPaymentsEnabled = b.chatPaymentsEnabled !== false;
     if (b.bannedWordsDefault !== undefined) patch.bannedWordsDefault = b.bannedWordsDefault !== false;
+    if (b.requireEmailVerification !== undefined) patch.requireEmailVerification = b.requireEmailVerification !== false;
     if (b.bannedWords !== undefined) patch.bannedWords = str(b.bannedWords, 5000);
     if (b.reportThreshold !== undefined) patch.reportThreshold = Math.max(1, Math.min(50, Math.round(Number(b.reportThreshold)) || 3));
     // السوق: العمولة بالنسبة المئوية، سعر يوم سبوت لايت بالهللة وحدوده، مراجعة عروض الحسابات الجديدة، منع أرقام التواصل والروابط

@@ -44,7 +44,8 @@ void main() {
     switch (key) {
       case 'POST /auth/register':
         if (lastBody!['email'] == 'taken@example.com') return _json({'error': 'email-taken'}, 409);
-        return _json({'id': 'SA0000009', 'nickname': lastBody!['nickname'], 'token': 'tok9', 'recoveryPhrase': 'كلمات ست للاسترداد', 'email': lastBody!['email'], 'verified': false, 'codeSent': mailConfigured});
+        // بوابة التأكيد: 202 بلا جلسة حتى يُدخل الرمز (test/verify_email_test.dart يغطي ما بعدها)
+        return _json({'id': 'SA0000009', 'nickname': lastBody!['nickname'], 'pending': true, 'recoveryPhrase': 'كلمات ست للاسترداد', 'email': lastBody!['email'], 'verified': false, 'codeSent': mailConfigured, 'recoverySent': mailConfigured}, 202);
       case 'POST /auth/forgot':
         return mailConfigured ? _json({'ok': true}) : _json({'error': 'mail-not-configured'}, 503);
       case 'POST /auth/reset':
@@ -89,7 +90,7 @@ void main() {
 
   Future<void> settle(WidgetTester tester) async { await tester.pump(); await tester.pump(const Duration(milliseconds: 300)); }
 
-  testWidgets('register form posts email, nickname and password to /auth/register and signs in', (tester) async {
+  testWidgets('register form posts email, nickname and password to /auth/register and waits for the email code', (tester) async {
     final api = await pumpLogin(tester);
     await tester.tap(find.byKey(const Key('auth-toggle')));
     await settle(tester);
@@ -112,7 +113,10 @@ void main() {
     expect(lastBody!['email'], 'new@example.com');
     expect(lastBody!['nickname'], 'newuser');
     expect(lastBody!['password'], 'Password1');
-    expect(api.token, 'tok9', reason: 'الجلسة تُعتمد بعد التسجيل');
+    expect(api.token, isNull, reason: 'لا جلسة قبل تأكيد البريد');
+    final st = tester.element(find.byType(LoginPage)).findAncestorWidgetOfExactType<ProviderScope>();
+    expect(st, isNotNull);
+    expect(find.text('حدث خطأ غير متوقع'), findsNothing, reason: 'الرد 202 ليس خطأ');
   });
 
   testWidgets('register validation blocks a bad email and a short password', (tester) async {
