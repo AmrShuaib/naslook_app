@@ -18,7 +18,7 @@ delete globalThis.naslifeMail;
 const smtp = await startFakeSmtp({ user: 'mailer', pass: 'secret' });
 const app = Fastify();
 // ---- نواة وهمية: حسابات في الذاكرة بكلمة سر وعبارة استرداد وجلسات
-const accounts = { jeddahh: { id: 'SA9954961', password: 'Morio@1982', phrase: 'حلوى موج فندق شكل كمان بطاطس' }, sara: { id: 'SA0000002', password: 'secret', phrase: 'a b c d e f' } };
+const accounts = { jeddahh: { id: 'SA9954961', password: 'TestPass#2026', phrase: 'حلوى موج فندق شكل كمان بطاطس' }, sara: { id: 'SA0000002', password: 'secret', phrase: 'a b c d e f' } };
 const sessions = new Map(); let seq = 10; let phraseSeq = 0;
 const issue = (nick) => { for (const [t, n] of sessions) if (n === nick) sessions.delete(t); const t = 'tok-' + nick + '-' + (++seq); sessions.set(t, nick); return t; };
 const newPhrase = () => 'عبارة جديدة رقم ' + (++phraseSeq) + ' كلمات ست';
@@ -39,7 +39,7 @@ const codeOf = (i) => (plainTextOf(smtp.messages[i].raw).match(/\b(\d{6})\b/) ||
 let r = await call('GET', '/auth/alias/status');
 check(r.code === 200 && r.json.aliases === 1 && r.json.verified === 1 && r.json.recoverable === 0 && r.json.mailConfigured === false, 'bootstrap alias seeded as verified; nothing recoverable; mail off', JSON.stringify(r.json));
 check(fs.existsSync(OPS + '/auth-key') && /^[0-9a-f]{64}\n?$/.test(fs.readFileSync(OPS + '/auth-key', 'utf8')), 'auth-key generated in ops dir with 32 random bytes');
-r = await call('POST', '/auth/login', { body: { handle: 'Jeddahh@Gmail.com', password: 'Morio@1982' } });
+r = await call('POST', '/auth/login', { body: { handle: 'Jeddahh@Gmail.com', password: 'TestPass#2026' } });
 check(r.code === 200 && r.json.token?.startsWith('tok-jeddahh') && r.json.id === 'SA9954961', 'login with email (any case) returns the core session');
 r = await call('POST', '/auth/login', { body: { handle: 'jeddahh@gmail.com', password: 'wrong' } });
 check(r.code === 401 && r.json.error === 'bad-credentials', 'wrong password rejected by the core');
@@ -124,7 +124,32 @@ check(r.code === 200 && r.json.verified === false && r.json.required === true, '
 r = await call('POST', '/me/login-email/verify', { user: secondGateId, body: { code: codeOf(smtp.messages.length - 1) } });
 check(r.code === 200 && r.json.verified === true, 'session-based verify (MySpace / bootstrap gate) still works');
 r = await call('POST', '/auth/register', { body: { email: 'second3@example.com', nickname: 'second3', password: 'Password2' } });
-check(r.code === 202, 'register keeps returning 202 while the gate is on');
+check(r.code === 202 && r.json.recoveryPhrase === undefined && r.json.hasRecovery === undefined && r.json.token === undefined, 'register keeps returning 202 while the gate is on, without the recovery phrase (it is a core credential)');
+const third3Id = r.json.id;
+// جلسة قائمة لحساب غير مؤكد لا تحذف بريدها هرباً من البوابة
+r = await call('DELETE', '/me/login-email', { user: third3Id });
+check(r.code === 403 && r.json.error === 'email-unverified', 'gate: an unverified session cannot delete its email to escape the gate');
+// بريد خاطئ عند التسجيل: تغييره بكلمة السر
+r = await call('POST', '/auth/change-email', { body: { handle: 'second3', password: 'wrong', email: 'fixed3@example.com' } });
+check(r.code === 401, 'change-email: wrong password refused');
+r = await call('POST', '/auth/change-email', { body: { handle: 'second3', password: 'Password2', email: 'jeddahh@gmail.com' } });
+check(r.code === 409 && r.json.error === 'email-taken', 'change-email: cannot take another account email');
+r = await call('POST', '/auth/change-email', { body: { handle: 'second3', password: 'Password2', email: 'Fixed3@Example.com' } });
+check(r.code === 202 && r.json.pending === true && r.json.email === 'fixed3@example.com' && r.json.codeSent === true && !r.json.token && ![...sessions.values()].includes('second3'), 'change-email: unverified email replaced, code sent, no session', JSON.stringify(r.json));
+r = await call('POST', '/auth/login', { body: { handle: 'second3@example.com', password: 'Password2' } });
+check(r.code === 401, 'change-email: the old email no longer logs in');
+r = await call('POST', '/auth/verify', { body: { email: 'fixed3@example.com', code: codeOf(smtp.messages.length - 1) } });
+check(r.code === 200 && r.json.verified === true, 'change-email: the new email verifies with its code');
+r = await call('POST', '/auth/change-email', { body: { handle: 'second3', password: 'Password2', email: 'other@example.com' } });
+check(r.code === 409 && r.json.error === 'already-verified', 'change-email: a verified email is not changed from here');
+r = await call('POST', '/auth/login', { body: { handle: 'fixed3@example.com', password: 'Password2' } });
+check(r.code === 200 && r.json.token, 'change-email: login with the new email works');
+// خمس محاولات ثم قفل حتى رمز جديد
+r = await call('POST', '/auth/register', { body: { email: 'lock@example.com', nickname: 'locker', password: 'Password2' } });
+for (let i = 0; i < 5; i++) r = await call('POST', '/auth/verify', { body: { email: 'lock@example.com', code: '000000' } });
+check(r.code === 400 && r.json.attemptsLeft === 0, 'fifth wrong code leaves 0 attempts', JSON.stringify(r.json));
+r = await call('POST', '/auth/verify', { body: { email: 'lock@example.com', code: codeOf(smtp.messages.length - 1) } });
+check(r.code === 429 && r.json.error === 'too-many-attempts', 'even the right code is refused after five attempts until a new code is sent');
 smtp.messages.length = 1; // نُبقي رسالة الترحيب الأولى فقط لفحوص الرسالة أدناه
 r = secondReg;
 { const secondId = r.json.id; const txt = plainTextOf(smtp.messages[0].raw); const raw = smtp.messages[0].raw;
@@ -172,13 +197,13 @@ r = await call('GET', '/me/recovery', ADMIN);
 check(r.code === 200 && r.json.enabled === false && r.json.email === 'jeddahh@gmail.com' && r.json.mailConfigured === true, 'legacy account: recovery not enabled yet', JSON.stringify(r.json));
 r = await call('POST', '/auth/forgot', { body: { email: 'jeddahh@gmail.com' } });
 check(r.code === 200 && smtp.messages.length === 3 && plainTextOf(smtp.messages[2].raw).includes('غير مفعّلة') && !/\b\d{6}\b/.test(plainTextOf(smtp.messages[2].raw)), 'forgot for legacy account mails an explanation instead of a code');
-r = await call('PUT', '/me/recovery', { ...ADMIN, body: { phrase: 'wrong words', password: 'Morio@1982' } });
+r = await call('PUT', '/me/recovery', { ...ADMIN, body: { phrase: 'wrong words', password: 'TestPass#2026' } });
 check(r.code === 400 && r.json.error === 'bad-phrase', 'enable recovery: wrong phrase');
 r = await call('PUT', '/me/recovery', { ...ADMIN, body: { phrase: 'حلوى موج فندق شكل كمان بطاطس', password: 'nope' } });
 check(r.code === 403 && r.json.error === 'bad-password', 'enable recovery: wrong password');
-r = await call('PUT', '/me/recovery', { ...ADMIN, body: { phrase: ' حلوى  موج فندق شكل كمان بطاطس ', password: 'Morio@1982' } });
+r = await call('PUT', '/me/recovery', { ...ADMIN, body: { phrase: ' حلوى  موج فندق شكل كمان بطاطس ', password: 'TestPass#2026' } });
 check(r.code === 200 && r.json.enabled === true && r.json.token, 'enable recovery with the phrase (whitespace normalized) returns a new session');
-check(accounts.jeddahh.password === 'Morio@1982' && accounts.jeddahh.phrase !== 'حلوى موج فندق شكل كمان بطاطس', 'password unchanged, core phrase rotated and stored');
+check(accounts.jeddahh.password === 'TestPass#2026' && accounts.jeddahh.phrase !== 'حلوى موج فندق شكل كمان بطاطس', 'password unchanged, core phrase rotated and stored');
 r = await call('GET', '/me/recovery', ADMIN);
 check(r.json.enabled === true, 'recovery now enabled');
 await pool.query("UPDATE login_aliases SET reset_sent_at = now() - interval '2 minutes' WHERE alias='jeddahh@gmail.com'");
@@ -207,6 +232,6 @@ check(r.code === 200 && r.json.verified === true, 'verify my email');
 r = await call('DELETE', '/me/login-email', SARA);
 check(r.code === 200 && (await call('POST', '/auth/login', { body: { handle: 'sara@example.com', password: 'secret' } })).code === 401, 'delete my login email');
 r = await call('GET', '/auth/alias/status');
-check(r.json.recoverable === 6, 'status counts recoverable accounts (3 original + third, second2, second3 from the gate checks)', JSON.stringify(r.json));
+check(r.json.recoverable === 7, 'status counts recoverable accounts (3 original + third, second2, second3, locker from the gate checks)', JSON.stringify(r.json));
 console.log(fails ? `\n${fails} FAILED` : '\nALL AUTH ALIAS TESTS PASSED');
 await app.close(); await smtp.close(); await pool.end(); process.exit(fails ? 1 : 0);

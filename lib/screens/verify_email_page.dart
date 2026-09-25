@@ -20,6 +20,8 @@ class VerifyEmailPage extends ConsumerStatefulWidget {
 
 class _VerifyEmailPageState extends ConsumerState<VerifyEmailPage> {
   final _code = TextEditingController();
+  // متحكم حوار «تغيير البريد» يعيش مع الصفحة: التخلص منه فور إغلاق الحوار يسقط أثناء حركة الإغلاق
+  final _newEmail = TextEditingController();
   Timer? _timer;
   int _wait = 0;
   bool _resending = false;
@@ -28,20 +30,27 @@ class _VerifyEmailPageState extends ConsumerState<VerifyEmailPage> {
   void initState() {
     super.initState();
     _code.addListener(() => setState(() {}));
-    // أُرسل رمز للتو (تسجيل أو دخول): نبدأ العدّاد حتى لا يُطلب رمز ثانٍ قبل دقيقة
-    if (ref.read(appStateProvider).pendingCodeSent) _startWait();
+    // أُرسل رمز للتو (تسجيل أو دخول): نبدأ العدّاد حتى لا يُطلب رمز ثانٍ قبل دقيقة؛ وإن لم يُرسل لأن آخر رمز حديث
+    // يخبرنا الخادم بالثواني المتبقية
+    final s = ref.read(appStateProvider);
+    if (s.pendingCodeSent) {
+      _startWait(VerifyEmailPage.resendSeconds);
+    } else if (s.pendingRetryIn > 0) {
+      _startWait(s.pendingRetryIn);
+    }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _code.dispose();
+    _newEmail.dispose();
     super.dispose();
   }
 
-  void _startWait() {
+  void _startWait(int seconds) {
     _timer?.cancel();
-    setState(() => _wait = VerifyEmailPage.resendSeconds);
+    setState(() => _wait = seconds);
     _timer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) { t.cancel(); return; }
       setState(() => _wait = _wait > 0 ? _wait - 1 : 0);
@@ -69,10 +78,46 @@ class _VerifyEmailPageState extends ConsumerState<VerifyEmailPage> {
 
   Future<void> _resend() async {
     setState(() => _resending = true);
-    final err = await ref.read(appStateProvider.notifier).resendPending();
+    final r = await ref.read(appStateProvider.notifier).resendPending();
     if (!mounted) return;
     setState(() => _resending = false);
-    if (err == null) { _toast('أرسلنا رمزاً جديداً إلى بريدك'); _startWait(); } else { _toast(err, error: true); }
+    if (r.error == null) {
+      _toast('أرسلنا رمزاً جديداً إلى بريدك');
+      _startWait(VerifyEmailPage.resendSeconds);
+    } else {
+      _toast(r.error!, error: true);
+      if (r.retryIn > 0) _startWait(r.retryIn);
+    }
+  }
+
+  /// بريد خاطئ عند التسجيل: يطلب بريداً جديداً فيُستبدل ويصل رمز جديد.
+  Future<void> _changeEmail() async {
+    final ctrl = _newEmail..text = ref.read(appStateProvider).pendingEmail ?? '';
+    final email = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تغيير البريد'),
+        content: TextField(key: const Key('verify-new-email'), controller: ctrl, autofocus: true, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'البريد الصحيح', border: OutlineInputBorder())),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('إلغاء')),
+          FilledButton(key: const Key('verify-new-email-ok'), onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()), child: const Text('أرسل الرمز')),
+        ],
+      ),
+    );
+    if (email == null || email.isEmpty || !mounted) return;
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) { _toast('صيغة البريد غير صحيحة', error: true); return; }
+    final err = await ref.read(appStateProvider.notifier).changePendingEmail(email);
+    if (!mounted) return;
+    if (err != null) { _toast(err, error: true); return; }
+    _code.clear();
+    final sent = ref.read(appStateProvider).pendingCodeSent;
+    _toast(sent ? 'أرسلنا الرمز إلى بريدك الجديد' : 'غُيّر البريد؛ اضغط «إعادة الإرسال» إن لم يصلك الرمز');
+    if (sent) {
+      _startWait(VerifyEmailPage.resendSeconds);
+    } else {
+      _timer?.cancel();
+      setState(() => _wait = 0);
+    }
   }
 
   @override
@@ -134,6 +179,12 @@ class _VerifyEmailPageState extends ConsumerState<VerifyEmailPage> {
                   onPressed: _wait > 0 || _resending || s.busy ? null : _resend,
                   child: Text(_wait > 0 ? 'إعادة الإرسال بعد $_wait ث' : 'إعادة إرسال الرمز'),
                 ),
+                if (ref.read(appStateProvider.notifier).canChangePendingEmail)
+                  TextButton(
+                    key: const Key('verify-change-email'),
+                    onPressed: s.busy ? null : _changeEmail,
+                    child: const Text('البريد خاطئ؟ غيّره'),
+                  ),
                 TextButton(
                   key: const Key('verify-back'),
                   onPressed: s.busy ? null : () => ref.read(appStateProvider.notifier).cancelPending(),

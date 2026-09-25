@@ -129,7 +129,7 @@ class ApiClient {
       data = await post('/register', {'nickname': nickname.trim(), 'password': pin.trim()});
     }
     if (data['pending'] == true && data['email'] != null) {
-      return AuthOutcome.pending(data['email'].toString(), codeSent: data['codeSent'] == true, recoveryPhrase: data['recoveryPhrase']?.toString(), recoverySent: data['recoverySent'] == true);
+      return AuthOutcome.pending(data['email'].toString(), codeSent: data['codeSent'] == true, recoverySent: data['recoverySent'] == true);
     }
     final session = Session.fromJson(data);
     if (!session.isValid) {
@@ -144,6 +144,12 @@ class ApiClient {
 
   /// إعادة إرسال رمز التأكيد لبريد غير مؤكد (مرة كل دقيقة).
   Future<void> resendVerification(String email) => post('/auth/resend', {'email': email.trim().toLowerCase()});
+
+  /// بريد خاطئ عند التسجيل: بكلمة السر يُستبدل البريد غير المؤكد ويصل رمز جديد (202 بانتظار الرمز).
+  Future<AuthOutcome> changePendingEmail({required String handle, required String password, required String email}) async {
+    final d = await post('/auth/change-email', {'handle': handle.trim(), 'password': password, 'email': email.trim().toLowerCase()});
+    return AuthOutcome.pending(d['email']?.toString() ?? email.trim().toLowerCase(), codeSent: d['codeSent'] == true);
+  }
 
   /// هل اسم المستخدم متاح؟ (server/auth_alias.js) يعيد null إن لم يكن الخادم يدعم الفحص.
   Future<bool?> nicknameAvailable(String nickname) async {
@@ -187,7 +193,7 @@ class ApiClient {
     } on ApiException catch (e) {
       if (e.statusCode == 403 && e.body is Map && (e.body as Map)['error'] == 'email-unverified') {
         final b = e.body as Map;
-        return AuthOutcome.pending(b['email']?.toString() ?? nickname.trim().toLowerCase(), codeSent: b['codeSent'] == true);
+        return AuthOutcome.pending(b['email']?.toString() ?? nickname.trim().toLowerCase(), codeSent: b['codeSent'] == true, retryIn: (b['retryIn'] as num?)?.toInt() ?? 0);
       }
       if (e.statusCode != 404) rethrow;
       data = await post('/login', body);
@@ -326,6 +332,7 @@ class ApiClient {
     'too-many-attempts': 'محاولات كثيرة، انتظر دقيقة ثم حاول',
     'email-taken': 'هذا البريد مسجّل لحساب آخر؛ سجّل الدخول به أو استخدم «نسيت كلمة السر»',
     'email-unverified': 'أكّد بريدك بالرمز المرسل إليه قبل الدخول',
+    'already-verified': 'البريد مؤكَّد مسبقاً',
     'bad-email': 'صيغة البريد الإلكتروني غير صحيحة',
     'bad-code': 'الرمز غير صحيح',
     'code-expired': 'انتهت صلاحية الرمز؛ اطلب رمزاً جديداً',
@@ -433,10 +440,12 @@ class AuthOutcome {
   final Session? session;
   final String? pendingEmail;
   final bool codeSent;
-  /// عبارة الاسترداد وهل أُرسلت بالبريد (من رد التسجيل) لتُعرض بعد الدخول كما كان.
-  final String? recoveryPhrase;
+  /// ثوانٍ قبل السماح بإعادة الإرسال (الخادم لم يرسل رمزاً لأن آخر رمز أُرسل قبل أقل من دقيقة).
+  final int retryIn;
+  /// هل أُرسلت بيانات الحساب وعبارة الاسترداد بالبريد (من رد التسجيل) لتُعرض رسالة الترحيب بعد الدخول. العبارة نفسها لا
+  /// تُسلَّم قبل التأكيد لأنها بيانات دخول لدى النواة.
   final bool recoverySent;
-  const AuthOutcome.signedIn(Session this.session) : pendingEmail = null, codeSent = false, recoveryPhrase = null, recoverySent = false;
-  const AuthOutcome.pending(String this.pendingEmail, {this.codeSent = false, this.recoveryPhrase, this.recoverySent = false}) : session = null;
+  const AuthOutcome.signedIn(Session this.session) : pendingEmail = null, codeSent = false, retryIn = 0, recoverySent = false;
+  const AuthOutcome.pending(String this.pendingEmail, {this.codeSent = false, this.retryIn = 0, this.recoverySent = false}) : session = null;
   bool get isPending => pendingEmail != null;
 }

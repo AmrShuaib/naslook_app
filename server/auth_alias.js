@@ -112,7 +112,13 @@ export default async function authAlias(app, opts = {}) {
   // ويُشترط أن تكون خدمة البريد مضبوطة وإلا لا وسيلة للتأكيد فتبقى الجلسات كما هي حتى لا يُقفل الباب على الجميع.
   const gateOn = () => mailOn() && globalThis.naslifeSettings?.requireEmailVerification !== false;
   /// يلغي جلسة أصدرتها النواة للتو (تسجيل أو دخول قبل التأكيد) عبر مسار الخروج نفسه الذي يستخدمه التطبيق.
-  const coreLogout = async (token) => { if (!token) return; try { await app.inject({ method: "POST", url: "/logout", headers: { "x-token": String(token), "content-type": "application/json" }, payload: "{}" }); } catch { /* ignore */ } };
+  const coreLogout = async (token) => {
+    if (!token) return;
+    try {
+      const r = await app.inject({ method: "POST", url: "/logout", headers: { "x-token": String(token), "content-type": "application/json" }, payload: "{}" });
+      if (r.statusCode >= 300) app.log.warn({ status: r.statusCode }, "auth_alias: core /logout did not revoke the pre-verification session");
+    } catch (e) { try { app.log.warn({ err: String(e?.message ?? e) }, "auth_alias: core /logout failed"); } catch { /* ignore */ } }
+  };
   const info = (row) => ({ email: row?.alias ?? null, verified: row?.verified === true, mailConfigured: mailOn(), required: gateOn(), codeSentAt: row?.code_sent_at ?? null, codePending: !!(row?.code_hash && row.code_exp && new Date(row.code_exp) > new Date()) });
   const parseBody = (r) => { try { return r.json(); } catch { return {}; } };
 
@@ -204,12 +210,24 @@ export default async function authAlias(app, opts = {}) {
     if (limited("reg:" + ipOf(req), 10, 15 * 60000)) return bad(reply, 429, "too-many-attempts");
     if ((await globalThis.naslifeNickReserved?.(nickname)) === true) return bad(reply, 409, "nickname-taken");
     if (await rowByEmail(email)) return bad(reply, 409, "email-taken");
-    const r = await coreRegister(req, nickname, password);
-    if (r.statusCode < 200 || r.statusCode >= 300) return forward(reply, r);
-    const body = parseBody(r);
-    const userId = String(body.id ?? body.user?.id ?? "").toUpperCase();
-    if (!ID_RE.test(userId)) return forward(reply, r);
-    await pool.query("INSERT INTO login_aliases(alias, user_id, nickname) VALUES($1,$2,$3) ON CONFLICT (alias) DO NOTHING", [email, userId, nickname]);
+    // قفل استشاري على البريد: تسجيلان متزامنان بالبريد نفسه كانا يمرّان الفحص معاً فيُنشأ حساب في النواة بلا بريد (وبلا بوابة)
+    const c = await pool.connect();
+    let r, body, userId;
+    try {
+      await c.query("BEGIN");
+      await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [email]);
+      if ((await c.query("SELECT 1 FROM login_aliases WHERE alias=$1", [email])).rowCount) { await c.query("ROLLBACK"); return bad(reply, 409, "email-taken"); }
+      r = await coreRegister(req, nickname, password);
+      if (r.statusCode < 200 || r.statusCode >= 300) { await c.query("ROLLBACK"); return forward(reply, r); }
+      body = parseBody(r);
+      userId = String(body.id ?? body.user?.id ?? "").toUpperCase();
+      if (!ID_RE.test(userId)) { await c.query("ROLLBACK"); return forward(reply, r); }
+      await c.query("INSERT INTO login_aliases(alias, user_id, nickname) VALUES($1,$2,$3)", [email, userId, nickname]);
+      await c.query("COMMIT");
+    } catch (e) {
+      try { await c.query("ROLLBACK"); } catch { /* ignore */ }
+      throw e;
+    } finally { c.release(); }
     const phrase = typeof body.recoveryPhrase === "string" && body.recoveryPhrase.trim() ? body.recoveryPhrase.trim() : null;
     if (phrase) await saveRecovery(userId, phrase, "register");
     // الموافقة على الشروط وسياسة الخصوصية (مربع إلزامي في التطبيق) تُسجَّل بنسختها (server/legal_pages.js)
@@ -220,7 +238,8 @@ export default async function authAlias(app, opts = {}) {
     if (gateOn()) {
       // البوابة: تُلغى جلسة النواة الصادرة الآن ويُرد 202 بلا رمز جلسة؛ التطبيق يعرض شاشة الرمز ثم يدخل بكلمة السر
       await coreLogout(body.token);
-      const { token: _omit, ...rest } = body;
+      // عبارة الاسترداد لا تُسلَّم قبل التأكيد (هي بيانات دخول لدى النواة عبر /recover)؛ تصل في رسالة الترحيب
+      const { token: _omit, recoveryPhrase: _phrase, hasRecovery: _hr, ...rest } = body;
       return reply.code(202).send({ ...rest, email, verified: false, pending: true, codeSent, recoverySent });
     }
     return reply.code(r.statusCode).send({ ...body, email, verified: false, codeSent, recoverySent });
@@ -253,6 +272,33 @@ export default async function authAlias(app, opts = {}) {
     return bad(reply, 403, "email-unverified", { email: row.alias, codeSent, retryIn: codeSent || since === Infinity ? 0 : Math.ceil(RESEND_SECONDS - since) });
   });
 
+  /// بريد خاطئ عند التسجيل: بكلمة السر يستبدل المستخدم بريده **غير المؤكد** ويصله رمز جديد (البريد المؤكد يُغيَّر من ماي سبيس).
+  app.post("/auth/change-email", async (req, reply) => {
+    const b = req.body && typeof req.body === "object" ? req.body : {};
+    const raw = String(b.handle ?? "").trim(), password = String(b.password ?? ""), email = normEmail(b.email);
+    if (!EMAIL_RE.test(email)) return bad(reply, 400, "bad-email");
+    if (limited("login:" + ipOf(req), 30, 15 * 60000)) return bad(reply, 429, "too-many-attempts");
+    let handle = raw;
+    if (raw.includes("@")) { const row = await rowByEmail(normEmail(raw)); if (!row) return bad(reply, 401, "bad-credentials"); handle = (await nickOf(row.user_id)) ?? row.nickname; }
+    const r = await coreLogin(req, handle, password);
+    if (r.statusCode < 200 || r.statusCode >= 300) return forward(reply, r);
+    const out = parseBody(r);
+    await coreLogout(out.token);
+    const userId = String(out.id ?? out.user?.id ?? "").toUpperCase();
+    const row = ID_RE.test(userId) ? await rowOf(userId) : null;
+    if (!row) return bad(reply, 400, "no-email");
+    if (row.verified) return bad(reply, 409, "already-verified");
+    const taken = await rowByEmail(email);
+    if (taken && taken.user_id !== userId) return bad(reply, 409, "email-taken");
+    if (row.alias !== email) {
+      await pool.query("DELETE FROM login_aliases WHERE user_id=$1", [userId]);
+      await pool.query("INSERT INTO login_aliases(alias, user_id, nickname) VALUES($1,$2,$3)", [email, userId, row.nickname ?? handle]);
+    }
+    let codeSent = false;
+    if (mailOn()) { try { await sendVerifyCode(email); codeSent = true; } catch { /* يعيد التطبيق الطلب */ } }
+    return reply.code(202).send({ pending: true, email, codeSent });
+  });
+
   // ================= تأكيد البريد بلا جلسة (بوابة الدخول) =================
   const rowFullByEmail = async (email) => (await pool.query("SELECT alias, user_id, nickname, verified, code_hash, code_exp, code_sent_at, attempts FROM login_aliases WHERE alias=$1", [email])).rows[0] ?? null;
   /// يطابق الرمز مع تجزئته ويحدّث المحاولات: null عند النجاح (ويُعلَّم البريد مؤكداً)، وإلا {code, error, extra}. خمس محاولات ثم رمز جديد.
@@ -260,10 +306,11 @@ export default async function authAlias(app, opts = {}) {
     const code = digits(raw);
     if (!row.code_hash || !row.code_exp) return { code: 400, error: "no-code" };
     if (new Date(row.code_exp) < new Date()) return { code: 410, error: "code-expired" };
-    if (row.attempts >= CODE_MAX_ATTEMPTS) return { code: 429, error: "too-many-attempts" };
+    // العدّاد يُزاد قبل المقارنة وبشرط في الاستعلام نفسه حتى لا تتجاوز طلبات متوازية حد الخمس محاولات
+    const a = await pool.query("UPDATE login_aliases SET attempts=attempts+1 WHERE alias=$1 AND attempts < $2 RETURNING attempts", [row.alias, CODE_MAX_ATTEMPTS]);
+    if (!a.rowCount) return { code: 429, error: "too-many-attempts" };
     if (code.length !== 6 || hashCode(row.alias, code) !== row.code_hash) {
-      const r = await pool.query("UPDATE login_aliases SET attempts=attempts+1 WHERE alias=$1 RETURNING attempts", [row.alias]);
-      return { code: 400, error: "bad-code", extra: { attemptsLeft: Math.max(0, CODE_MAX_ATTEMPTS - (r.rows[0]?.attempts ?? CODE_MAX_ATTEMPTS)) } };
+      return { code: 400, error: "bad-code", extra: { attemptsLeft: Math.max(0, CODE_MAX_ATTEMPTS - (a.rows[0]?.attempts ?? CODE_MAX_ATTEMPTS)) } };
     }
     await pool.query("UPDATE login_aliases SET verified=true, verified_at=now(), code_hash=NULL, code_exp=NULL, attempts=0 WHERE alias=$1", [row.alias]);
     return null;
@@ -272,7 +319,7 @@ export default async function authAlias(app, opts = {}) {
   app.post("/auth/resend", async (req, reply) => {
     const email = normEmail(req.body?.email);
     if (!EMAIL_RE.test(email)) return bad(reply, 400, "bad-email");
-    if (limited("resend:" + ipOf(req), 10, 15 * 60000)) return bad(reply, 429, "too-many-attempts");
+    if (limited("resend:" + ipOf(req), 10, 15 * 60000) || limited("resend:" + email, 5, 15 * 60000)) return bad(reply, 429, "too-many-attempts");
     if (!mailOn()) return bad(reply, 503, "mail-not-configured");
     const row = await rowFullByEmail(email);
     if (!row || row.verified) return { ok: true };
@@ -420,6 +467,8 @@ export default async function authAlias(app, opts = {}) {
   });
   app.delete("/me/login-email", async (req, reply) => {
     const uid = await me(req, reply); if (!uid) return;
+    // جلسة قائمة لحساب غير مؤكد لا تحذف بريدها لتصبح حساباً «قديماً» بلا بوابة
+    if (gateOn()) { const row = await rowOf(uid); if (row && !row.verified) return bad(reply, 403, "email-unverified"); }
     await pool.query("DELETE FROM login_aliases WHERE user_id=$1", [uid]);
     return { ok: true };
   });

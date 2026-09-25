@@ -14,9 +14,10 @@ class AppState {
   final Session? session;
   final String? error;
   final bool busy;
-  /// البريد المنتظر تأكيده وهل أُرسل إليه رمز في هذه الخطوة (لعدّاد إعادة الإرسال).
+  /// البريد المنتظر تأكيده، وهل أُرسل إليه رمز في هذه الخطوة، والثواني المتبقية قبل السماح بإعادة الإرسال (لعدّاد الشاشة).
   final String? pendingEmail;
   final bool pendingCodeSent;
+  final int pendingRetryIn;
 
   const AppState({
     this.status = AuthStatus.loading,
@@ -25,6 +26,7 @@ class AppState {
     this.busy = false,
     this.pendingEmail,
     this.pendingCodeSent = false,
+    this.pendingRetryIn = 0,
   });
 
   bool get isSignedIn => status == AuthStatus.signedIn && session != null;
@@ -37,14 +39,18 @@ class AppState {
     bool? busy,
     bool clearSession = false,
     bool clearError = false,
+    String? pendingEmail,
+    bool? pendingCodeSent,
+    int? pendingRetryIn,
   }) {
     return AppState(
       status: status ?? this.status,
       session: clearSession ? null : (session ?? this.session),
       error: clearError ? null : (error ?? this.error),
       busy: busy ?? this.busy,
-      pendingEmail: pendingEmail,
-      pendingCodeSent: pendingCodeSent,
+      pendingEmail: pendingEmail ?? this.pendingEmail,
+      pendingCodeSent: pendingCodeSent ?? this.pendingCodeSent,
+      pendingRetryIn: pendingRetryIn ?? this.pendingRetryIn,
     );
   }
 }
@@ -75,12 +81,15 @@ final appStateProvider = StateNotifierProvider<AppStateNotifier, AppState>((ref)
 class AppStateNotifier extends StateNotifier<AppState> {
   final ApiClient _api;
   final SessionStore _store;
-  // بيانات الدخول أثناء انتظار الرمز (في الذاكرة فقط): بعد التأكيد يُعاد الدخول بها تلقائياً. وعبارة الاسترداد من رد
-  // التسجيل تُعرض بعد الدخول كما كان قبل البوابة.
-  String? _pendingHandle, _pendingPin, _pendingPhrase;
+  // بيانات الدخول أثناء انتظار الرمز (في الذاكرة فقط): بعد التأكيد يُعاد الدخول بها تلقائياً، وتُمسح عند أي خروج أو
+  // إلغاء أو خطأ حتى لا تنتقل إلى حساب آخر على الجهاز نفسه. `_pendingRecoverySent` من رد التسجيل لرسالة الترحيب فقط.
+  String? _pendingHandle, _pendingPin;
   bool _pendingRecoverySent = false;
 
   AppStateNotifier(this._api, this._store) : super(const AppState());
+
+  /// هل يمكن تغيير البريد من شاشة التأكيد (بكلمة السر المحفوظة في الذاكرة، أو بالجلسة القائمة)؟
+  bool get canChangePendingEmail => _pendingHandle != null || state.session != null;
 
   /// حساب قائم لم يؤكد بريده (جلسة محفوظة أو دخول قبل تفعيل البوابة): يُطلب الرمز قبل المتابعة. أي خطأ في الفحص
   /// يُعامل كـ«لا بوابة» حتى لا يُقفل التطبيق بسبب عطل عابر.
@@ -133,11 +142,13 @@ class AppStateNotifier extends StateNotifier<AppState> {
   }
 
   Future<bool> login(String nickname, String pin) {
+    _clearPending();
     _pendingHandle = nickname; _pendingPin = pin;
     return _authenticate(() => _api.login(nickname: nickname, pin: pin));
   }
 
   Future<bool> register(String nickname, String pin, {String? email, bool acceptTerms = false}) {
+    _clearPending();
     _pendingHandle = nickname; _pendingPin = pin;
     return _authenticate(() => _api.register(nickname: nickname, pin: pin, email: email, acceptTerms: acceptTerms));
   }
@@ -176,18 +187,44 @@ class AppStateNotifier extends StateNotifier<AppState> {
     return _authenticate(() => _api.login(nickname: h, pin: p));
   }
 
-  /// إعادة إرسال الرمز للبريد المنتظر؛ يعيد نص الخطأ إن فشل.
-  Future<String?> resendPending() async {
+  /// إعادة إرسال الرمز للبريد المنتظر؛ يعيد نص الخطأ إن فشل، ومع «مبكر جداً» الثواني المتبقية للعدّاد.
+  Future<({String? error, int retryIn})> resendPending() async {
     final email = state.pendingEmail;
-    if (email == null) return 'لا بريد بانتظار التأكيد';
+    if (email == null) return (error: 'لا بريد بانتظار التأكيد', retryIn: 0);
     try {
       await _api.resendVerification(email);
-      state = AppState(status: AuthStatus.pendingVerification, session: state.session, pendingEmail: email, pendingCodeSent: true);
+      state = state.copyWith(pendingCodeSent: true, pendingRetryIn: 60);
+      return (error: null, retryIn: 60);
+    } on ApiException catch (e) {
+      final retry = e.body is Map ? ((e.body as Map)['retryIn'] as num?)?.toInt() ?? 0 : 0;
+      if (retry > 0) state = state.copyWith(pendingRetryIn: retry);
+      return (error: e.message, retryIn: retry);
+    } catch (_) {
+      return (error: 'تعذّر إرسال الرمز الآن', retryIn: 0);
+    }
+  }
+
+  /// بريد خاطئ: يستبدل البريد غير المؤكد (بكلمة السر المحفوظة، أو بالجلسة القائمة) ويصل رمز جديد. يعيد نص الخطأ إن فشل.
+  Future<String?> changePendingEmail(String email) async {
+    if (state.busy) return null;
+    state = state.copyWith(busy: true, clearError: true);
+    try {
+      if (state.session != null) {
+        final i = await _api.setLoginEmail(email);
+        state = state.copyWith(busy: false, pendingEmail: i.email ?? email.trim().toLowerCase(), pendingCodeSent: i.codeSent, pendingRetryIn: 0);
+        return null;
+      }
+      final h = _pendingHandle, p = _pendingPin;
+      if (h == null || p == null) { state = state.copyWith(busy: false); return 'ادخل بكلمة السر أولاً ثم غيّر البريد'; }
+      final out = await _api.changePendingEmail(handle: h, password: p, email: email);
+      state = state.copyWith(busy: false, pendingEmail: out.pendingEmail, pendingCodeSent: out.codeSent, pendingRetryIn: 0);
       return null;
     } on ApiException catch (e) {
+      state = state.copyWith(busy: false);
       return e.message;
     } catch (_) {
-      return 'تعذّر إرسال الرمز الآن';
+      state = state.copyWith(busy: false);
+      return 'تعذّر تغيير البريد الآن';
     }
   }
 
@@ -198,7 +235,7 @@ class AppStateNotifier extends StateNotifier<AppState> {
     state = const AppState(status: AuthStatus.signedOut);
   }
 
-  void _clearPending() { _pendingHandle = null; _pendingPin = null; }
+  void _clearPending() { _pendingHandle = null; _pendingPin = null; _pendingRecoverySent = false; }
 
   Future<bool> _authenticate(Future<AuthOutcome> Function() action) async {
     if (state.busy) return false;
@@ -207,15 +244,14 @@ class AppStateNotifier extends StateNotifier<AppState> {
       final out = await action();
       if (out.isPending) {
         // لا جلسة قبل تأكيد البريد: تُعرض شاشة الرمز وتبقى بيانات الدخول في الذاكرة للدخول التلقائي بعده
-        if (out.recoveryPhrase != null) _pendingPhrase = out.recoveryPhrase;
         _pendingRecoverySent = _pendingRecoverySent || out.recoverySent;
-        state = AppState(status: AuthStatus.pendingVerification, pendingEmail: out.pendingEmail, pendingCodeSent: out.codeSent);
+        state = AppState(status: AuthStatus.pendingVerification, pendingEmail: out.pendingEmail, pendingCodeSent: out.codeSent, pendingRetryIn: out.retryIn);
         return true;
       }
       var session = out.session!;
-      if (_pendingPhrase != null || _pendingRecoverySent) {
-        session = Session(token: session.token, user: session.user, recoveryPhrase: session.recoveryPhrase ?? _pendingPhrase, recoverySent: session.recoverySent || _pendingRecoverySent, email: session.email);
-        _pendingPhrase = null; _pendingRecoverySent = false;
+      if (_pendingRecoverySent && !session.recoverySent) {
+        // رسالة الترحيب بعد الدخول الأول (بيانات الحساب وعبارة الاسترداد وصلت بالبريد عند التسجيل)
+        session = Session(token: session.token, user: session.user, recoveryPhrase: session.recoveryPhrase, recoverySent: true, email: session.email);
       }
       _clearPending();
       // عبارة الاسترداد تُعرض مرة واحدة ولا تُخزَّن على الجهاز
@@ -223,6 +259,7 @@ class AppStateNotifier extends StateNotifier<AppState> {
       state = AppState(status: AuthStatus.signedIn, session: session);
       return true;
     } on ApiException catch (e) {
+      _clearPending();
       state = state.copyWith(
         status: AuthStatus.signedOut,
         busy: false,
@@ -231,6 +268,7 @@ class AppStateNotifier extends StateNotifier<AppState> {
       );
       return false;
     } catch (e) {
+      _clearPending();
       state = state.copyWith(
         status: AuthStatus.signedOut,
         busy: false,
@@ -259,16 +297,25 @@ class AppStateNotifier extends StateNotifier<AppState> {
     }
     if (current == null || saved.token != current.token || saved.user.id != current.user.id) {
       _api.token = saved.token;
-      state = AppState(status: AuthStatus.signedIn, session: saved);
+      // الجلسة القادمة من تبويب آخر تمر بالبوابة نفسها (حساب لم يؤكد بريده)
+      final gate = await _gateEmail();
+      state = gate != null
+          ? AppState(status: AuthStatus.pendingVerification, session: saved, pendingEmail: gate)
+          : AppState(status: AuthStatus.signedIn, session: saved);
     }
   }
 
   Future<void> logout() async {
     _clearPending();
     state = state.copyWith(busy: true, clearError: true);
-    await _api.logout();
-    await _store.clear();
-    state = const AppState(status: AuthStatus.signedOut);
+    try {
+      await _api.logout();
+      await _store.clear();
+    } catch (_) {
+      // تخزين محلي معطّل: الخروج يتم محلياً على أي حال
+    } finally {
+      state = const AppState(status: AuthStatus.signedOut);
+    }
   }
 
   void clearError() {

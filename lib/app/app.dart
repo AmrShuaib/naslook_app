@@ -181,9 +181,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   Future<void> _maybeShowRecovery() async {
     final session = ref.read(appStateProvider).session;
     final phrase = session?.recoveryPhrase;
-    if (phrase == null || _recoveryShown || !mounted) return;
+    if (session == null || (phrase == null && !session.recoverySent) || _recoveryShown || !mounted) return;
     _recoveryShown = true;
-    final me = session!.user;
+    final me = session.user;
     // بطاقة الحساب: من أنت الآن بوضوح (الاسم والمعرّف) حتى لا يلتبس الحساب الجديد بحساب آخر على الجهاز نفسه
     final who = Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -207,7 +207,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             who,
             const SizedBox(height: 12),
-            Text('أرسلنا رمز تأكيد البريد وبيانات حسابك وعبارة الاسترداد إلى ${session.email ?? 'بريدك'}. أكّد بريدك من ماي سبيس متى شئت.', style: const TextStyle(height: 1.6)),
+            Text('أرسلنا بيانات حسابك وعبارة الاسترداد إلى ${session.email ?? 'بريدك'}. احتفظ بالرسالة لاستعادة حسابك عند الحاجة.', style: const TextStyle(height: 1.6)),
           ]),
           actions: [FilledButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('ابدأ'))],
         ),
@@ -215,6 +215,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       ref.read(appStateProvider.notifier).dismissRecoveryPhrase();
       return;
     }
+    if (phrase == null) return;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,

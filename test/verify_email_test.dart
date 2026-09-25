@@ -59,8 +59,12 @@ class _Srv {
         return _json({'id': 'SA0000009', 'nickname': b['nickname'], 'pending': true, 'recoveryPhrase': 'كلمات ست للاسترداد', 'email': b['email'], 'verified': false, 'codeSent': true, 'recoverySent': true}, 202);
       case 'POST /auth/login':
         if (b['password'] != 'Password1') return _json({'error': 'bad-credentials'}, 401);
+        if (b['handle'] == 'amr') return _json({'id': 'SA0000001', 'nickname': 'amr', 'token': 'tok-amr'});
         if (!verified && gateOn) return _json({'error': 'email-unverified', 'email': 'new@example.com', 'codeSent': false, 'retryIn': 40}, 403);
         return _json({'id': 'SA0000009', 'nickname': 'newuser', 'token': 'tok9'});
+      case 'POST /auth/change-email':
+        if (b['password'] != 'Password1') return _json({'error': 'bad-credentials'}, 401);
+        return _json({'pending': true, 'email': b['email'], 'codeSent': true}, 202);
       case 'POST /auth/verify':
         if (b['code'] != '654321') return _json({'error': 'bad-code', 'attemptsLeft': 4}, 400);
         verified = true;
@@ -156,7 +160,8 @@ void main() {
     final st = ProviderScope.containerOf(tester.element(find.byType(_Gate))).read(appStateProvider);
     expect(st.status, AuthStatus.signedIn);
     expect(st.session?.token, 'tok9');
-    expect(st.session?.recoveryPhrase, 'كلمات ست للاسترداد', reason: 'عبارة الاسترداد من التسجيل تُعرض بعد الدخول كما كان');
+    expect(st.session?.recoveryPhrase, isNull, reason: 'العبارة لا تُسلَّم قبل التأكيد (هي بيانات دخول لدى النواة)؛ وصلت بالبريد');
+    expect(st.session?.recoverySent, isTrue, reason: 'رسالة الترحيب بعد الدخول الأول');
     expect(find.byKey(const Key('signed-in')), findsOneWidget);
   });
 
@@ -168,8 +173,11 @@ void main() {
     await _settle(tester);
     expect(srv.calls, contains('POST /auth/login'));
     expect(find.byType(VerifyEmailPage), findsOneWidget);
-    // الخادم لم يرسل رمزاً (أُرسل قبل أقل من دقيقة): إعادة الإرسال متاحة فوراً والتلميح ظاهر
+    // الخادم لم يرسل رمزاً (أُرسل قبل أقل من دقيقة) وأخبرنا بالثواني المتبقية: العدّاد يبدأ منها ولا يُدعى المستخدم لطلب سيُرفض
     expect(find.byKey(const Key('verify-not-sent')), findsOneWidget);
+    expect(tester.widget<TextButton>(find.byKey(const Key('verify-resend'))).onPressed, isNull);
+    expect(find.text('إعادة الإرسال بعد 40 ث'), findsOneWidget);
+    for (var i = 0; i < 41; i++) { await tester.pump(const Duration(seconds: 1)); }
     expect(tester.widget<TextButton>(find.byKey(const Key('verify-resend'))).onPressed, isNotNull);
     await tester.tap(find.byKey(const Key('verify-resend')));
     await _settle(tester);
@@ -182,6 +190,39 @@ void main() {
     await _settle(tester);
     expect(find.byType(LoginPage), findsOneWidget);
     expect(srv.calls.where((c) => c == 'POST /logout'), isEmpty, reason: 'لا جلسة فلا خروج');
+  });
+
+  testWidgets('a cancelled registration leaves nothing behind for the next account on the same device', (tester) async {
+    final srv = await _pump(tester);
+    await _register(tester);
+    expect(find.byType(VerifyEmailPage), findsOneWidget);
+    await tester.tap(find.byKey(const Key('verify-back')));
+    await _settle(tester);
+    expect(find.byType(LoginPage), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('login-handle')), 'amr');
+    await tester.enterText(find.byKey(const Key('login-password')), 'Password1');
+    await tester.tap(find.byKey(const Key('auth-submit')));
+    await _settle(tester, 6);
+    expect(srv.bodies['POST /auth/login']?['handle'], 'amr');
+    final st = ProviderScope.containerOf(tester.element(find.byType(_Gate))).read(appStateProvider);
+    expect(st.status, AuthStatus.signedIn);
+    expect(st.session?.user.id, 'SA0000001');
+    expect(st.session?.recoverySent, isFalse, reason: 'ترحيب التسجيل الملغى لا يظهر لحساب آخر');
+    expect(st.session?.recoveryPhrase, isNull);
+  });
+
+  testWidgets('a wrong email can be replaced from the verification screen with the password kept in memory', (tester) async {
+    final srv = await _pump(tester);
+    await _register(tester);
+    await tester.tap(find.byKey(const Key('verify-change-email')));
+    await _settle(tester);
+    await tester.enterText(find.byKey(const Key('verify-new-email')), 'Fixed@Example.com');
+    await tester.tap(find.byKey(const Key('verify-new-email-ok')));
+    await _settle(tester, 6);
+    expect(srv.bodies['POST /auth/change-email'], {'handle': 'newuser', 'password': 'Password1', 'email': 'fixed@example.com'});
+    expect(find.byType(VerifyEmailPage), findsOneWidget);
+    expect(find.textContaining('fixed@example.com'), findsOneWidget, reason: 'الشاشة تعرض البريد الجديد');
+    expect(find.textContaining('new@example.com'), findsNothing);
   });
 
   testWidgets('a saved session of an unverified account stops at the verification screen and continues with the same session', (tester) async {
