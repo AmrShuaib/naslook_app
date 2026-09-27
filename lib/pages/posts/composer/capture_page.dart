@@ -296,12 +296,13 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
               ]),
       );
 
-  /// أزرار التقريب كأزرار كاميرا الهاتف: ١× ٢× ٣×، والزر الأقرب للقيمة الحالية يعرضها بدقة (مثل «1.7×»)؛ القرص بإصبعين
-  /// على المعاينة يغيّرها أيضاً.
+  /// أزرار التقريب كأزرار كاميرا الهاتف: 0.5× (العدسة فائقة الاتساع إن وُجدت) ١× ٢× ٣×، والزر الأقرب للقيمة الحالية يعرضها
+  /// بدقة (مثل «1.7×»)؛ القرص بإصبعين على المعاينة يغيّرها أيضاً.
   Widget _zoomChips() {
     final cam = _cam!;
-    final presets = [1.0, 2.0, 3.0].where((z) => z <= cam.maxZoom + .01).toList();
-    if (cam.maxZoom >= 5 && presets.length == 3) presets.add(cam.maxZoom.floorToDouble());
+    final presets = [if (cam.minZoom < .9) 0.5, 1.0, 2.0, 3.0].where((z) => z <= cam.maxZoom + .01).toList();
+    if (cam.maxZoom >= 5) presets.add(cam.maxZoom.floorToDouble());
+    String label(double z) => z < .9 ? '0.5' : z.round().toString();
     return ValueListenableBuilder<double>(
       valueListenable: cam.zoomListenable,
       builder: (_, z, __) {
@@ -314,7 +315,7 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             for (var i = 0; i < presets.length; i++)
               InkWell(
-                key: Key('cam-zoom-${presets[i].toStringAsFixed(0)}'),
+                key: Key('cam-zoom-${label(presets[i]).replaceAll('.', '')}'),
                 borderRadius: BorderRadius.circular(999),
                 onTap: () => cam.setZoom(presets[i]),
                 child: AnimatedContainer(
@@ -322,7 +323,7 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
                   padding: EdgeInsets.symmetric(horizontal: i == active ? 12 : 10, vertical: 6),
                   decoration: BoxDecoration(color: i == active ? Colors.white : Colors.transparent, borderRadius: BorderRadius.circular(999)),
                   child: Text(
-                    i == active ? '${(z * 10).round() / 10 == z.roundToDouble() ? z.round().toString() : z.toStringAsFixed(1)}×' : '${presets[i].round()}',
+                    i == active ? '${(z * 10).round() / 10 == z.roundToDouble() ? z.round().toString() : z.toStringAsFixed(1)}×' : label(presets[i]),
                     style: TextStyle(color: i == active ? Colors.black : Colors.white, fontWeight: FontWeight.w700, fontSize: 12.5, fontFeatures: const [FontFeature.tabularFigures()]),
                   ),
                 ),

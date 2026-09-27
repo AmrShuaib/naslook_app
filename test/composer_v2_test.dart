@@ -38,7 +38,7 @@ class _FakeCamera implements LiveCamera {
   _FakeCamera() { last = this; }
   static _FakeCamera? last;
   bool started = false, _front = false, _rec = false;
-  static double fakeMaxZoom = 3;
+  static double fakeMaxZoom = 3, fakeMinZoom = 1;
   final _zoom = ValueNotifier<double>(1);
   final zoomCalls = <double>[];
   @override
@@ -48,11 +48,13 @@ class _FakeCamera implements LiveCamera {
   @override
   double get maxZoom => fakeMaxZoom;
   @override
+  double get minZoom => fakeMinZoom;
+  @override
   double get zoom => _zoom.value;
   @override
   ValueListenable<double> get zoomListenable => _zoom;
   @override
-  Future<void> setZoom(double z) async { zoomCalls.add(z); _zoom.value = z.clamp(1, fakeMaxZoom).toDouble(); }
+  Future<void> setZoom(double z) async { zoomCalls.add(z); _zoom.value = z.clamp(fakeMinZoom, fakeMaxZoom).toDouble(); }
   @override
   Future<void> start({bool front = false}) async { started = true; _front = front; }
   @override
@@ -327,6 +329,17 @@ void main() {
     await tester.tap(find.byKey(const Key('cam-flip')));
     await _settle(tester);
     expect(find.byKey(const Key('cam-zoom')), findsNothing);
+  });
+
+  testWidgets('an ultra-wide lens adds a 0.5x chip that zooms out below 1x', (tester) async {
+    _FakeCamera.fakeMinZoom = .5;
+    addTearDown(() => _FakeCamera.fakeMinZoom = 1);
+    await _pump(tester);
+    expect(find.byKey(const Key('cam-zoom-05')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('cam-zoom-05')));
+    await tester.pump();
+    expect(_FakeCamera.last!.zoomCalls.last, .5);
+    expect(find.text('0.5×'), findsOneWidget);
   });
 
   testWidgets('holding the shutter records a video that publishes with its duration', (tester) async {

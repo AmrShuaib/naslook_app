@@ -25,7 +25,11 @@ const _maxSide = 1600;
 
 class _WebCamera implements LiveCamera {
   web.MediaStream? _stream;
+  // المعاينة: صندوق أسود يملأ الشاشة، بداخله إطار بنسبة الفيديو نفسها (كصورة الكاميرا الأصلية 4:3 بشريطين)، وبداخله
+  // عنصر الفيديو؛ التقريب الرقمي يكبّر الفيديو داخل الإطار المقصوص فتطابق المعاينة ما يُلتقط بالضبط
+  web.HTMLDivElement? _box, _frame;
   web.HTMLVideoElement? _video;
+  web.ResizeObserver? _resize;
   web.MediaRecorder? _rec;
   final _chunks = <web.Blob>[];
   String _recMime = '';
@@ -40,6 +44,10 @@ class _WebCamera implements LiveCamera {
   bool _nativeZoom = false;
   bool _listenersOn = false;
   double _pinchStartDist = 0, _pinchStartZoom = 1;
+  // العدسة فائقة الاتساع (0.5×): الآيفون يعرضها جهاز فيديو مستقلاً باسم «Ultra Wide»، فالتبديل إليها فتح للبث من جديد
+  String? _ultraWideId;
+  bool _onUltra = false, _switching = false, _devicesProbed = false;
+  double _nativeMin = 1;
   Timer? _cropTimer;
   web.MediaStream? _cropStream;
 
@@ -50,10 +58,12 @@ class _WebCamera implements LiveCamera {
   @override
   double get maxZoom => _maxZoom;
   @override
+  double get minZoom => _minZoom;
+  @override
   double get zoom => _zoom.value;
   @override
   ValueListenable<double> get zoomListenable => _zoom;
-  double get _digital => _nativeZoom ? 1 : _zoom.value;
+  double get _digital => _nativeZoom || _onUltra ? 1 : math.max(1, _zoom.value);
 
   @override
   Future<void> start({bool front = false}) async {
@@ -61,19 +71,36 @@ class _WebCamera implements LiveCamera {
     await _open();
   }
 
-  Future<void> _open() async {
+  Future<void> _open({String? deviceId}) async {
     _stopTracks();
-    final constraints = web.MediaStreamConstraints(
-      video: {'facingMode': _front ? 'user' : 'environment', 'width': {'ideal': 1280}, 'height': {'ideal': 1920}}.jsify()!,
-      audio: true.toJS,
-    );
+    _onUltra = deviceId != null;
+    // إطار 4:3 كالكاميرا الأصلية؛ المعاينة تعرضه كاملاً (contain) فلا يبدو مقرَّباً
+    final video = deviceId != null
+        ? {'deviceId': {'exact': deviceId}, 'width': {'ideal': 1920}, 'height': {'ideal': 1440}}
+        : {'facingMode': _front ? 'user' : 'environment', 'width': {'ideal': 1920}, 'height': {'ideal': 1440}};
+    final constraints = web.MediaStreamConstraints(video: video.jsify()!, audio: true.toJS);
     try {
       _stream = await web.window.navigator.mediaDevices.getUserMedia(constraints).toDart;
     } catch (_) {
       // بعض الأجهزة ترفض القيود الدقيقة: نعيد المحاولة بأبسط طلب
       _stream = await web.window.navigator.mediaDevices.getUserMedia(web.MediaStreamConstraints(video: true.toJS, audio: true.toJS)).toDart;
     }
-    final v = _video ??= web.HTMLVideoElement()
+    final v = _elements();
+    v.srcObject = _stream;
+    try {
+      await v.play().toDart;
+    } catch (_) {
+      // autoplay يعمل لأن العنصر صامت؛ إن رُفض نتركه يبدأ عند أول تفاعل
+    }
+    _probeZoom();
+    await _probeDevices();
+    _attachGestures(_box!);
+    _layout();
+  }
+
+  web.HTMLVideoElement _elements() {
+    if (_video != null) return _video!;
+    final v = _video = web.HTMLVideoElement()
       ..autoplay = true
       ..muted = true
       ..setAttribute('playsinline', 'true');
@@ -82,19 +109,69 @@ class _WebCamera implements LiveCamera {
       ..height = '100%'
       ..objectFit = 'cover'
       ..background = '#000';
-    v.srcObject = _stream;
+    final frame = _frame = web.HTMLDivElement();
+    frame.style
+      ..position = 'relative'
+      ..overflow = 'hidden'
+      ..width = '100%'
+      ..height = '100%';
+    frame.append(v);
+    final box = _box = web.HTMLDivElement();
+    box.style
+      ..width = '100%'
+      ..height = '100%'
+      ..background = '#000'
+      ..display = 'flex'
+      ..alignItems = 'center'
+      ..justifyContent = 'center'
+      ..overflow = 'hidden';
+    box.append(frame);
+    v.addEventListener('loadedmetadata', ((web.Event _) => _layout()).toJS);
+    v.addEventListener('resize', ((web.Event _) => _layout()).toJS);
     try {
-      await v.play().toDart;
-    } catch (_) {
-      // autoplay يعمل لأن العنصر صامت؛ إن رُفض نتركه يبدأ عند أول تفاعل
+      _resize = web.ResizeObserver(((JSArray<web.ResizeObserverEntry> _, web.ResizeObserver __) => _layout()).toJS)..observe(box);
+    } catch (_) { /* متصفح قديم: نكتفي بحدث loadedmetadata */ }
+    return v;
+  }
+
+  /// يقيس الإطار ليحوي الفيديو كاملاً بنسبته داخل الصندوق (contain) بدل قصّه لملء الشاشة (كان يبدو مقرَّباً نحو ١٫٦×).
+  void _layout() {
+    final box = _box, frame = _frame, v = _video;
+    if (box == null || frame == null || v == null) return;
+    final bw = box.clientWidth, bh = box.clientHeight, vw = v.videoWidth, vh = v.videoHeight;
+    if (bw == 0 || bh == 0 || vw == 0 || vh == 0) {
+      frame.style..width = '100%'..height = '100%';
+      return;
     }
-    _probeZoom();
-    _attachGestures(v);
+    final s = math.min(bw / vw, bh / vh);
+    frame.style
+      ..width = '${(vw * s).floor()}px'
+      ..height = '${(vh * s).floor()}px';
+  }
+
+  /// بعد الإذن الأول تظهر أسماء الكاميرات؛ إن وُجدت عدسة فائقة الاتساع خلفية نتيح 0.5×.
+  Future<void> _probeDevices() async {
+    if (!_devicesProbed) {
+      _devicesProbed = true;
+      try {
+        final devices = (await web.window.navigator.mediaDevices.enumerateDevices().toDart).toDart;
+        for (final d in devices) {
+          if (d.kind == 'videoinput' && RegExp(r'ultra.?wide', caseSensitive: false).hasMatch(d.label) && !RegExp(r'front', caseSensitive: false).hasMatch(d.label)) { _ultraWideId = d.deviceId; break; }
+        }
+      } catch (_) { /* لا أسماء بلا إذن */ }
+    }
+    _minZoom = !_front && _ultraWideId != null ? .5 : _nativeMin;
+    if (_onUltra) {
+      _zoom.value = .5;
+    } else if (_zoom.value < _nativeMin) {
+      _zoom.value = _nativeMin;
+    }
   }
 
   /// يقرأ مدى التقريب البصري من قدرات المسار إن وُجد؛ وإلا تقريب رقمي حتى ٣×.
   void _probeZoom() {
     _nativeZoom = false;
+    _nativeMin = 1;
     _minZoom = 1;
     _maxZoom = 3;
     try {
@@ -106,7 +183,8 @@ class _WebCamera implements LiveCamera {
         final min = (o.getProperty<JSNumber?>('min'.toJS)?.toDartDouble ?? 1), max = (o.getProperty<JSNumber?>('max'.toJS)?.toDartDouble ?? 1);
         if (max > min + .05) {
           _nativeZoom = true;
-          _minZoom = math.max(1, min);
+          _nativeMin = math.max(1, min);
+          _minZoom = _nativeMin;
           _maxZoom = math.min(max, 8);
         }
       }
@@ -117,7 +195,25 @@ class _WebCamera implements LiveCamera {
 
   @override
   Future<void> setZoom(double zoom) async {
-    final z = zoom.clamp(_minZoom, _maxZoom).toDouble();
+    if (_switching) return;
+    var z = zoom.clamp(_minZoom, _maxZoom).toDouble();
+    // 0.5× = العدسة فائقة الاتساع نفسها (بث آخر)، وما فوق 0.75 يعود إلى العدسة العادية؛ أثناء التسجيل لا تبديل
+    // (المسجّل مربوط بالبث الحالي) فنبقى ضمن مدى العدسة الحالية
+    if (!_front && _ultraWideId != null) {
+      if (_onUltra && (z < .75 || recording)) {
+        _zoom.value = .5;
+        _applyPreview();
+        return;
+      }
+      if (z < .75 && !recording) {
+        await _switchDevice(_ultraWideId);
+        _zoom.value = .5;
+        _applyPreview();
+        return;
+      }
+      if (_onUltra) await _switchDevice(null);
+      z = z.clamp(_nativeMin, _maxZoom).toDouble();
+    }
     if ((z - _zoom.value).abs() < .001) return;
     _zoom.value = z;
     if (_nativeZoom) {
@@ -135,6 +231,20 @@ class _WebCamera implements LiveCamera {
     _applyPreview();
   }
 
+  Future<void> _switchDevice(String? deviceId) async {
+    _switching = true;
+    try {
+      await _open(deviceId: deviceId);
+    } catch (_) {
+      // تعذّر فتح العدسة الأخرى: نعود إلى العدسة العادية ونلغي خيار 0.5×
+      _ultraWideId = null;
+      _minZoom = _nativeMin;
+      try { await _open(); } catch (_) { /* ignore */ }
+    } finally {
+      _switching = false;
+    }
+  }
+
   /// المعاينة: المرآة للكاميرا الأمامية، والتكبير الرقمي بـ transform (البصري يغيّر الإطار نفسه فلا حاجة له).
   void _applyPreview() {
     final v = _video;
@@ -147,7 +257,7 @@ class _WebCamera implements LiveCamera {
   }
 
   /// قرص إصبعين على المعاينة يغيّر التقريب (عنصر <video> يستقبل اللمس مباشرة لا Flutter)، وعجلة الفأرة على الحاسوب.
-  void _attachGestures(web.HTMLVideoElement v) {
+  void _attachGestures(web.HTMLElement v) {
     if (_listenersOn) return;
     _listenersOn = true;
     v.style.touchAction = 'none';
@@ -195,17 +305,9 @@ class _WebCamera implements LiveCamera {
     if (!_registered) {
       _registered = true;
       ui_web.platformViewRegistry.registerViewFactory(_viewId, (int viewId) {
-        final v = _video ??= web.HTMLVideoElement()
-          ..autoplay = true
-          ..muted = true
-          ..setAttribute('playsinline', 'true');
-        v.style
-          ..width = '100%'
-          ..height = '100%'
-          ..objectFit = 'cover'
-          ..background = '#000';
+        final v = _elements();
         if (_stream != null && v.srcObject == null) v.srcObject = _stream;
-        return v;
+        return _box!;
       });
     }
     return HtmlElementView(viewType: _viewId);
@@ -325,7 +427,12 @@ class _WebCamera implements LiveCamera {
       v.srcObject = null;
       v.remove();
     }
+    _resize?.disconnect();
+    _resize = null;
+    _box?.remove();
     _video = null;
+    _frame = null;
+    _box = null;
   }
 }
 

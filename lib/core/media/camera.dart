@@ -39,6 +39,8 @@ abstract class LiveCamera {
   /// التقريب: 1 = بلا تقريب. [maxZoom] = 1 يعني أن الكاميرا لا تدعمه فتُخفى أزراره. القيمة تتغير أيضاً بقرص إصبعين
   /// على المعاينة، فتراقبها الشاشة عبر [zoomListenable].
   double get maxZoom;
+  /// أقل تقريب: 0.5 حين تتوفر عدسة فائقة الاتساع (الآيفون يعرضها كجهاز مستقل)، وإلا 1.
+  double get minZoom;
   double get zoom;
   ValueListenable<double> get zoomListenable;
   Future<void> setZoom(double zoom);
