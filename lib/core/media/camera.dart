@@ -1,5 +1,4 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import 'camera_stub.dart' if (dart.library.js_interop) 'camera_web.dart' as impl;
@@ -36,6 +35,13 @@ abstract class LiveCamera {
   Future<CameraShot?> stopVideo();
 
   bool get recording;
+
+  /// التقريب: 1 = بلا تقريب. [maxZoom] = 1 يعني أن الكاميرا لا تدعمه فتُخفى أزراره. القيمة تتغير أيضاً بقرص إصبعين
+  /// على المعاينة، فتراقبها الشاشة عبر [zoomListenable].
+  double get maxZoom;
+  double get zoom;
+  ValueListenable<double> get zoomListenable;
+  Future<void> setZoom(double zoom);
 
   /// يوقف البث ويحرر الكاميرا.
   void dispose();

@@ -63,6 +63,8 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
     try {
       final cam = _cam ??= LiveCamera();
       await cam.start(front: front);
+      // كل كاميرا (أمامية أو خلفية) لها مدى تقريب مختلف، فنبدأ من ١×
+      await cam.setZoom(1);
       if (!mounted) return;
       setState(() { camReady = true; starting = false; });
     } catch (e) {
@@ -242,6 +244,8 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
                 ),
               ),
             const SizedBox(height: 10),
+            if (camReady && (_cam?.maxZoom ?? 1) > 1.05) _zoomChips(),
+            const SizedBox(height: 8),
             Text(recording ? 'ارفع إصبعك لإيقاف التسجيل' : mode == 'video' ? 'اضغط باستمرار للتسجيل حتى ٣٠ ثانية' : camReady ? 'اضغط لالتقاط صورة · اضغط باستمرار لتصوير فيديو' : '', style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
             const SizedBox(height: 12),
             if (!recording) _modeStrip(),
@@ -291,6 +295,43 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
                 ]),
               ]),
       );
+
+  /// أزرار التقريب كأزرار كاميرا الهاتف: ١× ٢× ٣×، والزر الأقرب للقيمة الحالية يعرضها بدقة (مثل «1.7×»)؛ القرص بإصبعين
+  /// على المعاينة يغيّرها أيضاً.
+  Widget _zoomChips() {
+    final cam = _cam!;
+    final presets = [1.0, 2.0, 3.0].where((z) => z <= cam.maxZoom + .01).toList();
+    if (cam.maxZoom >= 5 && presets.length == 3) presets.add(cam.maxZoom.floorToDouble());
+    return ValueListenableBuilder<double>(
+      valueListenable: cam.zoomListenable,
+      builder: (_, z, __) {
+        var active = 0;
+        for (var i = 0; i < presets.length; i++) { if ((presets[i] - z).abs() < (presets[active] - z).abs()) active = i; }
+        return Container(
+          key: const Key('cam-zoom'),
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(color: Colors.black38, borderRadius: BorderRadius.circular(999)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            for (var i = 0; i < presets.length; i++)
+              InkWell(
+                key: Key('cam-zoom-${presets[i].toStringAsFixed(0)}'),
+                borderRadius: BorderRadius.circular(999),
+                onTap: () => cam.setZoom(presets[i]),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  padding: EdgeInsets.symmetric(horizontal: i == active ? 12 : 10, vertical: 6),
+                  decoration: BoxDecoration(color: i == active ? Colors.white : Colors.transparent, borderRadius: BorderRadius.circular(999)),
+                  child: Text(
+                    i == active ? '${(z * 10).round() / 10 == z.roundToDouble() ? z.round().toString() : z.toStringAsFixed(1)}×' : '${presets[i].round()}',
+                    style: TextStyle(color: i == active ? Colors.black : Colors.white, fontWeight: FontWeight.w700, fontSize: 12.5, fontFeatures: const [FontFeature.tabularFigures()]),
+                  ),
+                ),
+              ),
+          ]),
+        );
+      },
+    );
+  }
 
   Widget _modeStrip() => Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         for (final (k, l) in const [('photo', 'صورة'), ('video', 'فيديو'), ('text', 'نص')])

@@ -1,8 +1,8 @@
 // المحرّر الجديد: الكاميرا أولاً (صورة/فيديو/نص) ثم «راجع وعدّل» ثم شاشة النشر بوجهاتها الثلاث (الخريطة، دائرة، السوق)،
 // مع الطبقة الصوتية والفلاتر وكاميرا النظام احتياطاً وتعديل منشور قائم.
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,11 +35,24 @@ class _SignedIn extends AppStateNotifier {
 final Uint8List _png = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR42mM4YaPxHxkzkC4AAJdYIrG6Q2NNAAAAAElFTkSuQmCC');
 
 class _FakeCamera implements LiveCamera {
+  _FakeCamera() { last = this; }
+  static _FakeCamera? last;
   bool started = false, _front = false, _rec = false;
+  static double fakeMaxZoom = 3;
+  final _zoom = ValueNotifier<double>(1);
+  final zoomCalls = <double>[];
   @override
   bool get front => _front;
   @override
   bool get recording => _rec;
+  @override
+  double get maxZoom => fakeMaxZoom;
+  @override
+  double get zoom => _zoom.value;
+  @override
+  ValueListenable<double> get zoomListenable => _zoom;
+  @override
+  Future<void> setZoom(double z) async { zoomCalls.add(z); _zoom.value = z.clamp(1, fakeMaxZoom).toDouble(); }
   @override
   Future<void> start({bool front = false}) async { started = true; _front = front; }
   @override
@@ -291,6 +304,29 @@ void main() {
     expect(body['kind'], 'product');
     expect(body['images'], ['/chat/media/img1.jpg']);
     expect(body['lat'], 21.5);
+  });
+
+  testWidgets('zoom chips: 1x 2x 3x drive the camera zoom and follow a pinch; hidden when the camera has no zoom', (tester) async {
+    _FakeCamera.fakeMaxZoom = 3;
+    addTearDown(() => _FakeCamera.fakeMaxZoom = 3);
+    await _pump(tester);
+    expect(find.byKey(const Key('cam-zoom')), findsOneWidget);
+    expect(find.text('1×'), findsOneWidget, reason: 'الزر النشط يعرض القيمة الحالية');
+    await tester.tap(find.byKey(const Key('cam-zoom-2')));
+    await tester.pump();
+    expect(find.text('2×'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget, reason: 'الأزرار غير النشطة بلا علامة ×');
+    // قرص بإصبعين يغيّر القيمة من الكاميرا نفسها (على الويب يستقبله عنصر الفيديو)، فيتبعه الزر الأقرب بقيمة دقيقة
+    final fake = _FakeCamera.last!;
+    fake._zoom.value = 2.7;
+    await tester.pump();
+    expect(find.text('2.7×'), findsOneWidget);
+    expect(fake.zoomCalls.first, 1, reason: 'يبدأ من ١× بعد فتح الكاميرا');
+    // كاميرا بلا تقريب: لا أزرار
+    _FakeCamera.fakeMaxZoom = 1;
+    await tester.tap(find.byKey(const Key('cam-flip')));
+    await _settle(tester);
+    expect(find.byKey(const Key('cam-zoom')), findsNothing);
   });
 
   testWidgets('holding the shutter records a video that publishes with its duration', (tester) async {
