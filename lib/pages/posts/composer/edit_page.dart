@@ -38,6 +38,10 @@ class _EditPageState extends State<EditPage> {
   bool manual = false;
   final _inline = TextEditingController();
   final _inlineFocus = FocusNode();
+  // أثناء الكتابة يبقى القماش بحجمه ولوحة المفاتيح تغطي أسفله؛ الحقل يتوسط المساحة الظاهرة فوقها ثم يُثبَّت النص
+  // الجديد حيث رآه المستخدم (بمفاتيح القياس هذه)
+  final _canvasKey = GlobalKey(), _editorKey = GlobalKey();
+  bool _editingNew = false;
 
   bool get isImage => d.kind == 'image';
   bool get isVideo => d.kind == 'video';
@@ -62,6 +66,7 @@ class _EditPageState extends State<EditPage> {
       editing = i;
       selected = i;
       tool = 'text';
+      _editingNew = index == null;
       _inline.text = overlays[i].text;
       _inline.selection = TextSelection.collapsed(offset: _inline.text.length);
     });
@@ -72,12 +77,21 @@ class _EditPageState extends State<EditPage> {
     final i = editing;
     if (i == null) return;
     final text = _inline.text.trim();
+    // النص الجديد يُثبَّت حيث ظهر أثناء الكتابة (وسط المساحة فوق لوحة المفاتيح) بدل القفز إلى موضع افتراضي
+    double? y;
+    if (_editingNew) {
+      final ed = _editorKey.currentContext?.findRenderObject(), cv = _canvasKey.currentContext?.findRenderObject();
+      if (ed is RenderBox && cv is RenderBox && ed.hasSize && cv.hasSize && cv.size.height > 0) {
+        final c = ed.localToGlobal(ed.size.center(Offset.zero)).dy, top = cv.localToGlobal(Offset.zero).dy;
+        y = ((c - top) / cv.size.height).clamp(.08, .92);
+      }
+    }
     setState(() {
       if (text.isEmpty) {
         overlays = [...overlays]..removeAt(i);
         selected = null;
       } else {
-        overlays[i] = overlays[i].copyWith(text: text);
+        overlays[i] = overlays[i].copyWith(text: text, y: y);
         selected = i;
       }
       editing = null;
@@ -155,10 +169,15 @@ class _EditPageState extends State<EditPage> {
 
   // ---------------------------------------------------------------- البناء
   @override
-  Widget build(BuildContext context) => Theme(
+  Widget build(BuildContext context) {
+    // لوحة المفاتيح لا تقلّص الشاشة (وإلا انضغط القماش حتى اختفت الصورة)؛ نحسب ما تغطيه داخل المنطقة الآمنة ونرفع
+    // درج النص فوقه
+    final kb = (MediaQuery.viewInsetsOf(context).bottom - MediaQuery.paddingOf(context).bottom).clamp(0.0, double.infinity);
+    return Theme(
         data: ThemeData(brightness: Brightness.dark, useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: Joy.primary, brightness: Brightness.dark), fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily),
         child: Scaffold(
           backgroundColor: const Color(0xFF0F1114),
+          resizeToAvoidBottomInset: false,
           body: SafeArea(
             child: Column(children: [
               Padding(
@@ -174,7 +193,10 @@ class _EditPageState extends State<EditPage> {
                   final w = (box.maxHeight * 9 / 16).clamp(200.0, box.maxWidth - 88);
                   return Stack(children: [
                     Center(
-                      child: SizedBox(
+                      child: KeyedSubtree(
+                        key: const Key('edit-canvas'),
+                        child: SizedBox(
+                        key: _canvasKey,
                         width: w, height: box.maxHeight - 12,
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(22),
@@ -187,12 +209,12 @@ class _EditPageState extends State<EditPage> {
                               onChanged: _onOverlayChanged,
                               onEdit: (i) => overlays[i].isSticker ? null : _startText(index: i),
                             ),
-                            if (editing != null) _inlineEditor(w, box.maxHeight - 12),
                             if (voice != null) Positioned(bottom: 14, left: 0, right: 0, child: Center(child: VoiceChip(layer: voice, light: d.isText && contrastTextColor(d.board) == '#111111'))),
                             if (selected != null && editing == null)
                               Positioned(bottom: 6, left: 0, right: 0, child: IgnorePointer(child: Center(child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(999)), child: const Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.delete_outline_rounded, size: 14, color: Colors.white), SizedBox(width: 4), Text('اسحب إلى هنا للحذف', style: TextStyle(color: Colors.white, fontSize: 11))]))))),
                           ]),
                         ),
+                      ),
                       ),
                     ),
                     // عمود الأدوات
@@ -207,14 +229,25 @@ class _EditPageState extends State<EditPage> {
                           if (!isVideo) _tool('voice', Icons.mic_rounded, 'صوت', _voiceTool, on: voice != null),
                         ]),
                       ),
+                    // أثناء الكتابة: الحقل يتوسط ما يظهر من القماش فوق لوحة المفاتيح، ودرج الأنماط فوقها مباشرة
+                    if (editing != null)
+                      Positioned(
+                        left: 0, right: 0, top: 0, bottom: kb,
+                        child: Column(children: [
+                          Expanded(child: Center(child: KeyedSubtree(key: _editorKey, child: _inlineEditor(w)))),
+                          _tray(),
+                        ]),
+                      ),
                   ]);
                 }),
               ),
-              _tray(),
+              // الحافة السفلية نفسها أثناء الكتابة حتى لا يتغير حجم القماش
+              if (editing == null) _tray() else const SizedBox(height: 12),
             ]),
           ),
         ),
       );
+  }
 
   Widget _media() {
     if (d.isText) return Container(color: colorFromHex(d.board, Colors.white));
@@ -247,7 +280,7 @@ class _EditPageState extends State<EditPage> {
     );
   }
 
-  Widget _inlineEditor(double w, double h) {
+  Widget _inlineEditor(double w) {
     final o = overlays[editing!];
     final size = w * 0.065 * o.scale;
     final color = colorFromHex(o.color);
@@ -266,7 +299,7 @@ class _EditPageState extends State<EditPage> {
       ),
     );
     if (bgc != null) field = Container(padding: EdgeInsets.symmetric(horizontal: size * .5, vertical: size * .25), decoration: BoxDecoration(color: bgc, borderRadius: BorderRadius.circular(size * .5)), child: field);
-    return Positioned(left: o.x * w, top: o.y * h, child: FractionalTranslation(translation: const Offset(-0.5, -0.5), child: Transform.rotate(angle: o.rot, child: field)));
+    return field;
   }
 
   // ---------------------------------------------------------------- الأدراج
@@ -341,7 +374,7 @@ class _EditPageState extends State<EditPage> {
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(color: Color(0xFF1C1F24), borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + MediaQuery.viewInsetsOf(context).bottom * (editing != null ? 1 : 0)),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         Row(children: [
           Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),

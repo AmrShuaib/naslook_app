@@ -371,6 +371,30 @@ void main() {
     expect(srv.bodies['POST /mapposts']!['kind'], 'image');
   });
 
+  testWidgets('typing a text keeps the photo on screen: keyboard inset does not shrink the canvas, tray floats above it', (tester) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('shutter')));
+    await _settle(tester);
+    final canvasBefore = tester.getSize(find.byKey(const Key('edit-canvas')));
+    // لوحة مفاتيح تغطي الثلث الأسفل (1200 × الثلث = 400)
+    tester.view.viewInsets = const FakeViewPadding(bottom: 400);
+    await tester.tap(find.byKey(const Key('tool-text')));
+    await _settle(tester);
+    expect(tester.getSize(find.byKey(const Key('edit-canvas'))), canvasBefore, reason: 'القماش لا ينضغط مع لوحة المفاتيح');
+    expect(tester.getBottomLeft(find.byKey(const Key('tray-done'))).dy, lessThanOrEqualTo(800), reason: 'زر تم فوق لوحة المفاتيح');
+    final field = tester.getCenter(find.byKey(const Key('inline-text')));
+    expect(field.dy, lessThan(800 - 100), reason: 'حقل الكتابة في المساحة الظاهرة فوق اللوحة والدرج');
+    await tester.enterText(find.byKey(const Key('inline-text')), 'مرحبا');
+    await tester.tap(find.byKey(const Key('tray-done')));
+    tester.view.viewInsets = FakeViewPadding.zero;
+    await _settle(tester);
+    // النص ثُبّت حيث كُتب: أعلى من منتصف القماش (المساحة الظاهرة كانت الثلثين العلويين)
+    final canvasTop = tester.getTopLeft(find.byKey(const Key('edit-canvas'))).dy;
+    final textY = tester.getCenter(find.text('مرحبا')).dy;
+    expect((textY - canvasTop) / canvasBefore.height, lessThan(.5));
+    expect(find.byKey(const Key('inline-text')), findsNothing);
+  });
+
   testWidgets('editing an existing post skips the camera and saves through PATCH', (tester) async {
     final post = MapPost.fromJson({'id': _pid, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'kind': 'image', 'mediaUrl': '/chat/media/old.jpg', 'caption': 'قديم', 'overlays': [], 'tag': 'offer', 'title': 'عرض', 'price': 1500, 'lat': 21.5, 'lng': 39.2, 'status': 'active', 'mine': true});
     final srv = await _pump(tester, edit: post);
