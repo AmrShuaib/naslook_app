@@ -186,6 +186,11 @@ export default async function accountDelete(app, opts = {}) {
       if (has("market_follows", "user_id", "seller_id")) await run("market_follows", "DELETE FROM market_follows WHERE user_id=$1 OR seller_id=$1");
       for (const t of ["market_alerts", "market_views", "saved_searches", "wishlist_items", "app_notifications", "biz_follows", "biz_member_prefs", "biz_offer_views", "biz_staff", "biz_claims"]) if (has(t, "user_id")) await run(t, `DELETE FROM ${q(t)} WHERE user_id=$1`);
       if (has("biz_reviews", "user_id")) await run("biz_reviews", "DELETE FROM biz_reviews WHERE user_id=$1");
+      // التوظيف: ملف التوظيف والسيرة وترشيحاته تُحذف؛ عروض الدائرة تبقى ويُفكّ إسنادها إليه
+      if (has("job_profiles", "user_id")) await run("job_profiles", "DELETE FROM job_profiles WHERE user_id=$1");
+      if (has("job_matches", "user_id")) await run("job_matches", "DELETE FROM job_matches WHERE user_id=$1");
+      if (has("job_matches", "assignee_id")) await run("job_matches", "UPDATE job_matches SET assignee_id=NULL WHERE assignee_id=$1");
+      if (has("jobs", "assignee_id")) await run("jobs", "UPDATE jobs SET assignee_id=NULL WHERE assignee_id=$1");
       if (has("market_seller_upgrades", "seller_id")) await run("market_seller_upgrades", "DELETE FROM market_seller_upgrades WHERE seller_id=$1");
       if (has("biz_offer_grants", "user_id", "used_at", "expires_at")) await run("biz_offer_grants", "UPDATE biz_offer_grants SET expires_at=now() WHERE user_id=$1 AND used_at IS NULL");
       if (has("events", "host_id", "cancelled", "starts_at")) await run("events", "UPDATE events SET cancelled=true WHERE host_id=$1 AND starts_at > now() AND NOT cancelled");
