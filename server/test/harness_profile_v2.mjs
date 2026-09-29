@@ -61,7 +61,7 @@ const call = async (method, url, { body = {}, user = FAHAD, expect } = {}) => {
 
 // ---- الحالة والاكتشاف
 const st = await call('GET', '/profile/v2/status', { user: null, expect: 200 });
-check(st.ok === true && st.users === true && st.profiles === 'profiles' && st.contacts === true && st.posts === true && st.reviews === true && st.orders === true, 'status reports detected core tables', JSON.stringify(st));
+check(st.ok === true && st.users === true && st.profiles === 'profiles' && st.contacts === 'contacts(user_id,contact_id)' && st.posts === true && st.reviews === true && st.orders === true, 'status reports detected core tables', JSON.stringify(st));
 
 // ---- ملف بلا صف امتداد (زائر ضيف) ومع الإحصاءات من النواة
 let p = await call('GET', `/profiles/${FAHAD}/v2`, { user: null, expect: 200 });

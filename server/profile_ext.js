@@ -96,7 +96,15 @@ export default async function profileV2(app, opts) {
     }
   }
   const PC = P ? { bio: pick(P.cols, "bio"), skills: pick(P.cols, "skills"), isPublic: pick(P.cols, "is_public"), accountType: pick(P.cols, "account_type") } : {};
-  const contactsOk = await has("contacts", "user_id", "contact_id");
+  // الأصدقاء: جدول النواة بأي اسم وعمودين معروفين (الإنتاج ليس بالضرورة contacts(user_id, contact_id))
+  let C = null;
+  for (const t of ["contacts", "friends", "friendships", "user_contacts"]) {
+    if (!tables.has(t)) continue;
+    const c = await colsOf(t);
+    const a = pick(c, "user_id", "uid", "owner_id", "user_a", "a_id", "from_id", "requester_id");
+    const b = pick(c, "contact_id", "friend_id", "other_id", "peer_id", "user_b", "b_id", "to_id", "contact", "friend");
+    if (a && b && a !== b) { C = { table: t, a, b }; break; }
+  }
   const postsOk = await has("map_posts", "user_id", "status", "expires_at");
   const reviewsOk = await has("market_reviews", "seller_id", "rating");
   const ordersOk = await has("market_orders", "seller_id", "status");
@@ -161,7 +169,7 @@ export default async function profileV2(app, opts) {
     } catch { /* ignore */ }
     return out;
   };
-  const isFriend = async (a, b) => (a && b && a !== b && contactsOk ? exists("SELECT 1 FROM contacts WHERE (user_id=$1 AND contact_id=$2) OR (user_id=$2 AND contact_id=$1) LIMIT 1", [a, b]) : false);
+  const isFriend = async (a, b) => (a && b && a !== b && C ? exists(`SELECT 1 FROM ${q(C.table)} WHERE (${q(C.a)}=$1 AND ${q(C.b)}=$2) OR (${q(C.a)}=$2 AND ${q(C.b)}=$1) LIMIT 1`, [a, b]) : false);
   const isOnline = async (id) => (PR ? exists(`SELECT 1 FROM ${q(PR.table)} WHERE ${q(PR.key)}=$1 AND ${q(PR.at)} > now() - interval '5 minutes' LIMIT 1`, [id]) : null);
   const loadExt = async (id) => { try { return (await pool.query("SELECT * FROM profile_ext WHERE user_id=$1", [id])).rows[0] ?? null; } catch { return null; } };
   const EXT_DEFAULTS = { cover_url: null, display_name: "", job_title: "", city: "", district: "", links: [], intro_kind: null, intro_url: null, intro_sec: null, intro_at: null, intro_visibility: "all", msg_policy: "all", show_online: true, show_city: true, show_friends: false };
@@ -172,7 +180,7 @@ export default async function profileV2(app, opts) {
       followersOf(id),
       count("SELECT count(*)::int AS n FROM user_follows WHERE follower_id=$1", [id]),
       M ? count(`SELECT count(*)::int AS n FROM ${q(M.table)} WHERE ${q(M.key)}=$1`, [id]) : 0,
-      contactsOk ? count("SELECT count(*)::int AS n FROM contacts WHERE user_id=$1", [id]) : 0,
+      C ? count(`SELECT count(*)::int AS n FROM ${q(C.table)} WHERE ${q(C.a)}=$1`, [id]) : 0,
       ordersOk ? count("SELECT count(*)::int AS n FROM market_orders WHERE seller_id=$1 AND status IN ('completed','delivered','done')", [id]) : 0,
     ]);
     let ratingAvg = null, ratingCount = 0;
@@ -223,7 +231,7 @@ export default async function profileV2(app, opts) {
     };
   }
 
-  app.get("/profile/v2/status", async () => ({ ok: true, users: U.ok, profiles: P?.table ?? null, contacts: contactsOk, posts: postsOk, reviews: reviewsOk, orders: ordersOk, members: M?.table ?? null, presence: PR?.table ?? null }));
+  app.get("/profile/v2/status", async () => ({ ok: true, users: U.ok, profiles: P?.table ?? null, contacts: C ? `${C.table}(${C.a},${C.b})` : null, posts: postsOk, reviews: reviewsOk, orders: ordersOk, members: M?.table ?? null, presence: PR?.table ?? null }));
 
   // ---- ملف مستخدم كما يراه الزائر؛ الزيارة تُسجَّل مرة في اليوم لكل زائر مسجّل غير المالك
   app.get("/profiles/:id/v2", async (req, reply) => {
