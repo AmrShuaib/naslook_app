@@ -41,6 +41,7 @@ import '../../ui/reactions.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../business/business_page.dart';
+import '../jobs/job_page.dart';
 import '../business/community_page.dart';
 import '../events/events_page.dart';
 import '../market/market_page.dart';
@@ -756,7 +757,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           case 'event': nav.push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: card.id)));
           case 'ticket': nav.push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: card.eventId ?? card.id)));
           case 'listing': nav.push(MaterialPageRoute(builder: (_) => ListingPage(card.id)));
-          case 'job': if (card.bizId != null) nav.push(MaterialPageRoute(builder: (_) => BusinessPage(id: card.bizId!)));
+          case 'job': nav.push(MaterialPageRoute(builder: (_) => JobPage(id: card.id)));
           case 'space': nav.push(MaterialPageRoute(builder: (_) => CommunityPage(bizId: card.bizId ?? card.id, title: card.title)));
           case 'spacepost': nav.push(MaterialPageRoute(builder: (_) => CommunityPage(bizId: card.bizId ?? '', title: card.subtitle, initialPostId: card.id)));
           case 'post':

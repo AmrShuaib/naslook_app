@@ -64,3 +64,20 @@
 - لا سؤال عن الدين أو الحالة الاجتماعية في أسئلة الفرز، ولا تمييز في الصياغة؛ المحرك موجَّه بذلك في نص النظام، والفريق يعدّل المسودة قبل النشر.
 - السيرة الذاتية تُرفع عبر `/chat/upload` وتُحذف مع الحساب (`account_delete.js` يحذف صفوف المستخدم في الجداول العامة؛ أضف `job_profiles` و`job_matches` هناك إن لم تُشمل تلقائياً).
 - الحظر: لا تُرسل بطاقة إلى من حظره منشئ العرض.
+
+## ملفات التطبيق
+
+- المستخدم: `lib/pages/jobs/job_profile_page.dart` (أبحث عن عمل، رفع السيرة PDF عبر `/chat/upload`، على الويب فقط الآن)، `job_offers_page.dart` (الواردة/طلباتي وبطاقة `JobOfferCard`)، `job_offer_page.dart` (العرض، القبول، الأسئلة، سحب الطلب، فتح المحادثة مع بطاقة `#job/<id>` في حقل الكتابة)، قسم «التوظيف» أعلى تبويب «الطلبات» في `lib/pages/chat/chats_page.dart`، صفَّا ماي سبيس، `lib/state/jobs_providers.dart`، الشارة في `unreadCountProvider`.
+- الدائرة: تبويب «التوظيف» في `business_dashboard_page.dart` (`BusinessDashboardPage.jobsTab`)، `dashboard_jobs.dart` (الباقة والإحصاءات والقائمة)، `job_editor_page.dart` (المحرك ثم النموذج الكامل والمعاينة والنشر)، `job_candidates_page.dart`، `job_candidate_page.dart`، `job_stats_page.dart` (القمع والتصدير)، `job_actions.dart`، `lib/state/biz_jobs_providers.dart`، دور «توظيف» في `dashboard_reviews_team.dart`.
+- العام والإدارة: `lib/pages/jobs/jobs_page.dart` (القائمة والفلاتر و`JobsEntryCard` في صفحة الدائرة)، `job_page.dart` (الوظيفة والتقديم والمشاركة)، رقاقة «وظائف» في الخريطة وقائمة الدوائر، `lib/pages/admin/admin_jobs.dart` وقسم الإعدادات في `admin_settings.dart`، `lib/state/jobs_public_providers.dart`.
+- الروابط العميقة للإشعارات في `lib/core/notify_open.dart`، وبطاقة `#job` في `chat_cards.dart` تفتح صفحة الوظيفة.
+
+## الاختبار
+
+- الخادم: `server/test/run.sh harness_jobs.mjs` (١٧٤ فحصاً: الوحدات الخالصة، الملفات، المحرك بمحاكاة Claude ثم القالب، النشر والمطابقة والحدود، الصندوق والقبول والأسئلة وكشف الهوية، التقديم، اللوحة والمقابلات والتذكير والإحصاءات والتصدير، الإدارة والمسح).
+- التطبيق: `flutter test test/jobs_user_test.dart test/jobs_circle_test.dart test/jobs_public_test.dart`.
+- الخادم التجريبي: `tools/dev/mockapi.mjs` فيه ثلاث كتل `jobs (user|circle|public+admin)`.
+
+## المؤجّل
+
+- رفع السيرة الذاتية من الجوال الأصلي (يحتاج حزمة اختيار ملفات)، رسالة الخادم من روبوت في الخاص (تحتاج مساراً في النواة)، الدفع للباقة من المحفظة (الإدارة تمنحها الآن)، وترجمة الواجهة.
