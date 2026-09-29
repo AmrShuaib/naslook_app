@@ -47,7 +47,9 @@ Widget? notificationTarget(AppNotification n) {
     return match != null ? JobCandidatePage(bizId: biz, jobId: job, matchId: match) : JobCandidatesPage(bizId: biz, jobId: job);
   }
   switch (n.kind) {
+    // مراجعة العروض: للفريق (manage) لوحة توظيف الدائرة؛ وللمشرفين (بانتظار الموافقة) قسم التوظيف في الإدارة
     case 'job_review':
+      if (n.data['manage'] != true) return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'jobs').clamp(0, adminSections.length - 1));
       return biz == null ? null : BusinessDashboardPage(id: biz, initialTab: BusinessDashboardPage.jobsTab);
     case 'biz_order':
     case 'order_cancelled':

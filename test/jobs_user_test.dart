@@ -12,6 +12,7 @@ import 'package:naslook/api/notify_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/core/media/media.dart';
 import 'package:naslook/core/notify_open.dart';
+import 'package:naslook/pages/business/owner/job_candidate_page.dart';
 import 'package:naslook/pages/chat/chat_thread_page.dart';
 import 'package:naslook/pages/chat/chats_page.dart';
 import 'package:naslook/pages/jobs/job_offer_page.dart';
@@ -294,8 +295,9 @@ void main() {
     expect(notificationTarget(_n('job_offer')), isA<JobOffersPage>());
     expect(notificationTarget(_n('job_stage', {'jobId': _job1, 'matchId': _m1, 'stage': 'interview'})), isA<JobOfferPage>());
     expect(notificationTarget(_n('job_interview', {'jobId': _job1})), isA<JobOffersPage>().having((p) => p.initialTab, 'applications tab', 1));
-    expect(notificationTarget(_n('job_stage', {'jobId': _job1, 'matchId': _m1, 'bizId': 'biz-brew92', 'manage': true})), isNull, reason: 'وجهات الدائرة يبنيها الطرف الآخر');
-    expect(notificationTarget(_n('job_answers', {'jobId': _job1, 'matchId': _m1, 'bizId': 'biz-brew92', 'manage': true})), isNull);
+    // الأنواع نفسها موسومة manage تخص فريق التوظيف في الدائرة وتفتح المرشح
+    expect(notificationTarget(_n('job_stage', {'jobId': _job1, 'matchId': _m1, 'bizId': 'biz-brew92', 'manage': true})), isA<JobCandidatePage>());
+    expect(notificationTarget(_n('job_answers', {'jobId': _job1, 'matchId': _m1, 'bizId': 'biz-brew92', 'manage': true})), isA<JobCandidatePage>());
     expect(notificationStyle('job_offer').icon, Icons.work_outline_rounded);
     expect(notificationStyle('job_interview').icon, Icons.event_available_outlined);
   });

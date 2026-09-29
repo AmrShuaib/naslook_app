@@ -240,6 +240,8 @@ void main() {
       LegalLinks.openOverride = (u) async => opened.add(u);
       await _pump(tester, const Scaffold(body: MySpacePage()), size: const Size(420, 1400), srv: _Srv()..settings = {'announcement': '', 'supportEmail': 'help@areebd.sa'});
       await tester.scrollUntilVisible(find.byKey(const Key('contact-us')), 300);
+      await tester.ensureVisible(find.byKey(const Key('contact-us')));
+      await tester.pump();
       expect(find.descendant(of: find.byKey(const Key('contact-us')), matching: find.text('help@areebd.sa')), findsOneWidget);
       await tester.tap(find.byKey(const Key('contact-us')));
       await tester.pumpAndSettle();

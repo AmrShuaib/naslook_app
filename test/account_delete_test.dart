@@ -91,10 +91,17 @@ void main() {
     await pump(tester, const Scaffold(body: MySpacePage()));
     await tester.scrollUntilVisible(find.byKey(const Key('legal-terms')), 300);
     expect(find.byKey(const Key('delete-account')), findsOneWidget);
+    // الصف قد يُبنى في هامش القائمة خارج الشاشة، فنظهره قبل النقر
+    await tester.ensureVisible(find.byKey(const Key('legal-privacy')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('legal-privacy')));
+    await tester.ensureVisible(find.byKey(const Key('legal-terms')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('legal-terms')));
     await tester.pump();
     expect(opened.map((u) => u.path), ['/privacy', '/terms']);
+    await tester.ensureVisible(find.byKey(const Key('contact-us')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('contact-us')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('contact-email')));

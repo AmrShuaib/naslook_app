@@ -12,11 +12,13 @@ import 'package:naslook/api/models.dart';
 import 'package:naslook/api/notify_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/core/notify_open.dart';
+import 'package:naslook/pages/admin/admin_shell.dart';
 import 'package:naslook/pages/business/owner/business_dashboard_page.dart';
 import 'package:naslook/pages/business/owner/job_candidate_page.dart';
 import 'package:naslook/pages/business/owner/job_candidates_page.dart';
 import 'package:naslook/pages/business/owner/job_editor_page.dart';
 import 'package:naslook/pages/business/owner/job_stats_page.dart';
+import 'package:naslook/pages/jobs/job_offer_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
 import 'package:naslook/state/providers.dart';
@@ -338,10 +340,14 @@ void main() {
     expect(t('job_answers', {'bizId': 'biz-cafe', 'jobId': _job1, 'matchId': _mSara, 'manage': true}), isA<JobCandidatePage>());
     expect(t('job_apply', {'bizId': 'biz-cafe', 'jobId': _job1, 'manage': true}), isA<JobCandidatesPage>());
     expect(t('job_interview', {'bizId': 'biz-cafe', 'jobId': _job1, 'matchId': _mSara, 'interviewId': 'i', 'manage': true}), isA<JobCandidatePage>());
-    final review = t('job_review', {'bizId': 'biz-cafe', 'jobId': _job1});
+    final review = t('job_review', {'bizId': 'biz-cafe', 'jobId': _job1, 'manage': true});
     expect(review, isA<BusinessDashboardPage>());
     expect((review as BusinessDashboardPage).initialTab, BusinessDashboardPage.jobsTab);
-    // بلا manage: ليست وجهة الدائرة (يعالجها جانب الباحث عن عمل)
-    expect(t('job_answers', {'bizId': 'biz-cafe', 'jobId': _job1, 'matchId': _mSara}), isNot(isA<JobCandidatePage>()));
+    // بلا manage: إشعار المشرفين «بانتظار الموافقة» يفتح قسم التوظيف في الإدارة، وتغيّر المرحلة/المقابلة يخص المرشح
+    final adminReview = t('job_review', {'bizId': 'biz-cafe', 'jobId': _job1});
+    expect(adminReview, isA<AdminShell>());
+    expect((adminReview as AdminShell).initialSection, adminSections.indexWhere((s) => s.$1 == 'jobs'));
+    expect(t('job_stage', {'bizId': 'biz-cafe', 'jobId': _job1, 'matchId': _mSara, 'stage': 'interview'}), isA<JobOfferPage>());
+    expect(t('job_interview', {'bizId': 'biz-cafe', 'jobId': _job1, 'matchId': _mSara, 'interviewId': 'i'}), isA<JobOfferPage>());
   });
 }
