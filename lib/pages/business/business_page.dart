@@ -28,6 +28,7 @@ import '../../api/community_api.dart';
 import 'community_page.dart';
 import 'my_bookings_page.dart';
 import 'offers_page.dart';
+import '../jobs/jobs_page.dart' show JobsEntryCard;
 import 'owner/business_dashboard_page.dart';
 import 'owner/dashboard_posts.dart';
 
@@ -159,6 +160,8 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
                 OffersEntryCard(biz: biz, onOpen: () => _openOffers(biz)),
                 const SizedBox(height: 12),
               ],
+              // الوظائف الشاغرة: بطاقة تظهر فقط حين توجد وظائف مفتوحة (تحمل هامشها السفلي بنفسها)
+              JobsEntryCard(bizId: biz.id, title: biz.title),
               _InfoCard(biz: biz, onMap: () => _onMap(biz)),
               if (biz.highlights.isNotEmpty) ...[
                 const SizedBox(height: 10),

@@ -16,6 +16,7 @@ import '../../core/location.dart';
 import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
+import '../../state/jobs_public_providers.dart';
 import '../../state/market_providers.dart';
 import '../../state/posts_providers.dart';
 import '../../state/providers.dart';
@@ -43,6 +44,8 @@ class _MapPageState extends ConsumerState<MapPage> {
   final _map = MapController();
   final _sheet = DraggableScrollableController();
   bool showPeople = true, showPins = true, showStories = true, showBusinesses = true, showMarket = true;
+  // «وظائف»: يحصر الدوائر في التي لديها وظائف مفتوحة (يعمل حتى لو أُطفئت طبقة المتاجر)
+  bool showHiring = false;
   // فلاتر الأنشطة التجارية: مفتوح الآن، وفئات محددة (فارغة = الكل)
   bool openOnly = false;
   final Set<String> bizCats = {};
@@ -134,14 +137,17 @@ class _MapPageState extends ConsumerState<MapPage> {
         add(MapItem.listing(l));
       }
     }
-    if (showBusinesses) {
+    if (showBusinesses || showHiring) {
+      final hiring = showHiring ? (ref.watch(hiringBizProvider).value ?? const <String>{}) : const <String>{};
       for (final c in circles) {
-        if (openOnly && c.openNow != true) continue;
-        if (bizCats.isNotEmpty && !bizCats.contains(c.category.key)) continue;
+        // «وظائف»: الدوائر التي توظّف الآن فقط؛ وفلاتر المتاجر تُطبَّق معها حين تكون طبقتها ظاهرة
+        if (showHiring && !hiring.contains(c.id)) continue;
+        if (showBusinesses && openOnly && c.openNow != true) continue;
+        if (showBusinesses && bizCats.isNotEmpty && !bizCats.contains(c.category.key)) continue;
         add(MapItem.business(c.toBusiness()));
       }
-      // متاجر النواة القديمة بلا ساعات عمل أو فئة معروفة: تظهر فقط دون فلاتر
-      if (!openOnly && bizCats.isEmpty) {
+      // متاجر النواة القديمة بلا ساعات عمل أو فئة معروفة: تظهر فقط دون فلاتر (وليس لها وظائف)
+      if (showBusinesses && !showHiring && !openOnly && bizCats.isEmpty) {
         for (final b in businesses) {
           add(MapItem.business(b));
         }
@@ -220,6 +226,7 @@ class _MapPageState extends ConsumerState<MapPage> {
                   if (signedIn) _chip('دبابيس', Icons.push_pin_rounded, showPins, () => setState(() => showPins = !showPins)),
                   _chip('متاجر', Icons.storefront_rounded, showBusinesses, () => setState(() => showBusinesses = !showBusinesses)),
                   _chip('السوق', Icons.shopping_bag_rounded, showMarket, () => setState(() => showMarket = !showMarket)),
+                  if (ref.watch(jobsEnabledProvider)) _chip('وظائف', Icons.work_outline_rounded, showHiring, () => setState(() => showHiring = !showHiring), key: const Key('map-chip-hiring')),
                   if (showBusinesses) ...[
                     _chip('مفتوح الآن', Icons.schedule_rounded, openOnly, () => setState(() => openOnly = !openOnly)),
                     for (final c in BizCategory.values)
@@ -311,6 +318,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     ref.invalidate(businessesProvider);
     ref.invalidate(mapPostsProvider);
     ref.invalidate(mapMarketProvider);
+    ref.invalidate(hiringBizProvider);
   }
 
   /// يقرّب الخريطة إلى العنصر ويفتح تفاصيله.
@@ -328,9 +336,10 @@ class _MapPageState extends ConsumerState<MapPage> {
     _showItem(item);
   }
 
-  Widget _chip(String label, IconData icon, bool on, VoidCallback onTap) => Padding(
+  Widget _chip(String label, IconData icon, bool on, VoidCallback onTap, {Key? key}) => Padding(
         padding: const EdgeInsets.only(left: 8),
         child: FilterChip(
+          key: key,
           selected: on,
           onSelected: (_) => onTap(),
           showCheckmark: false,

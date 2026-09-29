@@ -10,6 +10,8 @@ import 'notify_providers.dart';
 
 import '../api/admin_api.dart';
 import '../api/admin_blog_api.dart';
+import '../api/jobs_api.dart';
+import '../api/jobs_models.dart';
 import '../api/models.dart';
 import 'app_state.dart';
 
@@ -104,6 +106,8 @@ class InboxUnreadNotifier extends StateNotifier<int> {
 final adminTeamTreeProvider = FutureProvider<List<TeamNode>>((ref) => ref.watch(apiClientProvider).adminTeamTree());
 final adminTeamPermissionsProvider = FutureProvider<List<TeamPermission>>((ref) => ref.watch(apiClientProvider).adminTeamPermissions());
 final publicSettingsProvider = FutureProvider<PublicSettings>((ref) => ref.watch(apiClientProvider).publicSettings());
+/// قائمة الوظائف في لوحة الإدارة بحسب الحالة ('' = الكل) مع الإجماليات.
+final adminJobsProvider = FutureProvider.family<AdminJobs, String>((ref, status) => ref.watch(apiClientProvider).adminJobs(status: status));
 
 /// تحويل المال بين المستخدمين (زرّا «تحويل» و«دفع» ورمز QR في المحفظة): لا يظهر في iOS، ولا حين يطفئه المدير.
 /// يبقى مخفياً حتى تصل الإعدادات (والخادم يفرض المفتاح أيضاً): المحفظة المغلقة هي المسار الموصى به تنظيمياً،
@@ -128,4 +132,5 @@ void invalidateAdmin(WidgetRef ref) {
   ref.invalidate(adminUserProvider);
   ref.invalidate(adminReportsProvider);
   ref.invalidate(adminModerationProvider);
+  ref.invalidate(adminJobsProvider);
 }

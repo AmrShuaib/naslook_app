@@ -24,7 +24,9 @@ class AdminSettingsPage extends ConsumerStatefulWidget {
 class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
   final maxTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), supportEmail = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
   final commission = TextEditingController(), spotPrice = TextEditingController(), spotMaxDays = TextEditingController(), spotMaxActive = TextEditingController();
-  bool? testTopup, maintenance, reviewNew, blockContacts, transfers, chatPayments, bannedDefault, requireVerify;
+  final jobsFree = TextEditingController(), jobsCap = TextEditingController();
+  bool? testTopup, maintenance, reviewNew, blockContacts, transfers, chatPayments, bannedDefault, requireVerify, jobsEnabled, jobsApproval;
+  double? jobsScore;
   bool loaded = false, busy = false;
 
   void _load(AdminSettings s) {
@@ -48,7 +50,15 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     spotMaxActive.text = '${s.spotlightMaxActive}';
     reviewNew = s.marketReviewNewAccounts;
     blockContacts = s.marketBlockContacts;
+    jobsEnabled = s.jobsEnabled;
+    jobsApproval = s.jobsRequireApproval;
+    jobsFree.text = '${s.jobsFreeActive}';
+    jobsCap.text = '${s.jobsWeeklyCap}';
+    jobsScore = s.jobsMinScore;
   }
+
+  /// حد المطابقة بخطوة 0.05 بين 0.1 و1 (كما يقبله الخادم).
+  static double _snapScore(double v) => ((v.clamp(.1, 1.0) * 20).round() / 20).clamp(.1, 1.0);
 
   @override
   Widget build(BuildContext context) {
@@ -99,6 +109,30 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             SwitchListTile(key: const Key('set-review-new'), contentPadding: EdgeInsets.zero, value: reviewNew ?? s.marketReviewNewAccounts, onChanged: (v) => setState(() => reviewNew = v), title: const Text('مراجعة عروض الحسابات الجديدة'), subtitle: const Text('عروض من سجّل قبل أقل من أسبوع لا تظهر إلا بعد موافقة الإدارة', style: TextStyle(fontSize: 12))),
             SwitchListTile(key: const Key('set-block-contacts'), contentPadding: EdgeInsets.zero, value: blockContacts ?? s.marketBlockContacts, onChanged: (v) => setState(() => blockContacts = v), title: const Text('منع أرقام الجوال والروابط في العروض'), subtitle: const Text('يبقي التواصل داخل المنصة', style: TextStyle(fontSize: 12))),
           ])),
+          const SectionTitle('التوظيف'),
+          JoyCard(child: Column(children: [
+            SwitchListTile(key: const Key('set-jobs-enabled'), contentPadding: EdgeInsets.zero, value: jobsEnabled ?? s.jobsEnabled, onChanged: (v) => setState(() => jobsEnabled = v), title: const Text('تفعيل التوظيف'), subtitle: const Text('نشر الوظائف من الدوائر، بطاقات العروض للباحثين، والتقديم. عند الإطفاء تختفي الوظائف من الخريطة والدوائر', style: TextStyle(fontSize: 12))),
+            SwitchListTile(key: const Key('set-jobs-approval'), contentPadding: EdgeInsets.zero, value: jobsApproval ?? s.jobsRequireApproval, onChanged: (v) => setState(() => jobsApproval = v), title: const Text('موافقة الإدارة قبل النشر'), subtitle: const Text('العرض الجديد يبقى «بانتظار الموافقة» حتى يوافق عليه مدير من قسم التوظيف', style: TextStyle(fontSize: 12))),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(child: TextField(key: const Key('set-jobs-free'), controller: jobsFree, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'عروض نشطة مجاناً', helperText: 'للدائرة في الباقة المجانية', helperMaxLines: 2))),
+              const SizedBox(width: 8),
+              Expanded(child: TextField(key: const Key('set-jobs-cap'), controller: jobsCap, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'بطاقات أسبوعياً', helperText: 'أقصى عروض تصل الباحث في الأسبوع', helperMaxLines: 2))),
+            ]),
+            const SizedBox(height: 6),
+            Row(children: [
+              const Expanded(child: Text('حد المطابقة لإرسال البطاقة', style: TextStyle(fontSize: 14))),
+              Text('${((jobsScore ?? s.jobsMinScore) * 100).round()}٪', key: const Key('set-jobs-score-value'), style: const TextStyle(fontWeight: FontWeight.w700, color: Joy.primary)),
+            ]),
+            Slider(
+              key: const Key('set-jobs-score'),
+              value: _snapScore(jobsScore ?? s.jobsMinScore),
+              min: .1, max: 1, divisions: 18,
+              label: '${(_snapScore(jobsScore ?? s.jobsMinScore) * 100).round()}٪',
+              onChanged: (v) => setState(() => jobsScore = _snapScore(v)),
+            ),
+            const Text('كلما ارتفع الحد قلّت البطاقات ودقّت المطابقة (المسمّى والمهارات والمدينة والدوام والخبرة). الافتراضي 45٪', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.5)),
+          ])),
           const SizedBox(height: 10),
           FilledButton.icon(
             key: const Key('set-save'),
@@ -106,7 +140,8 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
               setState(() => busy = true);
               try {
                 await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold,
-                  'supportEmail': supportEmail.text.trim(), 'transfersEnabled': transfers ?? s.transfersEnabled, 'chatPaymentsEnabled': chatPayments ?? s.chatPaymentsEnabled, 'bannedWordsDefault': bannedDefault ?? s.bannedWordsDefault, 'requireEmailVerification': requireVerify ?? s.requireEmailVerification});
+                  'supportEmail': supportEmail.text.trim(), 'transfersEnabled': transfers ?? s.transfersEnabled, 'chatPaymentsEnabled': chatPayments ?? s.chatPaymentsEnabled, 'bannedWordsDefault': bannedDefault ?? s.bannedWordsDefault, 'requireEmailVerification': requireVerify ?? s.requireEmailVerification,
+                  'jobsEnabled': jobsEnabled ?? s.jobsEnabled, 'jobsRequireApproval': jobsApproval ?? s.jobsRequireApproval, 'jobsFreeActive': int.tryParse(jobsFree.text.trim()) ?? s.jobsFreeActive, 'jobsWeeklyCap': int.tryParse(jobsCap.text.trim()) ?? s.jobsWeeklyCap, 'jobsMinScore': _snapScore(jobsScore ?? s.jobsMinScore)});
                 loaded = false;
                 invalidateAdmin(ref);
                 ref.invalidate(publicSettingsProvider);
