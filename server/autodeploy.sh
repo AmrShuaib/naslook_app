@@ -47,7 +47,7 @@ if [[ -n "$code_sha" && "$code_key" != "$last_code" ]]; then
     if [[ -f "$tmp/code/server/register.txt" && -f "$ROOT/src/index.js" ]]; then
       while IFS= read -r line; do
         [[ -z "$line" ]] && continue
-        mod=$(echo "$line" | grep -o '\./[a-z_]*\.js' | head -1)
+        mod=$(echo "$line" | grep -o '\./[a-z0-9_]*\.js' | head -1 || true)
         [[ -z "$mod" ]] && continue
         if ! grep -qF "$mod" "$ROOT/src/index.js"; then
           if grep -q 'NASLIFE_NO_LISTEN' "$ROOT/src/index.js"; then

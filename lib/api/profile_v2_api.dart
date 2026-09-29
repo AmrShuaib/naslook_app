@@ -2,7 +2,7 @@ import 'client.dart';
 import 'models.dart';
 import 'profile_v2_models.dart';
 
-/// مسارات الملف الشخصي v2 (server/profile_v2.js): الملف بالمعرّف أو النك نيم، ملفي مع الإعدادات والاكتمال،
+/// مسارات الملف الشخصي v2 (server/profile_ext.js): الملف بالمعرّف أو النك نيم، ملفي مع الإعدادات والاكتمال،
 /// التعديل، التعريف الصوتي/المرئي، المتابعة، أحداث الملف، إحصاءات 7 أيام، وفحص اسم المستخدم.
 extension ProfileV2Api on ApiClient {
   Future<ProfileV2> profileV2(String idOrHandle) async => ProfileV2.fromJson(await get('/profiles/${Uri.encodeComponent(idOrHandle)}/v2'));

@@ -1,10 +1,10 @@
-// الملف الشخصي v2 (server/profile_v2.js): الحالة، ملف بلا صف امتداد ومع صف، تسجيل الزيارات وإحصاءات سبعة أيام، فحص الحقول
+// الملف الشخصي v2 (server/profile_ext.js): الحالة، ملف بلا صف امتداد ومع صف، تسجيل الزيارات وإحصاءات سبعة أيام، فحص الحقول
 // وتطبيع الروابط وقاعدة الغلاف، التعريف الصوتي/المرئي وظهوره حسب الصداقة، سياسة المراسلة، إخفاء المدينة، الملف الخاص،
 // المتابعة وقوائمها وإشعار مرة واحدة، الأحداث، فحص الأسماء، اكتمال الملف، ومساعد الحذف.
 // النواة وهمية: users/profiles/contacts/map_posts/market_reviews/market_orders بأعمدة دنيا كما يكتشفها الخادم.
 import Fastify from 'fastify';
 import pg from 'pg';
-import { normaliseLink, linkUrl, handleShape, LINK_KINDS } from '../profile_v2.js';
+import { normaliseLink, linkUrl, handleShape, LINK_KINDS } from '../profile_ext.js';
 let fails = 0;
 const check = (c, l, extra = '') => { if (!c) fails++; console.log((c ? 'OK  ' : 'FAIL') + ' ' + l + (extra ? ' ' + extra : '')); };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -50,7 +50,7 @@ const notes = [];
 globalThis.naslifeNotify = async (ids, p) => { notes.push({ ids, ...p }); };
 const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
-app.register((await import('../profile_v2.js')).default, { pool, auth });
+app.register((await import('../profile_ext.js')).default, { pool, auth });
 await app.ready();
 const call = async (method, url, { body = {}, user = FAHAD, expect } = {}) => {
   const r = await app.inject({ method, url, headers: { ...(user ? { 'x-user': user } : {}), 'content-type': 'application/json', host: 'naslife.app', 'x-forwarded-proto': 'https' }, payload: method === 'GET' ? undefined : JSON.stringify(body) });
@@ -267,7 +267,7 @@ check(p.displayName === '' && p.intro === null && p.stats.followers === 0 && p.f
 // ---- بلا جداول نواة: الإضافة تعمل وتعيد أصفاراً
 await pool.query('DROP TABLE IF EXISTS profiles, contacts, map_posts, market_reviews, market_orders CASCADE');
 const app2 = Fastify();
-app2.register((await import('../profile_v2.js')).default, { pool, auth });
+app2.register((await import('../profile_ext.js')).default, { pool, auth });
 await app2.ready();
 const r2 = await app2.inject({ method: 'GET', url: `/profiles/${SARA}/v2`, headers: { 'x-user': KHALID } });
 const p2 = r2.json();

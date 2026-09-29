@@ -811,7 +811,7 @@ function layoutRoute(req, res, url, key) {
   return false;
 }
 // ---- home layout end
-// ---- profile v2 (تحاكي server/profile_v2.js في الذاكرة)
+// ---- profile v2 (تحاكي server/profile_ext.js في الذاكرة)
 const PV2_KINDS = ['instagram', 'x', 'tiktok', 'snapchat', 'website', 'other'];
 const pv2LinkUrl = (k, v) => k === 'instagram' ? `https://instagram.com/${v}` : k === 'x' ? `https://x.com/${v}` : k === 'tiktok' ? `https://tiktok.com/@${v}` : k === 'snapchat' ? `https://snapchat.com/add/${v}` : (/^https?:\/\//i.test(v) ? v : `https://${v}`);
 function pv2Link(raw) {

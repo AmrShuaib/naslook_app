@@ -2,7 +2,7 @@
 // زيارات سبعة أيام، خصوصية (من يراسلني، إظهار الاتصال والمدينة والأصدقاء)، وفحص توفر الاسم. النواة (ليست في المستودع) تملك
 // users/profiles/contacts فنقرأها فقط ونكتشف أعمدتها عند الإقلاع، وكل ما يخصنا في أربعة جداول هنا حتى لا نعدّل جداول النواة.
 // التسجيل في src/index.js:
-//   await app.register((await import("./profile_v2.js")).default, { pool, auth });
+//   await app.register((await import("./profile_ext.js")).default, { pool, auth });
 
 export const LINK_KINDS = ["instagram", "x", "tiktok", "snapchat", "website", "other"];
 export const RESERVED_HANDLES = ["naslife", "admin", "support", "jeddah", "dammam"];
