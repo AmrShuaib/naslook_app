@@ -8,6 +8,7 @@ import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/home_layout.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
@@ -25,6 +26,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
   final maxTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), supportEmail = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
   final commission = TextEditingController(), spotPrice = TextEditingController(), spotMaxDays = TextEditingController(), spotMaxActive = TextEditingController();
   final jobsFree = TextEditingController(), jobsCap = TextEditingController();
+  final layoutOrder = TextEditingController(), layoutPinned = TextEditingController();
   bool? testTopup, maintenance, reviewNew, blockContacts, transfers, chatPayments, bannedDefault, requireVerify, jobsEnabled, jobsApproval;
   double? jobsScore;
   bool loaded = false, busy = false;
@@ -55,6 +57,8 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     jobsFree.text = '${s.jobsFreeActive}';
     jobsCap.text = '${s.jobsWeeklyCap}';
     jobsScore = s.jobsMinScore;
+    layoutOrder.text = s.homeLayoutOrder;
+    layoutPinned.text = s.homeLayoutPinned;
   }
 
   /// حد المطابقة بخطوة 0.05 بين 0.1 و1 (كما يقبله الخادم).
@@ -133,6 +137,16 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             ),
             const Text('كلما ارتفع الحد قلّت البطاقات ودقّت المطابقة (المسمّى والمهارات والمدينة والدوام والخبرة). الافتراضي 45٪', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.5)),
           ])),
+          const SizedBox(height: 14),
+          const SectionTitle('الرئيسية'),
+          JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            TextField(key: const Key('set-home-order'), controller: layoutOrder, decoration: const InputDecoration(labelText: 'الترتيب الافتراضي للأقسام', helperText: 'معرّفات مفصولة بفواصل، الناقص يُلحق آخر القائمة. فارغ = الترتيب المدمج', helperMaxLines: 2)),
+            const SizedBox(height: 8),
+            TextField(key: const Key('set-home-pinned'), controller: layoutPinned, decoration: const InputDecoration(labelText: 'أقسام مثبّتة لا تُخفى', helperText: 'تظهر أول الرئيسية ولا يستطيع المستخدم إخفاءها', helperMaxLines: 2)),
+            const SizedBox(height: 6),
+            Wrap(spacing: 6, runSpacing: 6, children: [for (final b in homeBlocks) Tooltip(message: b.title, child: Chip(label: Text('${b.id} · ${b.title}', style: const TextStyle(fontSize: 11.5)), visualDensity: VisualDensity.compact))]),
+            const Text('التغيير يسري على من لم يخصّص رئيسيته، وعلى ترتيب «استعادة الافتراضي».', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.5)),
+          ])),
           const SizedBox(height: 10),
           FilledButton.icon(
             key: const Key('set-save'),
@@ -141,7 +155,8 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
               try {
                 await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold,
                   'supportEmail': supportEmail.text.trim(), 'transfersEnabled': transfers ?? s.transfersEnabled, 'chatPaymentsEnabled': chatPayments ?? s.chatPaymentsEnabled, 'bannedWordsDefault': bannedDefault ?? s.bannedWordsDefault, 'requireEmailVerification': requireVerify ?? s.requireEmailVerification,
-                  'jobsEnabled': jobsEnabled ?? s.jobsEnabled, 'jobsRequireApproval': jobsApproval ?? s.jobsRequireApproval, 'jobsFreeActive': int.tryParse(jobsFree.text.trim()) ?? s.jobsFreeActive, 'jobsWeeklyCap': int.tryParse(jobsCap.text.trim()) ?? s.jobsWeeklyCap, 'jobsMinScore': _snapScore(jobsScore ?? s.jobsMinScore)});
+                  'jobsEnabled': jobsEnabled ?? s.jobsEnabled, 'jobsRequireApproval': jobsApproval ?? s.jobsRequireApproval, 'jobsFreeActive': int.tryParse(jobsFree.text.trim()) ?? s.jobsFreeActive, 'jobsWeeklyCap': int.tryParse(jobsCap.text.trim()) ?? s.jobsWeeklyCap, 'jobsMinScore': _snapScore(jobsScore ?? s.jobsMinScore),
+                  'homeLayoutOrder': layoutOrder.text.trim(), 'homeLayoutPinned': layoutPinned.text.trim()});
                 loaded = false;
                 invalidateAdmin(ref);
                 ref.invalidate(publicSettingsProvider);

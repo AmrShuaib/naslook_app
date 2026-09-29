@@ -4,8 +4,8 @@
 // التسجيل في src/index.js قبل app.listen:
 //   await app.register((await import("./layout.js")).default, { pool, auth });
 
-export const BLOCK_IDS = ["announce", "quick", "around", "trending", "open", "circles", "feed", "biz", "jobs", "market", "events"];
-export const DEFAULT_ORDER = ["announce", "quick", "around", "trending", "open", "circles", "feed", "jobs", "market", "events", "biz"];
+export const BLOCK_IDS = ["announce", "quick", "around", "trending", "offers", "open", "circles", "feed", "biz", "jobs", "market", "events"];
+export const DEFAULT_ORDER = ["announce", "quick", "around", "trending", "offers", "open", "circles", "feed", "jobs", "market", "events", "biz"];
 export const DEFAULT_PINNED = ["announce"]; // المثبّت لا يُخفى ويبقى أولاً
 export const NAV_IDS = ["home", "circles", "chats", "me", "market", "offers", "jobs", "events"];
 export const DEFAULT_NAV = ["home", "circles", "chats", "me"];

@@ -544,6 +544,8 @@ class AdminSettings {
   final bool requireEmailVerification;
   // السوق
   final double marketCommissionPct;
+  /// الترتيب الافتراضي لأقسام الرئيسية والأقسام المثبّتة (معرّفات مفصولة بفواصل؛ فارغ = المدمج).
+  final String homeLayoutOrder, homeLayoutPinned;
   final int spotlightPricePerDay, spotlightMaxDays, spotlightMaxActive;
   final bool marketReviewNewAccounts, marketBlockContacts;
   // التوظيف (server/jobs.js): التفعيل، موافقة الإدارة قبل النشر، حد العروض النشطة مجاناً، سقف البطاقات الأسبوعي للمستخدم، وحد المطابقة
@@ -553,14 +555,14 @@ class AdminSettings {
   const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
       this.transfersEnabled = true, this.chatPaymentsEnabled = true, this.bannedWordsDefault = true, this.requireEmailVerification = true,
       this.marketCommissionPct = 0, this.spotlightPricePerDay = 2000, this.spotlightMaxDays = 30, this.spotlightMaxActive = 12, this.marketReviewNewAccounts = false, this.marketBlockContacts = true,
-      this.jobsEnabled = true, this.jobsRequireApproval = false, this.jobsFreeActive = 3, this.jobsWeeklyCap = 5, this.jobsMinScore = .45});
+      this.jobsEnabled = true, this.jobsRequireApproval = false, this.jobsFreeActive = 3, this.jobsWeeklyCap = 5, this.jobsMinScore = .45, this.homeLayoutOrder = '', this.homeLayoutPinned = 'announce'});
   factory AdminSettings.fromJson(Map m) => AdminSettings(testTopup: m['testTopup'] == true, maintenance: m['maintenance'] == true, setupCodePresent: m['setupCodePresent'] == true, maxTopup: _i(m['maxTopup']), announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '',
       bannedWords: m['bannedWords']?.toString() ?? '', reportThreshold: m['reportThreshold'] == null ? 3 : _i(m['reportThreshold']),
       supportEmail: m['supportEmail']?.toString() ?? '', transfersEnabled: m['transfersEnabled'] != false, chatPaymentsEnabled: m['chatPaymentsEnabled'] != false, bannedWordsDefault: m['bannedWordsDefault'] != false, requireEmailVerification: m['requireEmailVerification'] != false,
       marketCommissionPct: (m['marketCommissionPct'] as num?)?.toDouble() ?? 0, spotlightPricePerDay: m['spotlightPricePerDay'] == null ? 2000 : _i(m['spotlightPricePerDay']), spotlightMaxDays: m['spotlightMaxDays'] == null ? 30 : _i(m['spotlightMaxDays']), spotlightMaxActive: m['spotlightMaxActive'] == null ? 12 : _i(m['spotlightMaxActive']),
       marketReviewNewAccounts: m['marketReviewNewAccounts'] == true, marketBlockContacts: m['marketBlockContacts'] != false,
       jobsEnabled: m['jobsEnabled'] != false, jobsRequireApproval: m['jobsRequireApproval'] == true, jobsFreeActive: m['jobsFreeActive'] == null ? 3 : _i(m['jobsFreeActive']), jobsWeeklyCap: m['jobsWeeklyCap'] == null ? 5 : _i(m['jobsWeeklyCap']),
-      jobsMinScore: (m['jobsMinScore'] as num?)?.toDouble() ?? .45);
+      jobsMinScore: (m['jobsMinScore'] as num?)?.toDouble() ?? .45, homeLayoutOrder: m['homeLayoutOrder']?.toString() ?? '', homeLayoutPinned: m['homeLayoutPinned']?.toString() ?? 'announce');
 }
 
 /// آخر إجراء إداري على عنصر في طابور الإشراف.

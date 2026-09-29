@@ -43,7 +43,7 @@ await call('DELETE', '/me/layout', { user: null, expect: 401 });
 // ---- حفظ كامل وقراءة
 let p = await call('PUT', '/me/layout', { body: { order: ['market', 'jobs', 'announce', 'quick'], hidden: ['trending', 'biz'], nav: ['home', 'market', 'chats', 'me'], opts: { around: ['food', 'cafe'], market: ['new'] } }, expect: 200 });
 check(p.ok === true && typeof p.updatedAt === 'string' && !Number.isNaN(Date.parse(p.updatedAt)), 'put returns ok and an iso timestamp', JSON.stringify(p));
-const expOrder = ['announce', 'market', 'jobs', 'quick', 'around', 'trending', 'open', 'circles', 'feed', 'events', 'biz'];
+const expOrder = ['announce', 'market', 'jobs', 'quick', 'around', 'trending', 'offers', 'open', 'circles', 'feed', 'events', 'biz'];
 check(same(p.layout.order, expOrder), 'pinned first, then my order, then the missing blocks in default order', JSON.stringify(p.layout.order));
 check(same(p.layout.hidden, ['trending', 'biz']) && same(p.layout.nav, ['home', 'market', 'chats', 'me']) && same(p.layout.opts, { around: ['food', 'cafe'], market: ['new'] }), 'hidden, nav and opts stored as sent');
 g = await call('GET', '/me/layout', { expect: 200 });
@@ -63,7 +63,7 @@ check(same(p.layout.nav, ['home', 'chats', 'me']) && same(p.layout.opts, { feed:
 // ---- كتل جديدة ومعرّفات قديمة في صف محفوظ من نسخة سابقة
 await pool.query("UPDATE user_layouts SET layout=$2 WHERE user_id=$1", [AMR, JSON.stringify({ order: ['announce', 'legacy', 'quick', 'market'], hidden: ['legacy', 'quick'], nav: ['circles', 'me', 'oldtab'], opts: { quick: 'not-an-array' } })]);
 g = await call('GET', '/me/layout', { expect: 200 });
-check(same(g.layout.order, ['announce', 'quick', 'market', 'around', 'trending', 'open', 'circles', 'feed', 'jobs', 'events', 'biz']), 'missing blocks appended in default order and legacy id dropped', JSON.stringify(g.layout.order));
+check(same(g.layout.order, ['announce', 'quick', 'market', 'around', 'trending', 'offers', 'open', 'circles', 'feed', 'jobs', 'events', 'biz']), 'missing blocks appended in default order and legacy id dropped', JSON.stringify(g.layout.order));
 check(same(g.layout.hidden, ['quick']) && same(g.layout.nav, ['home', 'circles', 'me']) && same(g.layout.opts, {}), 'stored nav forced to start with home and end with me', JSON.stringify([g.layout.hidden, g.layout.nav, g.layout.opts]));
 
 // ---- أجسام سيئة
@@ -98,7 +98,7 @@ check(same(p.layout.nav, ['home', 'circles', 'me']), 'nav padded to three tabs f
 // ---- تجاوز الإعدادات: ترتيب افتراضي وكتل مثبّتة من الإدارة
 globalThis.naslifeSettings = { homeLayoutOrder: 'market, jobs,bogus,market', homeLayoutPinned: 'announce,quick' };
 g = await call('GET', '/me/layout', { user: null, expect: 200 });
-check(same(g.defaults.order, ['announce', 'quick', 'market', 'jobs', 'around', 'trending', 'open', 'circles', 'feed', 'events', 'biz']) && same(g.pinned, ['announce', 'quick']), 'settings order and pinned applied to defaults', JSON.stringify([g.defaults.order, g.pinned]));
+check(same(g.defaults.order, ['announce', 'quick', 'market', 'jobs', 'around', 'trending', 'offers', 'open', 'circles', 'feed', 'events', 'biz']) && same(g.pinned, ['announce', 'quick']), 'settings order and pinned applied to defaults', JSON.stringify([g.defaults.order, g.pinned]));
 g = await call('GET', '/me/layout', { expect: 200 });
 check(g.layout.order[0] === 'announce' && g.layout.order[1] === 'quick' && !g.layout.hidden.includes('quick'), 'newly pinned block moves first and leaves hidden', JSON.stringify([g.layout.order.slice(0, 3), g.layout.hidden]));
 globalThis.naslifeSettings = { homeLayoutOrder: '', homeLayoutPinned: '' };

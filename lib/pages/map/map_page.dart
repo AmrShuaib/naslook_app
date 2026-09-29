@@ -30,7 +30,10 @@ import '../posts/post_viewer.dart';
 import 'map_cluster.dart';
 import 'map_labels.dart';
 import '../../api/client.dart';
+import '../../api/offers_map_api.dart';
 import '../../state/notify_providers.dart';
+import '../../state/offers_providers.dart';
+import '../business/offers_page.dart';
 import '../../ui/joy_nav_bar.dart';
 import '../home/home_page.dart';
 import '../notifications/notifications_page.dart';
@@ -51,7 +54,9 @@ class MapPage extends ConsumerStatefulWidget {
 class _MapPageState extends ConsumerState<MapPage> {
   final _map = MapController();
   final _sheet = DraggableScrollableController();
-  bool showPeople = true, showPins = true, showStories = true, showBusinesses = true, showMarket = true;
+  bool showPeople = true, showPins = true, showStories = true, showBusinesses = true, showMarket = true, showOffers = true;
+  // وضع التحرير في المكان: أقسام الرئيسية صفوفاً تُسحب داخل الورقة
+  bool _editing = false;
   // «وظائف»: يحصر الدوائر في التي لديها وظائف مفتوحة (يعمل حتى لو أُطفئت طبقة المتاجر)
   bool showHiring = false;
   // فلاتر الأنشطة التجارية: مفتوح الآن، وفئات محددة (فارغة = الكل)
@@ -118,6 +123,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     final circles = ref.watch(mapBizProvider).value ?? const <Biz>[];
     final posts = ref.watch(mapPostsProvider).value ?? const <MapPost>[];
     final listings = ref.watch(mapMarketProvider).value ?? const <Listing>[];
+    final offers = ref.watch(mapOffersProvider).value ?? const <MapOffer>[];
     final seen = <String>{};
     final out = <MapItem>[];
     void add(MapItem? i) {
@@ -145,6 +151,11 @@ class _MapPageState extends ConsumerState<MapPage> {
     if (showMarket) {
       for (final l in listings) {
         add(MapItem.listing(l));
+      }
+    }
+    if (showOffers) {
+      for (final o in offers) {
+        add(MapItem.offer(o));
       }
     }
     if (showBusinesses || showHiring) {
@@ -244,6 +255,7 @@ class _MapPageState extends ConsumerState<MapPage> {
                   if (signedIn) _chip('دبابيس', Icons.push_pin_rounded, showPins, () => setState(() => showPins = !showPins)),
                   _chip('متاجر', Icons.storefront_rounded, showBusinesses, () => setState(() => showBusinesses = !showBusinesses)),
                   _chip('السوق', Icons.shopping_bag_rounded, showMarket, () => setState(() => showMarket = !showMarket)),
+                  _chip('عروض', Icons.local_offer_rounded, showOffers, () => setState(() => showOffers = !showOffers), key: const Key('map-chip-offers')),
                   if (ref.watch(jobsEnabledProvider)) _chip('وظائف', Icons.work_outline_rounded, showHiring, () => setState(() => showHiring = !showHiring), key: const Key('map-chip-hiring')),
                   if (showBusinesses) ...[
                     _chip('مفتوح الآن', Icons.schedule_rounded, openOnly, () => setState(() => openOnly = !openOnly)),
@@ -319,6 +331,13 @@ class _MapPageState extends ConsumerState<MapPage> {
               extra: blocks,
               bottomPad: widget.home ? JoyNavBar.inset(context) : 0,
               home: widget.home,
+              editing: _editing,
+              onEditToggle: widget.home
+                  ? () {
+                      setState(() => _editing = !_editing);
+                      if (_editing) _sheet.animateTo(_sheetMax, duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+                    }
+                  : null,
               onZoomIn: () => _map.move(_map.camera.center, math.max(_zoom + 2, kAreaListZoom + 1)),
               onSelect: _focus,
               onExpand: () => _sheet.animateTo(_sheetMax, duration: const Duration(milliseconds: 220), curve: Curves.easeOut),
@@ -524,6 +543,9 @@ class _MapPageState extends ConsumerState<MapPage> {
         _showPost(item.data as MapPost);
       case MapItemKind.listing:
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage((item.data as Listing).id)));
+      case MapItemKind.offer:
+        final o = item.data as MapOffer;
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleOffersPage(bizId: o.bizId, title: o.bizName)));
     }
   }
 
@@ -726,10 +748,12 @@ Color _kindColor(MapItemKind k) => switch (k) {
       MapItemKind.business => Joy.primary,
       MapItemKind.post => Joy.accent,
       MapItemKind.listing => const Color(0xFF00897B),
+      MapItemKind.offer => Joy.sun,
     };
 
 Color _kindOn(MapItemKind k) => switch (k) {
       MapItemKind.story => Joy.sunText,
+      MapItemKind.offer => Joy.sunText,
       MapItemKind.listing => Colors.white,
       _ => Joy.primaryOn,
     };
@@ -741,6 +765,7 @@ IconData _kindIcon(MapItemKind k) => switch (k) {
       MapItemKind.business => Icons.storefront_rounded,
       MapItemKind.post => Icons.auto_awesome_motion_rounded,
       MapItemKind.listing => Icons.shopping_bag_rounded,
+      MapItemKind.offer => Icons.local_offer_rounded,
     };
 
 String _kindLabel(MapItemKind k) => switch (k) {
@@ -750,6 +775,7 @@ String _kindLabel(MapItemKind k) => switch (k) {
       MapItemKind.business => 'متجر',
       MapItemKind.post => 'منشور',
       MapItemKind.listing => 'عرض في السوق',
+      MapItemKind.offer => 'عرض',
     };
 
 const _markerShadow = [BoxShadow(color: Color(0x33000000), blurRadius: 4, offset: Offset(0, 1.5))];
@@ -786,6 +812,7 @@ IconData _itemIcon(MapItem item) => switch (item.kind) {
       MapItemKind.story => Icons.auto_awesome_rounded,
       MapItemKind.person => Icons.person_rounded,
       MapItemKind.listing => (item.data as Listing).kind == 'service' ? Icons.handyman_rounded : Icons.shopping_bag_rounded,
+      MapItemKind.offer => Icons.local_offer_rounded,
     };
 
 /// نقطة صغيرة احترافية لعنصر واحد: دائرة ملونة بحدّ أبيض وظل خفيف ورمز يعبّر عن نوع المحتوى؛
@@ -854,6 +881,9 @@ class _AreaPanel extends StatelessWidget {
   final double bottomPad;
   /// وضع الرئيسية: العنوان «حولك الآن» قبل التقريب.
   final bool home;
+  /// وضع التحرير في المكان (النموذج ٣) وزره في رأس الورقة.
+  final bool editing;
+  final VoidCallback? onEditToggle;
   const _AreaPanel({
     required this.scroll,
     required this.items,
@@ -864,6 +894,8 @@ class _AreaPanel extends StatelessWidget {
     this.extra = const [],
     this.bottomPad = 0,
     this.home = false,
+    this.editing = false,
+    this.onEditToggle,
     required this.onZoomIn,
     required this.onExpand,
     required this.onCollapse,
@@ -885,7 +917,14 @@ class _AreaPanel extends StatelessWidget {
         boxShadow: [BoxShadow(color: Color(0x1F000000), blurRadius: 14, offset: Offset(0, -3))],
       ),
       clipBehavior: Clip.antiAlias,
-      child: ListView(
+      child: editing
+          ? Column(children: [
+              const SizedBox(height: 8),
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: Joy.control, borderRadius: BorderRadius.circular(2))),
+              const Padding(padding: EdgeInsets.fromLTRB(18, 10, 18, 6), child: Row(children: [Icon(Icons.tune_rounded, size: 20, color: Joy.primary), SizedBox(width: 8), Expanded(child: Text('تعديل الرئيسية', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)))])),
+              Expanded(child: HomeEditList(scroll: scroll, onDone: onEditToggle ?? () {}, bottomPad: bottomPad)),
+            ])
+          : ListView(
         controller: scroll,
         padding: EdgeInsets.zero,
         children: [
@@ -912,6 +951,7 @@ class _AreaPanel extends StatelessWidget {
                       decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)),
                       child: Text('${items.length}', style: const TextStyle(color: Joy.primary, fontWeight: FontWeight.w700, fontSize: 12.5)),
                     ),
+                  if (onEditToggle != null) IconButton(key: const Key('home-edit'), tooltip: 'تعديل الرئيسية', visualDensity: VisualDensity.compact, onPressed: onEditToggle, icon: const Icon(Icons.tune_rounded, color: Joy.textMuted, size: 20)),
                   Icon(expanded ? Icons.expand_more_rounded : Icons.expand_less_rounded, color: Joy.textMuted),
                 ]),
               ),

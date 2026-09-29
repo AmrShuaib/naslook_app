@@ -213,6 +213,23 @@ await call('POST', `/biz/${B}/posts`, { body: { kind: 'update', title: 'منيو
 check((await notes('biz_update', SARA)).length === 1 && (await notes('biz_update', KHALID)).length === 0, 'update post notifies members on all only');
 await call('POST', `/biz/${B}/posts`, { body: { kind: 'update', title: 'ثانٍ', body: 'x' }, expect: 200 });
 check((await notes('biz_update', SARA)).length === 1, 'daily cap: second update the same day is silent');
+// ---- طبقة الخريطة و«عروض اليوم»: عرض نشط جديد يظهر ضمن الحدود وبالقرب، ولا يظهر خارجها ولا بعد انتهائه
+const mapOffer = await call('POST', `/biz/${B}/manage/offers`, { body: { kind: 'deal', title: 'خصم الخريطة', value: { type: 'percent', amount: 15 }, endsAt: h(5), membersOnly: false }, expect: 200 });
+let mp = await call('GET', '/offers/map?minLat=21.5&minLng=39.1&maxLat=21.6&maxLng=39.2', { user: null, expect: 200 });
+check(mp.items.some((o) => o.id === mapOffer.id && o.bizId === B && o.lat === 21.5433 && o.bizName === 'مقهى ريف'), 'map layer lists the active offer with its circle coordinates', JSON.stringify(mp).slice(0, 200));
+mp = await call('GET', '/offers/map?minLat=26.3&minLng=50.0&maxLat=26.5&maxLng=50.2', { user: null, expect: 200 });
+check(!mp.items.some((o) => o.id === mapOffer.id), 'map layer excludes offers outside the bbox');
+mp = await call('GET', '/offers/map?minLat=x', { user: null, expect: 200 });
+check(Array.isArray(mp.items) && mp.items.length === 0, 'bad bbox → empty list');
+let nr = await call('GET', '/offers/near?lat=21.55&lng=39.17&radiusKm=5', { user: null, expect: 200 });
+check(nr.located === true && nr.items.some((o) => o.id === mapOffer.id && typeof o.distanceKm === 'number' && o.distanceKm < 2), 'near lists the offer with its distance', JSON.stringify(nr).slice(0, 200));
+nr = await call('GET', '/offers/near?lat=26.4&lng=50.1&radiusKm=5', { user: null, expect: 200 });
+check(!nr.items.some((o) => o.id === mapOffer.id), 'near excludes offers beyond the radius');
+nr = await call('GET', '/offers/near', { user: null, expect: 200 });
+check(nr.located === false && nr.items.some((o) => o.id === mapOffer.id), 'near without a location falls back to the latest active offers');
+await pool.query("UPDATE biz_offers SET ends_at=now() - interval '1 minute' WHERE id=$1", [mapOffer.id]);
+mp = await call('GET', '/offers/map?minLat=21.5&minLng=39.1&maxLat=21.6&maxLng=39.2', { user: null, expect: 200 });
+check(!mp.items.some((o) => o.id === mapOffer.id), 'ended offers leave the map layer');
 await app.close(); await pool.end();
 console.log(fails ? `\n${fails} FAILED` : '\nALL OFFERS TESTS PASSED');
 process.exit(fails ? 1 : 0);

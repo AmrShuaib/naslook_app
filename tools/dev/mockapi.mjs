@@ -760,8 +760,8 @@ function jobsRoute(req, res, url, key) {
 }
 // ---- jobs (user) end
 // ---- home layout start — تحاكي server/layout.js: تخطيط الرئيسية في الذاكرة (ترتيب الكتل، المخفي، الشريط السفلي، خيارات الكتل)
-const LAYOUT_BLOCKS = ['announce', 'quick', 'around', 'trending', 'open', 'circles', 'feed', 'biz', 'jobs', 'market', 'events'];
-const LAYOUT_ORDER = ['announce', 'quick', 'around', 'trending', 'open', 'circles', 'feed', 'jobs', 'market', 'events', 'biz'];
+const LAYOUT_BLOCKS = ['announce', 'quick', 'around', 'trending', 'offers', 'open', 'circles', 'feed', 'biz', 'jobs', 'market', 'events'];
+const LAYOUT_ORDER = ['announce', 'quick', 'around', 'trending', 'offers', 'open', 'circles', 'feed', 'jobs', 'market', 'events', 'biz'];
 const LAYOUT_NAV_IDS = ['home', 'circles', 'chats', 'me', 'market', 'offers', 'jobs', 'events'];
 const LAYOUT_NAV = ['home', 'circles', 'chats', 'me'];
 let mockLayout = null, mockLayoutAt = null;
@@ -779,6 +779,18 @@ function layoutNormalise(raw = {}) {
   const opts = {};
   if (raw.opts && typeof raw.opts === 'object' && !Array.isArray(raw.opts)) for (const [k, v] of Object.entries(raw.opts)) { if (!LAYOUT_BLOCKS.includes(k) || !Array.isArray(v)) continue; const vals = [...new Set(v.filter((s) => typeof s === 'string').map((s) => s.trim().slice(0, 40)).filter(Boolean).slice(0, 10))]; if (vals.length) opts[k] = vals; }
   return { order, hidden, nav: ['home', ...mid, 'me'], opts };
+}
+
+// ---- offers map layer + today (mock)
+const MOCK_MAP_OFFERS = [
+  { id: 'off-1', bizId: 'biz-cafe', bizName: 'أوفردوز', logoUrl: null, category: 'cafe', lat: 21.585, lng: 39.16, kind: 'deal', title: 'خصم ٢٠٪ على اللاتيه', description: 'حتى الليلة', value: { pct: 20 }, membersOnly: true, startsAt: new Date(Date.now() - 3600e3).toISOString(), endsAt: new Date(Date.now() + 6 * 3600e3).toISOString(), distanceKm: 0.7 },
+  { id: 'off-2', bizId: 'biz-halfmillion', bizName: 'هاف مليون', logoUrl: null, category: 'cafe', lat: 21.60, lng: 39.11, kind: 'loyalty', title: 'الفنجان السادس مجاناً', description: 'للأعضاء', value: { every: 5 }, membersOnly: true, startsAt: new Date(Date.now() - 86400e3).toISOString(), endsAt: null, distanceKm: 1.2 },
+];
+function offersMapRoute(req, res, url, key) {
+  const json = (code, body) => { console.log(key, url.search, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+  if (key === 'GET /offers/map') return json(200, { items: MOCK_MAP_OFFERS });
+  if (key === 'GET /offers/near') return json(200, { items: MOCK_MAP_OFFERS, located: url.searchParams.has('lat') });
+  return false;
 }
 function layoutRoute(req, res, url, key) {
   const json = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
@@ -813,6 +825,7 @@ http.createServer((req, res) => {
   if (url.pathname.startsWith('/notify')) { if (notifyRoute(req, res, url, key)) return; }
   if (url.pathname.startsWith('/jobs')) { if (jobsRoute(req, res, url, key)) return; }
   if (url.pathname === '/me/layout' || url.pathname === '/layout/status') { if (layoutRoute(req, res, url, key)) return; } // ---- home layout
+  if (url.pathname === '/offers/map' || url.pathname === '/offers/near') { if (offersMapRoute(req, res, url, key)) return; }
   // ---- jobs (public+admin) start
   if (/^\/(jobs\/hiring|jobs(\/[0-9a-f-]{36})?(\/apply)?|biz\/[^/]+\/jobs|adminapi\/jobs(\/.*)?)$/.test(url.pathname) && jobsPublicRoute(req, res, url, key)) return;
   // ---- jobs (public+admin) end

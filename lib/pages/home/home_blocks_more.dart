@@ -5,7 +5,10 @@ import '../../api/client.dart';
 import '../../api/commerce_models.dart';
 import '../../api/jobs_models.dart';
 import '../../core/app_theme.dart';
+import '../../api/offers_map_api.dart';
 import '../../state/jobs_public_providers.dart';
+import '../../state/offers_providers.dart';
+import '../business/offers_page.dart';
 import '../../ui/widgets.dart';
 import '../events/events_page.dart';
 import '../jobs/job_page.dart';
@@ -162,6 +165,48 @@ class HomeEventsBlock extends ConsumerWidget {
   }
 
   static String _month(int m) => const ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'][m - 1];
+}
+
+/// «عروض اليوم»: العروض الفعّالة الأقرب إليك، كل بطاقة تفتح عروض الدائرة.
+class HomeOffersBlock extends ConsumerWidget {
+  const HomeOffersBlock({super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final offers = ref.watch(offersNearProvider).valueOrNull ?? const <MapOffer>[];
+    if (offers.isEmpty) return const _Empty(icon: Icons.local_offer_outlined, text: 'لا عروض فعّالة قريبة الآن. انضم إلى دوائر المقاهي والمطاعم لتصلك عروضها.');
+    return SizedBox(
+      height: 112,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: offers.length.clamp(0, 10),
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final o = offers[i];
+          return SizedBox(
+            width: 210,
+            child: JoyCard(
+              key: Key('home-offer-${o.id}'),
+              padding: const EdgeInsets.all(10),
+              color: Joy.sunSoft,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleOffersPage(bizId: o.bizId, title: o.bizName))),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Container(width: 40, height: 40, decoration: BoxDecoration(color: Joy.sun, borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.local_offer_rounded, color: Joy.sunText, size: 20)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(o.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: Joy.sunText, height: 1.3)),
+                    const SizedBox(height: 3),
+                    Text(o.bizName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.text, fontSize: 12)),
+                    Text([o.endsLabel, if (o.distanceKm != null) o.distanceKm! < 1 ? '${(o.distanceKm! * 1000).round()} م' : '${o.distanceKm} كم'].join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
+                  ]),
+                ),
+              ]),
+            ),
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _Empty extends StatelessWidget {

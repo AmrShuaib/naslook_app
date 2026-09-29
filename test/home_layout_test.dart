@@ -55,6 +55,8 @@ class _Srv {
         return _json({'unread': 0});
       case 'GET /settings/public':
         return _json({'announcement': 'تحديث الليلة', 'maintenance': false, 'jobsEnabled': true});
+      case 'GET /offers/near':
+        return _json({'items': [{'id': 'off-1', 'bizId': 'biz-cafe', 'bizName': 'أوفردوز', 'category': 'cafe', 'lat': 21.58, 'lng': 39.16, 'kind': 'deal', 'title': 'خصم ٢٠٪ على اللاتيه', 'endsAt': DateTime.now().add(const Duration(hours: 5)).toUtc().toIso8601String(), 'distanceKm': 0.7}], 'located': true});
     }
     if (req.method == 'GET') return _json([]);
     return _json({'ok': true});
@@ -151,6 +153,8 @@ void main() {
     expect(container.read(homeLayoutProvider).hidden, isEmpty);
 
     await tester.scrollUntilVisible(find.byKey(const Key('block-menu-around')), -300, scrollable: find.byType(Scrollable).first);
+    await tester.ensureVisible(find.byKey(const Key('block-menu-around')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('block-menu-around')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('block-up')));
@@ -159,6 +163,33 @@ void main() {
     expect(_top(tester, 'block-around') < _top(tester, 'block-quick'), isTrue);
     await tester.pump(const Duration(milliseconds: 700));
     expect((srv.stored!['order'] as List).sublist(0, 3), ['announce', 'around', 'quick']);
+  });
+
+  testWidgets('offers block lists nearby offers', (tester) async {
+    await _pump(tester, const Scaffold(body: HomePage()), height: 2400);
+    expect(find.text('عروض اليوم'), findsOneWidget);
+    expect(find.byKey(const Key('home-offer-off-1')), findsOneWidget);
+    expect(find.text('خصم ٢٠٪ على اللاتيه'), findsOneWidget);
+  });
+
+  testWidgets('the in-place edit list hides a section, keeps pinned locked and reports done', (tester) async {
+    var done = 0;
+    final (_, container) = await _pump(tester, Scaffold(body: HomeEditList(onDone: () => done++)));
+    expect(find.byKey(const Key('home-edit-list')), findsOneWidget);
+    expect(find.byKey(const Key('home-edit-drag-quick')), findsOneWidget);
+    expect(find.byKey(const Key('home-edit-drag-announce')), findsNothing, reason: 'المثبّت بلا مقبض');
+    expect(find.byKey(const Key('home-edit-hide-announce')), findsNothing);
+    await tester.tap(find.byKey(const Key('home-edit-hide-quick')));
+    await tester.pump();
+    expect(container.read(homeLayoutProvider).isHidden('quick'), isTrue);
+    expect(find.byKey(const Key('home-edit-drag-quick')), findsNothing);
+    await tester.scrollUntilVisible(find.byKey(const Key('show-quick')), 300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.byKey(const Key('show-quick')));
+    await tester.pump();
+    expect(container.read(homeLayoutProvider).isHidden('quick'), isFalse);
+    await tester.scrollUntilVisible(find.byKey(const Key('home-edit-done')), -300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.byKey(const Key('home-edit-done')));
+    expect(done, 1);
   });
 
   testWidgets('a stored server layout wins over the device and new blocks are flagged', (tester) async {

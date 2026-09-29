@@ -268,9 +268,14 @@ void main() {
     await tester.tap(find.byKey(const Key('set-jobs-approval')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('set-jobs-free')), '5');
+    // حقلا الرئيسية: الترتيب الافتراضي والمثبّت
+    await tester.enterText(find.byKey(const Key('set-home-order')), 'offers, market, quick');
+    await tester.enterText(find.byKey(const Key('set-home-pinned')), 'announce,quick');
     await tester.tap(find.byKey(const Key('set-save')));
     await tester.pumpAndSettle();
     final b = srv.bodies['POST /adminapi/settings']!;
+    expect(b['homeLayoutOrder'], 'offers, market, quick');
+    expect(b['homeLayoutPinned'], 'announce,quick');
     expect(b['jobsEnabled'], isTrue);
     expect(b['jobsRequireApproval'], isTrue);
     expect(b['jobsFreeActive'], 5);

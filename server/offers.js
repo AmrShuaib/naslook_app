@@ -245,6 +245,27 @@ export default async function offers(app, opts = {}) {
     const pref = uid ? (await pool.query("SELECT notify FROM biz_member_prefs WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0] : null;
     return { bizId: b.id, member, notify: member ? (pref?.notify ?? "near") : null, active, upcoming, past };
   });
+  // ---- طبقة «عروض» على الخريطة وقسم «عروض اليوم» في الرئيسية: العروض النشطة مع إحداثيات دوائرها (عام، بلا أهلية)
+  const DIST = "(6371*acos(least(1, cos(radians($1))*cos(radians(b.lat))*cos(radians(b.lng)-radians($2))+sin(radians($1))*sin(radians(b.lat)))))";
+  const mapOfferOut = (r) => ({ id: r.id, bizId: r.b_id, bizName: r.name_ar || r.name, logoUrl: r.logo_url ?? null, category: r.category, lat: Number(r.lat), lng: Number(r.lng), kind: r.kind, title: r.title, description: r.description ?? "", value: r.value ?? {}, membersOnly: r.members_only !== false, startsAt: r.starts_at, endsAt: r.ends_at, distanceKm: r.km == null ? null : Math.round(Number(r.km) * 10) / 10 });
+  const ACTIVE = "o.active AND b.active AND o.starts_at <= now() AND (o.ends_at IS NULL OR o.ends_at > now())";
+  app.get("/offers/map", async (req) => {
+    const q = req.query ?? {}; const v = [q.minLat, q.minLng, q.maxLat, q.maxLng].map(Number);
+    if (!v.every(Number.isFinite)) return { items: [] };
+    const rows = (await pool.query(`SELECT o.*, b.id AS b_id, b.name, b.name_ar, b.logo_url, b.category, b.lat, b.lng FROM biz_offers o JOIN biz b ON b.id=o.biz_id WHERE ${ACTIVE} AND b.lat BETWEEN $1 AND $3 AND b.lng BETWEEN $2 AND $4 ORDER BY o.ends_at NULLS LAST, o.created_at DESC LIMIT 200`, v)).rows;
+    return { items: rows.map(mapOfferOut) };
+  });
+  app.get("/offers/near", async (req) => {
+    const q = req.query ?? {}; const lat = Number(q.lat), lng = Number(q.lng);
+    const km = Math.min(50, Math.max(1, Number(q.radiusKm) || 10)), limit = Math.min(50, Math.max(1, Number(q.limit) || 20));
+    const located = Number.isFinite(lat) && Number.isFinite(lng);
+    // بلا موقع: أحدث العروض النشطة في أي مكان
+    const sql = located
+      ? `SELECT o.*, b.id AS b_id, b.name, b.name_ar, b.logo_url, b.category, b.lat, b.lng, ${DIST} AS km FROM biz_offers o JOIN biz b ON b.id=o.biz_id WHERE ${ACTIVE} AND ${DIST} <= $3 ORDER BY km ASC, o.ends_at NULLS LAST LIMIT ${limit}`
+      : `SELECT o.*, b.id AS b_id, b.name, b.name_ar, b.logo_url, b.category, b.lat, b.lng FROM biz_offers o JOIN biz b ON b.id=o.biz_id WHERE ${ACTIVE} ORDER BY o.ends_at NULLS LAST, o.created_at DESC LIMIT ${limit}`;
+    const rows = (await pool.query(sql, located ? [lat, lng, km] : [])).rows;
+    return { items: rows.map(mapOfferOut), located };
+  });
   // ---- مستوى إشعارات الدائرة للعضو
   app.get("/biz/:id/notify", async (req, reply) => {
     const uid = await auth(req); if (!uid) return bad(reply, 401, "auth");

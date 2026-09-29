@@ -95,6 +95,7 @@ user_layouts (
 | `quick` | الاختصارات (الدوائر، السوق، العروض، الوظائف، الفعاليات، المحفظة، براندات، بث المدينة) | ثابت |
 | `around` | لحظات حولك + بطاقة بث المدينة (خيار «الأصدقاء فقط») | `storiesProvider`، `recentPostsProvider` |
 | `trending` | الأماكن الرائجة اليوم | `trendingPlacesProvider` |
+| `offers` | عروض اليوم (العروض الفعّالة الأقرب، من `GET /offers/near`) | `offersNearProvider` |
 | `open` | مفتوح الآن حولك | `discoverProvider` |
 | `circles` | دوائرك | `myVesselsProvider` |
 | `feed` | آخر ما في دوائرك (خيار «نصوص فقط») | `feedProvider` |
@@ -104,6 +105,18 @@ user_layouts (
 | `events` | فعاليات قريبة | `eventsProvider` |
 
 `homeBlockWidgets(context, ref)` في `lib/pages/home/home_page.dart` يبني الأقسام الظاهرة بترتيب المستخدم داخل `HomeBlock` (عنوان، إجراء «الكل»، زر «⋯»)، ثم `HiddenBlocksTray` إن وُجد مخفي. القسم الذي لا محتوى له الآن لا يُعرض (لا عنوان فارغاً). الأقسام الجديدة التي لم تكن في ترتيب المستخدم المحفوظ توسم «جديد» حتى يلمسها.
+
+### طبقة «عروض» على الخريطة
+
+`GET /offers/map?minLat&minLng&maxLat&maxLng` و`GET /offers/near?lat&lng&radiusKm&limit` في `server/offers.js` يعيدان العروض النشطة (بدأت ولم تنتهِ، والدائرة نشطة) مع إحداثيات دوائرها بلا حساب أهلية؛ الأول لطبقة الخريطة (شريحة «عروض»، `map-chip-offers`، نقطة صفراء تفتح عروض الدائرة) والثاني لقسم «عروض اليوم» (الأقرب أولاً مع المسافة، أو الأحدث بلا موقع). النماذج والمزوّدون: `lib/api/offers_map_api.dart` و`lib/state/offers_providers.dart`.
+
+### وضع التحرير في المكان (النموذج ٣)
+
+زر «تعديل الرئيسية» (`home-edit`) في رأس الورقة السفلية يوسّعها ويستبدل الأقسام بقائمة `HomeEditList` (`home-edit-list`): كل قسم ظاهر صفٌّ بمقبض سحب (`home-edit-drag-<id>`) وزر (−) للإخفاء (`home-edit-hide-<id>`)، المثبّت بلا مقبض ولا زر، وصندوق «أقسام مخفية» في الذيل، و«تم» (`home-edit-done`) يعيد الورقة إلى وضعها.
+
+### إعدادات الإدارة
+
+في شاشة الإعدادات بطاقة «الرئيسية» بحقلين: `homeLayoutOrder` (الترتيب الافتراضي لمن لم يخصّص، ولـ«استعادة الافتراضي») و`homeLayoutPinned` (أقسام لا تُخفى)، مع شرائح تعرض معرّفات الأقسام.
 
 ### التخصيص (النموذجان ١ و٢)
 

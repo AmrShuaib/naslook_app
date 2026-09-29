@@ -138,6 +138,8 @@ Widget? homeBlockBody(BuildContext context, WidgetRef ref, String id, HomeLayout
       return const HomeMarketBlock();
     case 'events':
       return const HomeEventsBlock();
+    case 'offers':
+      return const HomeOffersBlock();
   }
   return null;
 }
@@ -149,7 +151,7 @@ class HomeBlock extends ConsumerWidget {
   final Widget child;
   const HomeBlock({super.key, required this.id, required this.layout, required this.child});
 
-  static String? actionOf(String id) => switch (id) { 'trending' || 'open' || 'jobs' || 'market' || 'events' || 'circles' => 'الكل', 'feed' => 'الخريطة', _ => null };
+  static String? actionOf(String id) => switch (id) { 'trending' || 'open' || 'jobs' || 'market' || 'events' || 'circles' || 'offers' => 'الكل', 'feed' => 'الخريطة', _ => null };
 
   void _action(BuildContext context, WidgetRef ref) {
     switch (id) {
@@ -166,6 +168,8 @@ class HomeBlock extends ConsumerWidget {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MarketPage()));
       case 'events':
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EventsPage()));
+      case 'offers':
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyOffersPage()));
     }
   }
 
@@ -257,6 +261,81 @@ class HiddenBlocksTray extends ConsumerWidget {
           ]),
         ]),
       );
+}
+
+/// وضع التحرير في المكان (النموذج ٣): الأقسام الظاهرة صفوفاً تُسحب من مقبضها ويُخفى أي منها بزر (−)، ثم «تم».
+/// يُعرض داخل الورقة السفلية للخريطة مكان الأقسام؛ [scroll] متحكّم الورقة حتى يبقى السحب لتوسيعها يعمل.
+class HomeEditList extends ConsumerWidget {
+  final ScrollController? scroll;
+  final VoidCallback onDone;
+  final double bottomPad;
+  const HomeEditList({super.key, this.scroll, required this.onDone, this.bottomPad = 0});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final layout = ref.watch(homeLayoutProvider);
+    final n = ref.read(homeLayoutProvider.notifier);
+    final vis = layout.visible;
+    return ReorderableListView.builder(
+      key: const Key('home-edit-list'),
+      scrollController: scroll,
+      buildDefaultDragHandles: false,
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+      header: Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Container(
+          padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 8, 8),
+          decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(12)),
+          child: Row(children: [
+            const Expanded(child: Text('اسحب من المقبض لإعادة الترتيب، واضغط (−) للإخفاء', style: TextStyle(fontSize: 12.5, color: Joy.bubbleOutText, fontWeight: FontWeight.w500))),
+            FilledButton(key: const Key('home-edit-done'), style: FilledButton.styleFrom(minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 14), visualDensity: VisualDensity.compact), onPressed: onDone, child: const Text('تم')),
+          ]),
+        ),
+      ),
+      footer: Column(children: [
+        if (layout.hidden.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: HiddenBlocksTray(layout: layout)),
+        SizedBox(height: bottomPad),
+      ]),
+      itemCount: vis.length,
+      onReorderItem: (from, to) {
+        final v = [...vis];
+        final id = v.removeAt(from);
+        v.insert(to, id);
+        n.update((l) => l.reorder([...v, ...l.hidden]));
+      },
+      itemBuilder: (context, i) {
+        final id = vis[i];
+        final meta = homeBlockMeta(id);
+        final pinned = layout.isPinned(id);
+        return Container(
+          key: ValueKey('edit-$id'),
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsetsDirectional.fromSTEB(6, 6, 10, 6),
+          decoration: BoxDecoration(border: Border.all(color: pinned ? Joy.line : Joy.primary, width: 1.5), borderRadius: BorderRadius.circular(14)),
+          child: Row(children: [
+            if (pinned)
+              const SizedBox(width: 36, child: Icon(Icons.push_pin_rounded, size: 18, color: Joy.textMuted))
+            else
+              ReorderableDragStartListener(index: i, child: SizedBox(key: Key('home-edit-drag-$id'), width: 36, height: 40, child: const Icon(Icons.drag_indicator_rounded, color: Joy.textMuted))),
+            Container(width: 34, height: 34, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(10)), child: Icon(meta?.icon ?? Icons.widgets_outlined, color: Joy.primary, size: 19)),
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(meta?.title ?? id, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+              Text(pinned ? 'مثبّت' : (meta?.hint ?? ''), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
+            ])),
+            if (!pinned)
+              IconButton(
+                key: Key('home-edit-hide-$id'),
+                tooltip: 'إخفاء',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => n.update((l) => l.hide(id)),
+                icon: Container(width: 24, height: 24, decoration: const BoxDecoration(color: Joy.danger, shape: BoxShape.circle), child: const Icon(Icons.remove_rounded, color: Colors.white, size: 16)),
+              ),
+          ]),
+        );
+      },
+    );
+  }
 }
 
 /// يفتح تبويباً في الشريط السفلي (إن كان ضمن أقسام المستخدم) وإلا يفتح صفحته المستقلة.

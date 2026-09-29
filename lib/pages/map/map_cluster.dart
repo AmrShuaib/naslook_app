@@ -1,11 +1,12 @@
 import 'dart:math' as math;
 
 import '../../api/commerce_models.dart';
+import '../../api/offers_map_api.dart';
 import '../../api/models.dart';
 import '../../api/posts_api.dart';
 
 /// نوع العنصر المعروض على الخريطة.
-enum MapItemKind { person, story, pin, business, post, listing }
+enum MapItemKind { person, story, pin, business, post, listing, offer }
 
 /// عنصر موحّد على الخريطة (شخص/لحظة/دبوس/متجر) مع موقعه وصاحبه ووقته.
 class MapItem {
@@ -32,6 +33,18 @@ class MapItem {
   });
 
   String get key => '${kind.name}:$id';
+
+  /// عرض دائرة (خصم/كوبون/ولاء) عند موقع الدائرة
+  factory MapItem.offer(MapOffer o) => MapItem(
+        kind: MapItemKind.offer,
+        id: o.id,
+        lat: o.lat,
+        lng: o.lng,
+        title: o.title,
+        subtitle: '${o.bizName} · ${o.endsLabel}',
+        at: o.startsAt,
+        data: o,
+      );
 
   /// عرض من السوق (منتج أو خدمة) بموقعه وبائعه
   factory MapItem.listing(Listing l) => MapItem(

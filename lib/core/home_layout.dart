@@ -15,6 +15,7 @@ const homeBlocks = <HomeBlockMeta>[
   HomeBlockMeta('quick', 'الاختصارات', Icons.grid_view_rounded, 'الدوائر والسوق والفعاليات والمحفظة…'),
   HomeBlockMeta('around', 'لحظات حولك', Icons.auto_awesome_rounded, 'لحظات الأشخاص القريبين وبث المدينة'),
   HomeBlockMeta('trending', 'الأماكن الرائجة اليوم', Icons.local_fire_department_outlined, 'الأكثر لحظات خلال ٢٤ ساعة'),
+  HomeBlockMeta('offers', 'عروض اليوم', Icons.local_offer_outlined, 'عروض الدوائر القريبة الفعّالة الآن'),
   HomeBlockMeta('open', 'مفتوح الآن حولك', Icons.schedule_rounded, 'أنشطة مفتوحة الآن مرتبة بالأقرب'),
   HomeBlockMeta('circles', 'دوائرك', Icons.groups_outlined, 'الدوائر التي أنت عضو فيها'),
   HomeBlockMeta('feed', 'آخر ما في دوائرك', Icons.forum_outlined, 'منشورات دوائرك الأحدث'),
@@ -24,7 +25,7 @@ const homeBlocks = <HomeBlockMeta>[
   HomeBlockMeta('events', 'فعاليات قريبة', Icons.event_outlined, 'فعاليات وبازارات قادمة'),
 ];
 
-const homeDefaultOrder = ['announce', 'quick', 'around', 'trending', 'open', 'circles', 'feed', 'jobs', 'market', 'events', 'biz'];
+const homeDefaultOrder = ['announce', 'quick', 'around', 'trending', 'offers', 'open', 'circles', 'feed', 'jobs', 'market', 'events', 'biz'];
 const homeDefaultPinned = ['announce'];
 
 /// قسم من شريط التنقّل السفلي.
