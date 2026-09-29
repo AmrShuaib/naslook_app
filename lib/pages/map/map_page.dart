@@ -123,7 +123,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     final circles = ref.watch(mapBizProvider).value ?? const <Biz>[];
     final posts = ref.watch(mapPostsProvider).value ?? const <MapPost>[];
     final listings = ref.watch(mapMarketProvider).value ?? const <Listing>[];
-    final offers = ref.watch(mapOffersProvider).value ?? const <MapOffer>[];
+    final offers = ref.watch(mapOffersProvider).valueOrNull ?? const <MapOffer>[]; // طبقة اختيارية: خطؤها لا يُسقط الخريطة
     final seen = <String>{};
     final out = <MapItem>[];
     void add(MapItem? i) {

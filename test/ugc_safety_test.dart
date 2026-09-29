@@ -412,7 +412,9 @@ void main() {
     await tester.tap(find.byKey(const Key('set-transfers')));
     await tester.tap(find.byKey(const Key('set-banned-default')));
     await tester.pump();
+    await tester.scrollUntilVisible(find.byKey(const Key('set-save')), 400, scrollable: find.byType(Scrollable).first);
     await tester.ensureVisible(find.byKey(const Key('set-save')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('set-save')));
     await tester.pumpAndSettle();
     final b = srv.bodies['POST /adminapi/settings']!;

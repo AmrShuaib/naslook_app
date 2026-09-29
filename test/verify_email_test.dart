@@ -292,7 +292,9 @@ void main() {
     await tester.ensureVisible(sw);
     await tester.tap(sw);
     await tester.pump();
+    await tester.scrollUntilVisible(find.byKey(const Key('set-save')), 400, scrollable: find.byType(Scrollable).first);
     await tester.ensureVisible(find.byKey(const Key('set-save')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('set-save')));
     await _settle(tester);
     expect(saved?['requireEmailVerification'], isFalse);
