@@ -24,7 +24,7 @@
 
 ## الاختبار
 
-- `dart analyze` يجب أن يكون نظيفاً، و`flutter test` (نحو 230 اختباراً) يجب أن يمر قبل كل دفع. اختبارات الودجات تستخدم `MockClient` ومفاتيح `Key('...')` على العناصر.
+- `dart analyze` يجب أن يكون نظيفاً، و`flutter test` (نحو 400 اختبار) يجب أن يمر قبل كل دفع. اختبارات الودجات تستخدم `MockClient` ومفاتيح `Key('...')` على العناصر.
 - اختبارات الخادم: `server/test/run.sh harness_x.mjs` أو `all` (Postgres محلي: `pg_lsclusters | grep -q online || pg_ctlcluster 16 main start`؛ قاعدة `naslife_test`، المستخدم `postgres/pg`). الأكثر استخداماً: `harness_market_b.mjs` (السوق والمدفوعات)، `harness_posts.mjs`، `harness_admin.mjs` (فيه إخفاقات قديمة معروفة من حالة سابقة، ليست تراجعاً).
 - الفحص الحي: `tools/verify_*.sh` مع `NASLIFE_TOKEN` (رمز جلسة حساب المؤسس jeddahh/SA9954961، يُرسل في الترويسة `x-token` فقط). **لا يُكتب الرمز في أي ملف.** حساب الهاتف الفعلي للمالك هو SA8370980. حساب المنصة SA0000000.
 - Chromium داخل الجلسة لا يصل إلى naslife.app (وكيل الشبكة)، فالتحقق الحي بـ curl فقط ولقطات الشاشة تأتي من المالك.

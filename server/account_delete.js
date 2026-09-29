@@ -159,7 +159,8 @@ export default async function accountDelete(app, opts = {}) {
       for (const [t, cols] of T) {
         if (cols.has("endpoint")) { const k = pick(cols, "user_id", "uid"); if (k) await run(`${t}.push`, `DELETE FROM ${q(t)} WHERE ${q(k)}=$1`); }
       }
-      if (has("contacts", "user_id", "contact_id")) await run("contacts", "DELETE FROM contacts WHERE user_id=$1 OR contact_id=$1");
+      // الإنتاج يسمّي عمود المالك owner_id (وليس user_id) في جدول الأصدقاء
+      if (has("contacts", "contact_id")) { const k = pick(T.get("contacts"), "user_id", "owner_id", "uid"); if (k) await run("contacts", `DELETE FROM contacts WHERE ${q(k)}=$1 OR contact_id=$1`); }
       for (const [t, cols] of T) {
         if (!/^(blocks|user_blocks|blocked_users)$/.test(t)) continue;
         const k = pick(cols, "blocker_id", "user_id", "uid", "by_id"); if (k) await run(`${t}.blocks`, `DELETE FROM ${q(t)} WHERE ${q(k)}=$1`);
