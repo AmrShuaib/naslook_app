@@ -68,10 +68,15 @@ void main() {
     expect(find.byType(UserProfilePage), findsOneWidget);
     expect(srv.calls, contains('GET /profiles/SA0000002'));
     expect(find.text('أحب القهوة'), findsOneWidget);
-    expect(find.text('تصوير'), findsOneWidget);
-    expect(find.text('قهوة مختصة'), findsOneWidget);
     expect(find.text('مراسلة'), findsOneWidget);
     expect(find.text('إضافة صديق'), findsOneWidget);
+    // التصميم الجديد يوزّع التفاصيل على تبويبات: المهارات في «عنه» والعروض في «الخدمات»
+    await tester.tap(find.byKey(const Key('tab-about')));
+    await tester.pumpAndSettle();
+    expect(find.text('تصوير'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('tab-services')));
+    await tester.pumpAndSettle();
+    expect(find.text('قهوة مختصة'), findsOneWidget);
   });
 
   testWidgets('adding a friend from the profile calls the contacts API', (tester) async {
