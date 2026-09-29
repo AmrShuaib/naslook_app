@@ -1,0 +1,572 @@
+<title>نموذج بروفايل ناس لايف</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Baloo+Bhaijaan+2:wght@600;700;800&display=swap">
+<style>
+/* Layout: a slim top bar with a 4-way switch, then phone frames side by side (one at a time on narrow screens); each frame is the app's own light UI. */
+:root{
+  --bg:#EEF1F2; --fg:#111111; --muted:#5F6B73; --line:#D9DEE2; --card:#FFFFFF; --accent:#0A6E78; --accent-soft:#E0F3F4; --sun:#FFD66B;
+  --font-body:Rubik,"Segoe UI",Tahoma,sans-serif; --font-display:"Baloo Bhaijaan 2",Rubik,Tahoma,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#0F1315; --fg:#F1F3F4; --muted:#9AA6AE; --line:#273036; --card:#171C20; --accent:#5FC3CC; --accent-soft:#12383C; color-scheme:dark } }
+:root[data-theme="dark"]{ --bg:#0F1315; --fg:#F1F3F4; --muted:#9AA6AE; --line:#273036; --card:#171C20; --accent:#5FC3CC; --accent-soft:#12383C; color-scheme:dark }
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);direction:rtl}
+.wrap{max-width:1780px;margin:0 auto;padding-inline:16px;padding-block:14px 40px;display:flex;flex-direction:column;gap:14px}
+header{display:flex;flex-direction:column;gap:10px}
+h1{margin:0;font:800 26px/1.2 var(--font-display);text-wrap:balance}
+.sub{margin:0;color:var(--muted);font-size:14px;line-height:1.6;max-width:70ch}
+.seg{display:flex;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px;overflow-x:auto;scrollbar-width:none}
+.seg::-webkit-scrollbar{display:none}
+.seg button{flex:1 0 auto;min-width:0;height:40px;padding:0 14px;border:0;border-radius:10px;background:transparent;color:var(--muted);font:600 14px var(--font-body);cursor:pointer;white-space:nowrap}
+.seg button.on{background:var(--accent);color:#fff}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.phones{display:flex;gap:28px;flex-wrap:wrap;justify-content:center;align-items:flex-start}
+.slot{display:flex;flex-direction:column;gap:10px;width:min(390px,100%)}
+.slot h2{margin:0;font:700 15px var(--font-body);color:var(--fg);display:flex;align-items:center;gap:8px}
+.slot h2 span{width:24px;height:24px;border-radius:999px;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:13px;flex:none}
+.note{margin:0;font-size:13px;line-height:1.6;color:var(--muted)}
+.phone{width:100%;height:780px;max-height:calc(100vh - 40px);border-radius:34px;background:#111;padding:10px;box-sizing:border-box;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+.screen{width:100%;height:100%;border-radius:26px;background:#fff;color:#111;overflow:hidden;display:flex;flex-direction:column;font-family:var(--font-body);direction:rtl}
+.scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;scrollbar-width:none}
+.scroll::-webkit-scrollbar{display:none}
+@media (max-width:900px){ .slot:not(.active){display:none} }
+/* app pieces (fixed light, the app's own theme) */
+.btn{height:40px;padding:0 16px;border-radius:999px;border:0;background:#0A6E78;color:#fff;font:700 14px var(--font-body);cursor:pointer;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.btn.ghost{background:#fff;color:#111;border:1.5px solid #E5E5EA;font-weight:600}
+.btn.soft{background:#E0F3F4;color:#0F2D30}
+.btn.sm{height:34px;padding:0 12px;font-size:13px}
+.ic{width:18px;height:18px;flex:none}
+.iconbtn{width:40px;height:40px;border-radius:999px;border:0;background:rgba(17,17,17,.55);color:#fff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.name{font:800 22px/1.2 var(--font-display)}
+.vmark{width:20px;height:20px;border-radius:999px;background:#0A6E78;color:#fff;display:inline-flex;align-items:center;justify-content:center;flex:none}
+.tag{font:600 11px var(--font-body);color:#5A4200;background:#FFF4D6;padding:3px 8px;border-radius:999px}
+.muted{color:#6B7280}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:10px 0;border-top:1px solid #E5E5EA;border-bottom:1px solid #E5E5EA}
+.stat{border:0;background:transparent;padding:0;display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;font-family:var(--font-body)}
+.stat b{font:700 17px var(--font-body);color:#111;display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums}
+.stat small{font-size:11.5px;color:#6B7280}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;color:#0F2D30;background:#E0F3F4;padding:5px 10px;border-radius:999px}
+.chip.sun{color:#5A4200;background:#FFF4D6}.chip.grey{color:#374151;background:#F2F2F7}
+.tabs{display:flex;gap:4px;padding:12px 16px 0;overflow-x:auto;flex:none;border-bottom:1px solid #E5E5EA;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{flex:none;border:0;background:transparent;padding:8px 12px 10px;font:600 14px var(--font-body);color:#6B7280;border-bottom:2.5px solid transparent;cursor:pointer;white-space:nowrap}
+.tabs button.on{color:#111;border-bottom-color:#0A6E78}
+.panel{display:flex;flex-direction:column;gap:10px;padding:12px 16px 24px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px}
+.tile{position:relative;aspect-ratio:1;max-width:100%}
+.tile img{width:100%;height:100%;object-fit:cover;border-radius:8px;display:block}
+.tile .lbl{position:absolute;bottom:6px;right:6px;font-size:10.5px;color:#fff;background:rgba(17,17,17,.6);padding:2px 6px;border-radius:999px;display:inline-flex;align-items:center;gap:3px}
+.tile .kind{position:absolute;top:6px;left:6px;color:#fff;background:rgba(17,17,17,.6);border-radius:999px;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center}
+.tile .soon{position:absolute;top:6px;right:6px;font-size:10px;color:#5A4200;background:#FFD66B;padding:2px 6px;border-radius:999px;font-weight:700}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.card{display:flex;flex-direction:column;gap:6px;border:1px solid #E5E5EA;border-radius:14px;overflow:hidden}
+.card img{width:100%;height:150px;object-fit:cover;display:block}
+.card .body{padding:0 10px 10px;display:flex;flex-direction:column;gap:2px}
+.card .t{font-size:13.5px;font-weight:600;line-height:1.3}
+.price{font:700 15px var(--font-body);color:#0A6E78;font-variant-numeric:tabular-nums}
+.row{display:flex;gap:12px;border:1px solid #E5E5EA;border-radius:14px;padding:10px;align-items:center}
+.row img{width:84px;height:84px;object-fit:cover;border-radius:10px;flex:none}
+.row.s img{width:64px;height:64px}
+.row .body{flex-grow:1;display:flex;flex-direction:column;gap:3px;min-width:0}
+.row .t{font-size:14.5px;font-weight:600}
+.row .d{font-size:12.5px;color:#6B7280}
+.pill{padding:6px 11px;border-radius:999px;background:#F2F2F7;font-size:12.5px}
+.pill.sun{background:#FFF4D6;color:#5A4200}
+.kv{display:flex;justify-content:space-between;font-size:13.5px}
+.kv span:first-child{color:#6B7280}.kv span:last-child{font-weight:600}
+.sect{font-size:13.5px;font-weight:600}
+.nav{flex:none;height:64px;border-top:1px solid #E5E5EA;background:#fff;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));align-items:center;padding:0 6px}
+.nav button{border:0;background:transparent;display:flex;flex-direction:column;align-items:center;gap:2px;font:500 10.5px var(--font-body);color:#6B7280;cursor:pointer}
+.nav button.on{color:#0A6E78;font-weight:600}
+.stars{display:inline-flex;gap:1px;color:#875C0A}
+.review{display:flex;flex-direction:column;gap:6px;border-bottom:1px solid #E5E5EA;padding-bottom:12px}
+.review:last-child{border-bottom:0}
+.rhead{display:flex;align-items:center;gap:10px}
+.av{width:36px;height:36px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#0F2D30;flex:none}
+.bar{flex-grow:1;height:6px;background:#E5E5EA;border-radius:999px;overflow:hidden}.bar i{display:block;height:100%;background:#0A6E78}
+.field{display:flex;flex-direction:column;gap:6px}
+.lb{font-size:12.5px;font-weight:600;color:#374151}
+.in{width:100%;box-sizing:border-box;height:46px;border:1.5px solid #E5E5EA;border-radius:12px;padding:0 12px;font:500 14.5px var(--font-body);color:#111;background:#fff;outline:none}
+.in:focus{border-color:#0A6E78}
+textarea.in{height:96px;padding:10px 12px;resize:none;line-height:1.5}
+.sw{appearance:none;-webkit-appearance:none;width:46px;height:28px;border-radius:999px;background:#C7C7CC;position:relative;cursor:pointer;flex:none;margin:0;transition:background .15s}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:999px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .15s}
+.sw:checked{background:#0A6E78}.sw:checked::after{transform:translateX(18px)}
+.list{display:flex;flex-direction:column;border:1px solid #E5E5EA;border-radius:14px;overflow:hidden}
+.list>*{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid #E5E5EA;text-decoration:none;color:#111;background:#fff;border-left:0;border-right:0;border-top:0;font-family:var(--font-body);text-align:right;cursor:pointer}
+.list>*:last-child{border-bottom:0}
+.list .body{flex-grow:1;display:flex;flex-direction:column;gap:1px;min-width:0}
+.list .t{font-size:14px;font-weight:600}.list .d{font-size:12px;color:#6B7280}
+.ok{font-size:12px;font-weight:700;color:#1FA35A;display:inline-flex;align-items:center;gap:4px}
+.seg3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;background:#F2F2F7;border-radius:12px;padding:4px}
+.seg3 button{height:38px;border:0;border-radius:9px;background:transparent;color:#6B7280;font:600 13px var(--font-body);cursor:pointer}
+.seg3 button.on{background:#fff;color:#111;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.done{display:flex;flex-direction:column;gap:8px;background:#FFF4D6;border-radius:14px;padding:12px 14px;color:#5A4200}
+.done button{display:flex;align-items:center;gap:8px;border:0;background:transparent;padding:0;font:500 13px var(--font-body);color:#5A4200;cursor:pointer;text-align:right}
+.ck{width:18px;height:18px;border-radius:999px;border:1.5px solid #875C0A;display:inline-flex;align-items:center;justify-content:center;flex:none;color:#fff}
+.ck.y{background:#1FA35A;border-color:#1FA35A}
+.kpi{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.kpi div{display:flex;flex-direction:column;gap:2px;background:#F2F2F7;border-radius:12px;padding:10px 12px}
+.kpi small{font-size:11.5px;color:#6B7280}.kpi b{font:700 20px var(--font-body);font-variant-numeric:tabular-nums}.kpi em{font-style:normal;font-size:11px;font-weight:600;color:#1FA35A}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion: reduce){ *{transition:none!important} }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>نموذج بروفايل ناس لايف</h1>
+    <p class="sub">أربع شاشات بحجم الآيفون بألوان التطبيق وخطوطه. الشخصية: فهد الغامدي، مصوّر في جدة. التبويبات والأزرار تعمل، والشاشات مترابطة (تعديل الملف، التوثيق، «كزائر»).</p>
+    <div class="seg" id="seg" role="tablist" aria-label="الشاشات">
+      <button class="on" data-go="visitor" role="tab">١ · ما يراه الزائر</button>
+      <button data-go="owner" role="tab">٢ · ما يراه صاحب الحساب</button>
+      <button data-go="edit" role="tab">٣ · تعديل الملف</button>
+      <button data-go="privacy" role="tab">٤ · التوثيق والتحكم</button>
+    </div>
+  </header>
+
+  <div class="phones">
+
+    <!-- ================= 1. VISITOR ================= -->
+    <section class="slot active" id="s-visitor">
+      <h2><span>١</span>ما يراه الزائر</h2>
+      <div class="phone"><div class="screen">
+        <div class="scroll">
+          <div style="position:relative;height:176px;flex:none">
+            <img src="@@cover@@" alt="غلاف: بحر جدة عند الغروب" style="width:100%;height:176px;object-fit:cover;display:block">
+            <div style="position:absolute;top:12px;right:12px;left:12px;display:flex;justify-content:space-between;align-items:center">
+              <button class="iconbtn" aria-label="رجوع"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
+              <div style="display:flex;gap:8px">
+                <button class="iconbtn" aria-label="مشاركة الملف"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M16 6l-4-4-4 4"/><path d="M12 2v13"/></svg></button>
+                <button class="iconbtn" aria-label="المزيد: بلاغ أو حظر"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
+              </div>
+            </div>
+          </div>
+          <div style="padding:0 16px;display:flex;flex-direction:column;gap:10px;flex:none">
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-top:-44px">
+              <img src="@@avatar@@" alt="صورة فهد الغامدي" style="width:96px;height:96px;border-radius:999px;object-fit:cover;border:4px solid #fff;background:#F2F2F7;display:block">
+              <div style="display:flex;gap:8px;padding-bottom:6px">
+                <button class="btn ghost" style="padding:0 14px"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>مراسلة</button>
+                <button class="btn" id="followBtn" style="padding:0 18px">متابعة</button>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:3px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span class="name">فهد الغامدي</span>
+                <span class="vmark" title="حساب موثّق (بريد وجوال)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>
+                <span class="tag">مصوّر</span>
+              </div>
+              <div class="muted" style="font-size:13.5px;display:flex;align-items:center;gap:10px"><span dir="ltr">@fahad.shots</span><span style="display:inline-flex;align-items:center;gap:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>جدة · حي الشاطئ</span></div>
+              <p style="margin:6px 0 0;font-size:14.5px;line-height:1.55">أصوّر البحر والمقاهي والناس في جدة منذ ٢٠١٩. جلسات تصوير شخصية وتصوير منتجات للمتاجر الصغيرة، وأبيع معداتي القديمة هنا في السوق.</p>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:2px;font-size:13px;color:#0A6E78;font-weight:500">
+                <span style="display:inline-flex;align-items:center;gap:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg>fahad.shots</span>
+                <span style="display:inline-flex;align-items:center;gap:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7L12 19"/></svg>fahadshots.sa</span>
+              </div>
+            </div>
+            <div class="stats">
+              <button class="stat" data-tabgo="posts"><b>128</b><small>منشور</small></button>
+              <button class="stat"><b id="followers">1,212</b><small>متابِع</small></button>
+              <button class="stat" data-tabgo="reviews"><b><svg width="14" height="14" viewBox="0 0 24 24" fill="#875C0A"><path d="M12 2l3 6.6 7 .8-5.2 4.8 1.4 7L12 17.7 5.8 21.2l1.4-7L2 9.4l7-.8z"/></svg>4.9</b><small>٤٧ تقييماً</small></button>
+              <button class="stat" data-tabgo="circles"><b>6</b><small>دوائر</small></button>
+            </div>
+            <div class="chips">
+              <span class="chip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5z"/><path d="M9 12l2 2 4-4"/></svg>بريد وجوال موثّقان</span>
+              <span class="chip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>يرد خلال ساعة</span>
+              <span class="chip sun"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7L9 18l-5-5"/></svg>٣١ طلباً مكتملاً</span>
+              <span class="chip grey">عضو منذ مارس ٢٠٢٥</span>
+            </div>
+          </div>
+
+          <div class="tabs" data-tabs="v">
+            <button class="on" data-tab="posts">المنشورات</button><button data-tab="market">السوق</button><button data-tab="services">الخدمات</button><button data-tab="circles">الدوائر</button><button data-tab="reviews">التقييمات</button><button data-tab="about">عنه</button>
+          </div>
+
+          <div class="panel" data-panel="v:posts">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#6B7280"><span>على الخريطة الآن: ٩ منشورات نشطة</span><span style="font-weight:600;color:#0A6E78">عرض على الخريطة</span></div>
+            <div class="grid3">
+              <div class="tile"><img src="@@p16@@" alt="صخور الكورنيش"><span class="lbl">الكورنيش</span></div>
+              <div class="tile"><img src="@@p42@@" alt="طاولة مقهى"><span class="lbl">الروضة</span></div>
+              <div class="tile"><img src="@@p184@@" alt="كثبان رملية"><span class="kind"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span><span class="lbl">طريق مكة</span></div>
+              <div class="tile"><img src="@@p37@@" alt="ساحل"><span class="lbl">أبحر</span></div>
+              <div class="tile"><img src="@@p63@@" alt="فنجان قهوة"><span class="kind"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 3v10"/><path d="M8 13a4 4 0 0 0 8 0"/><path d="M12 17v4"/></svg></span><span class="lbl">الحمراء</span></div>
+              <div class="tile"><img src="@@p57@@" alt="شارع"><span class="lbl">البلد</span></div>
+              <div class="tile"><img src="@@p244@@" alt="رصيف بحري"><span class="lbl">الكورنيش</span></div>
+              <div class="tile"><img src="@@p274@@" alt="شارع ليلاً"><span class="lbl">التحلية</span></div>
+              <div class="tile"><img src="@@p154@@" alt="شاطئ"><span class="lbl">الشاطئ</span></div>
+            </div>
+            <button class="btn ghost" style="height:44px;border-radius:12px;justify-content:center">عرض ١١٩ منشوراً أقدم</button>
+          </div>
+
+          <div class="panel" data-panel="v:market" hidden>
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#6B7280"><span>٤ إعلانات نشطة · ٣١ طلباً مكتملاً</span><span style="display:inline-flex;align-items:center;gap:4px;color:#1FA35A;font-weight:600"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5z"/></svg>بائع موثوق</span></div>
+            <div class="grid2">
+              <div class="card"><img src="@@p250@@" alt="كاميرا فوجي"><div class="body"><span class="t">كاميرا فوجي X-T20 مع عدسة 18-55</span><span class="price">2,650 ر.س</span><span class="d muted" style="font-size:11.5px">مستعمل · نظيف جداً · الشاطئ</span></div></div>
+              <div class="card"><img src="@@p60@@" alt="حامل وإكسسوارات"><div class="body"><span class="t">حامل مانفروتو + حقيبة ظهر</span><span class="price">480 ر.س</span><span class="d muted" style="font-size:11.5px">مستعمل · توصيل داخل جدة</span></div></div>
+              <div class="card"><img src="@@p119@@" alt="لابتوب"><div class="body"><span class="t">ماك بوك إير M1 للمونتاج</span><span class="price">2,900 ر.س</span><span class="d muted" style="font-size:11.5px">مستعمل · بطارية ٩١٪</span></div></div>
+              <div class="card"><img src="@@p26@@" alt="إكسسوارات"><div class="body"><span class="t">طقم فلاتر ND وبطاريات</span><span class="price">220 ر.س</span><span class="d muted" style="font-size:11.5px">جديد · استلام من المقهى</span></div></div>
+            </div>
+          </div>
+
+          <div class="panel" data-panel="v:services" hidden>
+            <div style="font-size:13px;color:#6B7280">الحجز يتم داخل ناس لايف والدفع من المحفظة بعد التسليم</div>
+            <div class="row"><img src="@@avatar@@" alt=""><div class="body"><span class="t">جلسة تصوير شخصية · ساعة</span><span class="d">٢٥ صورة معدّلة · الكورنيش أو استوديو</span><span class="price">من 350 ر.س</span></div><button class="btn sm">احجز</button></div>
+            <div class="row"><img src="@@p42@@" alt=""><div class="body"><span class="t">تصوير منتجات ومقاهي</span><span class="d">٤٠ صورة للمنيو أو المتجر · يوم واحد</span><span class="price">من 900 ر.س</span></div><button class="btn sm">احجز</button></div>
+            <div class="row"><img src="@@s158@@" alt=""><div class="body"><span class="t">تغطية فعاليات وبازارات</span><span class="d">٤ ساعات · تسليم خلال ٤٨ ساعة</span><span class="price">من 1,200 ر.س</span></div><button class="btn sm">احجز</button></div>
+            <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px"><span class="sect">معرض الأعمال</span><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px"><img src="@@p244@@" alt="" style="aspect-ratio:1;width:100%;object-fit:cover;border-radius:8px"><img src="@@p16@@" alt="" style="aspect-ratio:1;width:100%;object-fit:cover;border-radius:8px"><img src="@@p63@@" alt="" style="aspect-ratio:1;width:100%;object-fit:cover;border-radius:8px"><img src="@@p274@@" alt="" style="aspect-ratio:1;width:100%;object-fit:cover;border-radius:8px"></div></div>
+          </div>
+
+          <div class="panel" data-panel="v:circles" hidden>
+            <span class="sect">يملك</span>
+            <div class="row"><span style="width:48px;height:48px;border-radius:12px;background:#0A6E78;color:#fff;display:inline-flex;align-items:center;justify-content:center;font:800 18px var(--font-display);flex:none">ف</span><div class="body"><span class="t">استوديو فهد شوتس</span><span class="d">دائرة أعمال · ٣٤٠ متابعاً · الشاطئ</span></div><button class="btn sm ghost" style="color:#0A6E78;border-color:#0A6E78;font-weight:700">متابعة</button></div>
+            <span class="sect" style="margin-top:4px">عضو في</span>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;gap:12px;align-items:center"><img src="@@overdose@@" alt="" style="width:44px;height:44px;border-radius:12px;object-fit:cover;background:#F2F2F7"><div style="display:flex;flex-direction:column;gap:1px"><span style="font-size:14px;font-weight:600">أوفردوز</span><span class="muted" style="font-size:12px">مقهى · ١٢ مشاركة في المجتمع</span></div></div>
+              <div style="display:flex;gap:12px;align-items:center"><img src="@@halfmillion@@" alt="" style="width:44px;height:44px;border-radius:12px;object-fit:cover;background:#F2F2F7"><div style="display:flex;flex-direction:column;gap:1px"><span style="font-size:14px;font-weight:600">هاف مليون</span><span class="muted" style="font-size:12px">مقهى · ٧ مشاركات</span></div></div>
+              <div style="display:flex;gap:12px;align-items:center"><img src="@@3brews@@" alt="" style="width:44px;height:44px;border-radius:12px;object-fit:cover;background:#F2F2F7"><div style="display:flex;flex-direction:column;gap:1px"><span style="font-size:14px;font-weight:600">ثري بروز</span><span class="muted" style="font-size:12px">مقهى · ٤ مشاركات</span></div></div>
+              <div style="display:flex;gap:12px;align-items:center"><img src="@@rawnah@@" alt="" style="width:44px;height:44px;border-radius:12px;object-fit:cover;background:#F2F2F7"><div style="display:flex;flex-direction:column;gap:1px"><span style="font-size:14px;font-weight:600">رونة</span><span class="muted" style="font-size:12px">مقهى · مشاركتان</span></div></div>
+              <div style="display:flex;gap:12px;align-items:center"><img src="@@malaga@@" alt="" style="width:44px;height:44px;border-radius:12px;object-fit:cover;background:#F2F2F7"><div style="display:flex;flex-direction:column;gap:1px"><span style="font-size:14px;font-weight:600">مالقا</span><span class="muted" style="font-size:12px">مقهى · مشاركة واحدة</span></div></div>
+            </div>
+          </div>
+
+          <div class="panel" data-panel="v:reviews" hidden>
+            <div style="display:flex;gap:16px;align-items:center;background:#F2F2F7;border-radius:14px;padding:12px 14px">
+              <div style="display:flex;flex-direction:column;align-items:center;flex:none"><span style="font:800 34px/1 var(--font-display)">4.9</span><span class="muted" style="font-size:11.5px">٤٧ تقييماً</span></div>
+              <div style="flex-grow:1;display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:#6B7280">
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:12px">٥</span><div class="bar"><i style="width:91%"></i></div></div>
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:12px">٤</span><div class="bar"><i style="width:7%"></i></div></div>
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:12px">٣</span><div class="bar"><i style="width:2%"></i></div></div>
+                <div style="display:flex;align-items:center;gap:6px"><span style="width:12px">٢</span><div class="bar"><i style="width:0%"></i></div></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;font-size:12px"><span class="pill" style="background:#111;color:#fff;font-weight:600">الكل ٤٧</span><span class="pill">خدمات ٢٩</span><span class="pill">سوق ١٨</span></div>
+            <div class="review">
+              <div class="rhead"><span class="av" style="background:#9EE0CC">س</span><div style="flex-grow:1;display:flex;flex-direction:column"><span style="font-size:13.5px;font-weight:600">سارة م.</span><span class="muted" style="font-size:11.5px">جلسة تصوير شخصية · قبل ٣ أيام</span></div><span class="stars">@@star@@@@star@@@@star@@@@star@@@@star@@</span></div>
+              <p style="margin:0;font-size:13.5px;line-height:1.5">التزم بالوقت والصور طلعت أحلى من المتوقع. سلّمني الألبوم في اليوم التالي.</p>
+              <div style="display:flex;gap:6px;background:#F2F2F7;border-radius:10px;padding:8px 10px;font-size:12.5px;color:#374151"><span style="font-weight:600;flex:none">ردّ فهد:</span><span>شكراً سارة، تشرفت بالتصوير معكم.</span></div>
+            </div>
+            <div class="review">
+              <div class="rhead"><span class="av" style="background:#A9D3FF">ع</span><div style="flex-grow:1;display:flex;flex-direction:column"><span style="font-size:13.5px;font-weight:600">عبدالله ر.</span><span class="muted" style="font-size:11.5px">شراء: حامل مانفروتو · قبل أسبوع</span></div><span class="stars">@@star@@@@star@@@@star@@@@star@@@@star@@</span></div>
+              <p style="margin:0;font-size:13.5px;line-height:1.5">الحامل مثل الوصف تماماً، والتسليم كان عند مقهى قريب مني.</p>
+            </div>
+            <div class="review">
+              <div class="rhead"><span class="av" style="background:#FFB9D6">ن</span><div style="flex-grow:1;display:flex;flex-direction:column"><span style="font-size:13.5px;font-weight:600">نورة ح. · متجر حلا</span><span class="muted" style="font-size:11.5px">تصوير منتجات · قبل شهر</span></div><span class="stars">@@star@@@@star@@@@star@@@@star@@@@ostar@@</span></div>
+              <p style="margin:0;font-size:13.5px;line-height:1.5">صور المنيو رفعت مبيعاتنا في السوق. تأخر التسليم يوماً لكنه اعتذر وعوّض بصور إضافية.</p>
+            </div>
+          </div>
+
+          <div class="panel" data-panel="v:about" hidden style="gap:14px">
+            <div class="field"><span class="sect">مهاراته</span><div class="chips"><span class="pill">تصوير بورتريه</span><span class="pill">تصوير منتجات</span><span class="pill">مونتاج</span><span class="pill">درون</span></div></div>
+            <div class="field"><span class="sect">هواياته</span><div class="chips"><span class="pill">غوص</span><span class="pill">قهوة مختصة</span><span class="pill">تخييم</span></div></div>
+            <div class="field"><span class="sect">يبحث عن</span><div class="chips"><span class="pill sun">مساعد تصوير للفعاليات</span><span class="pill sun">مقاهٍ للتعاون</span></div></div>
+            <div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid #E5E5EA;padding-top:12px">
+              <div class="kv"><span>نوع الحساب</span><span>مهني · مصوّر</span></div>
+              <div class="kv"><span>المدينة</span><span>جدة · حي الشاطئ</span></div>
+              <div class="kv"><span>عضو منذ</span><span>مارس ٢٠٢٥</span></div>
+              <div class="kv"><span>آخر نشاط</span><span>اليوم</span></div>
+              <div class="kv"><span>الرقم SA</span><span style="color:#6B7280">يظهر للأصدقاء فقط</span></div>
+            </div>
+          </div>
+        </div>
+        <nav class="nav">
+          <button>@@nav-map@@الخريطة</button><button>@@nav-circles@@الدوائر</button><button>@@nav-market@@السوق</button><button>@@nav-chat@@الدردشة</button><button data-go="owner">@@nav-me@@ماي سبيس</button>
+        </nav>
+      </div></div>
+      <p class="note">غلاف وصورة واسم واسم مستخدم وعلامة توثيق، مدينة وحي، نبذة وروابط، أرقام، أزرار متابعة ومراسلة ومشاركة، شريط الثقة، ثم ست تبويبات. جرّب زر «متابعة» والتبويبات.</p>
+    </section>
+
+    <!-- ================= 2. OWNER ================= -->
+    <section class="slot" id="s-owner">
+      <h2><span>٢</span>ما يراه صاحب الحساب</h2>
+      <div class="phone"><div class="screen">
+        <div class="scroll">
+          <div style="position:relative;height:176px;flex:none">
+            <img src="@@cover@@" alt="غلاف" style="width:100%;height:176px;object-fit:cover;display:block">
+            <div style="position:absolute;top:12px;right:12px;left:12px;display:flex;justify-content:space-between;align-items:center">
+              <span style="font:800 20px var(--font-display);color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5)">ماي سبيس</span>
+              <div style="display:flex;gap:8px">
+                <button class="iconbtn" data-go="privacy" aria-label="التوثيق والخصوصية"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5z"/></svg></button>
+                <button class="iconbtn" aria-label="الإعدادات"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+              </div>
+            </div>
+            <button class="iconbtn" style="position:absolute;bottom:10px;left:12px;width:auto;height:32px;padding:0 12px;border-radius:999px;font:600 12px var(--font-body);gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>تغيير الغلاف</button>
+          </div>
+          <div style="padding:0 16px;display:flex;flex-direction:column;gap:10px;flex:none">
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-top:-44px">
+              <div style="position:relative">
+                <img src="@@avatar@@" alt="صورتي" style="width:96px;height:96px;border-radius:999px;object-fit:cover;border:4px solid #fff;background:#F2F2F7;display:block">
+                <button aria-label="تغيير الصورة" style="position:absolute;bottom:2px;left:2px;width:30px;height:30px;border-radius:999px;border:2px solid #fff;background:#0A6E78;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+              </div>
+              <div style="display:flex;gap:8px;padding-bottom:6px">
+                <button class="btn ghost" data-go="visitor" style="padding:0 14px"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>كزائر</button>
+                <button class="btn" data-go="edit" style="padding:0 18px">تعديل الملف</button>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:3px">
+              <div style="display:flex;align-items:center;gap:6px"><span class="name">فهد الغامدي</span><span class="vmark"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span><span class="tag">مصوّر</span></div>
+              <div class="muted" style="font-size:13.5px;display:flex;align-items:center;gap:10px"><span dir="ltr">@fahad.shots</span><span>جدة · حي الشاطئ</span><span style="color:#9CA3AF">SA9954961</span></div>
+            </div>
+            <div class="done">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:13.5px;font-weight:700">اكتمال الملف <span id="pct">50</span>٪</span><span id="left" style="font-size:12px">خطوتان متبقيتان</span></div>
+              <div style="height:8px;background:rgba(90,66,0,.15);border-radius:999px;overflow:hidden"><div id="pctbar" style="width:50%;height:100%;background:#875C0A;border-radius:999px;transition:width .2s"></div></div>
+              <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+                <div style="display:flex;align-items:center;gap:8px"><span class="ck y"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span><span>صورة وغلاف ونبذة</span></div>
+                <div style="display:flex;align-items:center;gap:8px"><span class="ck y"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span><span>توثيق البريد والجوال</span></div>
+                <button class="step" data-done="أضفت رابط إنستغرام" data-todo="أضف رابطاً واحداً على الأقل"><span class="ck"></span><span>أضف رابطاً واحداً على الأقل</span></button>
+                <button class="step" data-done="أضفت معرض أعمال" data-todo="أضف صوراً إلى معرض الأعمال"><span class="ck"></span><span>أضف صوراً إلى معرض الأعمال</span></button>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:14px;font-weight:700">آخر ٧ أيام</span><span style="font-size:12.5px;font-weight:600;color:#0A6E78">التفاصيل</span></div>
+              <div class="kpi"><div><small>زيارات الملف</small><b>312</b><em>+٤٢٪</em></div><div><small>وصول المنشورات</small><b>4.8k</b><em>+١٨٪</em></div><div><small>رسائل من الملف</small><b>27</b><em style="color:#6B7280">٣ حجوزات</em></div></div>
+            </div>
+            <div class="stats">
+              <div class="stat"><b>128</b><small>منشور</small></div><div class="stat"><b>1,212</b><small>متابِع</small></div><div class="stat"><b>4.9</b><small>٤٧ تقييماً</small></div><div class="stat"><b>2,340</b><small>ر.س في المحفظة</small></div>
+            </div>
+          </div>
+
+          <div class="tabs" data-tabs="o">
+            <button class="on" data-tab="posts">المنشورات</button><button data-tab="market">السوق</button><button data-tab="services">الخدمات</button><button data-tab="circles">الدوائر</button><button data-tab="reviews">التقييمات</button><button data-tab="about">عني</button>
+          </div>
+
+          <div class="panel" data-panel="o:posts">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#6B7280"><span>٩ نشطة · ٣ تنتهي اليوم · مسودّتان</span><span style="font-weight:600;color:#0A6E78;display:inline-flex;align-items:center;gap:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>منشور جديد</span></div>
+            <div class="grid3">
+              <div class="tile"><img src="@@p16@@" alt=""><span class="lbl">@@eye@@1.2k</span></div>
+              <div class="tile"><img src="@@p42@@" alt=""><span class="lbl">@@eye@@860</span></div>
+              <div class="tile"><img src="@@p184@@" alt=""><span class="soon">ينتهي اليوم</span><span class="lbl">@@eye@@2.4k</span></div>
+              <div class="tile"><img src="@@p37@@" alt=""><span class="lbl">@@eye@@410</span></div>
+              <div class="tile"><img src="@@p63@@" alt=""><span class="lbl">@@eye@@530</span></div>
+              <div class="tile"><img src="@@p57@@" alt=""><span class="lbl">@@eye@@990</span></div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;border:1.5px dashed #C7C7CC;border-radius:12px;padding:10px 12px;font-size:13px;color:#6B7280"><span style="width:44px;height:44px;border-radius:8px;background:#F2F2F7;display:inline-flex;align-items:center;justify-content:center;flex:none"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span><span>مسودّتان محفوظتان تلقائياً: «غروب أبحر»، «عرض جلسات رمضان»</span></div>
+          </div>
+
+          <div class="panel" data-panel="o:market" hidden>
+            <div class="kpi" style="font-size:12px"><div><small>إعلانات نشطة</small><b style="font-size:18px">4</b></div><div><small>طلبات مفتوحة</small><b style="font-size:18px;color:#BF3A1E">2</b></div><div><small>مبيعات الشهر</small><b style="font-size:18px">1,930</b></div></div>
+            <div class="row s"><img src="@@p250@@" alt=""><div class="body"><span class="t" style="font-size:13.5px">كاميرا فوجي X-T20</span><span class="d" style="font-size:12px">٤٣ مشاهدة · ٣ محادثات · سبوت لايت ينتهي بعد يومين</span></div><button class="btn sm ghost">تعديل</button></div>
+            <div class="row s"><img src="@@p60@@" alt=""><div class="body"><span class="t" style="font-size:13.5px">حامل مانفروتو + حقيبة</span><span class="d" style="font-size:12px;color:#BF3A1E;font-weight:600">طلب بانتظار التأكيد من عبدالله ر.</span></div><button class="btn sm">تأكيد</button></div>
+            <button class="btn ghost" style="height:44px;border-radius:12px;justify-content:center">لوحة البائع الكاملة</button>
+          </div>
+
+          <div class="panel" data-panel="o:services" hidden>
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#6B7280"><span>٣ خدمات · ٣ حجوزات هذا الأسبوع</span><span style="font-weight:600;color:#0A6E78">خدمة جديدة</span></div>
+            <div class="row s"><img src="@@avatar@@" alt=""><div class="body"><span class="t" style="font-size:14px">جلسة تصوير شخصية</span><span class="d" style="font-size:12px">من 350 ر.س · ١٤ حجزاً · 4.9</span></div><label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#6B7280"><input type="checkbox" checked style="width:18px;height:18px;accent-color:#0A6E78">ظاهرة</label></div>
+            <div class="row s"><img src="@@p42@@" alt=""><div class="body"><span class="t" style="font-size:14px">تصوير منتجات ومقاهي</span><span class="d" style="font-size:12px">من 900 ر.س · ٩ حجوزات · 4.8</span></div><label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#6B7280"><input type="checkbox" checked style="width:18px;height:18px;accent-color:#0A6E78">ظاهرة</label></div>
+            <div class="row s"><img src="@@s158@@" alt=""><div class="body"><span class="t" style="font-size:14px">تغطية فعاليات وبازارات</span><span class="d" style="font-size:12px">من 1,200 ر.س · ٦ حجوزات · 5.0</span></div><label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#6B7280"><input type="checkbox" checked style="width:18px;height:18px;accent-color:#0A6E78">ظاهرة</label></div>
+            <div style="display:flex;flex-direction:column;gap:6px;background:#E0F3F4;border-radius:12px;padding:10px 12px;font-size:13px;color:#0F2D30"><span style="font-weight:700">الحجز القادم</span><span>الخميس ٤:٣٠ م · جلسة تصوير شخصية · سارة م. · الكورنيش</span></div>
+          </div>
+
+          <div class="panel" data-panel="o:circles" hidden>
+            <div class="row"><span style="width:48px;height:48px;border-radius:12px;background:#0A6E78;color:#fff;display:inline-flex;align-items:center;justify-content:center;font:800 18px var(--font-display);flex:none">ف</span><div class="body"><span class="t">استوديو فهد شوتس</span><span class="d">دائرتك · ٣٤٠ متابعاً · ٥ رسائل جديدة</span></div><button class="btn sm ghost" style="color:#0A6E78;border-color:#0A6E78;font-weight:700">إدارة</button></div>
+            <span class="sect" style="margin-top:4px">عضو في ٥ دوائر</span>
+            <div style="display:flex;gap:8px;flex-wrap:wrap"><img src="@@overdose@@" alt="أوفردوز" style="width:56px;height:56px;border-radius:14px;object-fit:cover;background:#F2F2F7"><img src="@@halfmillion@@" alt="هاف مليون" style="width:56px;height:56px;border-radius:14px;object-fit:cover;background:#F2F2F7"><img src="@@3brews@@" alt="ثري بروز" style="width:56px;height:56px;border-radius:14px;object-fit:cover;background:#F2F2F7"><img src="@@rawnah@@" alt="رونة" style="width:56px;height:56px;border-radius:14px;object-fit:cover;background:#F2F2F7"><img src="@@malaga@@" alt="مالقا" style="width:56px;height:56px;border-radius:14px;object-fit:cover;background:#F2F2F7"></div>
+          </div>
+
+          <div class="panel" data-panel="o:reviews" hidden>
+            <div style="display:flex;flex-direction:column;gap:6px;background:#FDEBE6;border-radius:12px;padding:10px 12px;font-size:13px;color:#7A2412"><span style="font-weight:700">تقييم بلا ردّ</span><span>نورة ح. أعطت ٤ نجوم وذكرت تأخر التسليم. الردّ العلني يرفع الثقة.</span><button class="btn sm" style="align-self:flex-start;background:#BF3A1E;height:32px;font-size:12.5px">اكتب ردّاً</button></div>
+            <div class="kv"><span>المتوسط العام</span><span>4.9 من ٤٧ تقييماً</span></div>
+            <div class="kv"><span>الخدمات</span><span>4.9 · ٢٩</span></div>
+            <div class="kv"><span>السوق</span><span>4.8 · ١٨</span></div>
+          </div>
+
+          <div class="panel" data-panel="o:about" hidden>
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:13.5px"><span class="muted">مهاراتي</span><button class="btn sm ghost" data-go="edit" style="height:30px">تعديل</button></div>
+            <div class="chips"><span class="pill">تصوير بورتريه</span><span class="pill">تصوير منتجات</span><span class="pill">مونتاج</span><span class="pill">درون</span></div>
+            <div class="kv" style="border-top:1px solid #E5E5EA;padding-top:10px"><span>الحساب</span><span>مهني · مصوّر</span></div>
+            <div class="kv"><span>البريد</span><span dir="ltr">f•••@gmail.com ✓</span></div>
+            <div class="kv"><span>الجوال</span><span dir="ltr">05•• ••• 41 ✓</span></div>
+          </div>
+        </div>
+        <nav class="nav">
+          <button>@@nav-map@@الخريطة</button><button>@@nav-circles@@الدوائر</button><button>@@nav-market@@السوق</button><button>@@nav-chat@@الدردشة</button><button class="on">@@nav-me@@ماي سبيس</button>
+        </nav>
+      </div></div>
+      <p class="note">الرأس نفسه مع «تعديل الملف» و«كزائر»، اكتمال الملف بخطوات (اضغط الخطوتين)، إحصاءات آخر ٧ أيام، والتبويبات بأدوات الإدارة: مشاهدات كل منشور، مسودّات، طلب بانتظار التأكيد، الحجز القادم، وتقييم بلا ردّ.</p>
+    </section>
+
+    <!-- ================= 3. EDIT ================= -->
+    <section class="slot" id="s-edit">
+      <h2><span>٣</span>تعديل الملف</h2>
+      <div class="phone"><div class="screen">
+        <div style="flex:none;height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 12px 0 16px;border-bottom:1px solid #E5E5EA">
+          <button class="btn ghost" data-go="owner" style="border:0;color:#6B7280;padding:0">إلغاء</button>
+          <span style="font:800 18px var(--font-display)">تعديل الملف</span>
+          <button class="btn sm" data-go="owner" style="height:36px;padding:0 16px">حفظ</button>
+        </div>
+        <div class="scroll" style="gap:18px;padding:0 16px 28px">
+          <div style="position:relative;margin:0 -16px;height:150px;flex:none">
+            <img src="@@cover@@" alt="الغلاف" style="width:100%;height:150px;object-fit:cover;display:block;opacity:.85">
+            <button class="iconbtn" style="position:absolute;top:12px;left:12px;width:auto;height:32px;padding:0 12px;font:600 12px var(--font-body)">تغيير الغلاف</button>
+            <div style="position:absolute;bottom:-36px;right:16px">
+              <img src="@@avatar@@" alt="الصورة" style="width:88px;height:88px;border-radius:999px;object-fit:cover;border:4px solid #fff;display:block">
+              <button aria-label="تغيير الصورة" style="position:absolute;bottom:0;left:0;width:30px;height:30px;border-radius:999px;border:2px solid #fff;background:#0A6E78;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+            </div>
+          </div>
+          <div style="height:22px;flex:none"></div>
+          <div class="field"><label class="lb" for="dn">الاسم المعروض</label><input id="dn" class="in" type="text" value="فهد الغامدي"></div>
+          <div class="field">
+            <label class="lb" for="un">اسم المستخدم</label>
+            <div style="position:relative"><input id="un" class="in" type="text" value="fahad.shots" dir="ltr" style="padding-left:12px;padding-right:30px;text-align:left"><span style="position:absolute;top:0;right:12px;height:46px;display:inline-flex;align-items:center;color:#6B7280;font-weight:600">@</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;gap:8px"><span id="unMsg" style="color:#1FA35A;font-weight:600">متاح</span><span class="muted" dir="ltr" style="text-align:right">naslife.app/u/<span id="unEcho">fahad.shots</span></span></div>
+            <span class="muted" style="font-size:11.5px">يمكن تغييره مرة كل ٣٠ يوماً، والرابط القديم يحوّل تلقائياً لمدة ٩٠ يوماً.</span>
+          </div>
+          <div class="field">
+            <div style="display:flex;justify-content:space-between"><label class="lb" for="bio">النبذة</label><span class="muted" style="font-size:12px"><span id="bioN">98</span> / 160</span></div>
+            <textarea id="bio" class="in" maxlength="160">أصوّر البحر والمقاهي والناس في جدة منذ ٢٠١٩. جلسات تصوير شخصية وتصوير منتجات للمتاجر الصغيرة، وأبيع معداتي القديمة هنا في السوق.</textarea>
+          </div>
+          <div class="field">
+            <span class="lb">نوع الحساب</span>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px" id="acct">
+              <button data-acct="personal" style="height:64px;border-radius:12px;border:1.5px solid #E5E5EA;background:#fff;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;padding:0 12px;cursor:pointer;font-family:var(--font-body);text-align:right"><span style="font-size:14px;font-weight:700;color:#111">شخصي</span><span style="font-size:11.5px;color:#6B7280">منشورات وأصدقاء وسوق</span></button>
+              <button data-acct="pro" class="on" style="height:64px;border-radius:12px;border:1.5px solid #0A6E78;background:#E0F3F4;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;padding:0 12px;cursor:pointer;font-family:var(--font-body);text-align:right"><span style="font-size:14px;font-weight:700;color:#111">مهني</span><span style="font-size:11.5px;color:#6B7280">+ خدمات وحجز ومعرض أعمال</span></button>
+            </div>
+            <div class="field" id="jobField" style="margin-top:4px"><label class="lb" for="job">المسمى المهني (يظهر بجانب الاسم)</label><input id="job" class="in" type="text" value="مصوّر"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
+            <div class="field"><label class="lb" for="city">المدينة</label><select id="city" class="in"><option>جدة</option><option>الدمام</option></select></div>
+            <div class="field"><label class="lb" for="dist">الحي</label><select id="dist" class="in"><option>الشاطئ</option><option>الحمراء</option><option>الروضة</option><option>أبحر الشمالية</option><option>السلامة</option></select></div>
+          </div>
+          <div class="field">
+            <span class="lb">المهارات (حتى ٨)</span>
+            <div class="chips" style="gap:6px">
+              <span class="chip" style="font-size:12.5px;padding:6px 10px">تصوير بورتريه<button aria-label="إزالة" class="rm">@@x@@</button></span>
+              <span class="chip" style="font-size:12.5px;padding:6px 10px">تصوير منتجات<button aria-label="إزالة" class="rm">@@x@@</button></span>
+              <span class="chip" style="font-size:12.5px;padding:6px 10px">مونتاج<button aria-label="إزالة" class="rm">@@x@@</button></span>
+              <span class="chip" style="font-size:12.5px;padding:6px 10px">درون<button aria-label="إزالة" class="rm">@@x@@</button></span>
+              <button style="padding:6px 10px;border-radius:999px;border:1.5px dashed #C7C7CC;background:#fff;font:500 12.5px var(--font-body);color:#6B7280;cursor:pointer">+ إضافة</button>
+            </div>
+          </div>
+          <div class="field" style="gap:8px">
+            <span class="lb">الروابط (حتى ٣)</span>
+            <div style="display:flex;align-items:center;gap:10px;border:1.5px solid #E5E5EA;border-radius:12px;padding:0 12px;height:46px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="#6B7280"/></svg><input id="lnk1" type="text" value="fahad.shots" dir="ltr" aria-label="إنستغرام" style="flex-grow:1;min-width:0;border:0;outline:none;font:500 14px var(--font-body);color:#111;text-align:left;background:transparent"></div>
+            <div style="display:flex;align-items:center;gap:10px;border:1.5px solid #E5E5EA;border-radius:12px;padding:0 12px;height:46px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7L12 19"/></svg><input id="lnk2" type="text" value="fahadshots.sa" dir="ltr" aria-label="موقع" style="flex-grow:1;min-width:0;border:0;outline:none;font:500 14px var(--font-body);color:#111;text-align:left;background:transparent"></div>
+            <span class="muted" style="font-size:11.5px">الحجز والدفع يبقيان داخل ناس لايف؛ الروابط للتعريف فقط.</span>
+          </div>
+          <div class="kv" style="border-top:1px solid #E5E5EA;padding-top:14px"><span>الرقم SA9954961</span><span style="font-size:12px;color:#6B7280;font-weight:500">ثابت ولا يُعدَّل</span></div>
+        </div>
+      </div></div>
+      <p class="note">الاسم المعروض، اسم المستخدم مع فحص التوفر الحي (جرّب كتابة fahad أو أحرف عربية)، النبذة بعدّاد ١٦٠، نوع الحساب شخصي/مهني، المدينة والحي، المهارات، الروابط. الرقم SA ثابت.</p>
+    </section>
+
+    <!-- ================= 4. PRIVACY ================= -->
+    <section class="slot" id="s-privacy">
+      <h2><span>٤</span>التوثيق والتحكم</h2>
+      <div class="phone"><div class="screen">
+        <div style="flex:none;height:56px;display:flex;align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid #E5E5EA">
+          <button class="iconbtn" data-go="owner" aria-label="رجوع" style="background:transparent;color:#111"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
+          <span style="font:800 18px var(--font-display)">التوثيق والتحكم</span>
+        </div>
+        <div class="scroll" style="gap:20px;padding:16px 16px 28px">
+          <div class="field" style="gap:10px">
+            <span style="font-size:14px;font-weight:700">درجة التوثيق</span>
+            <div class="list">
+              <div><span class="av" style="background:#E0F3F4;color:#0A6E78"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></span><div class="body"><span class="t">البريد الإلكتروني</span><span class="d" dir="ltr" style="text-align:right">f•••@gmail.com</span></div><span class="ok">@@check@@موثّق</span></div>
+              <div><span class="av" style="background:#E0F3F4;color:#0A6E78"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg></span><div class="body"><span class="t">رقم الجوال</span><span class="d" dir="ltr" style="text-align:right">05•• ••• 41</span></div><span class="ok" id="phoneOk" hidden>@@check@@موثّق</span><button class="btn sm" id="phoneBtn" style="height:32px;font-size:12.5px">أرسل الرمز</button></div>
+              <div><span class="av" style="background:#F2F2F7;color:#6B7280"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="12" r="2.5"/><path d="M14 10h4"/><path d="M14 14h4"/></svg></span><div class="body"><span class="t">الهوية (نفاذ)</span><span class="d">شارة «موثّق بالهوية» للبائعين ومقدمي الخدمات</span></div><span class="pill" style="font-size:12px;font-weight:600;color:#6B7280;padding:4px 10px">قريباً</span></div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:#0F2D30;background:#E0F3F4;border-radius:12px;padding:10px 12px"><span class="vmark">@@check@@</span><span id="badgeText">وثّق الجوال لتظهر علامة التوثيق بجانب اسمك.</span></div>
+          </div>
+          <div class="field" style="gap:10px">
+            <span style="font-size:14px;font-weight:700">من يراسلني</span>
+            <div class="seg3" id="msgSeg"><button class="on" data-msg="all">الجميع</button><button data-msg="friends">الأصدقاء</button><button data-msg="none">لا أحد</button></div>
+            <span class="muted" style="font-size:12px" id="msgHint">أي مستخدم موثّق يستطيع مراسلتك؛ الرسائل الأولى من غير الأصدقاء تصل إلى تبويب «الطلبات».</span>
+          </div>
+          <div class="field" style="gap:10px">
+            <span style="font-size:14px;font-weight:700">ما يظهر في ملفي</span>
+            <div class="list">
+              <label><div class="body"><span class="t">الحالة «متصل الآن»</span><span class="d">للأصدقاء ومن راسلتهم فقط</span></div><input class="sw" type="checkbox" checked aria-label="إظهار الحالة متصل"></label>
+              <label><div class="body"><span class="t">المدينة والحي</span><span class="d">جدة · حي الشاطئ</span></div><input class="sw" type="checkbox" checked aria-label="إظهار المدينة والحي"></label>
+              <label><div class="body"><span class="t">قائمة الأصدقاء</span><span class="d">مخفية عن الجميع الآن</span></div><input class="sw" type="checkbox" aria-label="إظهار قائمة الأصدقاء"></label>
+              <div><div class="body"><span class="t">الرقم SA</span><span class="d">للأصدقاء فقط دائماً، ويُنسخ من بطاقة الدردشة</span></div><span class="muted" style="font-size:12px">للأصدقاء</span></div>
+              <label><div class="body"><span class="t">ملف خاص</span><span class="d">يخفي كل شيء عن غير الأصدقاء بما فيه الحضور والمنشورات، ويخرجك من البحث</span></div><input class="sw" type="checkbox" aria-label="ملف خاص"></label>
+            </div>
+          </div>
+          <div class="field" style="gap:10px">
+            <span style="font-size:14px;font-weight:700">الأمان</span>
+            <div class="list">
+              <button><div class="body"><span class="t">المحظورون</span><span class="d">٣ حسابات</span></div>@@chev@@</button>
+              <button><div class="body"><span class="t">المحادثات الصامتة</span><span class="d">محادثة واحدة</span></div>@@chev@@</button>
+              <button><div class="body"><span class="t">الأجهزة المسجّل دخولها</span><span class="d">آيفون · جدة · الآن</span></div>@@chev@@</button>
+            </div>
+          </div>
+        </div>
+      </div></div>
+      <p class="note">درجات التوثيق (بريد ✓، جوال بزر إرسال الرمز، هوية عبر نفاذ لاحقاً)، من يراسلني بثلاثة خيارات، ما يظهر في ملفي، والأمان. الرقم SA للأصدقاء فقط دائماً.</p>
+    </section>
+
+  </div>
+</div>
+
+<script>
+(function(){
+  var slots = {visitor:'s-visitor', owner:'s-owner', edit:'s-edit', privacy:'s-privacy'};
+  function go(id){
+    Object.keys(slots).forEach(function(k){ document.getElementById(slots[k]).classList.toggle('active', k===id); });
+    document.querySelectorAll('#seg button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-go')===id); });
+    var el = document.getElementById(slots[id]);
+    if (window.innerWidth > 900) el.scrollIntoView({behavior:'smooth', block:'nearest', inline:'center'});
+    else window.scrollTo({top:0, behavior:'smooth'});
+    try { localStorage.setItem('nl-proto-screen', id); } catch(e){}
+  }
+  document.addEventListener('click', function(e){
+    var t = e.target.closest('[data-go]'); if (t) { go(t.getAttribute('data-go')); }
+  });
+  try { var saved = localStorage.getItem('nl-proto-screen'); if (saved && slots[saved]) go(saved); } catch(e){}
+
+  // tabs inside a phone
+  function showTab(ns, id){
+    document.querySelectorAll('[data-tabs="'+ns+'"] button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-tab')===id); });
+    document.querySelectorAll('[data-panel^="'+ns+':"]').forEach(function(p){ p.hidden = p.getAttribute('data-panel') !== ns+':'+id; });
+  }
+  document.querySelectorAll('[data-tabs]').forEach(function(bar){
+    var ns = bar.getAttribute('data-tabs');
+    bar.querySelectorAll('button').forEach(function(b){ b.addEventListener('click', function(){ showTab(ns, b.getAttribute('data-tab')); }); });
+  });
+  document.querySelectorAll('[data-tabgo]').forEach(function(b){ b.addEventListener('click', function(){ showTab('v', b.getAttribute('data-tabgo')); }); });
+
+  // follow
+  var following = false, fb = document.getElementById('followBtn'), fc = document.getElementById('followers');
+  fb.addEventListener('click', function(){
+    following = !following;
+    fb.textContent = following ? 'تتابعه' : 'متابعة';
+    fb.classList.toggle('soft', following);
+    fc.textContent = following ? '1,213' : '1,212';
+  });
+
+  // completion steps
+  var steps = document.querySelectorAll('.step'), pct = document.getElementById('pct'), bar = document.getElementById('pctbar'), left = document.getElementById('left');
+  steps.forEach(function(s){ s.addEventListener('click', function(){
+    var on = s.classList.toggle('y'); var ck = s.querySelector('.ck'); ck.classList.toggle('y', on);
+    ck.innerHTML = on ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>' : '';
+    s.lastElementChild.textContent = on ? s.getAttribute('data-done') : s.getAttribute('data-todo');
+    var n = 2 + document.querySelectorAll('.step.y').length; pct.textContent = n*25; bar.style.width = (n*25)+'%';
+    left.textContent = n===4 ? 'اكتمل ملفك' : (n===3 ? 'خطوة واحدة متبقية' : 'خطوتان متبقيتان');
+  }); });
+
+  // edit screen
+  var un = document.getElementById('un'), unMsg = document.getElementById('unMsg'), unEcho = document.getElementById('unEcho');
+  function checkHandle(){
+    var v = un.value.trim(); unEcho.textContent = v || '…';
+    var valid = /^[a-z0-9._]{3,20}$/.test(v), taken = (v==='fahad' || v==='jeddah' || v==='naslife');
+    unMsg.textContent = !valid ? 'أحرف إنجليزية صغيرة وأرقام ونقطة، ٣ إلى ٢٠' : taken ? 'الاسم محجوز' : 'متاح';
+    unMsg.style.color = (!valid || taken) ? '#D23B3B' : '#1FA35A';
+  }
+  un.addEventListener('input', checkHandle);
+  var bio = document.getElementById('bio'), bioN = document.getElementById('bioN');
+  function countBio(){ bioN.textContent = bio.value.length; } bio.addEventListener('input', countBio); countBio();
+  document.querySelectorAll('#acct button').forEach(function(b){ b.addEventListener('click', function(){
+    var pro = b.getAttribute('data-acct')==='pro';
+    document.querySelectorAll('#acct button').forEach(function(x){ var on = x===b; x.style.borderColor = on ? '#0A6E78' : '#E5E5EA'; x.style.background = on ? '#E0F3F4' : '#fff'; });
+    document.getElementById('jobField').hidden = !pro;
+  }); });
+  document.querySelectorAll('.rm').forEach(function(b){ b.addEventListener('click', function(){ b.parentElement.remove(); }); });
+
+  // privacy screen
+  var pb = document.getElementById('phoneBtn');
+  pb.addEventListener('click', function(){ pb.hidden = true; document.getElementById('phoneOk').hidden = false; document.getElementById('badgeText').textContent = 'تظهر علامة التوثيق بجانب اسمك لأن البريد والجوال موثّقان.'; });
+  var hints = {all:'أي مستخدم موثّق يستطيع مراسلتك؛ الرسائل الأولى من غير الأصدقاء تصل إلى تبويب «الطلبات».', friends:'الأصدقاء ومن اشترى منك أو حجز خدمة فقط.', none:'لا رسائل جديدة؛ المحادثات القائمة تستمر.'};
+  document.querySelectorAll('#msgSeg button').forEach(function(b){ b.addEventListener('click', function(){
+    document.querySelectorAll('#msgSeg button').forEach(function(x){ x.classList.toggle('on', x===b); });
+    document.getElementById('msgHint').textContent = hints[b.getAttribute('data-msg')];
+  }); });
+})();
+</script>
