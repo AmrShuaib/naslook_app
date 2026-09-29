@@ -4,18 +4,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../api/chat_tools_api.dart';
 import '../../api/client.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/notify_api.dart';
-import '../../api/session.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/notify/message_sound.dart';
 import '../../core/platform.dart';
 import '../../core/share/share_links.dart';
-import '../../core/media/pick_image.dart';
 import '../../core/push/push_service.dart';
 import '../../state/admin_providers.dart';
 import '../../state/jobs_providers.dart';
@@ -30,11 +27,14 @@ import '../business/owner/my_businesses_page.dart';
 import '../events/events_page.dart';
 import '../jobs/job_offers_page.dart';
 import '../jobs/job_profile_page.dart';
+import '../profile/edit_profile_page.dart';
+import '../profile/owner_cards.dart';
+import '../profile/privacy_control_page.dart';
+import '../profile/user_profile_page.dart';
 import '../market/market_page.dart';
 import '../posts/my_posts_page.dart';
 import 'delete_account_page.dart';
 import '../home/home_layout_page.dart';
-import 'safety_page.dart';
 import '../../core/share/legal_links.dart';
 import 'saved_searches_page.dart';
 import 'wishlist_page.dart';
@@ -84,7 +84,7 @@ class MySpacePage extends ConsumerWidget {
                     error: (_, __) => const SizedBox(),
                   ),
                 ])),
-                IconButton(tooltip: 'تعديل', onPressed: () => _edit(context, ref, p), icon: const Icon(Icons.edit_rounded, color: Joy.primary)),
+                IconButton(tooltip: 'تعديل', onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EditProfilePage())), icon: const Icon(Icons.edit_rounded, color: Joy.primary)),
               ]),
               const Divider(height: 24),
               Row(children: [
@@ -95,6 +95,8 @@ class MySpacePage extends ConsumerWidget {
               ]),
             ]),
           ),
+          // التعريف الصوتي/المرئي واكتمال الملف وآخر 7 أيام (تظهر حين يدعم الخادم الملف v2)
+          const OwnerProfileCards(),
           const SizedBox(height: 14),
           // بطاقة المحفظة: الرصيد وأزرار سريعة (في iOS بلا شحن ولا تحويل)
           _WalletCard(),
@@ -127,11 +129,13 @@ class MySpacePage extends ConsumerWidget {
           const SizedBox(height: 14),
           const SectionTitle('حسابي'),
           JoyCard(padding: EdgeInsets.zero, child: Column(children: [
+            ListTile(key: const Key('view-public-profile'), leading: const Icon(Icons.person_search_outlined, color: Joy.primary), title: const Text('عرض ملفي العام'), subtitle: const Text('كما يراه الزوار'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: me == null ? null : () => openProfile(context, Person(id: me.id, nickname: me.nickname, avatarUrl: p?.avatarUrl ?? me.avatarUrl))),
+            const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('share-me'), leading: const Icon(Icons.ios_share_rounded, color: Joy.primary), title: const Text('مشاركة حسابي'), subtitle: Text(me == null ? '' : profileLink(me.nickname).replaceFirst(RegExp(r'^https?://'), ''), textDirection: TextDirection.ltr, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: me == null ? null : () => shareLink(context, title: me.nickname, url: profileLink(me.nickname), subtitle: (p?.isPublic ?? true) ? 'حسابك العام على ناس لايف' : 'حسابك خاص: الرابط يعرض اسمك فقط', code: userCode(me.nickname))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('home-layout'), leading: const Icon(Icons.tune_rounded, color: Joy.primary), title: const Text('تخصيص الرئيسية'), subtitle: const Text('أخفِ الأقسام ورتّبها واختر أقسام شريط التنقّل'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HomeLayoutPage()))),
             const Divider(indent: 16, endIndent: 16),
-            ListTile(leading: const Icon(Icons.shield_outlined, color: Joy.primary), title: const Text('الخصوصية والأمان'), subtitle: const Text('المحظورون والمحادثات المكتومة'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SafetyPage()))),
+            ListTile(key: const Key('privacy-control'), leading: const Icon(Icons.shield_outlined, color: Joy.primary), title: const Text('الخصوصية والأمان'), subtitle: const Text('التوثيق، من يراسلك، ما يظهر في ملفك، المحظورون'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PrivacyControlPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('blog-link'), leading: const Icon(Icons.newspaper_outlined, color: Joy.primary), title: const Text('التحديثات والأخبار'), subtitle: const Text('مدونة ناس لايف: كل جديد في التطبيق'), trailing: const Icon(Icons.open_in_new_rounded, color: Joy.textMuted, size: 18), onTap: () => launchUrl(Uri.parse('${publicOrigin()}/blog'), mode: LaunchMode.externalApplication)),
           ])),
@@ -321,113 +325,6 @@ class MySpacePage extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) toast(context, e.toString(), error: true);
     }
-  }
-
-  /// يرفع صورة من الجهاز ويثبّتها صورةً للحساب، ويحدّث الجلسة والملف. يعيد الرابط أو null عند الإلغاء/الفشل.
-  Future<String?> _changeAvatar(BuildContext context, WidgetRef ref) async {
-    try {
-      final img = await pickImage();
-      if (img == null) return null;
-      final api = ref.read(apiClientProvider);
-      final up = await api.uploadMedia(img.bytes, contentType: img.mime, fileName: img.name);
-      final url = await api.setAvatar(up.url);
-      await _applyAvatar(ref, url);
-      if (context.mounted) toast(context, 'حُدّثت صورتك');
-      return url;
-    } catch (e) {
-      if (context.mounted) toast(context, e.toString().contains('unsupported') ? 'الخادم لا يدعم صور الحساب بعد' : e.toString().replaceFirst(RegExp(r'^ApiException\(\d+\): '), ''), error: true);
-      return null;
-    }
-  }
-
-  Future<bool> _removeAvatar(BuildContext context, WidgetRef ref) async {
-    try {
-      await ref.read(apiClientProvider).clearAvatar();
-      await _applyAvatar(ref, null);
-      if (context.mounted) toast(context, 'أُزيلت صورتك');
-      return true;
-    } catch (e) {
-      if (context.mounted) toast(context, e.toString(), error: true);
-      return false;
-    }
-  }
-
-  Future<void> _applyAvatar(WidgetRef ref, String? url) async {
-    final u = ref.read(appStateProvider).user;
-    if (u != null) await ref.read(appStateProvider.notifier).updateUser(SessionUser(id: u.id, nickname: u.nickname, displayName: u.displayName, avatarUrl: url));
-    ref.invalidate(profileProvider);
-  }
-
-  Future<void> _edit(BuildContext context, WidgetRef ref, Profile? p) async {
-    final bio = TextEditingController(text: p?.bio ?? '');
-    final skills = TextEditingController(text: p?.skills.join('، ') ?? '');
-    final hobbies = TextEditingController(text: p?.hobbies.join('، ') ?? '');
-    final looking = TextEditingController(text: p?.lookingFor.join('، ') ?? '');
-    final me = ref.read(appStateProvider).user;
-    String? avatar = p?.avatarUrl ?? me?.avatarUrl;
-    var busy = false;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          title: const Text('تعديل الملف'),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              // صورة الحساب: تُرفع وتُثبَّت فوراً، بمعزل عن زر الحفظ
-              Row(children: [
-                Avatar(name: me?.nickname ?? '', url: avatar, size: 64, ring: true),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    TextButton.icon(
-                      onPressed: busy
-                          ? null
-                          : () async {
-                              setS(() => busy = true);
-                              final url = await _changeAvatar(ctx, ref);
-                              if (url != null) avatar = url;
-                              if (ctx.mounted) setS(() => busy = false);
-                            },
-                      icon: const Icon(Icons.photo_camera_outlined, size: 18),
-                      label: Text(busy ? 'جارٍ الرفع…' : (avatar == null || avatar!.isEmpty ? 'إضافة صورة' : 'تغيير الصورة')),
-                    ),
-                    if (avatar != null && avatar!.isNotEmpty)
-                      TextButton.icon(
-                        onPressed: busy
-                            ? null
-                            : () async {
-                                setS(() => busy = true);
-                                if (await _removeAvatar(ctx, ref)) avatar = null;
-                                if (ctx.mounted) setS(() => busy = false);
-                              },
-                        style: TextButton.styleFrom(foregroundColor: Joy.danger),
-                        icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                        label: const Text('إزالة الصورة'),
-                      ),
-                  ]),
-                ),
-              ]),
-              const SizedBox(height: 10),
-              TextField(controller: bio, maxLines: 3, decoration: const InputDecoration(labelText: 'نبذة عني')),
-              const SizedBox(height: 10),
-              TextField(controller: skills, decoration: const InputDecoration(labelText: 'مهاراتي', helperText: 'افصل بينها بفاصلة')),
-              const SizedBox(height: 10),
-              TextField(controller: hobbies, decoration: const InputDecoration(labelText: 'هواياتي', helperText: 'افصل بينها بفاصلة')),
-              const SizedBox(height: 10),
-              TextField(controller: looking, decoration: const InputDecoration(labelText: 'أبحث عن', helperText: 'أصدقاء، شريك ركض، عمل…')),
-            ]),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('حفظ')),
-          ],
-        ),
-      ),
-    );
-    if (ok != true || !context.mounted) return;
-    List<String> split(String s) => s.split(RegExp(r'[،,]')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-    await _save(context, ref, {'bio': bio.text.trim(), 'skills': split(skills.text), 'hobbies': split(hobbies.text), 'lookingFor': split(looking.text)});
-    if (context.mounted) toast(context, 'حُفظ ملفك');
   }
 }
 
