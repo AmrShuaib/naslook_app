@@ -94,7 +94,10 @@ class _ReviewCard extends ConsumerWidget {
       );
 }
 
-/// الفريق: المالك والمديرون والموظفون، الإضافة بالنك نيم أو المعرّف، ونقل الملكية.
+/// أدوار الفريق القابلة للإسناد: موظف (تشغيل)، مدير (إدارة)، توظيف (العروض الوظيفية والمرشحون).
+const teamRoles = [('staff', 'موظف'), ('manager', 'مدير'), ('hr', 'توظيف')];
+
+/// الفريق: المالك والمديرون والموظفون ومسؤولو التوظيف، الإضافة بالنك نيم أو المعرّف، ونقل الملكية.
 class TeamTab extends ConsumerWidget {
   final Biz biz;
   const TeamTab({super.key, required this.biz});
@@ -106,7 +109,7 @@ class TeamTab extends ConsumerWidget {
         JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('الصلاحيات', style: TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
-          const Text('المالك: كل شيء بما فيه الفريق ونقل الملكية.\nالمدير: الملف والكتالوج والمنشورات والطلبات والردود.\nالموظف: عرض الطلبات وتأكيد الاستلام فقط.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.6)),
+          const Text('المالك: كل شيء بما فيه الفريق ونقل الملكية.\nالمدير: الملف والكتالوج والمنشورات والطلبات والردود.\nالموظف: عرض الطلبات وتأكيد الاستلام فقط.\nالتوظيف: العروض الوظيفية والمرشحون فقط.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.6)),
         ])),
         const SectionTitle('المالك'),
         if (t.owner != null)
@@ -136,7 +139,8 @@ class TeamTab extends ConsumerWidget {
                     } catch (e) { if (context.mounted) toast(context, ownerErrText(e), error: true); }
                   },
                   itemBuilder: (_) => [
-                    PopupMenuItem(value: s.role == 'manager' ? 'staff' : 'manager', child: Text(s.role == 'manager' ? 'تحويل إلى موظف' : 'ترقية إلى مدير')),
+                    for (final (k, l) in teamRoles)
+                      if (k != s.role) PopupMenuItem(value: k, child: Text(k == 'manager' ? 'ترقية إلى مدير' : 'تحويل إلى $l')),
                     const PopupMenuItem(value: 'remove', child: Text('إزالة من الفريق', style: TextStyle(color: Joy.danger))),
                   ],
                 ),
@@ -176,7 +180,7 @@ class TeamTab extends ConsumerWidget {
             TextField(controller: handle, autofocus: true, decoration: const InputDecoration(labelText: 'النك نيم أو المعرّف (SA…)')),
             const SizedBox(height: 10),
             Row(children: [
-              for (final (k, l) in [('staff', 'موظف'), ('manager', 'مدير')])
+              for (final (k, l) in teamRoles)
                 Padding(padding: const EdgeInsets.only(left: 8), child: ChoiceChip(label: Text(l, style: TextStyle(color: role == k ? Joy.primaryOn : Joy.text)), selected: role == k, showCheckmark: false, selectedColor: Joy.primary, onSelected: (_) => setS(() => role = k))),
             ]),
           ]),
