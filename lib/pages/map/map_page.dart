@@ -30,12 +30,20 @@ import '../posts/post_viewer.dart';
 import 'map_cluster.dart';
 import 'map_labels.dart';
 import '../../api/client.dart';
+import '../../state/notify_providers.dart';
+import '../../ui/joy_nav_bar.dart';
+import '../home/home_page.dart';
+import '../notifications/notifications_page.dart';
+import '../search/search_page.dart';
 
 /// مستوى التكبير الذي تبدأ عنده لوحة المنطقة بعرض المشاركات تفصيلياً.
 const double kAreaListZoom = 13;
 
 class MapPage extends ConsumerStatefulWidget {
-  const MapPage({super.key});
+  /// وضع الرئيسية (نظام «الخريطة أولاً»): بحث زجاجي وجرس فوق الخريطة، وأقسام الرئيسية القابلة للتخصيص داخل الورقة
+  /// السفلية، مع مساحة أسفلها لشريط التنقّل العائم.
+  final bool home;
+  const MapPage({super.key, this.home = false});
   @override
   ConsumerState<MapPage> createState() => _MapPageState();
 }
@@ -55,7 +63,9 @@ class _MapPageState extends ConsumerState<MapPage> {
   double _sheetFraction = _sheetInitial;
   bool _ready = false;
 
-  static const _sheetMin = 0.11, _sheetInitial = 0.26, _sheetMax = 0.74;
+  static const _sheetMin = 0.11, _sheetInitial = 0.26;
+  // في وضع الرئيسية تُفتح الورقة حتى تكاد تملأ الشاشة لتُقرأ الأقسام كصفحة
+  double get _sheetMax => widget.home ? 0.92 : 0.74;
 
   void _onMapEvent(MapEvent e) {
     // تحديث فوري (مُخفَّف لإطار واحد) للتجميع ولوحة المنطقة
@@ -173,6 +183,9 @@ class _MapPageState extends ConsumerState<MapPage> {
     final b = _bounds;
     final visible = b == null ? items : itemsInBounds(items, minLat: b.south, minLng: b.west, maxLat: b.north, maxLng: b.east);
     final panelItems = sortForPanel(visible);
+    // أقسام الرئيسية داخل الورقة (وضع الرئيسية فقط)
+    final blocks = widget.home ? [for (final w in homeBlockWidgets(context, ref)) Padding(padding: const EdgeInsets.symmetric(horizontal: 18), child: w)] : const <Widget>[];
+    final bell = widget.home ? ref.watch(unreadCountProvider) + (ref.watch(notifyUnreadProvider).valueOrNull ?? 0) : 0;
 
     // بلا تجميع: كل عنصر نقطة صغيرة بلونها ورمزها حسب نوع المحتوى، وحجمها يتبع مستوى التكبير
     final dot = dotSizeFor(_zoom);
@@ -188,6 +201,8 @@ class _MapPageState extends ConsumerState<MapPage> {
 
     return LayoutBuilder(builder: (context, box) {
       final sheetPx = (_sheetFraction.clamp(0, 1) * box.maxHeight);
+      // في وضع الرئيسية الورقة المطوية تبقى فوق شريط التنقّل العائم
+      final sheetMin = widget.home ? ((JoyNavBar.inset(context) + 48) / box.maxHeight).clamp(_sheetMin, 0.3) : _sheetMin;
       final controlsHidden = _sheetFraction > 0.45;
       return Stack(children: [
         FlutterMap(
@@ -211,12 +226,15 @@ class _MapPageState extends ConsumerState<MapPage> {
             const SimpleAttributionWidget(source: Text('© OpenStreetMap contributors', style: TextStyle(fontSize: 10))),
           ],
         ),
-        // شريط التصفية
+        // بحث زجاجي وجرس (وضع الرئيسية) ثم شريط التصفية
         Positioned(
           top: 10,
           left: 12,
           right: 12,
-          child: Row(children: [
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            if (widget.home) _HomeTopBar(bell: bell),
+            if (widget.home) const SizedBox(height: 8),
+            Row(children: [
             Expanded(
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -236,6 +254,7 @@ class _MapPageState extends ConsumerState<MapPage> {
               ),
             ),
             if (loading) const Padding(padding: EdgeInsets.only(left: 8), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
+            ]),
           ]),
         ),
         // أزرار التحكم تطفو فوق لوحة المنطقة
@@ -286,17 +305,19 @@ class _MapPageState extends ConsumerState<MapPage> {
         Positioned.fill(
           child: DraggableScrollableSheet(
             controller: _sheet,
-            initialChildSize: _sheetInitial,
-            minChildSize: _sheetMin,
+            initialChildSize: math.max(_sheetInitial, sheetMin + 0.16),
+            minChildSize: sheetMin,
             maxChildSize: _sheetMax,
             snap: true,
-            snapSizes: const [_sheetInitial],
+            snapSizes: [math.max(_sheetInitial, sheetMin + 0.16)],
             builder: (context, scroll) => _AreaPanel(
               scroll: scroll,
               items: panelItems,
               total: items.length,
               zoom: _zoom,
               ready: _ready,
+              extra: blocks,
+              bottomPad: widget.home ? JoyNavBar.inset(context) : 0,
               onZoomIn: () => _map.move(_map.camera.center, math.max(_zoom + 2, kAreaListZoom + 1)),
               onSelect: _focus,
               onExpand: () => _sheet.animateTo(_sheetMax, duration: const Duration(milliseconds: 220), curve: Curves.easeOut),
@@ -827,6 +848,9 @@ class _AreaPanel extends StatelessWidget {
   final bool expanded;
   final VoidCallback onZoomIn, onExpand, onCollapse;
   final ValueChanged<MapItem> onSelect;
+  /// أقسام الرئيسية بعد عناصر المنطقة، ومساحة سفلية لشريط التنقّل العائم.
+  final List<Widget> extra;
+  final double bottomPad;
   const _AreaPanel({
     required this.scroll,
     required this.items,
@@ -834,6 +858,8 @@ class _AreaPanel extends StatelessWidget {
     required this.zoom,
     required this.ready,
     required this.expanded,
+    this.extra = const [],
+    this.bottomPad = 0,
     required this.onZoomIn,
     required this.onExpand,
     required this.onCollapse,
@@ -911,10 +937,59 @@ class _AreaPanel extends StatelessWidget {
             )
           else
             for (var i = 0; i < items.length; i++) _ItemRow(item: items[i], onTap: () => onSelect(items[i]), divider: i < items.length - 1),
-          const SizedBox(height: 24),
+          if (extra.isNotEmpty) const Divider(height: 18, color: Joy.line),
+          ...extra,
+          SizedBox(height: 24 + bottomPad),
         ],
       ),
     );
+  }
+}
+
+/// بحث زجاجي مع صورة الحساب، وجرس التنبيهات: فوق الخريطة في وضع الرئيسية.
+class _HomeTopBar extends ConsumerWidget {
+  final int bell;
+  const _HomeTopBar({required this.bell});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final me = ref.watch(appStateProvider.select((s) => s.user));
+    return Row(children: [
+      Expanded(
+        child: Material(
+          color: Joy.surface,
+          borderRadius: BorderRadius.circular(999),
+          elevation: 4,
+          shadowColor: Colors.black38,
+          child: InkWell(
+            key: const Key('home-search'),
+            borderRadius: BorderRadius.circular(999),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage())),
+            child: Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(14, 7, 6, 7),
+              child: Row(children: [
+                const Icon(Icons.search_rounded, color: Joy.textMuted, size: 20),
+                const SizedBox(width: 8),
+                const Expanded(child: Text('ابحث في جدة: أشخاص، دوائر، سوق', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Joy.textMuted, fontSize: 13.5, fontWeight: FontWeight.w500))),
+                if (me != null) Avatar(name: me.nickname, url: me.avatarUrl, size: 30) else const Icon(Icons.person_outline_rounded, color: Joy.textMuted),
+              ]),
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(width: 8),
+      Material(
+        color: Joy.surface,
+        shape: const CircleBorder(),
+        elevation: 4,
+        shadowColor: Colors.black38,
+        child: InkWell(
+          key: const Key('home-bell'),
+          customBorder: const CircleBorder(),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsPage())),
+          child: SizedBox(width: 44, height: 44, child: Badge(isLabelVisible: bell > 0, label: Text('$bell'), backgroundColor: Joy.accent, offset: const Offset(-4, 6), child: const Icon(Icons.notifications_outlined, color: Joy.text))),
+        ),
+      ),
+    ]);
   }
 }
 

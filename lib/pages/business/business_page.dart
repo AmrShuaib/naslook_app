@@ -240,7 +240,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
 
   void _onMap(Biz b) {
     ref.read(mapFocusProvider.notifier).state = (lat: b.lat, lng: b.lng);
-    ref.read(navIndexProvider.notifier).state = 1;
+    ref.read(navIndexProvider.notifier).state = 0;
     Navigator.of(context).popUntil((r) => r.isFirst);
   }
 

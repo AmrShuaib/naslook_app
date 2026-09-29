@@ -9,6 +9,7 @@ import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/share/share_links.dart';
 import '../../core/nav_provider.dart';
+import '../../state/layout_providers.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
@@ -121,7 +122,7 @@ class UserProfilePage extends ConsumerWidget {
             const SizedBox(height: 16),
             if (isMe)
               OutlinedButton.icon(
-                onPressed: () { Navigator.of(context).pop(); ref.read(navIndexProvider.notifier).state = 4; },
+                onPressed: () { Navigator.of(context).pop(); ref.read(navIndexProvider.notifier).state = ref.read(homeLayoutProvider).nav.length - 1; },
                 icon: const Icon(Icons.edit_rounded),
                 label: const Text('هذا ملفك · عدّله من ماي سبيس'),
               )

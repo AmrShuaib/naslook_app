@@ -33,6 +33,7 @@ import '../jobs/job_profile_page.dart';
 import '../market/market_page.dart';
 import '../posts/my_posts_page.dart';
 import 'delete_account_page.dart';
+import '../home/home_layout_page.dart';
 import 'safety_page.dart';
 import '../../core/share/legal_links.dart';
 import 'saved_searches_page.dart';
@@ -117,6 +118,8 @@ class MySpacePage extends ConsumerWidget {
             const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('share-me'), leading: const Icon(Icons.ios_share_rounded, color: Joy.primary), title: const Text('مشاركة حسابي'), subtitle: Text(me == null ? '' : profileLink(me.nickname).replaceFirst(RegExp(r'^https?://'), ''), textDirection: TextDirection.ltr, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: me == null ? null : () => shareLink(context, title: me.nickname, url: profileLink(me.nickname), subtitle: (p?.isPublic ?? true) ? 'حسابك العام على ناس لايف' : 'حسابك خاص: الرابط يعرض اسمك فقط', code: userCode(me.nickname))),
             const Divider(indent: 16, endIndent: 16),
+            ListTile(key: const Key('home-layout'), leading: const Icon(Icons.tune_rounded, color: Joy.primary), title: const Text('تخصيص الرئيسية'), subtitle: const Text('أخفِ الأقسام ورتّبها واختر أقسام شريط التنقّل'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HomeLayoutPage()))),
+            const Divider(height: 1, indent: 56),
             ListTile(leading: const Icon(Icons.shield_outlined, color: Joy.primary), title: const Text('الخصوصية والأمان'), subtitle: const Text('المحظورون والمحادثات المكتومة'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SafetyPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.saved_search_rounded, color: Joy.primary), title: const Text('بحوثي المحفوظة'), subtitle: const Text('تنبيه عند ظهور جديد يطابق ما تبحث عنه'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SavedSearchesPage()))),

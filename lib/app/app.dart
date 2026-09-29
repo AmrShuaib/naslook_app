@@ -29,7 +29,12 @@ import '../state/notify_providers.dart';
 import '../state/providers.dart';
 import '../screens/login_page.dart';
 import '../screens/verify_email_page.dart';
-import '../pages/home/home_page.dart';
+import '../core/home_layout.dart';
+import '../state/layout_providers.dart';
+import '../ui/joy_nav_bar.dart';
+import '../pages/posts/my_posts_page.dart';
+import '../pages/jobs/jobs_page.dart';
+import '../pages/wallet/my_offers_page.dart';
 import '../pages/map/map_page.dart';
 import '../pages/circles/circles_page.dart';
 import '../pages/myspace/myspace_page.dart';
@@ -97,8 +102,18 @@ class AuthGate extends ConsumerWidget {
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
-  static const titles = ['الرئيسية', 'الخرائط', 'الدوائر', 'المحادثات', 'ماي سبيس'];
-  static const screens = [HomePage(), MapPage(), CirclesPage(), ChatsPage(), MySpacePage()];
+  /// صفحة كل قسم من أقسام الشريط. الأقسام المستقلة (السوق والعروض والوظائف والفعاليات) لها شريطها العلوي.
+  static Widget pageOf(String tab) => switch (tab) {
+        'home' => const MapPage(home: true),
+        'circles' => const CirclesPage(),
+        'chats' => const ChatsPage(),
+        'market' => const MarketPage(),
+        'offers' => const MyOffersPage(),
+        'jobs' => const JobsPage(),
+        'events' => const EventsPage(),
+        _ => const MySpacePage(),
+      };
+  static bool ownBar(String tab) => const {'home', 'market', 'offers', 'jobs', 'events'}.contains(tab);
 
   @override
   ConsumerState<HomeShell> createState() => _HomeShellState();
@@ -249,15 +264,19 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    final i = ref.watch(navIndexProvider);
+    // أقسام الشريط من تخصيص المستخدم: «الخريطة» أولاً و«ماي سبيس» آخراً وبينهما قسمان
+    final tabs = ref.watch(navTabsProvider);
+    final i = ref.watch(navIndexProvider).clamp(0, tabs.length - 1);
+    final current = tabs[i];
     final badge = ref.watch(unreadCountProvider);
     // جرس التنبيهات يجمع الرسائل غير المقروءة وإشعارات التجارة والإدارة
     final bell = badge + (ref.watch(notifyUnreadProvider).valueOrNull ?? 0);
     return Scaffold(
-      appBar: i == 1
+      extendBody: true,
+      appBar: HomeShell.ownBar(current)
           ? null
           : AppBar(
-              title: Text(HomeShell.titles[i]),
+              title: Text(navTabMeta(current)?.label ?? ''),
               actions: [
                 IconButton(tooltip: 'بحث', icon: const Icon(Icons.search_rounded), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage()))),
                 IconButton(
@@ -268,25 +287,16 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                 const SizedBox(width: 8),
               ],
             ),
-      body: IndexedStack(index: i, children: HomeShell.screens),
-      bottomNavigationBar: Container(
-        // شريط سفلي أبيض بخط فاصل رفيع وأيقونات ملوّنة عند التحديد (بلا مؤشر خلفي)
-        decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
-        child: NavigationBar(
-          selectedIndex: i,
-          onDestinationSelected: (x) => ref.read(navIndexProvider.notifier).state = x,
-          destinations: [
-            const NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home_rounded), label: 'الرئيسية'),
-            const NavigationDestination(icon: Icon(Icons.map_outlined), selectedIcon: Icon(Icons.map_rounded), label: 'الخرائط'),
-            const NavigationDestination(icon: Icon(Icons.groups_outlined), selectedIcon: Icon(Icons.groups_rounded), label: 'الدوائر'),
-            NavigationDestination(
-              icon: Badge(isLabelVisible: badge > 0, label: Text('$badge'), backgroundColor: Joy.accent, child: const Icon(Icons.chat_bubble_outline_rounded)),
-              selectedIcon: Badge(isLabelVisible: badge > 0, label: Text('$badge'), backgroundColor: Joy.accent, child: const Icon(Icons.chat_bubble_rounded)),
-              label: 'المحادثات',
-            ),
-            const NavigationDestination(icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded), label: 'ماي سبيس'),
-          ],
-        ),
+      // الصفحات غير الخريطة تُحجز أسفلها مساحة الكبسولة العائمة حتى لا يختفي محتواها خلفها
+      body: IndexedStack(index: i, children: [
+        for (final t in tabs) t == 'home' ? HomeShell.pageOf(t) : Padding(padding: EdgeInsets.only(bottom: JoyNavBar.inset(context)), child: HomeShell.pageOf(t)),
+      ]),
+      bottomNavigationBar: JoyNavBar(
+        tabs: tabs,
+        index: i,
+        onSelect: (x) => ref.read(navIndexProvider.notifier).state = x,
+        onCompose: () => composePostHere(context, ref),
+        badges: {'chats': badge},
       ),
     );
   }

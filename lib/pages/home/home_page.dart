@@ -27,7 +27,17 @@ import '../posts/post_viewer.dart';
 import '../search/search_page.dart';
 import '../wallet/wallet_page.dart';
 import '../../api/client.dart';
+import '../../api/biz_models.dart';
+import '../../core/home_layout.dart';
+import '../../state/jobs_public_providers.dart';
+import '../../state/layout_providers.dart';
+import '../jobs/jobs_page.dart';
+import '../wallet/my_offers_page.dart';
+import 'home_blocks_more.dart';
+import 'home_layout_page.dart';
 
+/// الرئيسية كصفحة مستقلة (تحية وبحث ثم الأقسام القابلة للتخصيص). في نظام «الخريطة أولاً» تُعرض الأقسام نفسها
+/// داخل الورقة السفلية للخريطة عبر [homeBlockWidgets].
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
 
@@ -44,13 +54,7 @@ class HomePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final me = ref.watch(appStateProvider.select((s) => s.user));
-    final stories = ref.watch(storiesProvider);
     final presence = ref.watch(presenceProvider);
-    final vessels = ref.watch(myVesselsProvider);
-    final feed = ref.watch(feedProvider);
-    // احتياط في التطبيق: منشورات المحظورين لا تظهر حتى لو أعادتها النواة
-    final blocked = ref.watch(blockedIdsProvider);
-
     return RefreshIndicator(
       onRefresh: () => _refresh(ref),
       child: ListView(
@@ -64,155 +68,371 @@ class HomePage extends ConsumerWidget {
             error: (_, __) => const Text('جدة', style: TextStyle(color: Joy.textMuted, fontSize: 13)),
           ),
           const SizedBox(height: 12),
-          // شريط البحث الموحّد
-          JoyCard(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage())),
-            child: const Row(children: [
-              Icon(Icons.search_rounded, color: Joy.textMuted),
-              SizedBox(width: 10),
-              Expanded(child: Text('ابحث عن أشخاص ودوائر وأنشطة ومنتجات', style: TextStyle(color: Joy.textMuted, fontSize: 13.5))),
-            ]),
-          ),
+          const HomeSearchBar(),
           const SizedBox(height: 14),
-          _StoriesRail(stories: stories, posts: ref.watch(recentPostsProvider), me: me?.nickname ?? ''),
-          const SizedBox(height: 14),
-          const _FeedCard(),
-          const _TrendingRail(),
-          const SizedBox(height: 16),
-          JoyCard(
-            padding: EdgeInsets.zero,
-            onTap: () => ref.read(navIndexProvider.notifier).state = 1,
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Row(children: [
-                Container(width: 48, height: 48, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(16)), child: const Icon(Icons.map_rounded, color: Joy.primary)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('حولك الآن', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-                    presence.when(
-                      data: (p) => Text('${p.where((x) => !x.me).length} شخصاً · ${stories.value?.length ?? 0} لحظة على الخريطة', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
-                      loading: () => const Text('…', style: TextStyle(color: Joy.textMuted)),
-                      error: (e, _) => const Text('اضغط لفتح الخريطة', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
-                    ),
-                  ]),
-                ),
-                const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
-              ]),
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(children: [
-            _Quick(icon: Icons.account_balance_wallet_outlined, label: 'المحفظة', color: Joy.primarySoft, fg: Joy.primary, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()))),
-            const SizedBox(width: 8),
-            _Quick(icon: Icons.event_outlined, label: 'الفعاليات', color: Joy.accentSoft, fg: Joy.accent, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EventsPage()))),
-            const SizedBox(width: 8),
-            _Quick(icon: Icons.storefront_outlined, label: 'السوق', color: Joy.sunSoft, fg: Joy.sunText, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MarketPage()))),
-          ]),
-          Consumer(builder: (context, ref, _) {
-            final ps = ref.watch(publicSettingsProvider).valueOrNull;
-            if (ps == null || (ps.announcement.isEmpty && !ps.maintenance)) return const SizedBox.shrink();
-            return Container(
-              margin: const EdgeInsets.only(top: 10),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: ps.maintenance ? Joy.accentSoft : Joy.sunSoft, borderRadius: BorderRadius.circular(14)),
-              child: Row(children: [
-                Icon(ps.maintenance ? Icons.build_circle_outlined : Icons.campaign_outlined, color: ps.maintenance ? Joy.accent : Joy.sunText),
-                const SizedBox(width: 8),
-                Expanded(child: Text(ps.maintenance && ps.announcement.isEmpty ? 'التطبيق تحت الصيانة حالياً؛ قد تتأخر بعض الخدمات.' : ps.announcement, style: TextStyle(color: ps.maintenance ? Joy.accent : Joy.sunText, fontWeight: FontWeight.w600, fontSize: 13, height: 1.5))),
-              ]),
-            );
-          }),
-          const SizedBox(height: 10),
-          JoyCard(
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BusinessesPage())),
-            child: Row(children: [
-              Container(width: 46, height: 46, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.local_mall_outlined, color: Joy.primary)),
-              const SizedBox(width: 12),
-              const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('الدوائر التجارية', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-                Text('براندات عالمية · سينما · فنادق · تأجير سيارات · مستشفيات · مطارات · مقاهٍ مختصة', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
-              ])),
-              const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
-            ]),
-          ),
-          // مفتوح الآن حولك: شريط أفقي من الأنشطة المفتوحة مرتبةً بالأقرب
-          Consumer(builder: (context, ref, _) {
-            final d = ref.watch(discoverProvider).valueOrNull;
-            if (d == null || d.openNow.isEmpty) return const SizedBox.shrink();
-            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const SizedBox(height: 18),
-              SectionTitle(d.located ? 'مفتوح الآن حولك' : 'مفتوح الآن', action: 'الكل', onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage()))),
-              SizedBox(
-                height: 76,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: d.openNow.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (_, i) {
-                    final b = d.openNow[i];
-                    return JoyCard(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      onTap: () => openBusiness(context, b.id, initial: b),
-                      child: Row(children: [
-                        BizLogo(biz: b, size: 40),
-                        const SizedBox(width: 10),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 150),
-                          child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(b.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
-                            Text(b.distanceLabel ?? (b.sector.isNotEmpty ? b.sector : b.category.label), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.success, fontSize: 12, fontWeight: FontWeight.w600)),
-                          ]),
-                        ),
-                      ]),
-                    );
-                  },
-                ),
-              ),
-            ]);
-          }),
-          const SizedBox(height: 18),
-          SectionTitle('دوائرك', action: 'الكل', onAction: () => ref.read(navIndexProvider.notifier).state = 2),
-          vessels.when(
-            data: (list) => list.isEmpty
-                ? JoyCard(
-                    color: Joy.sunSoft,
-                    child: Row(children: [
-                      const Icon(Icons.groups_rounded, color: Joy.sunText),
-                      const SizedBox(width: 10),
-                      const Expanded(child: Text('لم تنضم لأي دائرة بعد. اكتشف الدوائر القريبة منك.', style: TextStyle(color: Joy.sunText))),
-                      TextButton(onPressed: () => ref.read(navIndexProvider.notifier).state = 2, child: const Text('اكتشف')),
-                    ]),
-                  )
-                : SizedBox(
-                    height: 118,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: list.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 10),
-                      itemBuilder: (_, i) => _VesselTile(list[i]),
-                    ),
-                  ),
-            loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
-            error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(myVesselsProvider)),
-          ),
-          const SizedBox(height: 18),
-          const SectionTitle('آخر ما في دوائرك'),
-          feed.when(
-            data: (all) {
-              final posts = [for (final p in all) if (!isBlockedId(blocked, p.author.id)) p];
-              return posts.isEmpty
-                  ? const EmptyState(icon: Icons.forum_outlined, title: 'لا منشورات بعد', subtitle: 'انضم إلى دائرة أو انشر أول منشور فيها.')
-                  : Column(children: [for (final p in posts.take(20)) Padding(padding: const EdgeInsets.only(bottom: 10), child: PostCard(p))]);
-            },
-            loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
-            error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(feedProvider)),
-          ),
+          ...homeBlockWidgets(context, ref),
         ],
       ),
     );
   }
+}
+
+/// شريط البحث الموحّد.
+class HomeSearchBar extends StatelessWidget {
+  final bool glass;
+  const HomeSearchBar({super.key, this.glass = false});
+  @override
+  Widget build(BuildContext context) => JoyCard(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage())),
+        child: const Row(children: [
+          Icon(Icons.search_rounded, color: Joy.textMuted),
+          SizedBox(width: 10),
+          Expanded(child: Text('ابحث عن أشخاص ودوائر وأنشطة ومنتجات', style: TextStyle(color: Joy.textMuted, fontSize: 13.5))),
+        ]),
+      );
+}
+
+/// الأقسام الظاهرة بترتيب المستخدم، ثم صندوق «أقسام مخفية» إن وُجدت. كل قسم في [HomeBlock] بقائمة «⋯».
+List<Widget> homeBlockWidgets(BuildContext context, WidgetRef ref) {
+  final layout = ref.watch(homeLayoutProvider);
+  final out = <Widget>[];
+  for (final id in layout.visible) {
+    final body = homeBlockBody(context, ref, id, layout);
+    if (body == null) continue;
+    out.add(HomeBlock(id: id, layout: layout, child: body));
+  }
+  if (layout.hidden.isNotEmpty) out.add(HiddenBlocksTray(layout: layout));
+  return out;
+}
+
+/// جسم القسم حسب معرّفه، أو null إن لم يكن له ما يعرضه الآن (فلا يظهر عنوانه).
+Widget? homeBlockBody(BuildContext context, WidgetRef ref, String id, HomeLayout layout) {
+  switch (id) {
+    case 'announce':
+      final ps = ref.watch(publicSettingsProvider).valueOrNull;
+      if (ps == null || (ps.announcement.isEmpty && !ps.maintenance)) return null;
+      return _Announce(ps.announcement, maintenance: ps.maintenance);
+    case 'quick':
+      return const HomeQuickGrid();
+    case 'around':
+      return _AroundBlock(opts: layout.opts['around'] ?? const []);
+    case 'trending':
+      final places = ref.watch(trendingPlacesProvider).valueOrNull ?? const <TrendingPlace>[];
+      if (places.isEmpty) return null;
+      return _TrendingRail(places: places);
+    case 'open':
+      final d = ref.watch(discoverProvider).valueOrNull;
+      if (d == null || d.openNow.isEmpty) return null;
+      return _OpenNowRail(d.openNow);
+    case 'circles':
+      return const _CirclesBlock();
+    case 'feed':
+      return _FeedBlock(opts: layout.opts['feed'] ?? const []);
+    case 'biz':
+      return const _BizCard();
+    case 'jobs':
+      if (!ref.watch(jobsEnabledProvider)) return null;
+      return const HomeJobsBlock();
+    case 'market':
+      return const HomeMarketBlock();
+    case 'events':
+      return const HomeEventsBlock();
+  }
+  return null;
+}
+
+/// إطار القسم: عنوان وإجراء اختياري وزر «⋯» (نقل لأعلى/لأسفل، تثبيت، إخفاء، تخصيص الرئيسية). المثبّت بلا زر.
+class HomeBlock extends ConsumerWidget {
+  final String id;
+  final HomeLayout layout;
+  final Widget child;
+  const HomeBlock({super.key, required this.id, required this.layout, required this.child});
+
+  static String? actionOf(String id) => switch (id) { 'trending' || 'open' || 'jobs' || 'market' || 'events' || 'circles' => 'الكل', 'feed' => 'الخريطة', _ => null };
+
+  void _action(BuildContext context, WidgetRef ref) {
+    switch (id) {
+      case 'trending':
+      case 'open':
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage()));
+      case 'circles':
+        openNavTab(ref, 'circles');
+      case 'feed':
+        openNavTab(ref, 'home');
+      case 'jobs':
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobsPage()));
+      case 'market':
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MarketPage()));
+      case 'events':
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EventsPage()));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final meta = homeBlockMeta(id);
+    final pinned = layout.isPinned(id);
+    final action = actionOf(id);
+    return Padding(
+      key: Key('block-$id'),
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(
+            child: Row(children: [
+              Flexible(child: Text(meta?.title ?? id, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600))),
+              if (layout.isFresh(id))
+                Container(margin: const EdgeInsetsDirectional.only(start: 6), padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.sun, borderRadius: BorderRadius.circular(999)), child: const Text('جديد', style: TextStyle(color: Joy.sunText, fontSize: 10.5, fontWeight: FontWeight.w700))),
+            ]),
+          ),
+          if (action != null) TextButton(onPressed: () => _action(context, ref), child: Text(action, style: const TextStyle(fontSize: 13))),
+          if (!pinned)
+            IconButton(
+              key: Key('block-menu-$id'),
+              tooltip: 'خيارات القسم',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.more_horiz_rounded, color: Joy.textMuted, size: 20),
+              onPressed: () => showBlockMenu(context, ref, id),
+            ),
+        ]),
+        const SizedBox(height: 6),
+        child,
+      ]),
+    );
+  }
+}
+
+/// قائمة القسم (النموذج ١: «قائمة على القسم»).
+Future<void> showBlockMenu(BuildContext context, WidgetRef ref, String id) {
+  final layout = ref.read(homeLayoutProvider);
+  final vis = layout.visible;
+  final i = vis.indexOf(id);
+  final firstFree = layout.pinned.where(vis.contains).length;
+  final n = ref.read(homeLayoutProvider.notifier);
+  final meta = homeBlockMeta(id);
+  return showModalBottomSheet(
+    context: context,
+    builder: (ctx) => SafeArea(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 6), child: Align(alignment: AlignmentDirectional.centerStart, child: Text(meta?.title ?? id, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17)))),
+        ListTile(key: const Key('block-up'), enabled: i > firstFree, leading: const Icon(Icons.arrow_upward_rounded), title: const Text('نقل لأعلى'), onTap: () { Navigator.pop(ctx); n.update((l) => l.move(id, -1)); }),
+        ListTile(key: const Key('block-down'), enabled: i >= 0 && i < vis.length - 1, leading: const Icon(Icons.arrow_downward_rounded), title: const Text('نقل لأسفل'), onTap: () { Navigator.pop(ctx); n.update((l) => l.move(id, 1)); }),
+        ListTile(key: const Key('block-top'), enabled: i > firstFree, leading: const Icon(Icons.vertical_align_top_rounded), title: const Text('تثبيت في الأعلى'), onTap: () { Navigator.pop(ctx); n.update((l) => l.toTop(id)); }),
+        ListTile(key: const Key('block-hide'), leading: const Icon(Icons.visibility_off_outlined, color: Joy.danger), title: const Text('إخفاء القسم', style: TextStyle(color: Joy.danger)), subtitle: const Text('تجده في «أقسام مخفية» أسفل الصفحة'), onTap: () { Navigator.pop(ctx); n.update((l) => l.hide(id)); }),
+        const Divider(height: 1),
+        ListTile(key: const Key('block-customize'), leading: const Icon(Icons.tune_rounded), title: const Text('تخصيص الرئيسية…'), subtitle: const Text('ترتيب كل الأقسام وشريط التنقّل'), onTap: () { Navigator.pop(ctx); Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HomeLayoutPage())); }),
+        const SizedBox(height: 8),
+      ]),
+    ),
+  );
+}
+
+/// «أقسام مخفية»: شرائح تعيد كل قسم بضغطة.
+class HiddenBlocksTray extends ConsumerWidget {
+  final HomeLayout layout;
+  const HiddenBlocksTray({super.key, required this.layout});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Container(
+        key: const Key('hidden-tray'),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: Joy.control, width: 1.2)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.visibility_off_outlined, size: 16, color: Joy.textMuted),
+            const SizedBox(width: 6),
+            Expanded(child: Text('أقسام مخفية (${layout.hidden.length})', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Joy.text))),
+            TextButton(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HomeLayoutPage())), child: const Text('تخصيص', style: TextStyle(fontSize: 12.5))),
+          ]),
+          const SizedBox(height: 6),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final id in layout.hidden)
+              ActionChip(
+                key: Key('show-$id'),
+                avatar: const Icon(Icons.visibility_outlined, size: 15, color: Joy.primary),
+                label: Text(homeBlockMeta(id)?.title ?? id, style: const TextStyle(fontSize: 12.5)),
+                onPressed: () => ref.read(homeLayoutProvider.notifier).update((l) => l.show(id)),
+              ),
+          ]),
+        ]),
+      );
+}
+
+/// يفتح تبويباً في الشريط السفلي (إن كان ضمن أقسام المستخدم) وإلا يفتح صفحته المستقلة.
+void openNavTab(WidgetRef ref, String tab) {
+  final tabs = ref.read(homeLayoutProvider).nav;
+  final i = tabs.indexOf(tab);
+  if (i >= 0) ref.read(navIndexProvider.notifier).state = i;
+}
+
+class _Announce extends StatelessWidget {
+  final String text;
+  final bool maintenance;
+  const _Announce(this.text, {required this.maintenance});
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: maintenance ? Joy.accentSoft : Joy.sunSoft, borderRadius: BorderRadius.circular(14)),
+        child: Row(children: [
+          Icon(maintenance ? Icons.build_circle_outlined : Icons.campaign_outlined, color: maintenance ? Joy.accent : Joy.sunText),
+          const SizedBox(width: 8),
+          Expanded(child: Text(maintenance && text.isEmpty ? 'التطبيق تحت الصيانة حالياً؛ قد تتأخر بعض الخدمات.' : text, style: TextStyle(color: maintenance ? Joy.accent : Joy.sunText, fontWeight: FontWeight.w600, fontSize: 13, height: 1.5))),
+        ]),
+      );
+}
+
+/// الاختصارات: شبكة ٤×٢ إلى الأقسام الكبيرة.
+class HomeQuickGrid extends ConsumerWidget {
+  const HomeQuickGrid({super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final items = <(IconData, String, VoidCallback)>[
+      (Icons.groups_rounded, 'الدوائر', () => openNavTab(ref, 'circles')),
+      (Icons.storefront_outlined, 'السوق', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MarketPage()))),
+      (Icons.local_offer_outlined, 'العروض', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyOffersPage()))),
+      if (ref.watch(jobsEnabledProvider)) (Icons.work_outline_rounded, 'الوظائف', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobsPage()))),
+      (Icons.event_outlined, 'الفعاليات', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EventsPage()))),
+      (Icons.account_balance_wallet_outlined, 'المحفظة', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()))),
+      (Icons.local_mall_outlined, 'براندات', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BusinessesPage()))),
+      (Icons.auto_awesome_rounded, 'بث المدينة', () => FeedPage.open(context)),
+    ];
+    return GridView.count(
+      crossAxisCount: 4,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      childAspectRatio: .98,
+      children: [
+        for (final (icon, label, onTap) in items)
+          InkWell(
+            key: Key('quick-$label'),
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Container(width: 50, height: 50, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(16)), child: Icon(icon, color: Joy.primary)),
+              const SizedBox(height: 5),
+              Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w500)),
+            ]),
+          ),
+      ],
+    );
+  }
+}
+
+/// «لحظات حولك»: شريط اللحظات وبطاقة بث المدينة. الخيار «الأصدقاء فقط» يحصر الشريط في جهات الاتصال.
+class _AroundBlock extends ConsumerWidget {
+  final List<String> opts;
+  const _AroundBlock({required this.opts});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final me = ref.watch(appStateProvider.select((s) => s.user));
+    var posts = ref.watch(recentPostsProvider);
+    if (opts.contains('friends')) {
+      final friends = {for (final p in ref.watch(contactsProvider).valueOrNull ?? const <Person>[]) p.id};
+      posts = posts.whenData((l) => [for (final p in l) if (friends.contains(p.user.id)) p]);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _StoriesRail(stories: ref.watch(storiesProvider), posts: posts, me: me?.nickname ?? ''),
+      const SizedBox(height: 12),
+      const _FeedCard(),
+    ]);
+  }
+}
+
+class _OpenNowRail extends StatelessWidget {
+  final List<Biz> list;
+  const _OpenNowRail(this.list);
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        height: 76,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: list.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, i) {
+            final b = list[i];
+            return JoyCard(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              onTap: () => openBusiness(context, b.id, initial: b),
+              child: Row(children: [
+                BizLogo(biz: b, size: 40),
+                const SizedBox(width: 10),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 150),
+                  child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(b.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                    Text(b.distanceLabel ?? (b.sector.isNotEmpty ? b.sector : b.category.label), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.success, fontSize: 12, fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+              ]),
+            );
+          },
+        ),
+      );
+}
+
+class _CirclesBlock extends ConsumerWidget {
+  const _CirclesBlock();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => ref.watch(myVesselsProvider).when(
+        data: (list) => list.isEmpty
+            ? JoyCard(
+                color: Joy.sunSoft,
+                child: Row(children: [
+                  const Icon(Icons.groups_rounded, color: Joy.sunText),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('لم تنضم لأي دائرة بعد. اكتشف الدوائر القريبة منك.', style: TextStyle(color: Joy.sunText))),
+                  TextButton(onPressed: () => openNavTab(ref, 'circles'), child: const Text('اكتشف')),
+                ]),
+              )
+            : SizedBox(
+                height: 118,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: list.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 10),
+                  itemBuilder: (_, i) => _VesselTile(list[i]),
+                ),
+              ),
+        loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+        error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(myVesselsProvider)),
+      );
+}
+
+/// «آخر ما في دوائرك». الخيار «بلا وسائط» يعرض المنشورات النصية فقط.
+class _FeedBlock extends ConsumerWidget {
+  final List<String> opts;
+  const _FeedBlock({required this.opts});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final blocked = ref.watch(blockedIdsProvider);
+    return ref.watch(feedProvider).when(
+      data: (all) {
+        final posts = [for (final p in all) if (!isBlockedId(blocked, p.author.id) && (!opts.contains('text') || p.type == 'text')) p];
+        return posts.isEmpty
+            ? const EmptyState(icon: Icons.forum_outlined, title: 'لا منشورات بعد', subtitle: 'انضم إلى دائرة أو انشر أول منشور فيها.')
+            : Column(children: [for (final p in posts.take(20)) Padding(padding: const EdgeInsets.only(bottom: 10), child: PostCard(p))]);
+      },
+      loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+      error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(feedProvider)),
+    );
+  }
+}
+
+class _BizCard extends StatelessWidget {
+  const _BizCard();
+  @override
+  Widget build(BuildContext context) => JoyCard(
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BusinessesPage())),
+        child: Row(children: [
+          Container(width: 46, height: 46, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.local_mall_outlined, color: Joy.primary)),
+          const SizedBox(width: 12),
+          const Expanded(child: Text('براندات عالمية · سينما · فنادق · تأجير سيارات · مستشفيات · مطارات · مقاهٍ مختصة', style: TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.5))),
+          const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+        ]),
+      );
 }
 
 class _StoriesRail extends ConsumerWidget {
@@ -309,16 +529,6 @@ class _StoriesRail extends ConsumerWidget {
       ),
     );
   }
-}
-
-class _Quick extends StatelessWidget {
-  final IconData icon; final String label; final Color color; final Color fg; final VoidCallback onTap;
-  const _Quick({required this.icon, required this.label, required this.color, required this.fg, required this.onTap});
-  @override
-  Widget build(BuildContext context) => Expanded(child: InkWell(
-        onTap: onTap, borderRadius: BorderRadius.circular(18),
-        child: Container(height: 64, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: fg), const SizedBox(width: 6), Flexible(child: Text(label, overflow: TextOverflow.ellipsis, style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 13)))])),
-      ));
 }
 
 class _RailItem extends StatelessWidget {
@@ -526,17 +736,11 @@ class _FeedCard extends ConsumerWidget {
 }
 
 /// الأماكن الرائجة: الأكثر لحظاتٍ خلال 24 ساعة حولك؛ كل بطاقة تفتح البث مصفّى بذلك المكان.
-class _TrendingRail extends ConsumerWidget {
-  const _TrendingRail();
+class _TrendingRail extends StatelessWidget {
+  final List<TrendingPlace> places;
+  const _TrendingRail({required this.places});
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final places = ref.watch(trendingPlacesProvider).valueOrNull ?? const <TrendingPlace>[];
-    if (places.isEmpty) return const SizedBox.shrink();
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const SizedBox(height: 14),
-      const SectionTitle('الأماكن الرائجة اليوم'),
-      const SizedBox(height: 6),
-      SizedBox(
+  Widget build(BuildContext context) => SizedBox(
         height: 92,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
@@ -544,9 +748,7 @@ class _TrendingRail extends ConsumerWidget {
           separatorBuilder: (_, __) => const SizedBox(width: 8),
           itemBuilder: (_, i) => _TrendCard(place: places[i]),
         ),
-      ),
-    ]);
-  }
+      );
 }
 
 class _TrendCard extends StatelessWidget {
