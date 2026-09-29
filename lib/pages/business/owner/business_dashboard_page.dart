@@ -12,6 +12,7 @@ import '../../posts/post_stats.dart';
 import '../business_page.dart' show openBusiness, BizLogo, Stars, dayLabel, shortDate;
 import 'business_editor.dart';
 import 'dashboard_catalog.dart';
+import 'dashboard_jobs.dart';
 import 'dashboard_orders.dart';
 import 'dashboard_offers.dart';
 import 'dashboard_posts.dart';
@@ -23,6 +24,9 @@ class BusinessDashboardPage extends ConsumerWidget {
   final Biz? initial;
   final int initialTab;
   const BusinessDashboardPage({super.key, required this.id, this.initial, this.initialTab = 0});
+
+  /// فهرس تبويب «التوظيف» (الأخير) للروابط العميقة من الإشعارات.
+  static const jobsTab = 8;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -37,6 +41,7 @@ class BusinessDashboardPage extends ConsumerWidget {
       ('التقييمات', Icons.star_outline_rounded),
       ('الفريق', Icons.groups_outlined),
       ('الملف', Icons.badge_outlined),
+      ('التوظيف', Icons.work_outline_rounded),
     ];
     return DefaultTabController(
       length: tabs.length,
@@ -76,6 +81,7 @@ class BusinessDashboardPage extends ConsumerWidget {
                     ReviewsTab(biz: biz),
                     TeamTab(biz: biz),
                     ProfileTab(biz: biz),
+                    JobsTab(biz: biz),
                   ]),
       ),
     );
