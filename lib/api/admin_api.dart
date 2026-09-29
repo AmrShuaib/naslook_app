@@ -546,14 +546,21 @@ class AdminSettings {
   final double marketCommissionPct;
   final int spotlightPricePerDay, spotlightMaxDays, spotlightMaxActive;
   final bool marketReviewNewAccounts, marketBlockContacts;
+  // التوظيف (server/jobs.js): التفعيل، موافقة الإدارة قبل النشر، حد العروض النشطة مجاناً، سقف البطاقات الأسبوعي للمستخدم، وحد المطابقة
+  final bool jobsEnabled, jobsRequireApproval;
+  final int jobsFreeActive, jobsWeeklyCap;
+  final double jobsMinScore;
   const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
       this.transfersEnabled = true, this.chatPaymentsEnabled = true, this.bannedWordsDefault = true, this.requireEmailVerification = true,
-      this.marketCommissionPct = 0, this.spotlightPricePerDay = 2000, this.spotlightMaxDays = 30, this.spotlightMaxActive = 12, this.marketReviewNewAccounts = false, this.marketBlockContacts = true});
+      this.marketCommissionPct = 0, this.spotlightPricePerDay = 2000, this.spotlightMaxDays = 30, this.spotlightMaxActive = 12, this.marketReviewNewAccounts = false, this.marketBlockContacts = true,
+      this.jobsEnabled = true, this.jobsRequireApproval = false, this.jobsFreeActive = 3, this.jobsWeeklyCap = 5, this.jobsMinScore = .45});
   factory AdminSettings.fromJson(Map m) => AdminSettings(testTopup: m['testTopup'] == true, maintenance: m['maintenance'] == true, setupCodePresent: m['setupCodePresent'] == true, maxTopup: _i(m['maxTopup']), announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '',
       bannedWords: m['bannedWords']?.toString() ?? '', reportThreshold: m['reportThreshold'] == null ? 3 : _i(m['reportThreshold']),
       supportEmail: m['supportEmail']?.toString() ?? '', transfersEnabled: m['transfersEnabled'] != false, chatPaymentsEnabled: m['chatPaymentsEnabled'] != false, bannedWordsDefault: m['bannedWordsDefault'] != false, requireEmailVerification: m['requireEmailVerification'] != false,
       marketCommissionPct: (m['marketCommissionPct'] as num?)?.toDouble() ?? 0, spotlightPricePerDay: m['spotlightPricePerDay'] == null ? 2000 : _i(m['spotlightPricePerDay']), spotlightMaxDays: m['spotlightMaxDays'] == null ? 30 : _i(m['spotlightMaxDays']), spotlightMaxActive: m['spotlightMaxActive'] == null ? 12 : _i(m['spotlightMaxActive']),
-      marketReviewNewAccounts: m['marketReviewNewAccounts'] == true, marketBlockContacts: m['marketBlockContacts'] != false);
+      marketReviewNewAccounts: m['marketReviewNewAccounts'] == true, marketBlockContacts: m['marketBlockContacts'] != false,
+      jobsEnabled: m['jobsEnabled'] != false, jobsRequireApproval: m['jobsRequireApproval'] == true, jobsFreeActive: m['jobsFreeActive'] == null ? 3 : _i(m['jobsFreeActive']), jobsWeeklyCap: m['jobsWeeklyCap'] == null ? 5 : _i(m['jobsWeeklyCap']),
+      jobsMinScore: (m['jobsMinScore'] as num?)?.toDouble() ?? .45);
 }
 
 /// آخر إجراء إداري على عنصر في طابور الإشراف.
@@ -695,10 +702,12 @@ class PublicSettings {
   final bool maintenance, testTopup;
   /// مفتاحا المنصة لتحويل المال بين المستخدمين (المحفظة) وأوامر المال في المحادثة؛ مطفآن افتراضياً (قرار تنظيمي).
   final bool transfersEnabled, chatPaymentsEnabled;
-  const PublicSettings({this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.maintenance = false, this.testTopup = false, this.transfersEnabled = false, this.chatPaymentsEnabled = false});
+  /// التوظيف مفعّل (يُخفي الوظائف من الخريطة والدوائر حين يطفئه المدير).
+  final bool jobsEnabled;
+  const PublicSettings({this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.maintenance = false, this.testTopup = false, this.transfersEnabled = false, this.chatPaymentsEnabled = false, this.jobsEnabled = true});
   factory PublicSettings.fromJson(Map m) => PublicSettings(
       announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '', supportEmail: m['supportEmail']?.toString() ?? '',
-      maintenance: m['maintenance'] == true, testTopup: m['testTopup'] == true, transfersEnabled: m['transfersEnabled'] == true, chatPaymentsEnabled: m['chatPaymentsEnabled'] == true);
+      maintenance: m['maintenance'] == true, testTopup: m['testTopup'] == true, transfersEnabled: m['transfersEnabled'] == true, chatPaymentsEnabled: m['chatPaymentsEnabled'] == true, jobsEnabled: m['jobsEnabled'] != false);
 }
 
 /// مسارات لوحة الإدارة (server/admin.js).

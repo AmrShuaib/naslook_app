@@ -22,6 +22,7 @@ import 'admin_market.dart';
 import 'admin_team.dart';
 import 'admin_tasks.dart';
 import 'admin_inbox.dart';
+import 'admin_jobs.dart';
 
 /// أقسام لوحة الإدارة (المفتاح، الاسم، الأيقونة، الصلاحية المطلوبة لظهوره).
 const adminSections = [
@@ -39,6 +40,8 @@ const adminSections = [
   ('inbox', 'البريد الوارد', Icons.inbox_rounded, 'inbox.view'),
   ('settings', 'الإعدادات', Icons.tune_rounded, 'settings.view'),
   ('audit', 'سجل الإجراءات', Icons.history_rounded, 'audit.view'),
+  // في النهاية حتى لا تتزحزح الفهارس المكتوبة يدوياً في الإشعارات؛ صلاحية الدوائر لأن الوظائف تتبع الدوائر
+  ('jobs', 'التوظيف', Icons.work_outline_rounded, 'biz.view'),
 ];
 
 /// رسالة خطأ مفهومة لعمليات الإدارة.
@@ -151,6 +154,7 @@ class _Layout extends ConsumerWidget {
         'blog' => const AdminBlogPage(),
         'mail' => const AdminMailPage(),
         'settings' => const AdminSettingsPage(),
+        'jobs' => const AdminJobsPage(),
         _ => const AdminAuditPage(),
       };
 

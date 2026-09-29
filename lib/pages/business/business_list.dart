@@ -7,8 +7,10 @@ import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../state/biz_providers.dart';
+import '../../state/jobs_public_providers.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
+import '../jobs/jobs_page.dart';
 import 'business_page.dart';
 import 'my_bookings_page.dart';
 import 'owner/my_businesses_page.dart';
@@ -66,6 +68,9 @@ class _BizListViewState extends ConsumerState<BizListView> {
           child: Row(children: [
             _chip('الكل', Icons.apps_rounded, cat == '', () => setState(() => cat = '')),
             for (final c in BizCategory.values) _chip(c.plural, c.icon, cat == c.key, () => setState(() => cat = c.key)),
+            // مدخل الوظائف: يفتح قائمة الوظائف العامة (يختفي حين تطفئ الإدارة التوظيف)
+            if (ref.watch(jobsEnabledProvider))
+              KeyedSubtree(key: const Key('biz-jobs-chip'), child: _chip('وظائف', Icons.work_outline_rounded, false, () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobsPage())), color: Joy.accent)),
           ]),
         ),
       ),
