@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 // بريد الدعم: نفس التعبير في legal_pages.js حرفياً، فكل عنوان تقبله الإعدادات هو ما يظهر في /support (لا يُستبدل بالافتراضي بصمت)
 export const SUPPORT_EMAIL_RE = /^[^\s@<>"']+@[^\s@<>"']+\.[a-z]{2,}$/i;
+const LAYOUT_LIST_RE = /^[a-z0-9_,\s-]*$/; // قوائم معرّفات تخصيص الرئيسية (homeLayoutOrder/homeLayoutPinned)
 
 const ID_RE = /^[A-Z]{2}\d{7}$/;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -152,7 +153,9 @@ export default async function admin(app, opts) {
     // تأكيد البريد قبل الدخول (auth_alias.js): لا جلسة قبل إدخال الرمز؛ يعمل فقط حين تكون خدمة البريد مضبوطة
     requireEmailVerification: true,
     // التوظيف (jobs.js): التفعيل، حد العروض النشطة للباقة المجانية، حد البطاقات الأسبوعي للمستخدم، أدنى درجة مطابقة، موافقة الإدارة قبل النشر
-    jobsEnabled: true, jobsFreeActive: 3, jobsWeeklyCap: 5, jobsMinScore: 0.45, jobsRequireApproval: false };
+    jobsEnabled: true, jobsFreeActive: 3, jobsWeeklyCap: 5, jobsMinScore: 0.45, jobsRequireApproval: false,
+    // تخصيص الرئيسية (layout.js): الترتيب الافتراضي للكتل (فارغ = المدمج) والكتل المثبّتة التي لا تُخفى، معرّفات مفصولة بفواصل
+    homeLayoutOrder: "", homeLayoutPinned: "announce" };
   async function loadSettings() {
     const rows = (await pool.query("SELECT key, value FROM platform_settings")).rows;
     const s = { ...DEFAULT_SETTINGS };
@@ -729,6 +732,8 @@ export default async function admin(app, opts) {
     if (b.jobsWeeklyCap !== undefined) patch.jobsWeeklyCap = Math.max(1, Math.min(50, Math.round(Number(b.jobsWeeklyCap)) || 5));
     if (b.jobsMinScore !== undefined) patch.jobsMinScore = Math.max(0.1, Math.min(1, Math.round(Number(b.jobsMinScore) * 100) / 100 || 0.45));
     if (b.jobsRequireApproval !== undefined) patch.jobsRequireApproval = b.jobsRequireApproval === true;
+    // تخصيص الرئيسية: قوائم معرّفات مفصولة بفواصل؛ الأحرف خارج النمط تُرفض حتى لا يُحقن شيء في الافتراضيات
+    for (const k of ["homeLayoutOrder", "homeLayoutPinned"]) if (b[k] !== undefined) { const v = str(b[k], 400); if (!LAYOUT_LIST_RE.test(v)) return bad(reply, 400, "bad-layout"); patch[k] = v; }
     const s = await saveSettings(patch);
     await audit(uid, "settings.update", "platform", patch);
     return s;

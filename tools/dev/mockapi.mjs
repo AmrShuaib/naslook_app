@@ -759,6 +759,46 @@ function jobsRoute(req, res, url, key) {
   return false;
 }
 // ---- jobs (user) end
+// ---- home layout start — تحاكي server/layout.js: تخطيط الرئيسية في الذاكرة (ترتيب الكتل، المخفي، الشريط السفلي، خيارات الكتل)
+const LAYOUT_BLOCKS = ['announce', 'quick', 'around', 'trending', 'open', 'circles', 'feed', 'biz', 'jobs', 'market', 'events'];
+const LAYOUT_ORDER = ['announce', 'quick', 'around', 'trending', 'open', 'circles', 'feed', 'jobs', 'market', 'events', 'biz'];
+const LAYOUT_NAV_IDS = ['home', 'circles', 'chats', 'me', 'market', 'offers', 'jobs', 'events'];
+const LAYOUT_NAV = ['home', 'circles', 'chats', 'me'];
+let mockLayout = null, mockLayoutAt = null;
+const layoutIds = (v, known) => [...new Set(String(v ?? '').split(',').map((s) => s.trim()).filter((s) => known.includes(s)))];
+const layoutPinned = () => { const v = adminState?.settings?.homeLayoutPinned; return typeof v === 'string' ? layoutIds(v, LAYOUT_BLOCKS) : ['announce']; };
+const layoutDefaults = () => ({ order: [...new Set([...layoutPinned(), ...layoutIds(adminState?.settings?.homeLayoutOrder, LAYOUT_BLOCKS), ...LAYOUT_ORDER])], nav: [...LAYOUT_NAV] });
+function layoutNormalise(raw = {}) {
+  const d = layoutDefaults(), pin = layoutPinned();
+  const arr = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  const order = [...new Set([...pin, ...arr(raw.order).filter((id) => LAYOUT_BLOCKS.includes(id)), ...d.order])];
+  const hidden = [...new Set(arr(raw.hidden).filter((id) => LAYOUT_BLOCKS.includes(id) && !pin.includes(id)))];
+  let mid = [...new Set(arr(Array.isArray(raw.nav) ? raw.nav : d.nav).filter((id) => LAYOUT_NAV_IDS.includes(id) && id !== 'home' && id !== 'me'))];
+  for (const id of LAYOUT_NAV) if (mid.length < 1 && id !== 'home' && id !== 'me' && !mid.includes(id)) mid.push(id);
+  mid = mid.slice(0, 4);
+  const opts = {};
+  if (raw.opts && typeof raw.opts === 'object' && !Array.isArray(raw.opts)) for (const [k, v] of Object.entries(raw.opts)) { if (!LAYOUT_BLOCKS.includes(k) || !Array.isArray(v)) continue; const vals = [...new Set(v.filter((s) => typeof s === 'string').map((s) => s.trim().slice(0, 40)).filter(Boolean).slice(0, 10))]; if (vals.length) opts[k] = vals; }
+  return { order, hidden, nav: ['home', ...mid, 'me'], opts };
+}
+function layoutRoute(req, res, url, key) {
+  const json = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+  const readBody = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => cb(JSON.parse(raw || '{}'))); };
+  const ID_RE = /^[a-z0-9_-]{1,32}$/;
+  if (key === 'GET /layout/status') return json(200, { ok: true, blocks: LAYOUT_BLOCKS, nav: LAYOUT_NAV_IDS });
+  if (key === 'GET /me/layout') return json(200, { layout: mockLayout ? layoutNormalise(mockLayout) : null, defaults: layoutDefaults(), pinned: layoutPinned(), updatedAt: mockLayoutAt });
+  if (key === 'PUT /me/layout') { readBody((b) => {
+    if (!b || typeof b !== 'object' || Array.isArray(b)) return json(400, { error: 'bad-layout' });
+    for (const k of ['order', 'hidden', 'nav']) if (b[k] !== undefined && (!Array.isArray(b[k]) || b[k].length > 40 || !b[k].every((id) => typeof id === 'string' && ID_RE.test(id)))) return json(400, { error: 'bad-layout' });
+    if (b.nav !== undefined && (!b.nav.includes('home') || !b.nav.includes('me'))) return json(400, { error: 'bad-layout' });
+    if (b.opts !== undefined && (!b.opts || typeof b.opts !== 'object' || Array.isArray(b.opts) || Object.entries(b.opts).some(([k, v]) => !ID_RE.test(k) || !Array.isArray(v) || v.length > 10 || !v.every((s) => typeof s === 'string' && s.length <= 40)))) return json(400, { error: 'bad-layout' });
+    const cur = mockLayout ?? {};
+    mockLayout = layoutNormalise({ order: b.order ?? cur.order, hidden: b.hidden ?? cur.hidden, nav: b.nav ?? cur.nav, opts: b.opts ?? cur.opts }); mockLayoutAt = new Date().toISOString();
+    json(200, { ok: true, layout: mockLayout, updatedAt: mockLayoutAt });
+  }); return true; }
+  if (key === 'DELETE /me/layout') { mockLayout = null; mockLayoutAt = null; return json(200, { ok: true }); }
+  return false;
+}
+// ---- home layout end
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x'); const key = `${req.method} ${url.pathname}`;
   res.setHeader('access-control-allow-origin', '*'); res.setHeader('access-control-allow-headers', 'content-type,x-token,authorization,accept,x-file-name'); res.setHeader('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
@@ -772,6 +812,7 @@ http.createServer((req, res) => {
   if (url.pathname.startsWith('/search')) { if (searchRoute(req, res, url, key)) return; }
   if (url.pathname.startsWith('/notify')) { if (notifyRoute(req, res, url, key)) return; }
   if (url.pathname.startsWith('/jobs')) { if (jobsRoute(req, res, url, key)) return; }
+  if (url.pathname === '/me/layout' || url.pathname === '/layout/status') { if (layoutRoute(req, res, url, key)) return; } // ---- home layout
   // ---- jobs (public+admin) start
   if (/^\/(jobs\/hiring|jobs(\/[0-9a-f-]{36})?(\/apply)?|biz\/[^/]+\/jobs|adminapi\/jobs(\/.*)?)$/.test(url.pathname) && jobsPublicRoute(req, res, url, key)) return;
   // ---- jobs (public+admin) end

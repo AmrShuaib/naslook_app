@@ -189,6 +189,8 @@ export default async function accountDelete(app, opts = {}) {
       // التوظيف: ملف التوظيف والسيرة وترشيحاته تُحذف؛ عروض الدائرة تبقى ويُفكّ إسنادها إليه
       if (has("job_profiles", "user_id")) await run("job_profiles", "DELETE FROM job_profiles WHERE user_id=$1");
       if (has("job_matches", "user_id")) await run("job_matches", "DELETE FROM job_matches WHERE user_id=$1");
+      // تخصيص الرئيسية (layout.js): تخطيط المستخدم يُحذف مع حسابه
+      if (has("user_layouts", "user_id")) await run("user_layouts", "DELETE FROM user_layouts WHERE user_id=$1");
       if (has("job_matches", "assignee_id")) await run("job_matches", "UPDATE job_matches SET assignee_id=NULL WHERE assignee_id=$1");
       if (has("jobs", "assignee_id")) await run("jobs", "UPDATE jobs SET assignee_id=NULL WHERE assignee_id=$1");
       if (has("market_seller_upgrades", "seller_id")) await run("market_seller_upgrades", "DELETE FROM market_seller_upgrades WHERE seller_id=$1");
