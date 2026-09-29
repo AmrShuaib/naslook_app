@@ -212,14 +212,14 @@ export default async function inbox(app, opts = {}) {
     } catch { return false; }
   }
   // ---- المساعد الذكي: ملخص المحادثة أو مسودة رد عبر Claude (مفتاح Anthropic في الإعدادات)
-  const AI_MODELS = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"];
-  async function askClaude({ system, user, maxTokens = 2048 }) {
+  const AI_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"];
+  async function askClaude({ system, user, maxTokens = 2048, effort = "low" }) {
     const key = str(settings.aiKey, 300); if (!key) throw Object.assign(new Error("ai-not-configured"), { code: 400 });
     const model = AI_MODELS.includes(settings.aiModel) ? settings.aiModel : AI_MODELS[0];
     const r = await fetchFn()("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-beta": "server-side-fallback-2026-07-01" },
-      body: JSON.stringify({ model, max_tokens: maxTokens, fallbacks: "default", output_config: { effort: "low" }, system, messages: [{ role: "user", content: user }] }),
+      body: JSON.stringify({ model, max_tokens: maxTokens, fallbacks: "default", output_config: { effort: ["low", "medium", "high"].includes(effort) ? effort : "low" }, system, messages: [{ role: "user", content: user }] }),
     });
     const body = await r.text(); let j = null; try { j = JSON.parse(body); } catch { j = null; }
     if (r.status === 401 || r.status === 403) throw Object.assign(new Error("ai-key-invalid"), { code: 400 });
@@ -227,6 +227,8 @@ export default async function inbox(app, opts = {}) {
     if (j?.stop_reason === "refusal") throw Object.assign(new Error("ai-refused"), { code: 502 });
     return (j?.content ?? []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
   }
+  // الإضافات الأخرى (التوظيف) تستعمل المفتاح نفسه من لوحة الإدارة
+  globalThis.naslifeAskClaude = askClaude;
   const transcript = (t, msgs) => msgs.filter((m) => m.direction !== "note").map((m) => `[${m.direction === "in" ? "العميل" : "الفريق"} · ${new Date(m.created_at).toISOString().slice(0, 16)}] ${m.direction === "in" ? (m.from_name || m.from_addr) : (m.from_name || "الفريق")}:\n${String(m.text).slice(0, 6000)}`).join("\n\n").slice(0, 60000);
 
   // ---- القواعد: شروط على الصندوق/المرسل/الموضوع/النص، وإجراءات وسم/إسناد/تمييز/حالة/أرشفة عند الوصول

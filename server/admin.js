@@ -150,7 +150,9 @@ export default async function admin(app, opts) {
     // مفاتيح المال: التحويل بين المستخدمين والدفع داخل المحادثة يعملان كما هما الآن حتى يقرر المالك (يُطفآن دائماً في عميل iOS)
     transfersEnabled: true, chatPaymentsEnabled: true, supportEmail: "", bannedWordsDefault: true,
     // تأكيد البريد قبل الدخول (auth_alias.js): لا جلسة قبل إدخال الرمز؛ يعمل فقط حين تكون خدمة البريد مضبوطة
-    requireEmailVerification: true };
+    requireEmailVerification: true,
+    // التوظيف (jobs.js): التفعيل، حد العروض النشطة للباقة المجانية، حد البطاقات الأسبوعي للمستخدم، أدنى درجة مطابقة، موافقة الإدارة قبل النشر
+    jobsEnabled: true, jobsFreeActive: 3, jobsWeeklyCap: 5, jobsMinScore: 0.45, jobsRequireApproval: false };
   async function loadSettings() {
     const rows = (await pool.query("SELECT key, value FROM platform_settings")).rows;
     const s = { ...DEFAULT_SETTINGS };
@@ -167,7 +169,7 @@ export default async function admin(app, opts) {
   app.get("/settings/public", async () => {
     const s = globalThis.naslifeSettings ?? DEFAULT_SETTINGS;
     return { announcement: s.announcement ?? "", maintenance: s.maintenance === true, supportHandle: s.supportHandle ?? "", supportEmail: s.supportEmail ?? "", testTopup: s.testTopup === true,
-      transfersEnabled: s.transfersEnabled !== false, chatPaymentsEnabled: s.chatPaymentsEnabled !== false, requireEmailVerification: s.requireEmailVerification !== false };
+      transfersEnabled: s.transfersEnabled !== false, chatPaymentsEnabled: s.chatPaymentsEnabled !== false, requireEmailVerification: s.requireEmailVerification !== false, jobsEnabled: s.jobsEnabled !== false };
   });
 
   const audit = async (adminId, action, target, details = {}) => { try { await pool.query("INSERT INTO admin_audit(id,admin_id,action,target,details) VALUES($1,$2,$3,$4,$5)", [crypto.randomUUID(), adminId, action, target, JSON.stringify(details)]); } catch { /* ignore */ } };
@@ -721,6 +723,12 @@ export default async function admin(app, opts) {
     if (b.spotlightMaxActive !== undefined) patch.spotlightMaxActive = Math.max(1, Math.min(50, Math.round(Number(b.spotlightMaxActive)) || 12));
     if (b.marketReviewNewAccounts !== undefined) patch.marketReviewNewAccounts = b.marketReviewNewAccounts === true;
     if (b.marketBlockContacts !== undefined) patch.marketBlockContacts = b.marketBlockContacts !== false;
+    // التوظيف
+    if (b.jobsEnabled !== undefined) patch.jobsEnabled = b.jobsEnabled !== false;
+    if (b.jobsFreeActive !== undefined) patch.jobsFreeActive = Math.max(1, Math.min(100, Math.round(Number(b.jobsFreeActive)) || 3));
+    if (b.jobsWeeklyCap !== undefined) patch.jobsWeeklyCap = Math.max(1, Math.min(50, Math.round(Number(b.jobsWeeklyCap)) || 5));
+    if (b.jobsMinScore !== undefined) patch.jobsMinScore = Math.max(0.1, Math.min(1, Math.round(Number(b.jobsMinScore) * 100) / 100 || 0.45));
+    if (b.jobsRequireApproval !== undefined) patch.jobsRequireApproval = b.jobsRequireApproval === true;
     const s = await saveSettings(patch);
     await audit(uid, "settings.update", "platform", patch);
     return s;

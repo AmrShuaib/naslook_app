@@ -14,7 +14,7 @@ const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital"
 // clinic: عيادة بمواعيد (كالعرض السينمائي لكن مجاناً غالباً)، info: خدمة أو قسم تعريفي لا يُطلب
 const KINDS = new Set(["product", "showtime", "room", "car", "clinic", "info"]);
 const POST_KINDS = new Set(["news", "offer"]);
-const STAFF_ROLES = new Set(["manager", "staff"]);
+const STAFF_ROLES = new Set(["manager", "staff", "hr"]);
 const DAY = 86400000;
 const SHOWTIME_DAYS = 3;            // عدد الأيام القادمة التي تُعرض لها مواعيد السينما
 const RIYADH_OFFSET_MIN = 180;      // توقيت السعودية UTC+3 (بلا توقيت صيفي)

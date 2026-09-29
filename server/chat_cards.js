@@ -122,6 +122,14 @@ async function setup(app, opts) {
         const u = personOf(await userRow(p.user_id));
         return { type: "post", id: p.id, title: p.title || p.caption || (p.kind === "image" ? "صورة" : p.kind === "video" ? "فيديو" : p.kind === "audio" ? "تسجيل صوتي" : "منشور"), subtitle: [u?.nickname, p.place_name].filter(Boolean).join(" · "), image: p.kind === "image" ? p.media_url : null, kind: p.kind, price: p.price == null ? null : Number(p.price), user: u };
       }
+      case "job": {
+        if (!UUID_RE.test(b ?? "")) return null;
+        try {
+          const j = (await pool.query("SELECT j.*, z.name AS biz_name, z.name_ar AS biz_name_ar, z.logo_url FROM jobs j LEFT JOIN biz z ON z.id=j.biz_id WHERE j.id=$1", [b])).rows[0]; if (!j) return null;
+          const types = { full: "دوام كامل", part: "دوام جزئي", remote: "عن بُعد", intern: "تدريب", shift: "ورديات", freelance: "عمل حر" };
+          return { type: "job", id: j.id, bizId: j.biz_id, title: j.title, subtitle: [j.biz_name_ar || j.biz_name, j.city, types[j.type] ?? j.type].filter(Boolean).join(" · "), image: j.logo_url ?? null, status: j.status, salaryMin: j.salary_visible ? j.salary_min : null, salaryMax: j.salary_visible ? j.salary_max : null, link: `/jobs/${j.id}` };
+        } catch { return null; }
+      }
       case "space": {
         const biz = await bizRow(b ?? ""); if (!biz) return null;
         if (c) {
