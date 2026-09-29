@@ -39,6 +39,7 @@ import '../../core/share/legal_links.dart';
 import 'saved_searches_page.dart';
 import 'wishlist_page.dart';
 import '../wallet/wallet_page.dart';
+import '../../api/commerce_models.dart';
 
 class MySpacePage extends ConsumerWidget {
   const MySpacePage({super.key});
@@ -95,40 +96,44 @@ class MySpacePage extends ConsumerWidget {
             ]),
           ),
           const SizedBox(height: 14),
+          // بطاقة المحفظة: الرصيد وأزرار سريعة (في iOS بلا شحن ولا تحويل)
+          _WalletCard(),
+          const SizedBox(height: 14),
+          // البلاطات: أكثر ما يُفتح من ماي سبيس (صفّان ثابتان بلا قائمة متداخلة)
+          _Tiles(children: [
+            _Tile(icon: Icons.receipt_long_outlined, title: 'حجوزاتي وطلباتي', hint: 'فنادق وسينما وبراندات', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
+            _Tile(icon: Icons.auto_awesome_motion_outlined, title: 'منشوراتي', hint: 'على الخريطة', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyPostsPage()))),
+            _Tile(icon: Icons.storefront_outlined, title: 'السوق', hint: 'عروضي وطلباتي', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 0)))),
+            _Tile(icon: Icons.storefront_rounded, title: 'نشاطي التجاري', hint: 'لوحة دائرتك', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBusinessesPage()))),
+            _Tile(icon: Icons.bookmark_added_outlined, title: 'أمنياتي', hint: 'منتجات وفعاليات', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WishlistPage()))),
+            _Tile(icon: Icons.saved_search_rounded, title: 'بحوثي المحفوظة', hint: 'تنبيه عند جديد', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SavedSearchesPage()))),
+          ]),
+          const SizedBox(height: 14),
+          const SectionTitle('التوظيف'),
           JoyCard(padding: EdgeInsets.zero, child: Column(children: [
-            ListTile(leading: const Icon(Icons.account_balance_wallet_outlined, color: Joy.primary), title: const Text('المحفظة'), subtitle: Text(isIosNative ? 'الرصيد والمشتريات' : 'الرصيد والتحويلات والدفع', key: const Key('wallet-tile-subtitle')), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()))),
-            const Divider(indent: 16, endIndent: 16),
-            ListTile(leading: const Icon(Icons.confirmation_number_outlined, color: Joy.accent), title: const Text('تذاكري'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()))),
-            const Divider(indent: 16, endIndent: 16),
-            ListTile(leading: const Icon(Icons.receipt_long_outlined, color: Joy.primary), title: const Text('حجوزاتي وطلباتي'), subtitle: const Text('فنادق وسيارات وسينما وبراندات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
-            const Divider(indent: 16, endIndent: 16),
-            ListTile(leading: const Icon(Icons.storefront_rounded, color: Joy.primary), title: const Text('نشاطي التجاري'), subtitle: const Text('لوحة تحكم دائرتك: الكتالوج والطلبات والإحصاءات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBusinessesPage()))),
-            const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('jobs-profile'), leading: const Icon(Icons.work_outline_rounded, color: Joy.primary), title: const Text('أبحث عن عمل'), subtitle: Text(_jobProfileSubtitle(ref), maxLines: 1, overflow: TextOverflow.ellipsis), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobProfilePage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('jobs-offers'), leading: const Icon(Icons.badge_outlined, color: Joy.accent), title: const Text('عروض التوظيف'), subtitle: Text(_jobOffersSubtitle(ref)), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobOffersPage()))),
-            if (ref.watch(adminStatusProvider).valueOrNull?.isAdmin == true) ...[
-              const Divider(indent: 16, endIndent: 16),
+          ])),
+          if (ref.watch(adminStatusProvider).valueOrNull?.isAdmin == true) ...[
+            const SizedBox(height: 14),
+            const SectionTitle('الإدارة'),
+            JoyCard(padding: EdgeInsets.zero, child: Column(children: [
               ListTile(leading: const Icon(Icons.admin_panel_settings_outlined, color: Joy.accent), title: const Text('لوحة الإدارة'), subtitle: const Text('المستخدمون والبلاغات والمالية والإعدادات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminShell(standalone: false)))),
               const Divider(indent: 16, endIndent: 16),
               ListTile(key: const Key('blog-drafts'), leading: const Icon(Icons.article_outlined, color: Joy.accent), title: const Text('تدوينات جاهزة للنشر'), subtitle: const Text('مسودات «جديد ناس لايف» تُنشر بضغطة من هنا'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BlogDraftsPage()))),
-            ],
-            const Divider(indent: 16, endIndent: 16),
-            ListTile(leading: const Icon(Icons.auto_awesome_motion_outlined, color: Joy.accent), title: const Text('منشوراتي على الخريطة'), subtitle: const Text('صور وفيديو وصوت ونص · تعديل وإخفاء وحذف'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyPostsPage()))),
-            const Divider(indent: 16, endIndent: 16),
+            ])),
+          ],
+          const SizedBox(height: 14),
+          const SectionTitle('حسابي'),
+          JoyCard(padding: EdgeInsets.zero, child: Column(children: [
             ListTile(key: const Key('share-me'), leading: const Icon(Icons.ios_share_rounded, color: Joy.primary), title: const Text('مشاركة حسابي'), subtitle: Text(me == null ? '' : profileLink(me.nickname).replaceFirst(RegExp(r'^https?://'), ''), textDirection: TextDirection.ltr, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: me == null ? null : () => shareLink(context, title: me.nickname, url: profileLink(me.nickname), subtitle: (p?.isPublic ?? true) ? 'حسابك العام على ناس لايف' : 'حسابك خاص: الرابط يعرض اسمك فقط', code: userCode(me.nickname))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('home-layout'), leading: const Icon(Icons.tune_rounded, color: Joy.primary), title: const Text('تخصيص الرئيسية'), subtitle: const Text('أخفِ الأقسام ورتّبها واختر أقسام شريط التنقّل'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HomeLayoutPage()))),
-            const Divider(height: 1, indent: 56),
+            const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.shield_outlined, color: Joy.primary), title: const Text('الخصوصية والأمان'), subtitle: const Text('المحظورون والمحادثات المكتومة'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SafetyPage()))),
             const Divider(indent: 16, endIndent: 16),
-            ListTile(leading: const Icon(Icons.saved_search_rounded, color: Joy.primary), title: const Text('بحوثي المحفوظة'), subtitle: const Text('تنبيه عند ظهور جديد يطابق ما تبحث عنه'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SavedSearchesPage()))),
-            const Divider(indent: 16, endIndent: 16),
-            ListTile(leading: const Icon(Icons.bookmark_added_outlined, color: Joy.accent), title: const Text('قائمة أمنياتي'), subtitle: const Text('منتجات وخدمات وفعاليات ومنشورات أتمناها'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WishlistPage()))),
-            const Divider(indent: 16, endIndent: 16, height: 1),
             ListTile(key: const Key('blog-link'), leading: const Icon(Icons.newspaper_outlined, color: Joy.primary), title: const Text('التحديثات والأخبار'), subtitle: const Text('مدونة ناس لايف: كل جديد في التطبيق'), trailing: const Icon(Icons.open_in_new_rounded, color: Joy.textMuted, size: 18), onTap: () => launchUrl(Uri.parse('${publicOrigin()}/blog'), mode: LaunchMode.externalApplication)),
-            const Divider(indent: 16, endIndent: 16),
-            ListTile(leading: const Icon(Icons.storefront_outlined, color: Joy.sunText), title: const Text('عروضي وطلباتي في السوق'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 0)))),
           ])),
           const SizedBox(height: 14),
           if (p != null && (p.skills.isNotEmpty || p.hobbies.isNotEmpty || p.lookingFor.isNotEmpty)) ...[
@@ -859,4 +864,102 @@ class _RecoveryTileState extends ConsumerState<_RecoveryTile> {
       onTap: i != null && !i.enabled ? _enable : null,
     );
   }
+}
+
+
+/// بطاقة المحفظة: الرصيد والنقاط وأزرار سريعة. في iOS الأصلي بلا شحن ولا تحويل (قاعدة أبل).
+class _WalletCard extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final w = ref.watch(walletProvider).valueOrNull;
+    final ios = isIosNative;
+    void open() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()));
+    Widget btn(String label, IconData icon, VoidCallback onTap, {Key? key}) => Expanded(
+          child: Material(
+            color: Colors.white.withValues(alpha: .16),
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              key: key,
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(height: 38, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: Colors.white, size: 17), const SizedBox(width: 5), Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12.5))])),
+            ),
+          ),
+        );
+    return Material(
+      color: Joy.primary,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        key: const Key('wallet-card'),
+        onTap: open,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Icon(Icons.account_balance_wallet_outlined, color: Colors.white70, size: 18),
+              const SizedBox(width: 6),
+              const Text('المحفظة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+              const SizedBox(width: 10),
+              Expanded(child: Text(ios ? 'الرصيد والمشتريات' : 'الرصيد والتحويلات والدفع', key: const Key('wallet-tile-subtitle'), maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.end, style: const TextStyle(color: Colors.white70, fontSize: 11.5))),
+            ]),
+            const SizedBox(height: 8),
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text(w == null ? '…' : money(w.balance), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 26, height: 1.1)),
+              const SizedBox(width: 10),
+              if (w != null && w.points > 0) Padding(padding: const EdgeInsets.only(bottom: 3), child: Text('${w.points} نقطة', style: const TextStyle(color: Colors.white70, fontSize: 12))),
+              if (w != null && w.upcomingTickets > 0) Padding(padding: const EdgeInsets.only(bottom: 3), child: Text(' · ${w.upcomingTickets} تذاكر قادمة', style: const TextStyle(color: Colors.white70, fontSize: 12))),
+            ]),
+            const SizedBox(height: 10),
+            Row(children: [
+              if (!ios) ...[btn('شحن', Icons.add_rounded, open, key: const Key('wallet-topup')), const SizedBox(width: 8)],
+              if (!ios && ref.watch(walletTransfersEnabledProvider)) ...[btn('تحويل', Icons.swap_horiz_rounded, open, key: const Key('wallet-transfer')), const SizedBox(width: 8)],
+              btn('تذاكري', Icons.confirmation_number_outlined, () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage())), key: const Key('wallet-tickets')),
+              if (ios) ...[const SizedBox(width: 8), btn('المشتريات', Icons.receipt_long_outlined, () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 0))))],
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _Tiles extends StatelessWidget {
+  final List<Widget> children;
+  const _Tiles({required this.children});
+  @override
+  Widget build(BuildContext context) => Column(children: [
+        for (var r = 0; r < children.length; r += 3)
+          Padding(
+            padding: EdgeInsets.only(bottom: r + 3 < children.length ? 8 : 0),
+            child: SizedBox(
+              height: 108,
+              child: Row(children: [
+                for (var i = r; i < r + 3; i++) ...[
+                  if (i > r) const SizedBox(width: 8),
+                  Expanded(child: i < children.length ? children[i] : const SizedBox()),
+                ],
+              ]),
+            ),
+          ),
+      ]);
+}
+
+class _Tile extends StatelessWidget {
+  final IconData icon;
+  final String title, hint;
+  final VoidCallback onTap;
+  const _Tile({required this.icon, required this.title, required this.hint, required this.onTap});
+  @override
+  Widget build(BuildContext context) => JoyCard(
+        padding: const EdgeInsets.all(10),
+        onTap: onTap,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Container(width: 34, height: 34, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(10)), child: Icon(icon, color: Joy.primary, size: 19)),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5)),
+            Text(hint, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11)),
+          ]),
+        ]),
+      );
 }

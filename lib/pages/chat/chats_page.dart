@@ -130,7 +130,9 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
             ),
           ),
         ),
-        Padding(
+        // الشرائح تتمرّر أفقياً حتى لا تضيق بها الشاشات الصغيرة
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
           child: Row(children: [
             for (final (i, l) in ['المحادثات', reqCount > 0 ? 'الطلبات · $reqCount' : 'الطلبات'].indexed)
@@ -138,19 +140,22 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
                 padding: const EdgeInsetsDirectional.only(end: 8),
                 child: ChoiceChip(label: Text(l, style: TextStyle(color: _tab == i ? Joy.primaryOn : Joy.text)), selected: _tab == i, onSelected: (_) => setState(() => _tab = i), showCheckmark: false, selectedColor: Joy.primary),
               ),
+            // عروض التوظيف بانتظار الرد تظهر كشريحة مستقلة تفتح الطلبات (حيث تُعرض أولاً)
+            if (jobOffers.isNotEmpty)
+              ChoiceChip(key: const Key('chat-chip-jobs'), avatar: Icon(Icons.work_outline_rounded, size: 16, color: _tab == 1 ? Joy.primaryOn : Joy.primary), label: Text('التوظيف · ${jobOffers.length}', style: TextStyle(color: _tab == 1 ? Joy.primaryOn : Joy.text)), selected: false, onSelected: (_) => setState(() => _tab = 1), showCheckmark: false),
           ]),
         ),
-        Expanded(child: _tab == 0 ? _chatsTab(chats) : _requestsTab(requests, jobOffers)),
+        Expanded(child: _tab == 0 ? _chatsTab(chats, requests.valueOrNull ?? const [], jobOffers) : _requestsTab(requests, jobOffers)),
       ]),
     );
   }
 
-  Widget _chatsTab(AsyncValue<List<Chat>> chats) => chats.when(
+  Widget _chatsTab(AsyncValue<List<Chat>> chats, List<FriendRequest> pending, List<JobMatch> jobOffers) => chats.when(
         data: (all) {
           final muted = ref.watch(mutedPeersProvider);
           final q = _q.toLowerCase();
           final list = q.isEmpty ? all : all.where((c) => c.peer.nickname.toLowerCase().contains(q) || c.peer.id.toLowerCase().contains(q) || (c.lastContent?.toLowerCase().contains(q) ?? false)).toList();
-          if (all.isEmpty) {
+          if (all.isEmpty && pending.isEmpty && jobOffers.isEmpty) {
             return EmptyState(icon: Icons.chat_bubble_outline_rounded, title: 'لا محادثات بعد', subtitle: 'أضف صديقاً بنك نيمه وابدأ الحديث.', action: OutlinedButton(onPressed: _newChat, child: const Text('محادثة جديدة')));
           }
           return RefreshIndicator(
@@ -158,6 +163,50 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
             child: ListView(
               padding: const EdgeInsets.only(bottom: 96),
               children: [
+                // أول عرض وظيفي بانتظار الرد مثبّت فوق المحادثات
+                if (q.isEmpty && jobOffers.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                    child: Material(
+                      color: Joy.primarySoft,
+                      borderRadius: BorderRadius.circular(14),
+                      child: InkWell(
+                        key: const Key('chat-job-pinned'),
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => setState(() => _tab = 1),
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Row(children: [
+                            Container(width: 40, height: 40, decoration: BoxDecoration(color: Joy.surface, borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.work_outline_rounded, color: Joy.primary)),
+                            const SizedBox(width: 10),
+                            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text('عرض وظيفي: ${jobOffers.first.job?.title ?? ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: Joy.bubbleOutText)),
+                              Text(jobOffers.length > 1 ? '${jobOffers.length} عروض بانتظار ردك' : 'بانتظار ردك · افتح لتقبل أو تعتذر', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.text, fontSize: 12)),
+                            ])),
+                            const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ),
+                // ملخص طلبات المراسلة من غير الأصدقاء
+                if (q.isEmpty && pending.isNotEmpty)
+                  ListRow(
+                    key: const Key('chat-requests-row'),
+                    divider: list.isNotEmpty,
+                    onTap: () => setState(() => _tab = 1),
+                    leading: SizedBox(
+                      width: 52,
+                      height: 52,
+                      child: Stack(children: [
+                        for (final (i, r) in pending.take(3).toList().indexed)
+                          PositionedDirectional(start: i * 12.0, top: 8, child: Container(decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Joy.surface, width: 2)), child: ProfileAvatar(person: r.from, size: 34))),
+                      ]),
+                    ),
+                    title: Text(pending.length == 1 ? 'طلب مراسلة واحد' : '${pending.length} طلبات مراسلة'),
+                    subtitle: const Text('من غير الأصدقاء · اقبل أو تجاهل', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Joy.textMuted)),
+                    trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+                  ),
                 if (list.isEmpty && _hits.isEmpty && !_searchingServer) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('لا نتائج', style: TextStyle(color: Joy.textMuted)))),
                 for (final (i, c) in list.indexed) _ChatRow(c, muted: muted.contains(c.peer.id), divider: i < list.length - 1 || _hits.isNotEmpty),
                 if (_q.length >= 2) ...[

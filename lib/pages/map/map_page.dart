@@ -318,6 +318,7 @@ class _MapPageState extends ConsumerState<MapPage> {
               ready: _ready,
               extra: blocks,
               bottomPad: widget.home ? JoyNavBar.inset(context) : 0,
+              home: widget.home,
               onZoomIn: () => _map.move(_map.camera.center, math.max(_zoom + 2, kAreaListZoom + 1)),
               onSelect: _focus,
               onExpand: () => _sheet.animateTo(_sheetMax, duration: const Duration(milliseconds: 220), curve: Curves.easeOut),
@@ -851,6 +852,8 @@ class _AreaPanel extends StatelessWidget {
   /// أقسام الرئيسية بعد عناصر المنطقة، ومساحة سفلية لشريط التنقّل العائم.
   final List<Widget> extra;
   final double bottomPad;
+  /// وضع الرئيسية: العنوان «حولك الآن» قبل التقريب.
+  final bool home;
   const _AreaPanel({
     required this.scroll,
     required this.items,
@@ -860,6 +863,7 @@ class _AreaPanel extends StatelessWidget {
     required this.expanded,
     this.extra = const [],
     this.bottomPad = 0,
+    this.home = false,
     required this.onZoomIn,
     required this.onExpand,
     required this.onCollapse,
@@ -898,7 +902,7 @@ class _AreaPanel extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      !ready ? 'حول هذه المنطقة' : (zoomedIn ? 'في هذه المنطقة' : 'حول هذه المنطقة'),
+                      !ready || !zoomedIn ? (home ? 'حولك الآن' : 'حول هذه المنطقة') : 'في هذه المنطقة',
                       style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                     ),
                   ),

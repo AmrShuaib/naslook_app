@@ -7,7 +7,9 @@ import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../ui/widgets.dart';
+import '../../state/safety_providers.dart';
 import '../business/business_list.dart';
+import '../home/home_page.dart';
 import 'circle_detail_page.dart';
 
 class CirclesPage extends ConsumerStatefulWidget {
@@ -56,16 +58,13 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
           ),
         if (tab == 2)
           const Expanded(child: BizListView())
+        else if (tab == 0)
+          Expanded(child: _MineTab(mine: mine, onDiscover: () => setState(() => tab = 1), onCreate: _create))
         else
         Expanded(
-          child: (tab == 0 ? mine : discover).when(
+          child: discover.when(
             data: (list) => list.isEmpty
-                ? EmptyState(
-                    icon: Icons.groups_rounded,
-                    title: tab == 0 ? 'لم تنضم لأي دائرة بعد' : 'لا دوائر مطابقة',
-                    subtitle: tab == 0 ? 'اكتشف الدوائر النشطة حولك أو أنشئ دائرتك.' : 'جرّب كلمة أخرى أو أنشئ دائرة جديدة.',
-                    action: tab == 0 ? OutlinedButton(onPressed: () => setState(() => tab = 1), child: const Text('اكتشف حولك')) : null,
-                  )
+                ? const EmptyState(icon: Icons.groups_rounded, title: 'لا دوائر مطابقة', subtitle: 'جرّب كلمة أخرى أو أنشئ دائرة جديدة.')
                 : RefreshIndicator(
                     onRefresh: () async {
                       ref.invalidate(myVesselsProvider);
@@ -79,7 +78,7 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
                     ),
                   ),
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(tab == 0 ? myVesselsProvider : discoverVesselsProvider)),
+            error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(discoverVesselsProvider)),
           ),
         ),
       ]),
@@ -110,6 +109,152 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
       if (mounted) toast(context, e.toString(), error: true);
     }
   }
+}
+
+/// «دوائري» بنظام «الخريطة أولاً»: حلقات الدوائر (حلقة ملوّنة لما فيه جديد خلال ٢٤ ساعة) ثم آخر ما في دوائرك ثم اكتشف حولك.
+class _MineTab extends ConsumerWidget {
+  final AsyncValue<List<Vessel>> mine;
+  final VoidCallback onDiscover, onCreate;
+  const _MineTab({required this.mine, required this.onDiscover, required this.onCreate});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final list = mine.value ?? const <Vessel>[];
+    final feed = ref.watch(feedProvider);
+    final blocked = ref.watch(blockedIdsProvider);
+    final discover = (ref.watch(discoverVesselsProvider('')).valueOrNull ?? const <Vessel>[]).where((v) => !v.member).take(8).toList();
+    final now = DateTime.now();
+    return RefreshIndicator(
+      onRefresh: () async {
+        ref.invalidate(myVesselsProvider);
+        ref.invalidate(feedProvider);
+        ref.invalidate(discoverVesselsProvider);
+      },
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(0, 4, 0, 96),
+        children: [
+          SizedBox(
+            height: 96,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              children: [
+                for (final v in list)
+                  _Ring(
+                    key: Key('circle-ring-${v.id}'),
+                    name: v.name,
+                    fresh: v.lastPostAt != null && now.difference(v.lastPostAt!).inHours < 24,
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleDetailPage(vesselId: v.id, initial: v))),
+                  ),
+                _Ring(key: const Key('circle-ring-new'), name: 'جديدة', add: true, onTap: onCreate),
+              ],
+            ),
+          ),
+          if (mine.isLoading && list.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+          if (!mine.isLoading && list.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+              child: JoyCard(
+                color: Joy.sunSoft,
+                child: Row(children: [
+                  const Icon(Icons.groups_rounded, color: Joy.sunText),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('لم تنضم لأي دائرة بعد. اكتشف الدوائر النشطة حولك أو أنشئ دائرتك.', style: TextStyle(color: Joy.sunText))),
+                  TextButton(onPressed: onDiscover, child: const Text('اكتشف')),
+                ]),
+              ),
+            ),
+          Padding(padding: const EdgeInsets.fromLTRB(20, 14, 20, 6), child: SectionTitle('آخر ما في دوائرك', action: 'الخريطة', onAction: () => openNavTab(ref, 'home'))),
+          feed.when(
+            data: (all) {
+              final posts = [for (final p in all) if (!isBlockedId(blocked, p.author.id)) p];
+              return posts.isEmpty
+                  ? const Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: EmptyState(icon: Icons.forum_outlined, title: 'لا منشورات بعد', subtitle: 'انضم إلى دائرة أو انشر أول منشور فيها.'))
+                  : Column(children: [for (final p in posts.take(20)) Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 10), child: PostCard(p))]);
+            },
+            loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+            error: (e, _) => Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: ErrorState(e, onRetry: () => ref.invalidate(feedProvider))),
+          ),
+          if (discover.isNotEmpty) ...[
+            Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 6), child: SectionTitle('اكتشف حولك', action: 'الكل', onAction: onDiscover)),
+            SizedBox(
+              height: 150,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: discover.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (_, i) => _DiscoverCard(discover[i]),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _Ring extends StatelessWidget {
+  final String name;
+  final bool fresh, add;
+  final VoidCallback onTap;
+  const _Ring({super.key, required this.name, required this.onTap, this.fresh = false, this.add = false});
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(40),
+          child: SizedBox(
+            width: 68,
+            child: Column(children: [
+              Container(
+                padding: const EdgeInsets.all(2.5),
+                decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: fresh ? Joy.primary : (add ? Colors.transparent : Joy.line), width: fresh ? 2.5 : 1.5)),
+                child: add
+                    ? Container(width: 56, height: 56, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Joy.control, width: 1.5)), child: const Icon(Icons.add_rounded, color: Joy.primary))
+                    : Avatar(name: name, size: 56),
+              ),
+              const SizedBox(height: 5),
+              Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center, style: TextStyle(fontSize: 11.5, fontWeight: fresh ? FontWeight.w700 : FontWeight.w500)),
+            ]),
+          ),
+        ),
+      );
+}
+
+class _DiscoverCard extends ConsumerWidget {
+  final Vessel v;
+  const _DiscoverCard(this.v);
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => SizedBox(
+        width: 160,
+        child: JoyCard(
+          key: Key('discover-${v.id}'),
+          padding: const EdgeInsets.all(12),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleDetailPage(vesselId: v.id, initial: v))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Avatar(name: v.name, size: 40),
+            Text(v.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+            Text('${v.kind == 'business' ? 'تجارية' : (v.topic.isNotEmpty ? v.topic : 'مجتمع')} · ${v.members} عضواً', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
+            FilledButton.tonal(
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 14), visualDensity: VisualDensity.compact),
+              onPressed: () async {
+                try {
+                  await ref.read(apiClientProvider).joinVessel(v.id);
+                  ref.invalidate(myVesselsProvider);
+                  ref.invalidate(discoverVesselsProvider);
+                  ref.invalidate(feedProvider);
+                  if (context.mounted) toast(context, 'انضممت إلى ${v.name}');
+                } catch (e) {
+                  if (context.mounted) toast(context, e.toString(), error: true);
+                }
+              },
+              child: const Text('انضم', style: TextStyle(fontSize: 12.5)),
+            ),
+          ]),
+        ),
+      );
 }
 
 /// ما تعود به ورقة إنشاء الدائرة.
