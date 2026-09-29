@@ -579,8 +579,9 @@ page = f'''<title>الشاشات الرئيسية لناس لايف</title>
 </script>
 '''
 
-icons_path = root / 'icons.json'
-icons = json.loads(icons_path.read_text(encoding='utf-8')); icons.update(ICONS)
-icons_path.write_text(json.dumps(icons, ensure_ascii=False, indent=1), encoding='utf-8')
-(root / 'template_main.html').write_text(page, encoding='utf-8')
-print('template_main.html', len(page))
+if __name__ == '__main__':
+    icons_path = root / 'icons.json'
+    icons = json.loads(icons_path.read_text(encoding='utf-8')); icons.update(ICONS)
+    icons_path.write_text(json.dumps(icons, ensure_ascii=False, indent=1), encoding='utf-8')
+    (root / 'template_main.html').write_text(page, encoding='utf-8')
+    print('template_main.html', len(page))

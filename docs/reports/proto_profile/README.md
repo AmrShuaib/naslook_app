@@ -6,6 +6,7 @@
 - `template_en.html`: النسخة الإنجليزية.
 - `template_colors.html`: يولّده `make_colors.py` من الأصل: ثماني لوحات ألوان بخلفية بيضاء دائماً (تتغيّر `--a` و`--a-soft` و`--a-ink` فقط) + «عرّف بنفسك» صوت حتى ٦٠ ثانية أو فيديو حتى ٣٠ ثانية.
 - `template_main.html`: يولّده `make_main.py`: ثلاثة أنظمة للشاشات الرئيسية الخمس (أ الخريطة أولاً، ب الموجز، ج المدينة) بالمحتوى الحقيقي وجدول مقارنة.
-- البناء: `python3 build.py template_colors.html > out.html` (أو `template_main.html`) (يضمّن صور `img/` وأيقونات `icons.json`).
+- `template_custom.html`: يولّده `make_custom.py`: ثلاثة أساليب لتخصيص الرئيسية (قائمة على القسم، شاشة التخصيص، وضع التحرير) بإخفاء الأقسام وإعادة ترتيبها بالسحب واختيار أقسام شريط التنقّل، على حالة مشتركة تُحفظ في المتصفح.
+- البناء: `python3 build.py template_colors.html > out.html` (أو `template_main.html` أو `template_custom.html`) (يضمّن صور `img/` وأيقونات `icons.json`).
 
 الروابط المنشورة: النموذج الأصلي والإنجليزي والألوان نُشرت كـ Artifacts خاصة في حساب المالك.
