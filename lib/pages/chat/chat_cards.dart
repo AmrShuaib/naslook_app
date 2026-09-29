@@ -233,6 +233,17 @@ class ChatCodeCard extends StatelessWidget {
           Padding(padding: const EdgeInsets.only(top: 8), child: _codeRow(c.code ?? '', owner: c.person?.nickname)),
           _actions([_button('الدائرة', 'open', icon: Icons.storefront_outlined)]),
         ]));
+      case 'job':
+        // بطاقة عرض وظيفي (#job/…): المسمّى والدائرة والمدينة ونوع الدوام؛ تُرسل أول رسالة في محادثة التوظيف
+        final open = c.status == null || c.status == 'open';
+        return _frame(key: key, child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+          _head(
+            leading: _CardImage(url: c.image, fallback: Icons.work_outline_rounded),
+            title: c.title, subtitle: c.subtitle,
+            trailing: open ? const _Chip('عرض وظيفي', icon: Icons.work_outline_rounded) : const _Chip('مغلق', color: Joy.textMuted, bg: Joy.surface2),
+          ),
+          _actions([_button('الدائرة', 'open', icon: Icons.storefront_outlined)]),
+        ]));
       default:
         return const SizedBox.shrink();
     }
@@ -479,7 +490,7 @@ class _CodeSuggestionsState extends ConsumerState<CodeSuggestions> {
       return;
     }
     final slug = q.substring(0, slash), part = q.substring(slash + 1);
-    if (const ['ev', 'mk', 'post', 'space', 't', 'o'].contains(slug)) { setState(() => _items = const []); return; }
+    if (const ['ev', 'mk', 'post', 'space', 't', 'o', 'job'].contains(slug)) { setState(() => _items = const []); return; }
     var biz = _circleCache[slug];
     if (biz == null) {
       try {

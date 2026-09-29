@@ -117,6 +117,9 @@ ChatCode? parseRef(String token, {int start = 0}) {
       return c == null && _code.hasMatch(b) ? ChatCode(CodeKind.ticket, t, ref: t, start: start, end: end) : null;
     case 'o':
       return c == null && _code.hasMatch(b) ? ChatCode(CodeKind.order, t, ref: t, start: start, end: end) : null;
+    case 'job':
+      // عرض وظيفي (#job/معرّف): يُحلّ عند الخادم ببطاقة من نوع job؛ نوع الإشارة item يكفي لأن العرض يعتمد على نوع البطاقة
+      return c == null && _uuid.hasMatch(b) ? ChatCode(CodeKind.item, t, ref: t, start: start, end: end) : null;
     default:
       return c == null && _slug.hasMatch(a) && _slug.hasMatch(b) ? ChatCode(CodeKind.item, t, ref: t, start: start, end: end) : null;
   }
@@ -204,6 +207,8 @@ String circleCode(String bizId) => '@${shortBiz(bizId)}';
 String userCode(String nickname) => '@$nickname';
 String eventCode(String id) => '#ev/$id';
 String listingCode(String id) => '#mk/$id';
+/// رمز عرض وظيفي (يُرسل أول رسالة في محادثة التوظيف بعد الإجابة على أسئلة الفرز).
+String jobCode(String id) => '#job/$id';
 String postCode(String id) => '#post/$id';
 String spaceCode(String bizId, [String? postId]) => postId == null ? '#space/${shortBiz(bizId)}' : '#space/${shortBiz(bizId)}/$postId';
 String ticketCode(String code) => '#t/$code';

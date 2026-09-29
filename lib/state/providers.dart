@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/jobs_api.dart';
+import '../api/jobs_models.dart';
 import '../api/models.dart';
 import '../api/naslife_api.dart';
 import '../api/ws.dart';
@@ -44,12 +46,17 @@ final presenceProvider = FutureProvider<List<Presence>>((ref) async => ref.watch
 final pinsProvider = FutureProvider<List<Pin>>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).pins(ref.watch(bboxProvider)) : const <Pin>[]);
 final businessesProvider = FutureProvider<List<Business>>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).businesses(ref.watch(bboxProvider)) : const <Business>[]);
 
-/// عدد الرسائل غير المقروءة + الطلبات لشارة الجرس.
+/// بطاقات عروض التوظيف الواردة (قسم «التوظيف» في تبويب الطلبات وشارة الجرس)؛ للزائر فارغة بلا طلب.
+final jobsInboxProvider = FutureProvider<JobInbox>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).jobsInbox() : const JobInbox());
+/// عدد عروض التوظيف بانتظار الرد (بلا المؤجّلة)؛ صفر إن تعذّر الجلب.
+final pendingJobOffersProvider = Provider<int>((ref) => ref.watch(jobsInboxProvider).valueOrNull?.pending ?? 0);
+
+/// عدد الرسائل غير المقروءة + الطلبات + عروض التوظيف الجديدة لشارة الجرس.
 final unreadCountProvider = Provider<int>((ref) {
   if (!ref.watch(signedInProvider)) return 0;
   final chats = ref.watch(chatsProvider).value ?? const [];
   final reqs = ref.watch(requestsProvider).value ?? const [];
   final muted = ref.watch(mutedPeersProvider);
   // المحادثات المكتومة لا تُحسب في الشارة
-  return chats.fold<int>(0, (n, c) => n + (muted.contains(c.peer.id) ? 0 : c.unread)) + reqs.length;
+  return chats.fold<int>(0, (n, c) => n + (muted.contains(c.peer.id) ? 0 : c.unread)) + reqs.length + ref.watch(pendingJobOffersProvider);
 });

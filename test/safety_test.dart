@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:naslook/api/client.dart';
+import 'package:naslook/api/jobs_models.dart';
 import 'package:naslook/api/models.dart';
 import 'package:naslook/api/posts_api.dart';
 import 'package:naslook/api/safety_api.dart';
@@ -121,6 +122,8 @@ void main() {
             Chat(peer: Person(id: 'SA0000003', nickname: 'khalid'), unread: 1),
           ]),
       requestsProvider.overrideWith((ref) async => const []),
+      // عروض التوظيف الجديدة تدخل في الشارة أيضاً؛ هنا لا شيء منها
+      jobsInboxProvider.overrideWith((ref) async => const JobInbox()),
       mutesProvider.overrideWith((ref) async => const [ChatMute(peerId: 'SA0000002')]),
       // الشارة للحسابات فقط؛ الزائر عدده صفر
       signedInProvider.overrideWithValue(true),

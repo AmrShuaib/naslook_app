@@ -29,6 +29,7 @@ function resolveCard(ref) {
   if (a === 'mk') { const l = routes['GET /market'].find((x) => x.id === b); return l ? { type: 'listing', id: l.id, title: l.title, subtitle: l.placeName, image: l.imageUrl, price: l.price, status: l.status, seller: l.seller } : null; }
   if (a === 'post') { const p = mockPosts.find((x) => x.id === b); return p ? { type: 'post', id: p.id, title: p.title || p.caption || 'منشور', subtitle: [p.user.nickname, p.placeName].filter(Boolean).join(' · '), image: p.kind === 'image' ? p.mediaUrl : null, kind: p.kind, user: p.user } : null; }
   if (a === 't') { const t = routes['GET /tickets'].find((x) => x.code.toLowerCase() === (b || '').toLowerCase()); return t ? { type: 'ticket', id: t.id, code: t.code, eventId: t.eventId, title: t.title, subtitle: [t.tier, t.placeName].filter(Boolean).join(' · '), startsAt: t.startsAt, status: t.status, paid: t.paid, owner: me } : null; }
+  if (a === 'job') return jobCardOut(b); // jobs (user): بطاقة #job/معرّف
   if (a === 'o') { const o = bizOrders.find((x) => x.code.toLowerCase() === (b || '').toLowerCase()); return o ? { type: 'order', id: o.id, code: o.code, bizId: o.bizId, itemId: o.itemId, title: o.title, subtitle: o.bizName, status: o.status, total: o.total, owner: me, link: '/c/' + o.bizId } : null; }
   const biz = SEED.find((s) => s.id === a || s.id === 'biz-' + a);
   if (!biz) return null;
@@ -707,6 +708,57 @@ function jobsManageRoute(req, res, url, key) {
   return false;
 }
 // ---- jobs (circle) end
+// ---- jobs (user) start — تحاكي server/jobs.js من جهة الباحث عن عمل: الملف، الصندوق، الرد على العروض، أسئلة الفرز
+const JOB_TYPE_ARU = { full: 'دوام كامل', part: 'دوام جزئي', remote: 'عن بُعد', intern: 'تدريب', shift: 'ورديات', freelance: 'عمل حر' };
+const JOB_STAGE_ARU = { new: 'جديد', screening: 'فرز', answered: 'أجاب', interview: 'مقابلة', offer: 'عرض', hired: 'تعيين', rejected: 'معتذر' };
+const jobBizOut = (id) => { const b = SEED.find((s) => s.id === id); return b ? { id: b.id, name: b.name, nameAr: b.nameAr, category: b.category, logoUrl: b.logoUrl ?? null, verified: !!b.verified, address: b.address ?? '', city: /الدمام/.test(b.address ?? '') ? 'الدمام' : 'جدة', lat: b.lat, lng: b.lng } : null; };
+const mockJobsU = [
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000b1', bizId: 'biz-brew92', title: 'باريستا', titleEn: 'Barista', department: 'التشغيل', description: 'نبحث عن باريستا شغوف بالقهوة المختصة للعمل في فرعنا على شارع الأمير سلطان.\n• تحضير المشروبات حسب معايير المحمصة\n• خدمة العملاء والاهتمام بالتفاصيل\n• العمل ضمن فريق صغير', descriptionEn: '', requirements: { must: ['خبرة سنة على الأقل في مقهى', 'إجادة تحضير الإسبريسو'], nice: ['لاتيه آرت', 'شهادة SCA'] }, skills: ['قهوة مختصة', 'خدمة عملاء', 'لاتيه آرت'], city: 'جدة', district: 'الحمراء', type: 'full', experienceMin: 1, education: 'secondary', salaryMin: 4500, salaryMax: 6000, salaryVisible: true, openings: 2, deadline: new Date(Date.now() + 14 * D).toISOString(), status: 'open', public: true, views: 12, publishedAt: ago(60 * 24), createdAt: ago(60 * 48), questions: [{ id: 'q1', text: 'كم سنة عملت في المقاهي؟', kind: 'number', options: [], required: true }, { id: 'q2', text: 'هل تستطيع العمل في الورديات المسائية؟', kind: 'yesno', options: [], required: true }, { id: 'q3', text: 'الفترة المفضلة لديك', kind: 'choice', options: ['صباحي', 'مسائي', 'كلاهما'], required: false }, { id: 'q4', text: 'حدّثنا عن أفضل تجربة لك مع عميل', kind: 'text', options: [], required: false }] },
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000b2', bizId: 'biz-ikea', title: 'موظف مبيعات', titleEn: 'Sales Associate', department: 'المبيعات', description: 'استقبال العملاء في قسم غرف النوم ومساعدتهم في اختيار المنتجات وإتمام الطلبات.', descriptionEn: '', requirements: { must: ['مهارات تواصل ممتازة'], nice: ['خبرة في التجزئة'] }, skills: ['مبيعات', 'خدمة عملاء'], city: 'جدة', district: '', type: 'shift', experienceMin: 0, education: 'none', salaryMin: 4000, salaryMax: 5000, salaryVisible: false, openings: 3, deadline: null, status: 'open', public: true, views: 40, publishedAt: ago(60 * 24 * 3), createdAt: ago(60 * 24 * 4), questions: [] },
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000b3', bizId: 'biz-starbucks', title: 'مشرف وردية', titleEn: 'Shift Supervisor', department: '', description: 'قيادة فريق الوردية وضمان جودة الخدمة.', descriptionEn: '', requirements: { must: ['خبرة سنتين في المقاهي'], nice: [] }, skills: ['قيادة فريق', 'قهوة'], city: 'جدة', district: 'الشاطئ', type: 'full', experienceMin: 2, education: 'diploma', salaryMin: 5500, salaryMax: 7000, salaryVisible: true, openings: 1, deadline: new Date(Date.now() + 5 * D).toISOString(), status: 'open', public: true, views: 8, publishedAt: ago(60 * 24 * 6), createdAt: ago(60 * 24 * 7), questions: [{ id: 'q1', text: 'هل أدرت فريقاً من قبل؟', kind: 'yesno', options: [], required: true }] },
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000b4', bizId: 'biz-mcdonalds', title: 'كاشير', titleEn: 'Cashier', department: '', description: 'استقبال الطلبات وتحصيلها.', descriptionEn: '', requirements: { must: [], nice: [] }, skills: ['كاشير'], city: 'جدة', district: 'التحلية', type: 'part', experienceMin: 0, education: 'none', salaryMin: null, salaryMax: null, salaryVisible: false, openings: 2, deadline: null, status: 'open', public: true, views: 22, publishedAt: ago(60 * 24 * 10), createdAt: ago(60 * 24 * 11), questions: [{ id: 'q1', text: 'هل عملت كاشيراً من قبل؟', kind: 'yesno', options: [], required: true }] },
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000b5', bizId: 'biz-nike', title: 'مساعد متجر', titleEn: 'Store Assistant', department: '', description: 'ترتيب المعروضات ومساعدة العملاء.', descriptionEn: '', requirements: { must: [], nice: [] }, skills: ['مبيعات'], city: 'الدمام', district: '', type: 'full', experienceMin: 0, education: 'none', salaryMin: null, salaryMax: null, salaryVisible: false, openings: 1, deadline: null, status: 'open', public: true, views: 3, publishedAt: ago(60 * 24 * 12), createdAt: ago(60 * 24 * 12), questions: [] },
+];
+let jobProfile = { userId: me.id, active: true, titles: ['باريستا', 'كاشير'], fields: ['مقاهي', 'مبيعات'], city: 'جدة', districts: ['الحمراء', 'الشاطئ'], types: ['full', 'part'], experienceYears: 2, education: 'secondary', skills: ['قهوة مختصة', 'خدمة عملاء', 'لاتيه آرت'], languages: ['العربية', 'الإنجليزية'], salaryMin: 4000, salaryMax: 6000, availability: 'now', summary: 'باريستا بخبرة سنتين في مقاهٍ مختصة بجدة، أبحث عن فريق يهتم بالجودة.', cvUrl: null, cvName: null, updatedAt: now, createdAt: now };
+const mockMatchesU = [
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000a1', jobId: 'aaaaaaaa-0000-4000-8000-0000000000b1', bizId: 'biz-brew92', status: 'sent', stage: 'new', source: 'match', score: .86, reasons: ['المسمّى يطابق', 'نفس المدينة', 'مهارتان مشتركتان'], sentAt: ago(30), viewedAt: null, acceptedAt: null, answeredAt: null, declinedAt: null, answers: null, interview: null },
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000a2', jobId: 'aaaaaaaa-0000-4000-8000-0000000000b2', bizId: 'biz-ikea', status: 'viewed', stage: 'new', source: 'match', score: .62, reasons: ['المجال يطابق', 'نفس المدينة'], sentAt: ago(60 * 5), viewedAt: ago(60), acceptedAt: null, answeredAt: null, declinedAt: null, answers: null, interview: null },
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000a3', jobId: 'aaaaaaaa-0000-4000-8000-0000000000b3', bizId: 'biz-starbucks', status: 'later', stage: 'new', source: 'match', score: .7, reasons: ['المهارات تطابق'], sentAt: ago(60 * 24 * 2), viewedAt: ago(60 * 24), acceptedAt: null, answeredAt: null, declinedAt: null, answers: null, interview: null },
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000a4', jobId: 'aaaaaaaa-0000-4000-8000-0000000000b4', bizId: 'biz-mcdonalds', status: 'answered', stage: 'interview', source: 'match', score: .75, reasons: ['المسمّى يطابق'], sentAt: ago(60 * 24 * 8), viewedAt: ago(60 * 24 * 8), acceptedAt: ago(60 * 24 * 7), answeredAt: ago(60 * 24 * 7), declinedAt: null, answers: [{ id: 'q1', text: 'هل عملت كاشيراً من قبل؟', kind: 'yesno', value: true }], interview: { id: 'iv1', at: new Date(Date.now() + D + 2 * H).toISOString(), mode: 'onsite', place: 'فرع التحلية', note: 'أحضر هويتك', status: 'scheduled' } },
+  { id: 'aaaaaaaa-0000-4000-8000-0000000000a5', jobId: 'aaaaaaaa-0000-4000-8000-0000000000b5', bizId: 'biz-nike', status: 'declined', stage: 'new', source: 'match', score: .5, reasons: ['المجال يطابق'], sentAt: ago(60 * 24 * 12), viewedAt: ago(60 * 24 * 12), acceptedAt: null, answeredAt: null, declinedAt: ago(60 * 24 * 11), answers: null, interview: null },
+];
+const jobPublicOut = (j) => { const o = { ...j, typeLabel: JOB_TYPE_ARU[j.type] ?? j.type, biz: jobBizOut(j.bizId) }; if (!j.salaryVisible) { o.salaryMin = null; o.salaryMax = null; } delete o.questions; return o; };
+const jobMatchOut = (m) => { const j = mockJobsU.find((x) => x.id === m.jobId); return { ...m, stageLabel: JOB_STAGE_ARU[m.stage] ?? m.stage, job: j ? jobPublicOut(j) : null, questions: j?.questions ?? [], assignee: person('SA0000002', 'sara') }; };
+const jobCardOut = (id) => { const j = mockJobsU.find((x) => x.id === id); if (!j) return null; const b = jobBizOut(j.bizId); return { type: 'job', id: j.id, bizId: j.bizId, title: j.title, subtitle: [b?.nameAr || b?.name, j.city, JOB_TYPE_ARU[j.type]].filter(Boolean).join(' · '), image: b?.logoUrl ?? null, status: j.status, salaryMin: j.salaryVisible ? j.salaryMin : null, salaryMax: j.salaryVisible ? j.salaryMax : null, link: '/jobs/' + j.id }; };
+function jobsRoute(req, res, url, key) {
+  const json = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+  const readBody = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => cb(JSON.parse(raw || '{}'))); };
+  if (key === 'GET /jobs/profile') return json(200, { profile: jobProfile, pending: mockMatchesU.filter((m) => m.status === 'sent').length, total: mockMatchesU.length });
+  if (key === 'PUT /jobs/profile') { readBody((b) => { if (!Array.isArray(b.titles) || !b.titles.length) return json(400, { error: 'titles-required' }); jobProfile = { ...(jobProfile ?? {}), userId: me.id, ...b, updatedAt: new Date().toISOString(), createdAt: jobProfile?.createdAt ?? new Date().toISOString() }; json(200, { profile: jobProfile }); }); return true; }
+  if (key === 'DELETE /jobs/profile') { jobProfile = null; return json(200, { ok: true }); }
+  if (key === 'GET /jobs/inbox') { const items = mockMatchesU.filter((m) => ['sent', 'viewed', 'later'].includes(m.status)).map(jobMatchOut); return json(200, { items, pending: items.filter((i) => i.status !== 'later').length }); }
+  if (key === 'GET /jobs/mine') { const items = mockMatchesU.map(jobMatchOut); return json(200, { items, active: items.filter((i) => ['accepted', 'answered'].includes(i.status) && !['hired', 'rejected'].includes(i.stage)), history: items.filter((i) => !['sent', 'viewed', 'later', 'accepted', 'answered'].includes(i.status) || ['hired', 'rejected'].includes(i.stage)) }); }
+  let m = key.match(/^GET \/jobs\/offers\/([\w-]+)$/);
+  if (m) { const x = mockMatchesU.find((y) => y.id === m[1]); if (!x) return json(404, { error: 'not-found' }); if (x.status === 'sent') { x.status = 'viewed'; x.viewedAt = new Date().toISOString(); } return json(200, jobMatchOut(x)); }
+  m = key.match(/^POST \/jobs\/offers\/([\w-]+)\/(accept|decline|later|answers|withdraw)$/);
+  if (m) {
+    readBody((b) => {
+      const x = mockMatchesU.find((y) => y.id === m[1]); if (!x) return json(404, { error: 'not-found' });
+      const qs = mockJobsU.find((j) => j.id === x.jobId)?.questions ?? []; const t = new Date().toISOString();
+      switch (m[2]) {
+        case 'accept': { if (!['sent', 'viewed', 'later', 'declined'].includes(x.status)) return json(409, { error: 'bad-state', status: x.status }); const direct = qs.length === 0; x.status = direct ? 'answered' : 'accepted'; x.stage = direct ? 'answered' : 'screening'; x.acceptedAt = t; if (direct) { x.answeredAt = t; x.answers = []; } return json(200, { ok: true, status: x.status, questions: qs, chatWith: direct ? person('SA0000002', 'sara') : null }); }
+        case 'decline': if (!['sent', 'viewed', 'later'].includes(x.status)) return json(409, { error: 'bad-state', status: x.status }); x.status = 'declined'; x.declinedAt = t; x.declineReason = b.reason ?? ''; return json(200, { ok: true });
+        case 'later': if (!['sent', 'viewed'].includes(x.status)) return json(409, { error: 'bad-state', status: x.status }); x.status = 'later'; return json(200, { ok: true });
+        case 'answers': { if (x.status !== 'accepted') return json(409, { error: 'bad-state', status: x.status }); const given = Array.isArray(b.answers) ? b.answers : []; const out = []; for (const q of qs) { const a = given.find((g) => String(g?.id) === q.id); const v = a?.value ?? null; if (q.required && (v == null || v === '')) return json(400, { error: 'answer-required', id: q.id }); out.push({ id: q.id, text: q.text, kind: q.kind, value: v }); } x.status = 'answered'; x.stage = 'answered'; x.answers = out; x.answeredAt = t; return json(200, { ok: true, chatWith: person('SA0000002', 'sara') }); }
+        case 'withdraw': if (!['accepted', 'answered'].includes(x.status) || ['hired', 'rejected'].includes(x.stage)) return json(409, { error: 'bad-state' }); x.status = 'withdrawn'; x.stage = 'rejected'; return json(200, { ok: true });
+      }
+      return json(404, { error: 'not-found' });
+    });
+    return true;
+  }
+  return false;
+}
+// ---- jobs (user) end
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x'); const key = `${req.method} ${url.pathname}`;
   res.setHeader('access-control-allow-origin', '*'); res.setHeader('access-control-allow-headers', 'content-type,x-token,authorization,accept,x-file-name'); res.setHeader('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
@@ -719,6 +771,7 @@ http.createServer((req, res) => {
   if (url.pathname.startsWith('/safety') || url.pathname === '/blocks') { if (safetyRoute(req, res, url, key)) return; }
   if (url.pathname.startsWith('/search')) { if (searchRoute(req, res, url, key)) return; }
   if (url.pathname.startsWith('/notify')) { if (notifyRoute(req, res, url, key)) return; }
+  if (url.pathname.startsWith('/jobs')) { if (jobsRoute(req, res, url, key)) return; }
   // ---- jobs (public+admin) start
   if (/^\/(jobs\/hiring|jobs(\/[0-9a-f-]{36})?(\/apply)?|biz\/[^/]+\/jobs|adminapi\/jobs(\/.*)?)$/.test(url.pathname) && jobsPublicRoute(req, res, url, key)) return;
   // ---- jobs (public+admin) end

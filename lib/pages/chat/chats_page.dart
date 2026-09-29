@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../api/jobs_models.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
@@ -11,6 +12,7 @@ import '../../state/providers.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../jobs/job_offers_page.dart';
 import 'chat_thread_page.dart';
 
 /// نتيجة بحث في الرسائل كما فسّرناها من رد الخادم.
@@ -104,7 +106,9 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
   Widget build(BuildContext context) {
     final chats = ref.watch(chatsProvider);
     final requests = ref.watch(requestsProvider);
-    final reqCount = requests.value?.length ?? 0;
+    // عروض التوظيف بانتظار الرد تُعدّ طلبات أيضاً (المؤجّلة لا تُحسب ولا تُعرض هنا)
+    final jobOffers = (ref.watch(jobsInboxProvider).valueOrNull?.items ?? const <JobMatch>[]).where((m) => m.pending).toList();
+    final reqCount = (requests.value?.length ?? 0) + jobOffers.length;
     return Scaffold(
       backgroundColor: Joy.bg,
       floatingActionButton: FloatingActionButton(
@@ -136,7 +140,7 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
               ),
           ]),
         ),
-        Expanded(child: _tab == 0 ? _chatsTab(chats) : _requestsTab(requests)),
+        Expanded(child: _tab == 0 ? _chatsTab(chats) : _requestsTab(requests, jobOffers)),
       ]),
     );
   }
@@ -169,15 +173,33 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(chatsProvider)),
       );
 
-  Widget _requestsTab(AsyncValue<List<FriendRequest>> requests) => requests.when(
-        data: (list) => list.isEmpty
-            ? const EmptyState(icon: Icons.mark_email_read_outlined, title: 'لا طلبات مراسلة', subtitle: 'رسائل من غير أصدقائك تظهر هنا أولاً حتى تقبلها أو تتجاهلها.')
+  /// قسم «التوظيف» أولاً (بطاقات عروض بأزرار الرد) ثم طلبات المراسلة كما هي.
+  Widget _requestsTab(AsyncValue<List<FriendRequest>> requests, List<JobMatch> jobOffers) => requests.when(
+        data: (list) => list.isEmpty && jobOffers.isEmpty
+            ? const EmptyState(icon: Icons.mark_email_read_outlined, title: 'لا طلبات مراسلة', subtitle: 'رسائل من غير أصدقائك وعروض التوظيف تظهر هنا أولاً حتى تقبلها أو تتجاهلها.')
             : RefreshIndicator(
-                onRefresh: () async => ref.invalidate(requestsProvider),
-                child: ListView.builder(
+                onRefresh: () async {
+                  ref.invalidate(requestsProvider);
+                  ref.invalidate(jobsInboxProvider);
+                },
+                child: ListView(
                   padding: const EdgeInsets.only(bottom: 96),
-                  itemCount: list.length,
-                  itemBuilder: (_, i) => _RequestRow(list[i], divider: i < list.length - 1),
+                  children: [
+                    if (jobOffers.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                        child: Row(children: [
+                          const Icon(Icons.work_outline_rounded, size: 18, color: Joy.primary),
+                          const SizedBox(width: 6),
+                          const Expanded(child: Text('التوظيف', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
+                          TextButton(key: const Key('jobs-all'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobOffersPage())), child: const Text('الكل', style: TextStyle(fontSize: 13))),
+                        ]),
+                      ),
+                      for (final m in jobOffers) Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 10), child: JobOfferCard(m, actions: true)),
+                      if (list.isNotEmpty) const Padding(padding: EdgeInsets.fromLTRB(16, 8, 16, 2), child: Text('طلبات المراسلة', style: TextStyle(fontWeight: FontWeight.w700, color: Joy.textMuted, fontSize: 13))),
+                    ],
+                    for (final (i, r) in list.indexed) _RequestRow(r, divider: i < list.length - 1),
+                  ],
                 ),
               ),
         loading: () => const Center(child: CircularProgressIndicator()),
