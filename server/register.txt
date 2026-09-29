@@ -28,3 +28,4 @@ await app.register((await import("./market_b.js")).default, { pool, auth });
 await app.register((await import("./legal_pages.js")).default, { pool, auth });
 await app.register((await import("./account_delete.js")).default, { pool, auth });
 await app.register((await import("./layout.js")).default, { pool, auth });
+await app.register((await import("./profile_v2.js")).default, { pool, auth });

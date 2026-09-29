@@ -811,11 +811,96 @@ function layoutRoute(req, res, url, key) {
   return false;
 }
 // ---- home layout end
+// ---- profile v2 (تحاكي server/profile_v2.js في الذاكرة)
+const PV2_KINDS = ['instagram', 'x', 'tiktok', 'snapchat', 'website', 'other'];
+const pv2LinkUrl = (k, v) => k === 'instagram' ? `https://instagram.com/${v}` : k === 'x' ? `https://x.com/${v}` : k === 'tiktok' ? `https://tiktok.com/@${v}` : k === 'snapchat' ? `https://snapchat.com/add/${v}` : (/^https?:\/\//i.test(v) ? v : `https://${v}`);
+function pv2Link(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const kind = String(raw.kind ?? '').toLowerCase(); if (!PV2_KINDS.includes(kind)) return null;
+  let value = String(raw.value ?? '').trim();
+  if (kind === 'website' || kind === 'other') return value && !/\s/.test(value) && value.length <= 120 ? { kind, value } : null;
+  value = value.replace(/^https?:\/\/(?:www\.)?(?:instagram|x|twitter|tiktok|snapchat)\.com\//i, '').replace(/^add\//i, '').replace(/^@/, '').split(/[/?#]/)[0].trim();
+  return /^[A-Za-z0-9._-]{1,120}$/.test(value) ? { kind, value } : null;
+}
+const pv2Names = { SA0000001: 'amr', SA0000002: 'sara', SA0000003: 'khalid', SA0000004: 'nora', SA0000005: 'fahad', SA0000006: 'lina' };
+// صف الامتداد لكل مستخدم؛ SA0000001 عيّنة كاملة (غلاف، روابط، تعريف صوتي 42ث)، والباقون افتراضيات
+const pv2Ext = {
+  SA0000001: { coverUrl: 'http://127.0.0.1:8090/chat/media/cover-fahad.jpg', displayName: 'فهد العتيبي', jobTitle: 'مصوّر', city: 'جدة', district: 'الشاطئ', links: [{ kind: 'instagram', value: 'fahad' }, { kind: 'x', value: 'fahad_1' }, { kind: 'website', value: 'fahad.sa' }], intro: { kind: 'voice', url: 'http://127.0.0.1:8090/chat/media/intro-fahad.weba', sec: 42, at: ago(60 * 24 * 3) }, msgPolicy: 'all', showOnline: true, showCity: true, showFriends: true, introVisibility: 'all' },
+  SA0000002: { coverUrl: null, displayName: 'سارة', jobTitle: 'مصممة', city: 'جدة', district: '', links: [{ kind: 'instagram', value: 'sara.design' }], intro: { kind: 'video', url: 'http://127.0.0.1:8090/chat/media/intro-sara.mp4', sec: 18, at: ago(60 * 24) }, msgPolicy: 'friends', showOnline: true, showCity: false, showFriends: false, introVisibility: 'friends' },
+};
+const pv2Default = () => ({ coverUrl: null, displayName: '', jobTitle: '', city: '', district: '', links: [], intro: null, msgPolicy: 'all', showOnline: true, showCity: true, showFriends: false, introVisibility: 'all' });
+const pv2Follows = new Set(['SA0000002>SA0000001', 'SA0000003>SA0000001', 'SA0000001>SA0000002']); // follower>user
+const pv2Friends = new Set(['SA0000002']); // أصدقاء amr (من /contacts)
+const pv2Private = new Set(['SA0000004']);
+const pv2Events = [{ kind: 'follow', at: Date.now() - 86400000 }, { kind: 'message', at: Date.now() - 3600000 }, { kind: 'share', at: Date.now() - 7200000 }];
+const pv2Visits = [3, 5, 2, 8, 4, 6, 7];
+function pv2Profile(id, viewer) {
+  const ext = pv2Ext[id] ?? pv2Default();
+  const isMe = viewer === id, isFriend = !isMe && pv2Friends.has(id);
+  const isPrivate = pv2Private.has(id);
+  const head = { id, nickname: pv2Names[id] ?? 'user', displayName: ext.displayName, avatarUrl: null, coverUrl: ext.coverUrl };
+  const base = { isMe, isFollowing: pv2Follows.has(`${viewer}>${id}`), isFriend, isPrivate, blocked: false };
+  if (isPrivate && !isMe && !isFriend) return { ...head, flags: { ...base, canMessage: ext.msgPolicy === 'all', online: null }, stats: {} };
+  const followers = [...pv2Follows].filter((k) => k.endsWith('>' + id)).length, following = [...pv2Follows].filter((k) => k.startsWith(id + '>')).length;
+  const showCity = isMe || ext.showCity, showFriends = isMe || ext.showFriends;
+  const sample = id === 'SA0000001' ? { posts: 12, circles: 4, ratingAvg: 4.8, ratingCount: 23, completedOrders: 41, friends: 18 } : { posts: 2, circles: 1, ratingAvg: null, ratingCount: 0, completedOrders: 0, friends: 3 };
+  return {
+    ...head, bio: id === 'SA0000001' ? 'مصوّر وصانع محتوى من جدة، أوثّق الأماكن والناس.' : 'أحب القهوة والبحر', accountType: id === 'SA0000001' ? 'pro' : 'personal', jobTitle: ext.jobTitle,
+    city: showCity ? ext.city : '', district: showCity ? ext.district : '', links: ext.links.map((l) => ({ ...l, url: pv2LinkUrl(l.kind, l.value) })),
+    intro: ext.intro && (isMe || ext.introVisibility === 'all' || isFriend) ? ext.intro : null,
+    stats: { ...sample, followers, following, friends: showFriends ? sample.friends : 0 },
+    trust: { emailVerified: id === 'SA0000001', phoneVerified: false, memberSince: '2025-03-01T00:00:00.000Z', respondsFast: id === 'SA0000001' ? true : null },
+    flags: { ...base, canMessage: isMe || ext.msgPolicy === 'all' || (ext.msgPolicy === 'friends' && isFriend), online: ext.showOnline ? id !== 'SA0000003' : null, showFriends: ext.showFriends },
+    memberSince: '2025-03-01T00:00:00.000Z',
+  };
+}
+function pv2Mine() {
+  const ext = pv2Ext[me.id] ?? (pv2Ext[me.id] = pv2Default());
+  const p = pv2Profile(me.id, me.id);
+  const labels = { avatar: 'صورة الحساب', cover: 'صورة الغلاف', bio: 'النبذة', links: 'روابط التواصل', intro: 'تعريف صوتي أو مرئي', email: 'تأكيد البريد', skills: 'المهارات' };
+  const steps = [['avatar', !!me.avatarUrl], ['cover', !!ext.coverUrl], ['bio', !!p.bio], ['links', ext.links.length > 0], ['intro', !!ext.intro], ['email', true], ['skills', false]].map(([id, done]) => ({ id, done, label: labels[id] }));
+  const done = steps.filter((s) => s.done).length;
+  return { ...p, settings: { msgPolicy: ext.msgPolicy, showOnline: ext.showOnline, showCity: ext.showCity, showFriends: ext.showFriends, introVisibility: ext.introVisibility }, completion: { pct: Math.round((done / 7) * 20) * 5, steps } };
+}
+function profileV2Route(req, res, url, key) {
+  const json = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+  const readBody = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => { let b; try { b = JSON.parse(raw || '{}'); } catch { b = {}; } cb(b); }); };
+  const resolve = (s) => (/^[A-Z]{2}\d{7}$/.test(s) ? s : Object.entries(pv2Names).find(([, n]) => n === String(s).replace(/^@/, '').toLowerCase())?.[0] ?? null);
+  const abs = (u) => { const m = String(u ?? '').match(/^(?:https?:\/\/[^/]+)?(\/chat\/media\/[A-Za-z0-9._-]{1,120})$/); return m ? 'http://127.0.0.1:8090' + m[1] : null; };
+  if (key === 'GET /profile/v2/status') return json(200, { ok: true });
+  if (key === 'GET /me/profile/v2') return json(200, pv2Mine());
+  if (key === 'GET /me/profile/stats') { const days = Array.from({ length: 7 }, (_, i) => ({ day: new Date(Date.now() - (6 - i) * 86400000).toISOString().slice(0, 10), visits: pv2Visits[i] })); const n = (k) => pv2Events.filter((e) => e.kind === k && e.at > Date.now() - 7 * 86400000).length; return json(200, { visits7: pv2Visits.reduce((a, b) => a + b, 0), visits7Prev: 21, messages7: n('message'), follows7: n('follow'), shares7: n('share'), links7: n('link'), series: days }); }
+  if (key === 'PUT /me/profile/v2') { readBody((b) => {
+    if (!b || typeof b !== 'object' || Array.isArray(b)) return json(400, { error: 'bad-field', field: 'body' });
+    const ext = pv2Ext[me.id] ?? (pv2Ext[me.id] = pv2Default()); const next = { ...ext };
+    for (const f of ['displayName', 'jobTitle', 'city', 'district']) if (b[f] !== undefined) { if (typeof b[f] !== 'string' || b[f].trim().length > 40) return json(400, { error: 'bad-field', field: f }); next[f] = b[f].trim(); }
+    if (b.coverUrl !== undefined) { if (b.coverUrl === null || b.coverUrl === '') next.coverUrl = null; else { const a = abs(b.coverUrl); if (!a) return json(400, { error: 'bad-field', field: 'coverUrl' }); next.coverUrl = a; } }
+    if (b.links !== undefined) { if (!Array.isArray(b.links) || b.links.length > 3) return json(400, { error: 'bad-field', field: 'links' }); const ls = b.links.map(pv2Link); if (ls.some((l) => !l)) return json(400, { error: 'bad-field', field: 'links' }); next.links = ls; }
+    if (b.msgPolicy !== undefined) { if (!['all', 'friends', 'none'].includes(b.msgPolicy)) return json(400, { error: 'bad-field', field: 'msgPolicy' }); next.msgPolicy = b.msgPolicy; }
+    if (b.introVisibility !== undefined) { if (!['all', 'friends'].includes(b.introVisibility)) return json(400, { error: 'bad-field', field: 'introVisibility' }); next.introVisibility = b.introVisibility; }
+    for (const f of ['showOnline', 'showCity', 'showFriends']) if (b[f] !== undefined) { if (typeof b[f] !== 'boolean') return json(400, { error: 'bad-field', field: f }); next[f] = b[f]; }
+    pv2Ext[me.id] = next; json(200, pv2Mine());
+  }); return true; }
+  if (key === 'PUT /me/profile/intro') { readBody((b) => {
+    const kind = b.kind === 'voice' || b.kind === 'video' ? b.kind : null; const u = abs(b.url); const sec = Number.isInteger(b.sec) ? b.sec : null;
+    if (!kind || !u || sec == null || sec < 1 || sec > (kind === 'voice' ? 60 : 30)) return json(400, { error: 'bad-intro' });
+    const ext = pv2Ext[me.id] ?? (pv2Ext[me.id] = pv2Default()); ext.intro = { kind, url: u, sec, at: new Date().toISOString() }; json(200, { ok: true, intro: ext.intro });
+  }); return true; }
+  if (key === 'DELETE /me/profile/intro') { readBody(() => { const ext = pv2Ext[me.id]; if (ext) ext.intro = null; json(200, { ok: true }); }); return true; }
+  if (key === 'GET /handles/check') { const n = String(url.searchParams.get('nickname') ?? '').trim().toLowerCase(); if (n.length < 3) return json(200, { valid: false, available: false, reason: 'short' }); if (!/^[a-z0-9._]{3,20}$/.test(n)) return json(200, { valid: false, available: false, reason: 'chars' }); const taken = ['naslife', 'admin', 'support', 'jeddah', 'dammam', ...Object.values(pv2Names)].includes(n); return json(200, { valid: true, available: !taken, reason: taken ? 'taken' : null }); }
+  let m = key.match(/^GET \/profiles\/([^/]+)\/v2$/); if (m) { const id = resolve(m[1]); if (!id) return json(404, { error: 'not-found' }); if (id !== me.id) pv2Visits[6]++; return json(200, pv2Profile(id, me.id)); }
+  m = key.match(/^(POST|DELETE) \/profiles\/([^/]+)\/follow$/); if (m) { const id = resolve(m[2]); if (!id) return json(404, { error: 'not-found' }); if (id === me.id) return json(400, { error: 'self' }); readBody(() => { const k = `${me.id}>${id}`; if (m[1] === 'POST') { pv2Follows.add(k); } else pv2Follows.delete(k); json(200, { ok: true, following: m[1] === 'POST', followers: [...pv2Follows].filter((x) => x.endsWith('>' + id)).length }); }); return true; }
+  m = key.match(/^GET \/profiles\/([^/]+)\/(followers|following)$/); if (m) { const id = resolve(m[1]); if (!id) return json(404, { error: 'not-found' }); const ids = [...pv2Follows].map((k) => k.split('>')).filter(([f, u]) => (m[2] === 'followers' ? u === id : f === id)).map(([f, u]) => (m[2] === 'followers' ? f : u)); return json(200, { items: ids.slice(0, Number(url.searchParams.get('limit') || 50)).map((x) => person(x, pv2Names[x] ?? 'user')) }); }
+  m = key.match(/^POST \/profiles\/([^/]+)\/event$/); if (m) { const id = resolve(m[1]); readBody((b) => { if (!['message', 'share', 'link'].includes(b.kind)) return json(400, { error: 'bad-kind' }); if (!id) return json(404, { error: 'not-found' }); if (id === me.id) return json(200, { ok: true }); pv2Events.push({ kind: b.kind, at: Date.now() }); json(200, { ok: true }); }); return true; }
+  return false;
+}
+// ---- profile v2 end
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x'); const key = `${req.method} ${url.pathname}`;
   res.setHeader('access-control-allow-origin', '*'); res.setHeader('access-control-allow-headers', 'content-type,x-token,authorization,accept,x-file-name'); res.setHeader('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   if (/^\/(me\/login-email|me\/recovery|mail\/status|adminapi\/mail|auth\/(register|forgot|reset|change-password|nickname-available))(\/|$)/.test(url.pathname) && mailRoute(req, res, url, key)) return;
+  if (/^\/(profile\/v2\/status|handles\/check|me\/profile\/(v2|intro|stats)|profiles\/[^/]+\/(v2|follow|followers|following|event))$/.test(url.pathname) && profileV2Route(req, res, url, key)) return; // ---- profile v2
   if (/^\/(me\/profile|profile\/avatar|market(\/|$)|stories\/|map\/pins\/)/.test(url.pathname) && profileMarketRoute(req, res, url, key)) return;
   if (url.pathname.startsWith('/mapposts')) { if (postsRoute(req, res, url, key)) return; }
   if (url.pathname.startsWith('/wishlist')) { if (wishlistRoute(req, res, url, key)) return; }

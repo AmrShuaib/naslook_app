@@ -191,6 +191,11 @@ export default async function accountDelete(app, opts = {}) {
       if (has("job_matches", "user_id")) await run("job_matches", "DELETE FROM job_matches WHERE user_id=$1");
       // تخصيص الرئيسية (layout.js): تخطيط المستخدم يُحذف مع حسابه
       if (has("user_layouts", "user_id")) await run("user_layouts", "DELETE FROM user_layouts WHERE user_id=$1");
+      // الملف الشخصي v2 (profile_v2.js): الامتداد والمتابعات والزيارات والأحداث من الجانبين
+      if (has("profile_ext", "user_id")) await run("profile_ext", "DELETE FROM profile_ext WHERE user_id=$1");
+      if (has("user_follows", "follower_id", "user_id")) await run("user_follows", "DELETE FROM user_follows WHERE follower_id=$1 OR user_id=$1");
+      if (has("profile_views", "user_id", "viewer_id")) await run("profile_views", "DELETE FROM profile_views WHERE user_id=$1 OR viewer_id=$1");
+      if (has("profile_events", "user_id", "actor_id")) await run("profile_events", "DELETE FROM profile_events WHERE user_id=$1 OR actor_id=$1");
       if (has("job_matches", "assignee_id")) await run("job_matches", "UPDATE job_matches SET assignee_id=NULL WHERE assignee_id=$1");
       if (has("jobs", "assignee_id")) await run("jobs", "UPDATE jobs SET assignee_id=NULL WHERE assignee_id=$1");
       if (has("market_seller_upgrades", "seller_id")) await run("market_seller_upgrades", "DELETE FROM market_seller_upgrades WHERE seller_id=$1");
