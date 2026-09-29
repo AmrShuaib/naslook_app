@@ -89,7 +89,9 @@ class ChatThreadPage extends ConsumerStatefulWidget {
   final Person peer;
   /// رسالة يُقفز إليها بعد التحميل (من نتائج البحث مثلاً).
   final String? initialMessageId;
-  const ChatThreadPage({super.key, required this.peer, this.initialMessageId});
+  /// نص يملأ المؤلّف عند الفتح ولا يُرسل تلقائياً (رمز `#job/…` بعد الإجابة على أسئلة التوظيف مثلاً).
+  final String? initialText;
+  const ChatThreadPage({super.key, required this.peer, this.initialMessageId, this.initialText});
   @override
   ConsumerState<ChatThreadPage> createState() => _ChatThreadPageState();
 }
@@ -160,6 +162,11 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       final has = _text.text.trim().isNotEmpty;
       if (has != _hasText) setState(() => _hasText = has);
     });
+    final draft = widget.initialText;
+    if (draft != null && draft.trim().isNotEmpty) {
+      _text.text = draft;
+      _hasText = true;
+    }
     _load();
     final s = ref.read(socketProvider);
     _sub = s?.events.listen(_onEvent);
@@ -749,6 +756,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           case 'event': nav.push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: card.id)));
           case 'ticket': nav.push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: card.eventId ?? card.id)));
           case 'listing': nav.push(MaterialPageRoute(builder: (_) => ListingPage(card.id)));
+          case 'job': if (card.bizId != null) nav.push(MaterialPageRoute(builder: (_) => BusinessPage(id: card.bizId!)));
           case 'space': nav.push(MaterialPageRoute(builder: (_) => CommunityPage(bizId: card.bizId ?? card.id, title: card.title)));
           case 'spacepost': nav.push(MaterialPageRoute(builder: (_) => CommunityPage(bizId: card.bizId ?? '', title: card.subtitle, initialPostId: card.id)));
           case 'post':

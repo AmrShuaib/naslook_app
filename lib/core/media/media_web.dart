@@ -14,7 +14,7 @@ const _jpegQuality = 0.85;
 /// يفتح منتقي الملفات ويقرأ الملف عبر Blob.arrayBuffer مباشرة (بلا XHR على رابط blob).
 Future<PickedMedia?> pick(String kind) async {
   final input = web.HTMLInputElement()..type = 'file';
-  input.accept = kind == 'video' ? 'video/*' : kind == 'file' ? '*/*' : 'image/*';
+  input.accept = kind == 'video' ? 'video/*' : kind == 'file' ? '*/*' : kind == 'pdf' ? 'application/pdf,.pdf' : 'image/*';
   if (kind == 'camera') input.setAttribute('capture', 'environment');
   input.style.display = 'none';
   web.document.body!.append(input);
@@ -53,15 +53,15 @@ Future<PickedMedia?> pick(String kind) async {
 }
 
 Future<PickedMedia> _read(web.File file, String kind) async {
-  final name = file.name.isNotEmpty ? file.name : (kind == 'video' ? 'video' : kind == 'file' ? 'file' : 'photo.jpg');
+  final name = file.name.isNotEmpty ? file.name : (kind == 'video' ? 'video' : kind == 'file' ? 'file' : kind == 'pdf' ? 'cv.pdf' : 'photo.jpg');
   var mime = file.type;
-  // الملفات العامة (مرفقات البريد) تُقرأ كما هي بلا تصغير
-  if (kind != 'video' && kind != 'file') {
+  // الملفات العامة (مرفقات البريد، السيرة الذاتية PDF) تُقرأ كما هي بلا تصغير
+  if (kind != 'video' && kind != 'file' && kind != 'pdf') {
     final small = await _downscale(file);
     if (small != null) return PickedMedia(small, 'image/jpeg', '${name.split('.').first}.jpg');
   }
   final bytes = (await file.arrayBuffer().toDart).toDart.asUint8List();
-  if (mime.isEmpty) mime = kind == 'video' ? 'video/mp4' : kind == 'file' ? 'application/octet-stream' : 'image/jpeg';
+  if (mime.isEmpty) mime = kind == 'video' ? 'video/mp4' : kind == 'file' ? 'application/octet-stream' : kind == 'pdf' ? 'application/pdf' : 'image/jpeg';
   return PickedMedia(bytes, mime, name);
 }
 

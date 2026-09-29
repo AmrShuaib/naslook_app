@@ -10,6 +10,8 @@ import '../pages/business/offers_page.dart';
 import '../pages/wallet/my_offers_page.dart';
 import '../pages/business/owner/business_dashboard_page.dart';
 import '../pages/events/events_page.dart';
+import '../pages/jobs/job_offer_page.dart';
+import '../pages/jobs/job_offers_page.dart';
 import '../pages/market/market_page.dart';
 import '../pages/myspace/wishlist_page.dart';
 import '../pages/posts/my_posts_page.dart';
@@ -35,7 +37,7 @@ Future<bool> openNotification(BuildContext context, WidgetRef ref, AppNotificati
 
 /// الوجهة حسب نوع الإشعار وبياناته (bizId, eventId, ...).
 Widget? notificationTarget(AppNotification n) {
-  final biz = n.str('bizId'), event = n.str('eventId');
+  final biz = n.str('bizId'), event = n.str('eventId'), match = n.str('matchId');
   switch (n.kind) {
     case 'biz_order':
     case 'order_cancelled':
@@ -98,6 +100,19 @@ Widget? notificationTarget(AppNotification n) {
     case 'community_reply':
     case 'community_hidden':
       return biz == null ? null : CommunityPage(bizId: biz, initialPostId: n.str('postId'));
+    // التوظيف من جهة المرشح: بطاقة عرض → صفحة العرض؛ تغيّر المرحلة أو موعد مقابلة → العرض نفسه أو «طلباتي»
+    case 'job_offer':
+      return match == null ? const JobOffersPage() : JobOfferPage(matchId: match);
+    case 'job_stage':
+    case 'job_interview':
+      if (n.data['manage'] == true) return null; // TODO(jobs-circle): صفحة مرشح الدائرة (jobId, matchId, bizId)
+      return match == null ? const JobOffersPage(initialTab: 1) : JobOfferPage(matchId: match);
+    case 'job_accept':
+    case 'job_answers':
+    case 'job_apply':
+      return null; // TODO(jobs-circle): لوحة مرشحي العرض في الدائرة (jobId, matchId, bizId)
+    case 'job_review':
+      return null; // TODO(jobs-circle): لوحة وظائف الدائرة (jobId, bizId)
   }
   return null;
 }
@@ -145,6 +160,18 @@ Widget? notificationTarget(AppNotification n) {
       return (icon: Icons.forum_outlined, color: Joy.primary);
     case 'community_hidden':
       return (icon: Icons.visibility_off_outlined, color: Joy.danger);
+    case 'job_offer':
+      return (icon: Icons.work_outline_rounded, color: Joy.primary);
+    case 'job_stage':
+      return (icon: Icons.timeline_rounded, color: Joy.accent);
+    case 'job_interview':
+      return (icon: Icons.event_available_outlined, color: Joy.accent);
+    case 'job_accept':
+    case 'job_answers':
+    case 'job_apply':
+      return (icon: Icons.person_add_alt_1_outlined, color: Joy.primary);
+    case 'job_review':
+      return (icon: Icons.fact_check_outlined, color: Joy.sunText);
   }
   return (icon: Icons.notifications_outlined, color: Joy.textMuted);
 }

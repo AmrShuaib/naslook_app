@@ -13,7 +13,7 @@ class PickedMedia {
 /// وسائط الويب بلا روابط blob (تفشل قراءتها على iOS): اختيار ملفات وتسجيل صوت مباشرة من المتصفح.
 class WebMedia {
   static bool get available => impl.available;
-  /// kind: image | camera | video
+  /// kind: image | camera | video | file | pdf
   static Future<PickedMedia?> pick(String kind) => impl.pick(kind);
 }
 

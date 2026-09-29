@@ -18,6 +18,7 @@ import '../../core/share/share_links.dart';
 import '../../core/media/pick_image.dart';
 import '../../core/push/push_service.dart';
 import '../../state/admin_providers.dart';
+import '../../state/jobs_providers.dart';
 import '../../state/notify_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
@@ -27,6 +28,8 @@ import '../admin/admin_shell.dart';
 import '../admin/blog_drafts_page.dart';
 import '../business/owner/my_businesses_page.dart';
 import '../events/events_page.dart';
+import '../jobs/job_offers_page.dart';
+import '../jobs/job_profile_page.dart';
 import '../market/market_page.dart';
 import '../posts/my_posts_page.dart';
 import 'delete_account_page.dart';
@@ -54,6 +57,8 @@ class MySpacePage extends ConsumerWidget {
         ref.invalidate(profileProvider);
         ref.invalidate(myPresenceProvider);
         ref.invalidate(contactsProvider);
+        ref.invalidate(jobProfileProvider);
+        ref.invalidate(jobsInboxProvider);
       },
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
@@ -97,6 +102,10 @@ class MySpacePage extends ConsumerWidget {
             ListTile(leading: const Icon(Icons.receipt_long_outlined, color: Joy.primary), title: const Text('حجوزاتي وطلباتي'), subtitle: const Text('فنادق وسيارات وسينما وبراندات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(leading: const Icon(Icons.storefront_rounded, color: Joy.primary), title: const Text('نشاطي التجاري'), subtitle: const Text('لوحة تحكم دائرتك: الكتالوج والطلبات والإحصاءات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBusinessesPage()))),
+            const Divider(indent: 16, endIndent: 16),
+            ListTile(key: const Key('jobs-profile'), leading: const Icon(Icons.work_outline_rounded, color: Joy.primary), title: const Text('أبحث عن عمل'), subtitle: Text(_jobProfileSubtitle(ref), maxLines: 1, overflow: TextOverflow.ellipsis), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobProfilePage()))),
+            const Divider(indent: 16, endIndent: 16),
+            ListTile(key: const Key('jobs-offers'), leading: const Icon(Icons.badge_outlined, color: Joy.accent), title: const Text('عروض التوظيف'), subtitle: Text(_jobOffersSubtitle(ref)), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobOffersPage()))),
             if (ref.watch(adminStatusProvider).valueOrNull?.isAdmin == true) ...[
               const Divider(indent: 16, endIndent: 16),
               ListTile(leading: const Icon(Icons.admin_panel_settings_outlined, color: Joy.accent), title: const Text('لوحة الإدارة'), subtitle: const Text('المستخدمون والبلاغات والمالية والإعدادات'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminShell(standalone: false)))),
@@ -238,6 +247,18 @@ class MySpacePage extends ConsumerWidget {
   }
 
   Widget _stat(String n, String l) => Expanded(child: Column(children: [Text(n, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 20)), Text(l, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5))]));
+
+  /// حالة ملف التوظيف: غير مُنشأ، متاح للعروض، أو موقوف.
+  String _jobProfileSubtitle(WidgetRef ref) {
+    final p = ref.watch(jobProfileProvider).valueOrNull?.profile;
+    if (p == null) return 'أنشئ ملفك الخاص لتصلك عروض تناسبك';
+    return p.active ? 'متاح للعروض · ${p.titles.join('، ')}' : 'موقوف مؤقتاً عن العروض';
+  }
+
+  String _jobOffersSubtitle(WidgetRef ref) {
+    final n = ref.watch(pendingJobOffersProvider);
+    return n > 0 ? '$n عرض جديد بانتظار ردك' : 'الواردة وطلباتي';
+  }
 
   Widget _chips(String title, List<String> items, Color bg, Color fg) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
