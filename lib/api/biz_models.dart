@@ -97,8 +97,10 @@ class Biz {
 
   bool get isOwner => myRole == 'owner' || myRole == 'admin';
   bool get canManage => isOwner || myRole == 'manager';
-  bool get canOperate => canManage || myRole == 'staff';
-  String get roleLabel => switch (myRole) { 'owner' => 'مالك', 'admin' => 'مدير النظام', 'manager' => 'مدير', 'staff' => 'موظف', _ => '' };
+  bool get canOperate => canManage || myRole == 'staff' || myRole == 'hr';
+  /// التوظيف: المالك والمدير ودور «توظيف» (hr) يديرون العروض والمرشحين
+  bool get canHire => canManage || myRole == 'hr';
+  String get roleLabel => switch (myRole) { 'owner' => 'مالك', 'admin' => 'مدير النظام', 'manager' => 'مدير', 'staff' => 'موظف', 'hr' => 'توظيف', _ => '' };
 
   /// الاسم المعروض: العربي إن وُجد.
   String get title => nameAr.isNotEmpty ? nameAr : name;
@@ -205,7 +207,7 @@ class BizStaff {
   final DateTime? since;
   const BizStaff({required this.user, required this.role, this.since});
   factory BizStaff.fromJson(Map m) => BizStaff(user: Person.fromJson(_m(m['user'])), role: m['role']?.toString() ?? 'staff', since: _t(m['since']));
-  String get roleLabel => role == 'manager' ? 'مدير' : 'موظف';
+  String get roleLabel => switch (role) { 'manager' => 'مدير', 'hr' => 'توظيف', _ => 'موظف' };
 }
 
 class BizTeam {
