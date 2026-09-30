@@ -1,0 +1,484 @@
+<title>بدائل الورقة السفلية</title>
+<meta name="description" content="أربع طرق لعرض أقسام الرئيسية فوق خريطة ناس لايف بلا ورقة تُسحب: مسارات أفقية، زر خريطة/قائمة، قسمة ثابتة، أو الخريطة كبطاقة.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Baloo+Bhaijaan+2:wght@600;700;800&display=swap">
+<style>
+/* Layout: concept switch + screen switch on top; three phones side by side (one at a time under 1250px). Phones are the app's own white UI; the accent family is the brand teal. */
+:root{
+  --bg:#FFFFFF; --fg:#111111; --muted:#5F6B73; --line:#E3E7EA; --card:#FFFFFF; --sun:#FFD66B;
+  --a:#0A6E78; --a-soft:#E0F3F4; --a-ink:#0F2D30;
+  --font-body:Rubik,"Segoe UI",Tahoma,sans-serif; --font-display:"Baloo Bhaijaan 2",Rubik,Tahoma,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#0F1315; --fg:#F1F3F4; --muted:#9AA6AE; --line:#273036; --card:#171C20; color-scheme:dark } }
+:root[data-theme="dark"]{ --bg:#0F1315; --fg:#F1F3F4; --muted:#9AA6AE; --line:#273036; --card:#171C20; color-scheme:dark }
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);direction:rtl}
+.wrap{max-width:1780px;margin:0 auto;padding-inline:16px;padding-block:14px 40px;display:flex;flex-direction:column;gap:14px}
+header{display:flex;flex-direction:column;gap:10px}
+h1{margin:0;font:800 26px/1.2 var(--font-display);text-wrap:balance}
+.sub{margin:0;color:var(--muted);font-size:14px;line-height:1.6;max-width:75ch}
+.seg{display:flex;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px;overflow-x:auto;scrollbar-width:none}
+.seg::-webkit-scrollbar{display:none}
+.seg button{flex:1 0 auto;min-width:0;height:40px;padding:0 14px;border:0;border-radius:10px;background:transparent;color:var(--muted);font:600 14px var(--font-body);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:8px;justify-content:center}
+.seg button.on{background:var(--a);color:#fff}
+.seg button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+.seg button i{width:22px;height:22px;border-radius:999px;background:rgba(0,0,0,.08);display:inline-flex;align-items:center;justify-content:center;font-style:normal;font-size:12px}
+.seg button.on i{background:rgba(255,255,255,.22)}
+.rowh{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.rowh .seg{flex:1 1 320px}
+.rowh .seg.sc button{height:36px;font-size:13px}
+.phones{display:flex;gap:26px;flex-wrap:wrap;justify-content:center;align-items:flex-start}
+.slot{display:flex;flex-direction:column;gap:10px;width:min(390px,100%)}
+.slot h2{margin:0;font:700 15px var(--font-body);color:var(--fg);display:flex;align-items:center;gap:8px}
+.slot h2 span{width:26px;height:26px;border-radius:999px;background:var(--a);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:13px;flex:none}
+.slot h2 small{font-weight:500;color:var(--muted);font-size:13px}
+.note{margin:0;font-size:13px;line-height:1.6;color:var(--muted)}
+.phone{width:100%;height:790px;max-height:calc(100vh - 40px);border-radius:34px;background:#111;padding:10px;box-sizing:border-box;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+.screen{width:100%;height:100%;border-radius:26px;background:#fff;color:#111;overflow:hidden;display:flex;flex-direction:column;font-family:var(--font-body);direction:rtl;position:relative}
+.scr{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;position:relative}
+.scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:12px;scrollbar-width:none;padding-bottom:16px}
+.scroll::-webkit-scrollbar{display:none}
+.scr.abs .scroll.pad{padding-bottom:92px}
+@media (max-width:1250px){ .slot:not(.active){display:none} }
+/* ---- app pieces (always white) */
+.tb{flex:none;min-height:54px;display:flex;align-items:center;justify-content:space-between;padding:6px 14px;gap:8px}
+.tb .l,.tb .r{display:flex;gap:6px;align-items:center;min-width:0}
+.tb .ttl{font:800 20px var(--font-display);white-space:nowrap}
+.tb .ttl.brand{color:var(--a)}
+.tb .sub2{font:500 11.5px var(--font-body);color:#6B7280}
+.tb .loc{font-size:12px;color:#374151;font-weight:600;gap:3px}
+.ib{width:36px;height:36px;border-radius:999px;border:0;background:#F2F2F7;color:#111;display:inline-flex;align-items:center;justify-content:center;position:relative;cursor:pointer;flex:none}
+.ib .dot{position:absolute;top:6px;right:8px;width:8px;height:8px;border-radius:999px;background:#D23B3B;border:1.5px solid #fff}
+.btn{height:40px;padding:0 16px;border-radius:999px;border:0;background:var(--a);color:#fff;font:700 14px var(--font-body);cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex:none}
+.btn.ghost{background:#fff;color:#111;border:1.5px solid #E5E5EA;font-weight:600}
+.btn.soft{background:var(--a-soft);color:var(--a-ink)}
+.btn.sm{height:32px;padding:0 12px;font-size:12.5px}
+.search{height:42px;border-radius:999px;background:#F2F2F7;display:flex;align-items:center;gap:8px;padding:0 12px 0 8px;color:#6B7280;font-size:13.5px;margin:0 14px;flex:none}
+.search.glass{background:rgba(255,255,255,.94);box-shadow:0 4px 14px rgba(0,0,0,.16);color:#374151;font-weight:500}
+.avm{width:30px;height:30px;border-radius:999px;overflow:hidden;flex:none}.avm img{width:100%;height:100%;object-fit:cover;display:block}
+.hrow{display:flex;gap:8px;overflow-x:auto;padding:0 14px;scrollbar-width:none;flex:none}
+.hrow::-webkit-scrollbar{display:none}
+.ch{flex:none;display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:999px;background:#F2F2F7;color:#374151;font-size:12.5px;font-weight:500;white-space:nowrap}
+.ch.on{background:var(--a);color:#fff}
+.ch.glass{background:rgba(255,255,255,.95);box-shadow:0 2px 8px rgba(0,0,0,.14);color:#111}
+.ch.glass.on{background:#111;color:#fff}
+.sec{display:flex;justify-content:space-between;align-items:baseline;padding:0 14px;flex:none}
+.sec b{font-size:15px;font-weight:700;display:flex;align-items:baseline;gap:8px}.sec a{font-size:12.5px;color:var(--a);font-weight:600;text-decoration:none}
+.sec small{font-size:11.5px;color:#6B7280;font-weight:500}
+.hs{display:flex;gap:10px;overflow-x:auto;padding:0 14px;scrollbar-width:none;flex:none}
+.hs::-webkit-scrollbar{display:none}
+.hs>*{flex:none}
+.mcard{position:relative;width:124px;height:166px;border-radius:14px;overflow:hidden;background:#F2F2F7}
+.mcard>img:first-child{width:100%;height:100%;object-fit:cover;display:block}
+.mcard .who{position:absolute;top:8px;right:8px;width:26px;height:26px;border-radius:999px;border:2px solid #fff;object-fit:cover}
+.mcard .k,.pin .k,.post .k{position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:999px;background:rgba(17,17,17,.6);color:#fff;display:inline-flex;align-items:center;justify-content:center}
+.mcard .k svg,.pin .k svg,.post .k svg{width:12px;height:12px}
+.mcard .ov{position:absolute;inset:auto 0 0 0;padding:28px 8px 8px;background:linear-gradient(transparent,rgba(0,0,0,.7));color:#fff;font-size:11px;display:flex;flex-direction:column;gap:2px}
+.mcard .ov b{font-size:12px}.mcard .ov span{display:inline-flex;align-items:center;gap:3px;opacity:.9}
+.place{display:flex;align-items:center;gap:10px;padding:6px 14px;flex:none}
+.place img{width:48px;height:48px;border-radius:12px;object-fit:cover;background:#F2F2F7;flex:none}
+.place .b{flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.place .t{font-size:14px;font-weight:600}.place .d{font-size:12px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.open{color:#1FA35A;font-weight:600}
+.dist{color:#6B7280;display:inline-flex}
+.pcard{width:148px;border:1px solid #E5E5EA;border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:5px;box-sizing:border-box}
+.pcard b{font-size:13.5px}.pcard small{font-size:11.5px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.post{display:flex;flex-direction:column;gap:8px;padding:0 14px;flex:none}
+.post .au{display:flex;align-items:center;gap:8px}
+.post .au img{width:36px;height:36px;border-radius:999px;object-fit:cover}
+.post .au .b{flex-grow:1;min-width:0;display:flex;flex-direction:column}
+.post .au .t{font-size:13.5px;font-weight:700}.post .au .t small{font-weight:400;color:#6B7280}.post .au .d{font-size:11.5px;color:#6B7280;display:inline-flex;align-items:center;gap:3px}
+.post .im{border-radius:16px;overflow:hidden;aspect-ratio:4/3;background:#F2F2F7;position:relative;max-width:100%}
+.post .im img{width:100%;height:100%;object-fit:cover;display:block}
+.post .cap{position:absolute;inset:auto 0 0 0;padding:30px 12px 10px;background:linear-gradient(transparent,rgba(0,0,0,.7));color:#fff;font-size:13px;font-weight:500;line-height:1.4}
+.post .txt{margin:0;font-size:14px;line-height:1.55}
+.post .acts{display:flex;gap:16px;color:#374151;font-size:12.5px;align-items:center}
+.post .acts span{display:inline-flex;align-items:center;gap:4px}
+.circ-card{margin:0 14px;border:1px solid #E5E5EA;border-radius:16px;padding:12px 0 4px;display:flex;flex-direction:column;gap:6px;flex:none}
+.circ-card .sec{padding:0 12px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;flex:none}
+.card{display:flex;flex-direction:column;gap:6px;border:1px solid #E5E5EA;border-radius:14px;overflow:hidden}
+.card img{width:100%;height:110px;object-fit:cover;display:block}
+.card .body{padding:0 10px 10px;display:flex;flex-direction:column;gap:2px}
+.card .t{font-size:13px;font-weight:600;line-height:1.3}
+.price{font:700 14px var(--font-body);color:var(--a);font-variant-numeric:tabular-nums}
+.muted{color:#6B7280}
+.ocard{position:relative;width:200px;height:112px;border-radius:14px;overflow:hidden;background:#F2F2F7}
+.ocard>img:first-child{width:100%;height:100%;object-fit:cover;display:block}
+.ocard .ov{position:absolute;inset:0;padding:10px;background:linear-gradient(90deg,rgba(0,0,0,.05),rgba(0,0,0,.72));color:#fff;display:flex;flex-direction:column;justify-content:flex-end;gap:2px}
+.ocard .ov b{font-size:13.5px}.ocard .ov span{font-size:11px;opacity:.9}
+.ocard .lg{width:28px;height:28px;border-radius:8px;border:1.5px solid #fff;margin-bottom:auto;object-fit:cover}
+.jobc{display:flex;align-items:center;gap:10px;border:1.5px solid var(--a-soft);background:var(--a-soft);border-radius:14px;padding:10px;flex:none;margin:0 14px}
+.jobc .ic{width:40px;height:40px;border-radius:12px;background:#fff;color:var(--a);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.jobc .b{flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.jobc .t{font-size:13.5px;font-weight:700;color:var(--a-ink)}.jobc .d{font-size:11.5px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scroll .jobc{margin:0 14px}
+.chat{display:flex;align-items:center;gap:12px;padding:8px 14px;flex:none}
+.chat .avw{position:relative;flex:none}
+.chat img{width:48px;height:48px;border-radius:999px;object-fit:cover;display:block}
+.chat.big img{width:54px;height:54px}
+.chat .odot{position:absolute;bottom:1px;left:1px;width:12px;height:12px;border-radius:999px;background:#1FA35A;border:2px solid #fff}
+.chat .b{flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.chat .t{display:flex;justify-content:space-between;font-size:14px;font-weight:600;gap:8px}.chat .t small{font-weight:400;color:#6B7280;font-size:11.5px;flex:none}
+.chat .d{font-size:12.5px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:4px}
+.badge{min-width:20px;height:20px;border-radius:999px;background:var(--a);color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 6px;flex:none}
+.reqrow{display:flex;align-items:center;gap:12px;margin:0 14px;padding:10px 12px;border:1px solid #E5E5EA;border-radius:14px;flex:none;color:#6B7280}
+.reqrow .stack{display:inline-flex;flex:none}
+.reqrow .stack img{width:30px;height:30px;border-radius:999px;border:2px solid #fff;object-fit:cover;margin-inline-start:-10px}
+.reqrow .stack img:first-child{margin-inline-start:0}
+.reqrow .b{flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.reqrow .t{font-size:13.5px;font-weight:600;color:#111}.reqrow .d{font-size:11.5px}
+.rings{gap:14px;padding-block:4px}
+.ring{display:flex;flex-direction:column;align-items:center;gap:5px;width:64px}
+.ring img{width:58px;height:58px;border-radius:999px;object-fit:cover;border:2.5px solid #fff;box-shadow:0 0 0 2px #E5E5EA}
+.ring.new img{box-shadow:0 0 0 2.5px var(--a)}
+.ring span{font-size:11px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:64px}
+.ring .pl{width:58px;height:58px;border-radius:999px;border:1.5px dashed #C7C7CC;display:inline-flex;align-items:center;justify-content:center;color:#6B7280}
+.mehead{display:flex;align-items:center;gap:12px;padding:4px 14px;flex:none}
+.mehead img{width:56px;height:56px;border-radius:999px;object-fit:cover}
+.mehead.big{padding:0 14px;margin-top:-30px;align-items:flex-end}
+.mehead.big img{width:84px;height:84px;border:4px solid #fff}
+.mehead .b{flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.mehead .t{font:800 17px var(--font-display);display:flex;align-items:center;gap:6px}.mehead .d{font-size:12.5px;color:#6B7280}
+.vm{width:18px;height:18px;border-radius:999px;background:var(--a);color:#fff;display:inline-flex;align-items:center;justify-content:center;flex:none;font-style:normal}
+.tag{font:600 11px var(--font-body);color:#5A4200;background:#FFF4D6;padding:3px 8px;border-radius:999px}
+.intro-pill{display:inline-flex;align-items:center;gap:4px;height:30px;padding:0 10px;border-radius:999px;background:var(--a-soft);color:var(--a-ink);font-size:12px;font-weight:600;flex:none}
+.wallet{margin:0 14px;border-radius:18px;background:var(--a);color:#fff;padding:14px;display:flex;flex-direction:column;gap:8px;flex:none}
+.wallet .bal{font:800 30px/1.1 var(--font-display);font-variant-numeric:tabular-nums}.wallet .bal small{font:600 13px var(--font-body);opacity:.85}
+.wallet .qs{display:flex;gap:8px;margin-top:2px}.wallet .qs button{flex:1;height:36px;border-radius:10px;border:0;background:rgba(255,255,255,.18);color:#fff;font:600 12.5px var(--font-body);cursor:pointer}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:0 14px;flex:none}
+.tiles button{display:flex;flex-direction:column;gap:6px;align-items:flex-start;border:1px solid #E5E5EA;border-radius:14px;padding:10px;background:#fff;font-family:var(--font-body);text-align:right;cursor:pointer;min-width:0}
+.tiles .ic{width:32px;height:32px;border-radius:10px;background:var(--a-soft);color:var(--a);display:inline-flex;align-items:center;justify-content:center}
+.tiles b{font-size:12px;color:#111;line-height:1.25}.tiles small{font-size:11px;color:#6B7280}
+.list{display:flex;flex-direction:column;border:1px solid #E5E5EA;border-radius:14px;overflow:hidden;margin:0 14px;flex:none}
+.list.plain{border:0;border-radius:0;margin:0}
+.list>*{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid #E5E5EA;color:#111;background:#fff;border-left:0;border-right:0;border-top:0;font-family:var(--font-body);text-align:right;cursor:pointer}
+.list>*:last-child{border-bottom:0}
+.list .body{flex-grow:1;display:flex;flex-direction:column;gap:1px;min-width:0}
+.list .t{font-size:14px;font-weight:600}.list .d{font-size:12px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ic2{width:36px;height:36px;border-radius:10px;background:#F2F2F7;color:#374151;display:inline-flex;align-items:center;justify-content:center;flex:none}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:10px 0;border-top:1px solid #E5E5EA;border-bottom:1px solid #E5E5EA;flex:none}
+.stat{display:flex;flex-direction:column;align-items:center;gap:1px}
+.stat b{font:700 17px var(--font-body);color:#111;font-variant-numeric:tabular-nums}.stat small{font-size:11.5px;color:#6B7280}
+.cover{position:relative;height:150px;flex:none}
+.cover>img{width:100%;height:100%;object-fit:cover;display:block}
+.cover .tbo{position:absolute;top:10px;right:14px;left:14px;display:flex;justify-content:space-between;align-items:center}
+.cover .tbo .ttl{font:800 20px var(--font-display);color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+.cover .tbo div{display:flex;gap:6px}
+.cover .ib{background:rgba(17,17,17,.5);color:#fff}
+.intro{display:flex;align-items:center;gap:10px;border:1px solid #E5E5EA;border-radius:16px;padding:8px 10px 8px 8px;background:#fff;flex:none}
+.intro .play{width:42px;height:42px;border-radius:999px;border:0;background:var(--a);color:#fff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex:none}
+.intro .body{flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.intro .t{font-size:13.5px;font-weight:700}.intro .d{font-size:12px;color:#6B7280}
+.wave{display:flex;align-items:center;gap:2px;height:22px}.wave i{flex:1 1 0;min-width:2px;border-radius:2px;background:#D1D5DB}
+.qa{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:0 14px;flex:none}
+.qa button{display:flex;flex-direction:column;align-items:center;gap:6px;border:0;background:transparent;font:500 11.5px var(--font-body);color:#111;cursor:pointer;padding:0}
+.qa .ic{width:54px;height:54px;border-radius:16px;display:inline-flex;align-items:center;justify-content:center;background:var(--a-soft);color:var(--a)}
+.ccover{position:relative;aspect-ratio:1;border-radius:16px;overflow:hidden;background:#F2F2F7;max-width:100%}
+.ccover>img:first-child{width:100%;height:100%;object-fit:cover;display:block}
+.ccover .ov{position:absolute;inset:0;padding:10px;background:linear-gradient(transparent 30%,rgba(0,0,0,.75));color:#fff;display:flex;flex-direction:column;justify-content:flex-end;gap:2px}
+.ccover .ov b{font-size:13.5px}.ccover .ov span{font-size:11px;opacity:.9}
+.ccover .lg{width:30px;height:30px;border-radius:999px;border:2px solid #fff;margin-bottom:auto;object-fit:cover}
+.ccover .nb{position:absolute;top:8px;left:8px;font-size:10.5px;font-weight:700;color:#5A4200;background:#FFD66B;padding:3px 7px;border-radius:999px}
+/* map */
+.map{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:#F1EFE8}
+.map svg.base{position:absolute;inset:0;width:100%;height:100%}
+.map .pin{position:absolute;width:40px;height:40px;transform:translate(50%,-50%)}
+.map .pin img{width:40px;height:40px;border-radius:999px;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.28);object-fit:cover;display:block}
+.map .pin .k{top:-6px;left:-6px;width:20px;height:20px;background:var(--a)}
+.map .plabel{position:absolute;transform:translate(50%,-50%);display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10.5px;font-weight:700;color:#1F2937;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff;white-space:nowrap}
+.map .plabel img{width:24px;height:24px;border-radius:7px;border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.28);object-fit:cover}
+.map .me{position:absolute;width:16px;height:16px;border-radius:999px;background:#1E88FF;border:3px solid #fff;box-shadow:0 0 0 8px rgba(30,136,255,.18);transform:translate(50%,-50%)}
+.map .top{position:absolute;top:10px;right:0;left:0;display:flex;flex-direction:column;gap:8px}
+.fabm{position:absolute;left:12px;width:40px;height:40px;border-radius:999px;border:0;background:#fff;color:#111;box-shadow:0 3px 10px rgba(0,0,0,.2);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.sheet{position:absolute;right:0;left:0;bottom:0;background:#fff;border-radius:20px 20px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,.16);display:flex;flex-direction:column;gap:10px;padding:8px 0 96px;box-sizing:border-box;overflow:hidden}
+.scr:not(.abs) .sheet{padding-bottom:10px}
+.sheet .hd{width:36px;height:4px;border-radius:999px;background:#D1D5DB;margin:0 auto;flex:none}
+.mapstrip{position:relative;height:120px;margin:0 14px;border-radius:16px;overflow:hidden;flex:none;background:#F1EFE8}
+.mapstrip .pin{width:28px;height:28px}.mapstrip .pin img{width:28px;height:28px}.mapstrip .plabel{font-size:9px}.mapstrip .plabel img{width:18px;height:18px}.mapstrip .pin .k{display:none}
+.mapstrip .cta{position:absolute;bottom:8px;right:10px;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:999px;background:#111;color:#fff;font-size:12px;font-weight:600}
+.seg3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;background:#F2F2F7;border-radius:12px;padding:4px;flex:none}
+.seg3.glass{background:rgba(255,255,255,.95);box-shadow:0 4px 14px rgba(0,0,0,.16)}
+.seg3 button{height:34px;border:0;border-radius:9px;background:transparent;color:#6B7280;font:600 13px var(--font-body);cursor:pointer}
+.seg3 button.on{background:#111;color:#fff}
+/* navs */
+.nav{flex:none;height:64px;border-top:1px solid #E5E5EA;background:#fff;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));align-items:center;padding:0 6px}
+.nav button{border:0;background:transparent;display:flex;flex-direction:column;align-items:center;gap:2px;font:500 10.5px var(--font-body);color:#6B7280;cursor:pointer;padding:0}
+.nav button.on{color:var(--a);font-weight:600}
+.nav.pill{position:absolute;left:14px;right:14px;bottom:12px;height:60px;border:1px solid #E5E5EA;border-radius:999px;background:rgba(255,255,255,.97);box-shadow:0 10px 28px rgba(0,0,0,.2);padding:0 8px}
+.nav.pill .c{width:52px;height:52px;border-radius:999px;background:var(--a);color:#fff;margin-top:-26px;box-shadow:0 8px 18px rgba(10,110,120,.4);justify-self:center;display:inline-flex;align-items:center;justify-content:center}
+.nav.pill button span{font-size:10px}
+/* compare table */
+.cmp{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
+.cmp th,.cmp td{border-bottom:1px solid var(--line);padding:10px 8px;text-align:right;vertical-align:top;line-height:1.55}
+.cmp th{font-weight:700;color:var(--fg)}
+.cmp thead th{color:var(--muted);font-weight:600;font-size:12.5px}
+.cmp td b{color:var(--a)}
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;padding:0 12px}
+.reco{border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.65}
+.reco b{font-size:15px}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion: reduce){ *{transition:none!important} }
+
+/* أ: مسارات أفقية */
+.seg4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;background:#F2F2F7;border-radius:12px;padding:4px;flex:none}
+.seg4.glass{background:rgba(255,255,255,.95);box-shadow:0 4px 14px rgba(0,0,0,.16)}
+.seg4 button{height:34px;border:0;border-radius:9px;background:transparent;color:#6B7280;font:600 13px var(--font-body);cursor:pointer}
+.seg4 button.on{background:#111;color:#fff}
+.rails{position:absolute;right:0;left:0;bottom:84px;display:flex;flex-direction:column;gap:8px}
+.rail{display:flex;flex-direction:column;gap:8px}
+.rail .sec b{color:#111;text-shadow:0 0 4px #fff,0 0 8px #fff}
+.rc{flex:none;width:150px;border:0;border-radius:16px;background:rgba(255,255,255,.97);box-shadow:0 6px 18px rgba(0,0,0,.18);display:flex;flex-direction:column;overflow:hidden;text-align:right;padding:0;cursor:pointer;font-family:var(--font-body);position:relative}
+.rc>img:first-child{width:100%;height:78px;object-fit:cover;display:block}
+.rc .k{position:absolute;top:6px;left:6px;width:22px;height:22px;border-radius:999px;background:rgba(17,17,17,.6);color:#fff;display:inline-flex;align-items:center;justify-content:center}
+.rc .k svg{width:12px;height:12px}
+.rc .b{display:flex;flex-direction:column;gap:2px;padding:7px 9px 9px}
+.rc .t{font-size:12.5px;font-weight:700;color:#111;display:flex;align-items:center;justify-content:space-between;gap:6px}
+.rc .who{width:20px;height:20px;border-radius:999px;object-fit:cover;border:1.5px solid #fff;box-shadow:0 0 0 1px #E5E5EA}
+.rc .d{font-size:11px;color:#6B7280;display:flex;align-items:center;gap:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rc.hi{outline:2.5px solid var(--a);outline-offset:-2.5px}
+.map .pin.hi img{box-shadow:0 0 0 3px var(--a),0 2px 8px rgba(0,0,0,.28)}
+/* ب و د: وضعان */
+.mode{position:absolute;inset:0;display:flex;flex-direction:column}
+.mode>.map{position:absolute;inset:0}
+.fabc{position:absolute;left:50%;transform:translateX(-50%);bottom:92px;height:42px;padding:0 18px;border-radius:999px;border:0;background:#111;color:#fff;font:700 13.5px var(--font-body);display:inline-flex;align-items:center;gap:8px;box-shadow:0 8px 22px rgba(0,0,0,.28);cursor:pointer;z-index:2}
+.fabc.dark{background:var(--a);box-shadow:0 8px 22px rgba(10,110,120,.4)}
+.peek{position:absolute;right:14px;left:14px;bottom:146px;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.97);border-radius:16px;padding:8px 10px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.peek img{width:46px;height:46px;border-radius:12px;object-fit:cover}
+.peek .b{flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.peek .t{font-size:13.5px;font-weight:700}.peek .t small{font-weight:500;color:#6B7280}
+.peek .d{font-size:11.5px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mode[data-mode=list] .tb{border-bottom:1px solid #F2F2F7}
+.brand{font:800 20px var(--font-display);color:var(--a)}
+.tb .ttl .sub2{margin-inline-start:8px}
+.ibx{width:30px;height:30px;border-radius:999px;border:0;background:#F2F2F7;color:#111;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex:none;transform:scaleX(-1)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0 14px;flex:none}
+/* ج: قسمة ثابتة */
+.split{position:absolute;inset:0;display:flex;flex-direction:column}
+.split .map.mapc{flex:0 0 42%;transition:flex-basis .28s ease}
+.split.full .map.mapc{flex-basis:calc(100% - 0px)}
+.split .panel{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;background:#fff;border-top:1px solid #E5E5EA}
+.split.full .panel{display:none}
+.split .fabm.loc{bottom:12px}
+.split .fabm.exp{bottom:12px;left:auto;right:12px}
+.split.full .fabm{bottom:92px}
+.ptabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid #E5E5EA;flex:none}
+.ptabs button{flex:1;height:38px;border:0;background:transparent;color:#6B7280;font:600 13px var(--font-body);cursor:pointer;border-bottom:2.5px solid transparent;margin-bottom:-1px}
+.ptabs button.on{color:var(--a);border-bottom-color:var(--a)}
+.pbody{display:flex;flex-direction:column;gap:10px}
+/* د: بطاقة الخريطة */
+.mapcard{position:relative;margin:0 14px;border:0;border-radius:18px;overflow:hidden;padding:0;background:#F1EFE8;flex:none;cursor:pointer;text-align:right;font-family:var(--font-body);box-shadow:0 6px 18px rgba(0,0,0,.12)}
+.mapcard .mapstrip{pointer-events:none}
+.mapcard .mapstrip .pin{width:30px;height:30px}.mapcard .mapstrip .pin img{width:30px;height:30px}
+.mc-ov{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff}
+.mc-ov .b{flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.mc-ov .t{font-size:14.5px;font-weight:700;color:#111}.mc-ov .d{font-size:11.5px;color:#6B7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mc-ov .go{flex:none;display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 12px;border-radius:999px;background:var(--a);color:#fff;font-size:12px;font-weight:700}
+.dist{color:#9CA3AF;display:inline-flex}
+.avm img{width:28px;height:28px;border-radius:999px;object-fit:cover}
+</style>
+<div class="wrap">
+  <header>
+    <h1>بدائل الورقة السفلية على الخريطة</h1>
+    <p class="sub">اليوم تحمل «ورقة» تُسحب من أسفل الخريطة كل أقسام الرئيسية (12 قسماً)، فتتنافس مع الخريطة على الشاشة ويلتبس السحب بين تحريك الخريطة وتمرير القائمة. هذه أربع طرق مغايرة بالمحتوى الحقيقي نفسه؛ كلٌّ منها يجيب عن السؤال «أين تعيش الأقسام إذا لم تكن في ورقة؟». الأزرار داخل الهواتف تعمل: بدّل الطبقات في أ، والوضع في ب ود، والتبويبات والتوسيع في ج.</p>
+    <div class="rowh">
+      <div class="seg" id="seg" role="tablist" aria-label="النماذج">
+        <button class="on" data-go="a" role="tab"><i>أ</i>مسارات أفقية</button>
+        <button data-go="b" role="tab"><i>ب</i>زر خريطة/قائمة</button>
+        <button data-go="c" role="tab"><i>ج</i>قسمة ثابتة</button>
+        <button data-go="d" role="tab"><i>د</i>الخريطة بطاقة</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="phones">
+    <section class="slot active" id="s-a">
+      <h2><span>أ</span>مسارات أفقية <small>· طبقة واحدة في المرة</small></h2>
+      <div class="phone"><div class="screen" data-concept="a"><div class="scr abs" data-scr="home"><div class="map"><svg class="base" viewBox="0 0 390 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+<rect width="390" height="700" fill="#F1EFE8"/>
+<path d="M0 0H118C150 110 88 250 128 372C160 462 96 600 138 700H0Z" fill="#D5E5F1"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#DCD9D0" stroke-width="11"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#fff" stroke-width="8"/>
+<g stroke="#fff" stroke-width="6"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g stroke="#DCD9D0" stroke-width="1"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g fill="#E8E5DC"><rect x="178" y="196" width="66" height="88" rx="6"/><rect x="276" y="196" width="40" height="88" rx="6"/><rect x="180" y="318" width="64" height="86" rx="6"/><rect x="276" y="318" width="40" height="86" rx="6"/><rect x="346" y="318" width="40" height="86" rx="6"/><rect x="184" y="438" width="60" height="106" rx="6"/><rect x="276" y="438" width="40" height="106" rx="6"/><rect x="346" y="438" width="40" height="106" rx="6"/><rect x="190" y="578" width="54" height="110" rx="6"/><rect x="276" y="578" width="40" height="110" rx="6"/></g>
+<ellipse cx="300" cy="140" rx="34" ry="22" fill="#DCE8D2"/>
+<g font-family="Rubik,Tahoma,sans-serif" font-size="11" fill="#8A8F87"><text x="215" y="250">الشاطئ</text><text x="215" y="370">الحمراء</text><text x="222" y="500">الروضة</text><text x="228" y="640">التحلية</text><text x="40" y="330" fill="#7FA3BF">البحر الأحمر</text><text x="282" y="145" fill="#7A9A6C">حديقة</text></g>
+</svg><span class="pin" style="right:78%;top:30%"><img src="@@p16@@" alt=""><i class="k">@@i-cam@@</i></span><span class="pin" style="right:40%;top:58%"><img src="@@p42@@" alt=""></span><span class="pin" style="right:30%;top:79%"><img src="@@p274@@" alt=""><i class="k">@@i-play@@</i></span><span class="pin" style="right:62%;top:49%"><img src="@@p63@@" alt=""><i class="k">@@i-mic@@</i></span><span class="pin" style="right:52%;top:66%"><img src="@@avatar@@" alt=""></span><span class="plabel" style="right:42%;top:68%"><img src="@@overdose@@" alt="">أوفردوز</span><span class="plabel" style="right:26%;top:36%"><img src="@@halfmillion@@" alt="">هاف مليون</span><span class="plabel" style="right:66%;top:60%"><img src="@@3brews@@" alt="">ثري بروز</span><span class="plabel" style="right:20%;top:50%"><img src="@@rawnah@@" alt="">رونة</span><span class="me" style="right:56%;top:44%"></span>
+      <div class="top"><div class="search glass">@@i-search@@<span style="flex-grow:1">ابحث في جدة</span><span class="avm"><img src="@@avatar@@" alt=""></span></div>
+        <div style="padding:0 14px"><div class="seg4 glass"><button data-layer="near" class=on>حولك</button><button data-layer="offers">عروض</button><button data-layer="circles">دوائر</button><button data-layer="market">سوق</button></div></div></div>
+      <button class="fabm" style="bottom:262px" aria-label="موقعي">@@i-locate@@</button>
+      <div class="rails"><div class="rail" data-rail="near"><div class="sec"><b>حولك الآن<small>٤٦ شخصاً · ١٢ لحظة</small></b><a href="#">قائمة</a></div><div class="hs"><button class="rc" data-pin="0"><img src="@@p16@@" alt=""><i class="k">@@i-cam@@</i><div class="b"><span class="t">فهد<img class="who" src="@@avatar@@" alt=""></span><span class="d">@@i-pin@@الكورنيش · قبل ١٢ د</span></div></button><button class="rc" data-pin="1"><img src="@@p42@@" alt=""><div class="b"><span class="t">سارة<img class="who" src="@@p26@@" alt=""></span><span class="d">@@i-pin@@الروضة · قبل ٢٥ د</span></div></button><button class="rc" data-pin="2"><img src="@@p274@@" alt=""><i class="k">@@i-play@@</i><div class="b"><span class="t">نورة<img class="who" src="@@p154@@" alt=""></span><span class="d">@@i-pin@@التحلية · قبل ساعة</span></div></button><button class="rc" data-pin="3"><img src="@@p63@@" alt=""><i class="k">@@i-mic@@</i><div class="b"><span class="t">عبدالله<img class="who" src="@@p119@@" alt=""></span><span class="d">@@i-pin@@الحمراء · قبل ساعتين</span></div></button><button class="rc" data-pin="4"><img src="@@p184@@" alt=""><div class="b"><span class="t">ريان<img class="who" src="@@p60@@" alt=""></span><span class="d">@@i-pin@@طريق مكة · قبل ٣ س</span></div></button></div></div><div class="rail" data-rail="offers" hidden><div class="sec"><b>عروض اليوم<small>٣ عروض قريبة</small></b><a href="#">قائمة</a></div><div class="hs"><button class="rc"><img src="@@p63@@" alt=""><div class="b"><span class="t">خصم ٢٠٪ على اللاتيه</span><span class="d"><img class="who" src="@@overdose@@" alt="" style="margin:0 0 0 4px">أوفردوز · حتى الليلة</span></div></button><button class="rc"><img src="@@p42@@" alt=""><div class="b"><span class="t">الفنجان السادس مجاناً</span><span class="d"><img class="who" src="@@halfmillion@@" alt="" style="margin:0 0 0 4px">هاف مليون · للأعضاء</span></div></button><button class="rc"><img src="@@p16@@" alt=""><div class="b"><span class="t">قهوة الصباح بـ ٩ ر.س</span><span class="d"><img class="who" src="@@3brews@@" alt="" style="margin:0 0 0 4px">ثري بروز · حتى ١١ ص</span></div></button></div></div><div class="rail" data-rail="circles" hidden><div class="sec"><b>دوائر قريبة<small>انضم بلمسة</small></b><a href="#">قائمة</a></div><div class="hs"><button class="rc"><img src="@@overdose@@" alt="" style="border-radius:999px;width:52px;height:52px;margin:8px"><div class="b"><span class="t">أوفردوز</span><span class="d">مقهى · ٢٬١٠٠ متابع · ٦٥٠ م</span></div></button><button class="rc"><img src="@@halfmillion@@" alt="" style="border-radius:999px;width:52px;height:52px;margin:8px"><div class="b"><span class="t">هاف مليون</span><span class="d">مقهى · ١٬٤٠٠ متابع · ١.٢ كم</span></div></button><button class="rc"><img src="@@malaga@@" alt="" style="border-radius:999px;width:52px;height:52px;margin:8px"><div class="b"><span class="t">مالقا</span><span class="d">مقهى · ٩٨٠ متابعاً · ٢.٨ كم</span></div></button><button class="rc"><img src="@@avatar@@" alt="" style="border-radius:999px;width:52px;height:52px;margin:8px"><div class="b"><span class="t">جيران الشاطئ</span><span class="d">١٢٤ عضواً · ٣ منشورات جديدة</span></div></button></div></div><div class="rail" data-rail="market" hidden><div class="sec"><b>من السوق<small>الأقرب إليك</small></b><a href="#">قائمة</a></div><div class="hs"><button class="rc"><img src="@@p250@@" alt=""><div class="b"><span class="t">كاميرا فوجي X-T20</span><span class="d"><b style="color:var(--a)">2,650 ر.س</b> · الشاطئ</span></div></button><button class="rc"><img src="@@p60@@" alt=""><div class="b"><span class="t">حامل مانفروتو + حقيبة</span><span class="d"><b style="color:var(--a)">480 ر.س</b> · توصيل</span></div></button><button class="rc"><img src="@@p119@@" alt=""><div class="b"><span class="t">ماك بوك إير M1</span><span class="d"><b style="color:var(--a)">2,900 ر.س</b> · الحمراء</span></div></button><button class="rc"><img src="@@p26@@" alt=""><div class="b"><span class="t">طقم فلاتر ND</span><span class="d"><b style="color:var(--a)">220 ر.س</b> · جديد</span></div></button></div></div></div></div><nav class="nav pill"><button data-nav="home" class=on>@@i-map@@<span>الخريطة</span></button><button data-nav="circles">@@i-groups@@<span>الدوائر</span></button><button class="c" aria-label="لحظة جديدة">@@i-cam@@</button><button data-nav="chats">@@i-chat@@<span>المحادثات</span></button><button data-nav="me">@@i-me@@<span>ماي سبيس</span></button></nav></div></div></div>
+      <p class="note">الخريطة كاملة دائماً. مفتاح رباعي في الأعلى (حولك، عروض، دوائر، سوق) يبدّل مسار بطاقات أفقياً في الأسفل، ولمس بطاقة يُبرز دبّوسها. لا سحب عمودي إطلاقاً: التمرير الأفقي للبطاقات والعمودي للخريطة لا يتعارضان. الأقسام الأخرى (وظائف، فعاليات، دوائرك) تنتقل إلى تبويباتها أو إلى «قائمة». كما في خرائط قوقل وسناب ماب.</p>
+    </section>
+    <section class="slot" id="s-b">
+      <h2><span>ب</span>زر خريطة/قائمة <small>· وضعان كاملان</small></h2>
+      <div class="phone"><div class="screen" data-concept="b"><div class="scr abs" data-scr="home"><div class="mode" data-mode="map">
+      <div class="map"><svg class="base" viewBox="0 0 390 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+<rect width="390" height="700" fill="#F1EFE8"/>
+<path d="M0 0H118C150 110 88 250 128 372C160 462 96 600 138 700H0Z" fill="#D5E5F1"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#DCD9D0" stroke-width="11"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#fff" stroke-width="8"/>
+<g stroke="#fff" stroke-width="6"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g stroke="#DCD9D0" stroke-width="1"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g fill="#E8E5DC"><rect x="178" y="196" width="66" height="88" rx="6"/><rect x="276" y="196" width="40" height="88" rx="6"/><rect x="180" y="318" width="64" height="86" rx="6"/><rect x="276" y="318" width="40" height="86" rx="6"/><rect x="346" y="318" width="40" height="86" rx="6"/><rect x="184" y="438" width="60" height="106" rx="6"/><rect x="276" y="438" width="40" height="106" rx="6"/><rect x="346" y="438" width="40" height="106" rx="6"/><rect x="190" y="578" width="54" height="110" rx="6"/><rect x="276" y="578" width="40" height="110" rx="6"/></g>
+<ellipse cx="300" cy="140" rx="34" ry="22" fill="#DCE8D2"/>
+<g font-family="Rubik,Tahoma,sans-serif" font-size="11" fill="#8A8F87"><text x="215" y="250">الشاطئ</text><text x="215" y="370">الحمراء</text><text x="222" y="500">الروضة</text><text x="228" y="640">التحلية</text><text x="40" y="330" fill="#7FA3BF">البحر الأحمر</text><text x="282" y="145" fill="#7A9A6C">حديقة</text></g>
+</svg><span class="pin" style="right:78%;top:30%"><img src="@@p16@@" alt=""><i class="k">@@i-cam@@</i></span><span class="pin" style="right:40%;top:58%"><img src="@@p42@@" alt=""></span><span class="pin" style="right:30%;top:79%"><img src="@@p274@@" alt=""><i class="k">@@i-play@@</i></span><span class="pin" style="right:62%;top:49%"><img src="@@p63@@" alt=""><i class="k">@@i-mic@@</i></span><span class="pin" style="right:52%;top:66%"><img src="@@avatar@@" alt=""></span><span class="plabel" style="right:42%;top:68%"><img src="@@overdose@@" alt="">أوفردوز</span><span class="plabel" style="right:26%;top:36%"><img src="@@halfmillion@@" alt="">هاف مليون</span><span class="plabel" style="right:66%;top:60%"><img src="@@3brews@@" alt="">ثري بروز</span><span class="plabel" style="right:20%;top:50%"><img src="@@rawnah@@" alt="">رونة</span><span class="me" style="right:56%;top:44%"></span>
+        <div class="top"><div class="search glass">@@i-search@@<span style="flex-grow:1">ابحث في جدة</span><span class="avm"><img src="@@avatar@@" alt=""></span></div>
+          <div class="hrow"><span class="ch glass on">الكل</span><span class="ch glass">أشخاص</span><span class="ch glass">دوائر</span><span class="ch glass">سوق</span><span class="ch glass">مفتوح الآن</span></div></div>
+        <button class="fabm" style="bottom:150px" aria-label="موقعي">@@i-locate@@</button>
+        <div class="peek"><img src="@@overdose@@" alt=""><div class="b"><span class="t">أوفردوز <small>· ٦٥٠ م</small></span><span class="d">مقهى · مفتوح الآن · ٨ لحظات · خصم ٢٠٪</span></div><button class="btn sm soft">افتح</button></div>
+        <button class="fabc" data-toggle="list">@@i-list@@ القائمة</button>
+      </div></div>
+      <div class="mode" data-mode="list" hidden>
+      <div class="tb"><div class="l"><button class="ib" aria-label="بحث">@@i-search@@</button></div><span class="ttl"><span class="brand">ناس لايف</span><span class="sub2">جدة · الشاطئ</span></span><div class="r"><button class="ib" aria-label="الإشعارات">@@i-bell@@<i class="dot"></i></button></div></div>
+      <div class="scroll pad">
+        
+        <div class="sec"><b>لحظات حولك<small>١٢ الآن</small></b><a href="#">الكل</a></div><div class="hs"><div class="mcard"><img src="@@p16@@" alt=""><img class="who" src="@@avatar@@" alt=""><i class="k">@@i-cam@@</i><div class="ov"><b>فهد</b><span>@@i-pin@@الكورنيش · قبل ١٢ د</span></div></div><div class="mcard"><img src="@@p42@@" alt=""><img class="who" src="@@p26@@" alt=""><div class="ov"><b>سارة</b><span>@@i-pin@@الروضة · قبل ٢٥ د</span></div></div><div class="mcard"><img src="@@p274@@" alt=""><img class="who" src="@@p154@@" alt=""><i class="k">@@i-play@@</i><div class="ov"><b>نورة</b><span>@@i-pin@@التحلية · قبل ساعة</span></div></div><div class="mcard"><img src="@@p63@@" alt=""><img class="who" src="@@p119@@" alt=""><i class="k">@@i-mic@@</i><div class="ov"><b>عبدالله</b><span>@@i-pin@@الحمراء · قبل ساعتين</span></div></div><div class="mcard"><img src="@@p184@@" alt=""><img class="who" src="@@p60@@" alt=""><div class="ov"><b>ريان</b><span>@@i-pin@@طريق مكة · قبل ٣ س</span></div></div></div>
+        <div class="sec"><b>عروض اليوم<small>٣ قريبة</small></b><a href="#">الكل</a></div><div class="hs"><div class="ocard"><img src="@@p63@@" alt=""><div class="ov"><img class="lg" src="@@overdose@@" alt=""><b>خصم ٢٠٪ على اللاتيه</b><span>أوفردوز · حتى الليلة</span></div></div><div class="ocard"><img src="@@p42@@" alt=""><div class="ov"><img class="lg" src="@@halfmillion@@" alt=""><b>الفنجان السادس مجاناً</b><span>هاف مليون · للأعضاء</span></div></div><div class="ocard"><img src="@@p16@@" alt=""><div class="ov"><img class="lg" src="@@3brews@@" alt=""><b>قهوة الصباح بـ ٩ ر.س</b><span>ثري بروز · حتى ١١ ص</span></div></div></div>
+        <div class="sec"><b>مفتوح الآن حولك<small>الأقرب أولاً</small></b><a href="#">الكل</a></div><div class="place"><img src="@@overdose@@" alt=""><div class="b"><span class="t">أوفردوز</span><span class="d">مقهى · الروضة</span><span class="d"><span class="open">٨ لحظات · مفتوح الآن</span> · ٦٥٠ م</span></div><button class="btn sm soft">افتح</button></div><div class="place"><img src="@@halfmillion@@" alt=""><div class="b"><span class="t">هاف مليون</span><span class="d">مقهى · الشاطئ</span><span class="d"><span class="open">٥ لحظات · خصم ٢٠٪</span> · ١.٢ كم</span></div><button class="btn sm soft">افتح</button></div><div class="place"><img src="@@3brews@@" alt=""><div class="b"><span class="t">ثري بروز</span><span class="d">مقهى · الحمراء</span><span class="d"><span class="open">يوظّف باريستا</span> · ٢.١ كم</span></div><button class="btn sm soft">افتح</button></div>
+        <div class="sec"><b>دوائرك</b><a href="#">الكل</a></div><div class="place"><img src="@@avatar@@" alt="" style="border-radius:999px"><div class="b"><span class="t">جيران الشاطئ</span><span class="d">١٢٤ عضواً · ٣ منشورات جديدة</span></div><span class="dist">@@i-chev@@</span></div><div class="place"><img src="@@p16@@" alt="" style="border-radius:999px"><div class="b"><span class="t">مصوّرو جدة</span><span class="d">٣٨٠ عضواً · نقاش حيّ الآن</span></div><span class="dist">@@i-chev@@</span></div><div class="place"><img src="@@p244@@" alt="" style="border-radius:999px"><div class="b"><span class="t">استوديو فهد شوتس</span><span class="d">دائرتك التجارية · ٥ رسائل</span></div><span class="dist">@@i-chev@@</span></div>
+        <div class="sec"><b>من السوق</b><a href="#">الكل</a></div><div class="grid2"><div class="card"><img src="@@p250@@" alt=""><div class="body"><span class="t">كاميرا فوجي X-T20</span><span class="price">2,650 ر.س</span><span class="d muted" style="font-size:11.5px">الشاطئ</span></div></div><div class="card"><img src="@@p60@@" alt=""><div class="body"><span class="t">حامل مانفروتو + حقيبة</span><span class="price">480 ر.س</span><span class="d muted" style="font-size:11.5px">توصيل</span></div></div></div>
+        <div class="sec"><b>وظائف جديدة</b><a href="#">الكل</a></div><div class="jobc"><span class="ic">@@i-job@@</span><div class="b"><span class="t">عرض وظيفي: باريستا · ثري بروز</span><span class="d">دوام جزئي · الحمراء · ٤٬٥٠٠ ر.س · يطابق ملفك ٨٧٪</span></div><button class="btn sm">افتح</button></div>
+      </div>
+      <button class="fabc dark" data-toggle="map">@@i-map@@ الخريطة</button>
+      </div><nav class="nav pill"><button data-nav="home" class=on>@@i-map@@<span>الخريطة</span></button><button data-nav="circles">@@i-groups@@<span>الدوائر</span></button><button class="c" aria-label="لحظة جديدة">@@i-cam@@</button><button data-nav="chats">@@i-chat@@<span>المحادثات</span></button><button data-nav="me">@@i-me@@<span>ماي سبيس</span></button></nav></div></div></div>
+      <p class="note">وضعان لا ثالث لهما: خريطة كاملة ببطاقة «الأقرب» صغيرة، وقائمة كاملة هي الرئيسية العادية بأقسامها. زر واحد عائم يبدّل بينهما ويتذكّر التطبيق آخر وضع. أبسط ما يمكن شرحه للمستخدم، وكل أقسام الرئيسية والتخصيص تبقى كما هي في وضع القائمة. كما في Airbnb وZillow.</p>
+    </section>
+    <section class="slot" id="s-c">
+      <h2><span>ج</span>قسمة ثابتة <small>· بلا سحب، بتبويبات</small></h2>
+      <div class="phone"><div class="screen" data-concept="c"><div class="scr abs" data-scr="home"><div class="split">
+      <div class="map mapc"><svg class="base" viewBox="0 0 390 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+<rect width="390" height="700" fill="#F1EFE8"/>
+<path d="M0 0H118C150 110 88 250 128 372C160 462 96 600 138 700H0Z" fill="#D5E5F1"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#DCD9D0" stroke-width="11"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#fff" stroke-width="8"/>
+<g stroke="#fff" stroke-width="6"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g stroke="#DCD9D0" stroke-width="1"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g fill="#E8E5DC"><rect x="178" y="196" width="66" height="88" rx="6"/><rect x="276" y="196" width="40" height="88" rx="6"/><rect x="180" y="318" width="64" height="86" rx="6"/><rect x="276" y="318" width="40" height="86" rx="6"/><rect x="346" y="318" width="40" height="86" rx="6"/><rect x="184" y="438" width="60" height="106" rx="6"/><rect x="276" y="438" width="40" height="106" rx="6"/><rect x="346" y="438" width="40" height="106" rx="6"/><rect x="190" y="578" width="54" height="110" rx="6"/><rect x="276" y="578" width="40" height="110" rx="6"/></g>
+<ellipse cx="300" cy="140" rx="34" ry="22" fill="#DCE8D2"/>
+<g font-family="Rubik,Tahoma,sans-serif" font-size="11" fill="#8A8F87"><text x="215" y="250">الشاطئ</text><text x="215" y="370">الحمراء</text><text x="222" y="500">الروضة</text><text x="228" y="640">التحلية</text><text x="40" y="330" fill="#7FA3BF">البحر الأحمر</text><text x="282" y="145" fill="#7A9A6C">حديقة</text></g>
+</svg><span class="pin" style="right:78%;top:30%"><img src="@@p16@@" alt=""><i class="k">@@i-cam@@</i></span><span class="pin" style="right:40%;top:58%"><img src="@@p42@@" alt=""></span><span class="pin" style="right:30%;top:79%"><img src="@@p274@@" alt=""><i class="k">@@i-play@@</i></span><span class="pin" style="right:62%;top:49%"><img src="@@p63@@" alt=""><i class="k">@@i-mic@@</i></span><span class="pin" style="right:52%;top:66%"><img src="@@avatar@@" alt=""></span><span class="plabel" style="right:42%;top:68%"><img src="@@overdose@@" alt="">أوفردوز</span><span class="plabel" style="right:26%;top:36%"><img src="@@halfmillion@@" alt="">هاف مليون</span><span class="plabel" style="right:66%;top:60%"><img src="@@3brews@@" alt="">ثري بروز</span><span class="plabel" style="right:20%;top:50%"><img src="@@rawnah@@" alt="">رونة</span><span class="me" style="right:56%;top:44%"></span>
+        <div class="top"><div class="search glass">@@i-search@@<span style="flex-grow:1">ابحث في جدة</span><span class="avm"><img src="@@avatar@@" alt=""></span></div></div>
+        <button class="fabm loc" aria-label="موقعي">@@i-locate@@</button>
+        <button class="fabm exp" data-expand aria-label="توسيع الخريطة">@@i-expand@@</button>
+      </div>
+      <div class="panel"><div class="ptabs"><button data-ptab="near" class=on>حولك</button><button data-ptab="offers">عروض</button><button data-ptab="circles">دوائر</button><button data-ptab="market">سوق</button><button data-ptab="more">المزيد</button></div><div class="scroll pad" style="gap:10px"><div class="pbody" data-pbody="near"><div class="sec"><b>حولك الآن<small>٤٦ شخصاً · ١٢ لحظة</small></b><a href="#">الكل</a></div><div class="hs"><div class="mcard"><img src="@@p16@@" alt=""><img class="who" src="@@avatar@@" alt=""><i class="k">@@i-cam@@</i><div class="ov"><b>فهد</b><span>@@i-pin@@الكورنيش · قبل ١٢ د</span></div></div><div class="mcard"><img src="@@p42@@" alt=""><img class="who" src="@@p26@@" alt=""><div class="ov"><b>سارة</b><span>@@i-pin@@الروضة · قبل ٢٥ د</span></div></div><div class="mcard"><img src="@@p274@@" alt=""><img class="who" src="@@p154@@" alt=""><i class="k">@@i-play@@</i><div class="ov"><b>نورة</b><span>@@i-pin@@التحلية · قبل ساعة</span></div></div><div class="mcard"><img src="@@p63@@" alt=""><img class="who" src="@@p119@@" alt=""><i class="k">@@i-mic@@</i><div class="ov"><b>عبدالله</b><span>@@i-pin@@الحمراء · قبل ساعتين</span></div></div><div class="mcard"><img src="@@p184@@" alt=""><img class="who" src="@@p60@@" alt=""><div class="ov"><b>ريان</b><span>@@i-pin@@طريق مكة · قبل ٣ س</span></div></div></div>
+                 <div class="sec"><b>مفتوح الآن<small>الأقرب أولاً</small></b><a href="#">الكل</a></div><div class="place"><img src="@@overdose@@" alt=""><div class="b"><span class="t">أوفردوز</span><span class="d">مقهى · الروضة</span><span class="d"><span class="open">٨ لحظات · مفتوح الآن</span> · ٦٥٠ م</span></div><button class="btn sm soft">افتح</button></div><div class="place"><img src="@@halfmillion@@" alt=""><div class="b"><span class="t">هاف مليون</span><span class="d">مقهى · الشاطئ</span><span class="d"><span class="open">٥ لحظات · خصم ٢٠٪</span> · ١.٢ كم</span></div><button class="btn sm soft">افتح</button></div><div class="place"><img src="@@3brews@@" alt=""><div class="b"><span class="t">ثري بروز</span><span class="d">مقهى · الحمراء</span><span class="d"><span class="open">يوظّف باريستا</span> · ٢.١ كم</span></div><button class="btn sm soft">افتح</button></div><div class="place"><img src="@@rawnah@@" alt=""><div class="b"><span class="t">رونة</span><span class="d">مقهى · التحلية</span><span class="d"><span class="open">مفتوح حتى ١٢</span> · ٣.٤ كم</span></div><button class="btn sm soft">افتح</button></div></div><div class="pbody" data-pbody="offers" hidden><div class="sec"><b>عروض اليوم<small>٣ قريبة</small></b><a href="#">الكل</a></div><div class="hs"><div class="ocard"><img src="@@p63@@" alt=""><div class="ov"><img class="lg" src="@@overdose@@" alt=""><b>خصم ٢٠٪ على اللاتيه</b><span>أوفردوز · حتى الليلة</span></div></div><div class="ocard"><img src="@@p42@@" alt=""><div class="ov"><img class="lg" src="@@halfmillion@@" alt=""><b>الفنجان السادس مجاناً</b><span>هاف مليون · للأعضاء</span></div></div><div class="ocard"><img src="@@p16@@" alt=""><div class="ov"><img class="lg" src="@@3brews@@" alt=""><b>قهوة الصباح بـ ٩ ر.س</b><span>ثري بروز · حتى ١١ ص</span></div></div></div><div class="sec"><b>عروض دوائرك</b><a href="#"></a></div><div class="place"><img src="@@overdose@@" alt=""><div class="b"><span class="t">أوفردوز</span><span class="d">مقهى · الروضة</span><span class="d"><span class="open">٨ لحظات · مفتوح الآن</span> · ٦٥٠ م</span></div><button class="btn sm soft">استخدم</button></div><div class="place"><img src="@@halfmillion@@" alt=""><div class="b"><span class="t">هاف مليون</span><span class="d">مقهى · الشاطئ</span><span class="d"><span class="open">٥ لحظات · خصم ٢٠٪</span> · ١.٢ كم</span></div><button class="btn sm soft">استخدم</button></div></div><div class="pbody" data-pbody="circles" hidden><div class="sec"><b>دوائرك</b><a href="#">الكل</a></div><div class="place"><img src="@@avatar@@" alt="" style="border-radius:999px"><div class="b"><span class="t">جيران الشاطئ</span><span class="d">١٢٤ عضواً · ٣ منشورات جديدة</span></div><span class="dist">@@i-chev@@</span></div><div class="place"><img src="@@p16@@" alt="" style="border-radius:999px"><div class="b"><span class="t">مصوّرو جدة</span><span class="d">٣٨٠ عضواً · نقاش حيّ الآن</span></div><span class="dist">@@i-chev@@</span></div><div class="place"><img src="@@p244@@" alt="" style="border-radius:999px"><div class="b"><span class="t">استوديو فهد شوتس</span><span class="d">دائرتك التجارية · ٥ رسائل</span></div><span class="dist">@@i-chev@@</span></div><div class="sec"><b>اكتشف حولك</b><a href="#">الكل</a></div><div class="place"><img src="@@overdose@@" alt="" style="border-radius:999px"><div class="b"><span class="t">أوفردوز</span><span class="d">مقهى · ٢٬١٠٠ متابع · ٦٥٠ م</span></div><button class="btn sm soft">انضم</button></div><div class="place"><img src="@@halfmillion@@" alt="" style="border-radius:999px"><div class="b"><span class="t">هاف مليون</span><span class="d">مقهى · ١٬٤٠٠ متابع · ١.٢ كم</span></div><button class="btn sm soft">انضم</button></div><div class="place"><img src="@@malaga@@" alt="" style="border-radius:999px"><div class="b"><span class="t">مالقا</span><span class="d">مقهى · ٩٨٠ متابعاً · ٢.٨ كم</span></div><button class="btn sm soft">انضم</button></div></div><div class="pbody" data-pbody="market" hidden><div class="sec"><b>من السوق<small>الأقرب إليك</small></b><a href="#">الكل</a></div><div class="grid2"><div class="card"><img src="@@p250@@" alt=""><div class="body"><span class="t">كاميرا فوجي X-T20</span><span class="price">2,650 ر.س</span><span class="d muted" style="font-size:11.5px">الشاطئ</span></div></div><div class="card"><img src="@@p60@@" alt=""><div class="body"><span class="t">حامل مانفروتو + حقيبة</span><span class="price">480 ر.س</span><span class="d muted" style="font-size:11.5px">توصيل</span></div></div><div class="card"><img src="@@p119@@" alt=""><div class="body"><span class="t">ماك بوك إير M1</span><span class="price">2,900 ر.س</span><span class="d muted" style="font-size:11.5px">الحمراء</span></div></div><div class="card"><img src="@@p26@@" alt=""><div class="body"><span class="t">طقم فلاتر ND</span><span class="price">220 ر.س</span><span class="d muted" style="font-size:11.5px">جديد</span></div></div></div></div><div class="pbody" data-pbody="more" hidden><div class="sec"><b>وظائف جديدة</b><a href="#">الكل</a></div><div class="jobc"><span class="ic">@@i-job@@</span><div class="b"><span class="t">عرض وظيفي: باريستا · ثري بروز</span><span class="d">دوام جزئي · الحمراء · ٤٬٥٠٠ ر.س · يطابق ملفك ٨٧٪</span></div><button class="btn sm">افتح</button></div><div class="sec"><b>فعاليات قريبة</b><a href="#">الكل</a></div><div class="place"><img src="@@malaga@@" alt=""><div class="b"><span class="t">بازار الحي</span><span class="d">الجمعة ٥ م · حديقة الشاطئ</span><span class="d"><span class="open">١٢ طاولة</span> · ٩٠٠ م</span></div><button class="btn sm soft">تذكرة</button></div><div class="place"><img src="@@3brews@@" alt=""><div class="b"><span class="t">ورشة لاتيه آرت</span><span class="d">السبت ٧ م · ثري بروز</span><span class="d"><span class="open">٤ مقاعد</span> · ٢.١ كم</span></div><button class="btn sm soft">تذكرة</button></div></div></div></div>
+    </div><nav class="nav pill"><button data-nav="home" class=on>@@i-map@@<span>الخريطة</span></button><button data-nav="circles">@@i-groups@@<span>الدوائر</span></button><button class="c" aria-label="لحظة جديدة">@@i-cam@@</button><button data-nav="chats">@@i-chat@@<span>المحادثات</span></button><button data-nav="me">@@i-me@@<span>ماي سبيس</span></button></nav></div></div></div>
+      <p class="note">الخريطة تأخذ 42٪ من الشاشة والباقي لوحة ثابتة بتبويبات (حولك، عروض، دوائر، سوق، المزيد). لا شيء يُسحب: الخريطة تتحرّك في مساحتها واللوحة تتمرّر في مساحتها، وزر التوسيع يجعل الخريطة كاملة ويعيدها. يحتفظ بأكبر قدر من المحتوى مع خريطة دائمة الحضور، على حساب خريطة أصغر.</p>
+    </section>
+    <section class="slot" id="s-d">
+      <h2><span>د</span>الخريطة بطاقة <small>· الرئيسية قائمة</small></h2>
+      <div class="phone"><div class="screen" data-concept="d"><div class="scr abs" data-scr="home"><div class="mode" data-mode="list">
+      <div class="tb"><div class="l"><button class="ib" aria-label="بحث">@@i-search@@</button></div><span class="ttl"><span class="brand">ناس لايف</span><span class="sub2">جدة · الشاطئ</span></span><div class="r"><button class="ib" aria-label="الإشعارات">@@i-bell@@<i class="dot"></i></button></div></div>
+      <div class="scroll pad">
+        <button class="mapcard" data-open="map"><div class="mapstrip map" style="margin:0;height:150px;border-radius:0;flex:none"><svg class="base" viewBox="0 0 390 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+<rect width="390" height="700" fill="#F1EFE8"/>
+<path d="M0 0H118C150 110 88 250 128 372C160 462 96 600 138 700H0Z" fill="#D5E5F1"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#DCD9D0" stroke-width="11"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#fff" stroke-width="8"/>
+<g stroke="#fff" stroke-width="6"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g stroke="#DCD9D0" stroke-width="1"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g fill="#E8E5DC"><rect x="178" y="196" width="66" height="88" rx="6"/><rect x="276" y="196" width="40" height="88" rx="6"/><rect x="180" y="318" width="64" height="86" rx="6"/><rect x="276" y="318" width="40" height="86" rx="6"/><rect x="346" y="318" width="40" height="86" rx="6"/><rect x="184" y="438" width="60" height="106" rx="6"/><rect x="276" y="438" width="40" height="106" rx="6"/><rect x="346" y="438" width="40" height="106" rx="6"/><rect x="190" y="578" width="54" height="110" rx="6"/><rect x="276" y="578" width="40" height="110" rx="6"/></g>
+<ellipse cx="300" cy="140" rx="34" ry="22" fill="#DCE8D2"/>
+<g font-family="Rubik,Tahoma,sans-serif" font-size="11" fill="#8A8F87"><text x="215" y="250">الشاطئ</text><text x="215" y="370">الحمراء</text><text x="222" y="500">الروضة</text><text x="228" y="640">التحلية</text><text x="40" y="330" fill="#7FA3BF">البحر الأحمر</text><text x="282" y="145" fill="#7A9A6C">حديقة</text></g>
+</svg><span class="pin" style="right:78%;top:30%"><img src="@@p16@@" alt=""><i class="k">@@i-cam@@</i></span><span class="pin" style="right:40%;top:58%"><img src="@@p42@@" alt=""></span><span class="pin" style="right:30%;top:79%"><img src="@@p274@@" alt=""><i class="k">@@i-play@@</i></span><span class="pin" style="right:62%;top:49%"><img src="@@p63@@" alt=""><i class="k">@@i-mic@@</i></span><span class="pin" style="right:52%;top:66%"><img src="@@avatar@@" alt=""></span><span class="plabel" style="right:42%;top:68%"><img src="@@overdose@@" alt="">أوفردوز</span><span class="plabel" style="right:26%;top:36%"><img src="@@halfmillion@@" alt="">هاف مليون</span><span class="plabel" style="right:66%;top:60%"><img src="@@3brews@@" alt="">ثري بروز</span><span class="plabel" style="right:20%;top:50%"><img src="@@rawnah@@" alt="">رونة</span><span class="me" style="right:56%;top:44%"></span></div>
+          <div class="mc-ov"><div class="b"><span class="t">حولك الآن</span><span class="d">٤٦ شخصاً · ١٢ لحظة · ٣ عروض · ٦٥٠ م لأقرب مقهى</span></div><span class="go">افتح الخريطة @@i-arrow@@</span></div></button>
+        <div class="sec"><b>لحظات حولك<small>١٢ الآن</small></b><a href="#">الكل</a></div><div class="hs"><div class="mcard"><img src="@@p16@@" alt=""><img class="who" src="@@avatar@@" alt=""><i class="k">@@i-cam@@</i><div class="ov"><b>فهد</b><span>@@i-pin@@الكورنيش · قبل ١٢ د</span></div></div><div class="mcard"><img src="@@p42@@" alt=""><img class="who" src="@@p26@@" alt=""><div class="ov"><b>سارة</b><span>@@i-pin@@الروضة · قبل ٢٥ د</span></div></div><div class="mcard"><img src="@@p274@@" alt=""><img class="who" src="@@p154@@" alt=""><i class="k">@@i-play@@</i><div class="ov"><b>نورة</b><span>@@i-pin@@التحلية · قبل ساعة</span></div></div><div class="mcard"><img src="@@p63@@" alt=""><img class="who" src="@@p119@@" alt=""><i class="k">@@i-mic@@</i><div class="ov"><b>عبدالله</b><span>@@i-pin@@الحمراء · قبل ساعتين</span></div></div><div class="mcard"><img src="@@p184@@" alt=""><img class="who" src="@@p60@@" alt=""><div class="ov"><b>ريان</b><span>@@i-pin@@طريق مكة · قبل ٣ س</span></div></div></div>
+        <div class="sec"><b>عروض اليوم<small>٣ قريبة</small></b><a href="#">الكل</a></div><div class="hs"><div class="ocard"><img src="@@p63@@" alt=""><div class="ov"><img class="lg" src="@@overdose@@" alt=""><b>خصم ٢٠٪ على اللاتيه</b><span>أوفردوز · حتى الليلة</span></div></div><div class="ocard"><img src="@@p42@@" alt=""><div class="ov"><img class="lg" src="@@halfmillion@@" alt=""><b>الفنجان السادس مجاناً</b><span>هاف مليون · للأعضاء</span></div></div><div class="ocard"><img src="@@p16@@" alt=""><div class="ov"><img class="lg" src="@@3brews@@" alt=""><b>قهوة الصباح بـ ٩ ر.س</b><span>ثري بروز · حتى ١١ ص</span></div></div></div>
+        <div class="sec"><b>مفتوح الآن حولك<small>الأقرب أولاً</small></b><a href="#">الكل</a></div><div class="place"><img src="@@overdose@@" alt=""><div class="b"><span class="t">أوفردوز</span><span class="d">مقهى · الروضة</span><span class="d"><span class="open">٨ لحظات · مفتوح الآن</span> · ٦٥٠ م</span></div><button class="btn sm soft">افتح</button></div><div class="place"><img src="@@halfmillion@@" alt=""><div class="b"><span class="t">هاف مليون</span><span class="d">مقهى · الشاطئ</span><span class="d"><span class="open">٥ لحظات · خصم ٢٠٪</span> · ١.٢ كم</span></div><button class="btn sm soft">افتح</button></div><div class="place"><img src="@@3brews@@" alt=""><div class="b"><span class="t">ثري بروز</span><span class="d">مقهى · الحمراء</span><span class="d"><span class="open">يوظّف باريستا</span> · ٢.١ كم</span></div><button class="btn sm soft">افتح</button></div>
+        <div class="sec"><b>دوائرك</b><a href="#">الكل</a></div><div class="place"><img src="@@avatar@@" alt="" style="border-radius:999px"><div class="b"><span class="t">جيران الشاطئ</span><span class="d">١٢٤ عضواً · ٣ منشورات جديدة</span></div><span class="dist">@@i-chev@@</span></div><div class="place"><img src="@@p16@@" alt="" style="border-radius:999px"><div class="b"><span class="t">مصوّرو جدة</span><span class="d">٣٨٠ عضواً · نقاش حيّ الآن</span></div><span class="dist">@@i-chev@@</span></div><div class="place"><img src="@@p244@@" alt="" style="border-radius:999px"><div class="b"><span class="t">استوديو فهد شوتس</span><span class="d">دائرتك التجارية · ٥ رسائل</span></div><span class="dist">@@i-chev@@</span></div>
+        <div class="sec"><b>من السوق</b><a href="#">الكل</a></div><div class="grid2"><div class="card"><img src="@@p250@@" alt=""><div class="body"><span class="t">كاميرا فوجي X-T20</span><span class="price">2,650 ر.س</span><span class="d muted" style="font-size:11.5px">الشاطئ</span></div></div><div class="card"><img src="@@p60@@" alt=""><div class="body"><span class="t">حامل مانفروتو + حقيبة</span><span class="price">480 ر.س</span><span class="d muted" style="font-size:11.5px">توصيل</span></div></div></div>
+        <div class="sec"><b>وظائف جديدة</b><a href="#">الكل</a></div><div class="jobc"><span class="ic">@@i-job@@</span><div class="b"><span class="t">عرض وظيفي: باريستا · ثري بروز</span><span class="d">دوام جزئي · الحمراء · ٤٬٥٠٠ ر.س · يطابق ملفك ٨٧٪</span></div><button class="btn sm">افتح</button></div>
+      </div>
+      </div>
+      <div class="mode" data-mode="map" hidden>
+      <div class="map"><svg class="base" viewBox="0 0 390 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+<rect width="390" height="700" fill="#F1EFE8"/>
+<path d="M0 0H118C150 110 88 250 128 372C160 462 96 600 138 700H0Z" fill="#D5E5F1"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#DCD9D0" stroke-width="11"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#fff" stroke-width="8"/>
+<g stroke="#fff" stroke-width="6"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g stroke="#DCD9D0" stroke-width="1"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g fill="#E8E5DC"><rect x="178" y="196" width="66" height="88" rx="6"/><rect x="276" y="196" width="40" height="88" rx="6"/><rect x="180" y="318" width="64" height="86" rx="6"/><rect x="276" y="318" width="40" height="86" rx="6"/><rect x="346" y="318" width="40" height="86" rx="6"/><rect x="184" y="438" width="60" height="106" rx="6"/><rect x="276" y="438" width="40" height="106" rx="6"/><rect x="346" y="438" width="40" height="106" rx="6"/><rect x="190" y="578" width="54" height="110" rx="6"/><rect x="276" y="578" width="40" height="110" rx="6"/></g>
+<ellipse cx="300" cy="140" rx="34" ry="22" fill="#DCE8D2"/>
+<g font-family="Rubik,Tahoma,sans-serif" font-size="11" fill="#8A8F87"><text x="215" y="250">الشاطئ</text><text x="215" y="370">الحمراء</text><text x="222" y="500">الروضة</text><text x="228" y="640">التحلية</text><text x="40" y="330" fill="#7FA3BF">البحر الأحمر</text><text x="282" y="145" fill="#7A9A6C">حديقة</text></g>
+</svg><span class="pin" style="right:78%;top:30%"><img src="@@p16@@" alt=""><i class="k">@@i-cam@@</i></span><span class="pin" style="right:40%;top:58%"><img src="@@p42@@" alt=""></span><span class="pin" style="right:30%;top:79%"><img src="@@p274@@" alt=""><i class="k">@@i-play@@</i></span><span class="pin" style="right:62%;top:49%"><img src="@@p63@@" alt=""><i class="k">@@i-mic@@</i></span><span class="pin" style="right:52%;top:66%"><img src="@@avatar@@" alt=""></span><span class="plabel" style="right:42%;top:68%"><img src="@@overdose@@" alt="">أوفردوز</span><span class="plabel" style="right:26%;top:36%"><img src="@@halfmillion@@" alt="">هاف مليون</span><span class="plabel" style="right:66%;top:60%"><img src="@@3brews@@" alt="">ثري بروز</span><span class="plabel" style="right:20%;top:50%"><img src="@@rawnah@@" alt="">رونة</span><span class="me" style="right:56%;top:44%"></span>
+        <div class="top"><div class="search glass"><button class="ibx" data-open="list" aria-label="رجوع">@@i-arrow@@</button><span style="flex-grow:1">حولك الآن</span>@@i-sliders@@</div>
+          <div class="hrow"><span class="ch glass on">الكل</span><span class="ch glass">أشخاص</span><span class="ch glass">دوائر</span><span class="ch glass">عروض</span><span class="ch glass">سوق</span></div></div>
+        <button class="fabm" style="bottom:150px" aria-label="موقعي">@@i-locate@@</button>
+        <div class="peek"><img src="@@p16@@" alt=""><div class="b"><span class="t">فهد <small>· الكورنيش · قبل ١٢ د</small></span><span class="d">لحظة بالكاميرا · ٢٤ إعجاباً</span></div><button class="btn sm soft">افتح</button></div>
+      </div></div><nav class="nav pill"><button data-nav="home" class=on>@@i-map@@<span>الخريطة</span></button><button data-nav="circles">@@i-groups@@<span>الدوائر</span></button><button class="c" aria-label="لحظة جديدة">@@i-cam@@</button><button data-nav="chats">@@i-chat@@<span>المحادثات</span></button><button data-nav="me">@@i-me@@<span>ماي سبيس</span></button></nav></div></div></div>
+      <p class="note">نعكس العلاقة: الرئيسية قائمة عادية والخريطة بطاقة حيّة في أعلاها تفتح الخريطة الكاملة بلمسة. الخريطة تصير أداة تُستدعى عند الحاجة لا حاوية لكل شيء، وتبقى ملء الشاشة حين تُفتح مع بطاقة «الأقرب» فقط. كما في أوبر إيتس وكريم. أقلها التزاماً بفكرة «الخريطة أولاً».</p>
+    </section>
+  </div>
+
+  <div class="tblwrap"><table class="cmp">
+    <thead><tr><th>المعيار</th><th>أ · مسارات أفقية</th><th>ب · زر خريطة/قائمة</th><th>ج · قسمة ثابتة</th><th>د · الخريطة بطاقة</th></tr></thead>
+    <tbody>
+      <tr><th>حجم الخريطة</th><td>كاملة دائماً</td><td>كاملة في وضعها</td><td>42٪ ثابتة، وكاملة بزر</td><td>بطاقة، وكاملة عند الفتح</td></tr>
+      <tr><th>الإيماءات</th><td>أفقي للبطاقات، الخريطة حرّة</td><td>لا تعارض إطلاقاً</td><td>كل منطقة تتمرّر وحدها</td><td>لا تعارض إطلاقاً</td></tr>
+      <tr><th>أين تذهب الأقسام الـ12</th><td>4 طبقات هنا والباقي في تبويباته</td><td>كلها في وضع القائمة كما هي</td><td>5 تبويبات، «المزيد» يجمع الباقي</td><td>كلها في القائمة تحت بطاقة الخريطة</td></tr>
+      <tr><th>التخصيص الحالي</th><td>يقتصر على ترتيب الطبقات</td><td>يبقى كما هو</td><td>يبقى داخل كل تبويب</td><td>يبقى كما هو</td></tr>
+      <tr><th>الازدحام</th><td><b>الأقل</b>: شيء واحد في المرة</td><td>منخفض في الخريطة، كما هو في القائمة</td><td>متوسط</td><td>كما القائمة الحالية</td></tr>
+      <tr><th>هوية «الخريطة أولاً»</th><td><b>الأقوى</b></td><td>قوية</td><td>متوسطة</td><td>ضعيفة</td></tr>
+      <tr><th>أثر التنفيذ</th><td>متوسط: شريط طبقات ومسارات جديدة</td><td><b>الأصغر</b>: الرئيسية القديمة + زر</td><td>متوسط: لوحة تبويبات</td><td>صغير: بطاقة خريطة في الرئيسية</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="reco">
+    <b>توصيتي</b>
+    <span>«أ · مسارات أفقية» يحل مشكلة الازدحام والالتباس معاً ويبقي هوية الخريطة، لأن المستخدم يرى طبقة واحدة في المرة ويقرّر بنفسه ما التالي. وإن أردت أقل تغيير وأوضح سلوك فـ«ب» ينفَّذ في يوم واحد ويعيد الرئيسية القديمة كوضع قائمة. ويمكن الجمع: مسارات «أ» على الخريطة، وزر «القائمة» من «ب» لمن يريد كل الأقسام دفعة واحدة.</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  var slots = {a:'s-a', b:'s-b', c:'s-c', d:'s-d'};
+  function go(id){
+    Object.keys(slots).forEach(function(k){ document.getElementById(slots[k]).classList.toggle('active', k===id); });
+    document.querySelectorAll('#seg button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-go')===id); });
+    if (window.innerWidth <= 1250) window.scrollTo({top:0, behavior:'smooth'});
+    try { localStorage.setItem('nl-map-concept', id); } catch(e){}
+  }
+  document.querySelectorAll('#seg button').forEach(function(b){ b.addEventListener('click', function(){ go(b.getAttribute('data-go')); }); });
+  var saved = null; try { saved = localStorage.getItem('nl-map-concept'); } catch(e){}
+  if (saved && slots[saved]) go(saved);
+
+  // أ: الطبقات والمسارات وإبراز الدبوس
+  var a = document.querySelector('[data-concept=a]');
+  a.querySelectorAll('[data-layer]').forEach(function(b){ b.addEventListener('click', function(){
+    var k = b.getAttribute('data-layer');
+    a.querySelectorAll('[data-layer]').forEach(function(x){ x.classList.toggle('on', x===b); });
+    a.querySelectorAll('[data-rail]').forEach(function(r){ r.hidden = r.getAttribute('data-rail')!==k; });
+  }); });
+  var pins = a.querySelectorAll('.map .pin');
+  a.querySelectorAll('.rc[data-pin]').forEach(function(c){ c.addEventListener('click', function(){
+    var i = +c.getAttribute('data-pin');
+    a.querySelectorAll('.rc').forEach(function(x){ x.classList.toggle('hi', x===c); });
+    pins.forEach(function(p, j){ p.classList.toggle('hi', j===i); });
+  }); });
+
+  // ب و د: تبديل الوضع
+  ['b','d'].forEach(function(id){
+    var s = document.querySelector('[data-concept='+id+']');
+    function mode(m){ s.querySelectorAll('[data-mode]').forEach(function(x){ x.hidden = x.getAttribute('data-mode')!==m; }); }
+    s.querySelectorAll('[data-toggle],[data-open]').forEach(function(b){ b.addEventListener('click', function(ev){ ev.preventDefault(); mode(b.getAttribute('data-toggle')||b.getAttribute('data-open')); }); });
+  });
+
+  // ج: التبويبات والتوسيع
+  var c = document.querySelector('[data-concept=c]');
+  c.querySelectorAll('[data-ptab]').forEach(function(b){ b.addEventListener('click', function(){
+    var k = b.getAttribute('data-ptab');
+    c.querySelectorAll('[data-ptab]').forEach(function(x){ x.classList.toggle('on', x===b); });
+    c.querySelectorAll('[data-pbody]').forEach(function(x){ x.hidden = x.getAttribute('data-pbody')!==k; });
+  }); });
+  var split = c.querySelector('.split'), exp = c.querySelector('[data-expand]');
+  exp.addEventListener('click', function(){
+    var full = split.classList.toggle('full');
+    exp.innerHTML = full ? "<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M10 4v6H4\"/><path d=\"M14 20v-6h6\"/><path d=\"M4 20l6-6\"/><path d=\"M20 4l-6 6\"/></svg>" : "<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 9V4h5\"/><path d=\"M20 15v5h-5\"/><path d=\"M4 4l6 6\"/><path d=\"M20 20l-6-6\"/></svg>";
+    exp.setAttribute('aria-label', full ? 'تصغير الخريطة' : 'توسيع الخريطة');
+  });
+})();
+</script>
