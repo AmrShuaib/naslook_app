@@ -792,6 +792,26 @@ function offersMapRoute(req, res, url, key) {
   if (key === 'GET /offers/near') return json(200, { items: MOCK_MAP_OFFERS, located: url.searchParams.has('lat') });
   return false;
 }
+// ---- «الصف» (server/row.js): بث واحد مرتّب بالقرب من المصادر الخمسة لبطاقة الخريطة (mock): سبع بطاقات مختلطة حول جدة
+function rowItems(located) {
+  const d = (km) => (located ? km : null);
+  const p0 = mockPosts[0], p1 = mockPosts[1], ev = routes['GET /events'][0], lst = routes['GET /market'][1];
+  return [
+    { kind: 'offer', id: 'off-1', refId: 'biz-brew92', title: 'خصم 20٪ على أول طلب', subtitle: 'برو 92 · ينتهي الليلة', who: 'برو 92', logoUrl: null, imageUrl: null, lat: 21.585, lng: 39.16, distanceKm: d(0.7), at: ago(180), endsAt: new Date(Date.now() + 5 * 3600e3).toISOString(), act: 'استخدم', payload: {} },
+    { kind: 'moment', id: p0.id, refId: p0.id, title: p0.caption, subtitle: 'قبل 60 د · 5 إعجابات', who: p0.user.nickname, logoUrl: null, imageUrl: null, lat: p0.lat, lng: p0.lng, distanceKm: d(1.1), at: p0.createdAt, endsAt: p0.expiresAt, act: 'شاهد', payload: p0 },
+    { kind: 'event', id: ev.id, refId: ev.id, title: ev.title, subtitle: 'جدة · غداً 7 م · من 50 ر.س', who: ev.host.nickname, logoUrl: null, imageUrl: null, lat: ev.lat, lng: ev.lng, distanceKm: d(2.4), at: ev.startsAt, endsAt: null, act: 'تذكرة', payload: {} },
+    { kind: 'job', id: 'aaaaaaaa-0000-4000-8000-00000000j001', refId: 'biz-ikea', title: 'موظف خدمة عملاء', subtitle: 'ورديات · 4,000 ر.س', who: 'إيكيا', logoUrl: null, imageUrl: null, lat: 21.6, lng: 39.15, distanceKm: d(3.2), at: ago(1440), endsAt: new Date(Date.now() + 10 * 86400e3).toISOString(), act: 'قدّم', payload: {} },
+    { kind: 'listing', id: lst.id, refId: lst.id, title: lst.title, subtitle: '45 ر.س · جدة', who: lst.seller.nickname, logoUrl: null, imageUrl: lst.imageUrl, lat: lst.lat, lng: lst.lng, distanceKm: d(2.4), at: lst.createdAt, endsAt: null, act: 'اطلب', payload: {} },
+    { kind: 'moment', id: p1.id, refId: p1.id, title: p1.caption, subtitle: 'قبل 2 س · إعجاب واحد', who: p1.user.nickname, logoUrl: null, imageUrl: null, lat: p1.lat, lng: p1.lng, distanceKm: d(2.9), at: p1.createdAt, endsAt: p1.expiresAt, act: 'شاهد', payload: p1 },
+    { kind: 'offer', id: 'off-3', refId: 'biz-brew92', title: 'V60 بسعر خاص', subtitle: 'برو 92 · ينتهي بعد 3 أيام', who: 'برو 92', logoUrl: null, imageUrl: null, lat: 21.585, lng: 39.16, distanceKm: d(0.7), at: ago(2880), endsAt: new Date(Date.now() + 3 * 86400e3).toISOString(), act: 'استخدم', payload: {} },
+  ];
+}
+function rowRoute(req, res, url, key) {
+  const json = (code, body) => { console.log(key, url.search, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+  if (key === 'GET /row/status') return json(200, { ok: true, sources: { moment: true, offer: true, event: true, job: true, listing: true } });
+  if (key === 'GET /row') { const located = url.searchParams.has('lat'); const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 30)); return json(200, { items: rowItems(located).slice(0, limit), located }); }
+  return false;
+}
 function layoutRoute(req, res, url, key) {
   const json = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
   const readBody = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => cb(JSON.parse(raw || '{}'))); };
@@ -911,6 +931,7 @@ http.createServer((req, res) => {
   if (url.pathname.startsWith('/jobs')) { if (jobsRoute(req, res, url, key)) return; }
   if (url.pathname === '/me/layout' || url.pathname === '/layout/status') { if (layoutRoute(req, res, url, key)) return; } // ---- home layout
   if (url.pathname === '/offers/map' || url.pathname === '/offers/near') { if (offersMapRoute(req, res, url, key)) return; }
+  if (url.pathname === '/row' || url.pathname === '/row/status') { if (rowRoute(req, res, url, key)) return; } // ---- الصف
   // ---- jobs (public+admin) start
   if (/^\/(jobs\/hiring|jobs(\/[0-9a-f-]{36})?(\/apply)?|biz\/[^/]+\/jobs|adminapi\/jobs(\/.*)?)$/.test(url.pathname) && jobsPublicRoute(req, res, url, key)) return;
   // ---- jobs (public+admin) end
