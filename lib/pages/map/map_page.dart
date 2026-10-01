@@ -27,6 +27,7 @@ import '../chat/chat_thread_page.dart';
 import '../market/listing_page.dart';
 import '../posts/post_composer.dart';
 import '../posts/post_viewer.dart';
+import '../posts/timeline_page.dart';
 import 'map_cluster.dart';
 import 'map_labels.dart';
 import '../../api/client.dart';
@@ -317,7 +318,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
       final sheetPx = widget.home ? 0.0 : (_sheetFraction.clamp(0, 1) * box.maxHeight);
       final controlsHidden = !widget.home && _sheetFraction > 0.45;
       // في وضع الرئيسية البطاقة فوق كبسولة التنقّل العائمة، والأزرار العائمة فوق البطاقة
-      final deckBottom = (widget.floatingNav ? JoyNavBar.inset(context) : MediaQuery.paddingOf(context).bottom) + 8;
+      final deckBottom = (widget.floatingNav ? JoyNavBar.inset(context) : MediaQuery.viewPaddingOf(context).bottom) + 6;
       final controlsBottom = widget.home ? deckBottom + RowDeck.heightFor(context) + 12 : sheetPx + 12;
       return Stack(children: [
         FlutterMap(
@@ -343,7 +344,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
             MarkerLayer(markers: markers),
             // أسماء الدوائر بلا تداخل (تُعاد حساباتها مع كل حركة للكاميرا)
             MapLabelLayer(items: items, dot: dot, onTap: (it) => _tapDot(it, items, dot)),
-            const SimpleAttributionWidget(source: Text('© OpenStreetMap contributors', style: TextStyle(fontSize: 10))),
+            if (!widget.home) const SimpleAttributionWidget(source: Text('© OpenStreetMap contributors', style: TextStyle(fontSize: 10))),
           ],
         ),
         // وضع الرئيسية: بحث زجاجي وجرس فقط؛ وإلا شريط التصفية
@@ -420,6 +421,19 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
             ),
           ),
         ),
+        // نسب الخريطة في الرئيسية: سطر صغير تحت شريط البحث بدل أسفل الخريطة حيث كان يظهر في فراغ فوق الكبسولة
+        if (widget.home)
+          Positioned(
+            top: 62,
+            left: 14,
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: Colors.white.withValues(alpha: .7), borderRadius: BorderRadius.circular(6)),
+                child: const Text('© OpenStreetMap', style: TextStyle(fontSize: 9, color: Joy.textMuted)),
+              ),
+            ),
+          ),
         // «الصف»: عدّاد وبطاقة واحدة فوق شريط التنقّل
         if (widget.home)
           Positioned(
@@ -1147,6 +1161,19 @@ class _HomeTopBar extends ConsumerWidget {
               ]),
             ),
           ),
+        ),
+      ),
+      const SizedBox(width: 8),
+      Material(
+        color: Joy.surface,
+        shape: const CircleBorder(),
+        elevation: 4,
+        shadowColor: Colors.black38,
+        child: InkWell(
+          key: const Key('home-timeline'),
+          customBorder: const CircleBorder(),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TimelinePage())),
+          child: const SizedBox(width: 44, height: 44, child: Icon(Icons.view_agenda_outlined, color: Joy.text)),
         ),
       ),
       const SizedBox(width: 8),

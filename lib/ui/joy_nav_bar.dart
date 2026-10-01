@@ -16,7 +16,9 @@ class JoyNavBar extends StatelessWidget {
   static const height = 62.0;
   static const margin = 12.0;
   /// المسافة التي تحجزها الكبسولة أسفل الصفحات حتى لا يختفي محتواها خلفها.
-  static double inset(BuildContext context) => height + margin + MediaQuery.paddingOf(context).bottom;
+  /// المسافة التي تحجزها الكبسولة من أسفل الشاشة. نقرأ viewPadding لا padding لأن Scaffold مع extendBody يضيف
+  /// ارتفاع الشريط إلى padding الجسم، فكان الصف يرتفع فوق الكبسولة بفراغ يظهر فيه نص الخريطة.
+  static double inset(BuildContext context) => height + margin + MediaQuery.viewPaddingOf(context).bottom;
 
   @override
   Widget build(BuildContext context) {

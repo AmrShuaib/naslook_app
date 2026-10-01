@@ -11,6 +11,8 @@ import 'row_providers.dart';
 final mapPostsProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClientProvider).posts(bbox: ref.watch(bboxProvider)));
 /// أحدث المنشورات للشريط في الرئيسية.
 final recentPostsProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClientProvider).posts(limit: 30));
+/// الخط الزمني: كل المشاركات النشطة على الخريطة الأحدث أولاً (بلا حدود جغرافية؛ تنتهي خلال يوم فتبقى القائمة قصيرة).
+final timelineProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClientProvider).posts(limit: 150));
 /// منشوراتي: للزائر قائمة فارغة بلا طلب.
 final myPostsProvider = FutureProvider<List<MapPost>>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).myPosts() : const <MapPost>[]);
 
@@ -33,6 +35,7 @@ void invalidatePosts(WidgetRef ref) {
   ref.invalidate(trendingPlacesProvider);
   ref.invalidate(mapPostsProvider);
   ref.invalidate(recentPostsProvider);
+  ref.invalidate(timelineProvider);
   ref.invalidate(myPostsProvider);
   // اللحظة الجديدة تظهر في «الصف» فور نشرها بدل انتظار التحديث الدوري
   ref.invalidate(rowProvider);

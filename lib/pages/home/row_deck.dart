@@ -90,6 +90,8 @@ class _RowDeckState extends State<RowDeck> {
         final w = box.maxWidth;
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
+          // لمسة بلا سحب في أي مكان من البطاقة تفتح رحلتها، كما لو ضُغط زرها
+          onTap: () => widget.onAct(it),
           onHorizontalDragStart: (_) => setState(() => _dragging = true),
           onHorizontalDragUpdate: (d) => setState(() => _dragX += d.delta.dx),
           onHorizontalDragEnd: (_) => _onDragEnd(w),

@@ -268,6 +268,23 @@ void main() {
     expect(_pinY(tester, 21.544, 39.172), closeTo(.42, .02));
   });
 
+  testWidgets('tapping anywhere on the card opens its journey, and the deck sits just above the pill nav', (tester) async {
+    await _pump(tester);
+    // لمسة على نص البطاقة (لا على الزر)
+    await tester.tap(find.byKey(const Key('row-card')));
+    await _settle(tester, 3);
+    expect(find.byType(CircleOffersPage), findsOneWidget);
+  });
+
+  testWidgets('JoyNavBar.inset reads the system inset, not the Scaffold padding that extendBody adds', (tester) async {
+    double? inset;
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(padding: EdgeInsets.only(bottom: 100), viewPadding: EdgeInsets.only(bottom: 20)),
+      child: Builder(builder: (context) { inset = JoyNavBar.inset(context); return const SizedBox(); }),
+    ));
+    expect(inset, JoyNavBar.height + JoyNavBar.margin + 20);
+  });
+
   testWidgets('the card button opens the existing journey for each of the five kinds', (tester) async {
     await _pump(tester);
     Future<void> act() async {
