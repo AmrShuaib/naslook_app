@@ -792,6 +792,32 @@ function offersMapRoute(req, res, url, key) {
   if (key === 'GET /offers/near') return json(200, { items: MOCK_MAP_OFFERS, located: url.searchParams.has('lat') });
   return false;
 }
+// ---- «القناة الحية» (server/live.js): انتظار طويل على /live/wait؛ الوهمي يبث لحظة مزيّفة كل 40 ثانية ليُرى الخط الزمني والصف يتحدّثان وحدهما
+const live = { seq: 0, events: [], waiters: new Set() };
+function liveEmit(kind, data) { const ev = { seq: ++live.seq, kind, at: new Date().toISOString(), data }; live.events.push(ev); if (live.events.length > 300) live.events.shift(); for (const w of [...live.waiters]) { live.waiters.delete(w); w(); } }
+setInterval(() => {
+  const n = live.seq + 1;
+  const p = { ...mockPosts[0], id: `bbbbbbbb-0000-4000-8000-${String(n).padStart(12, '0')}`, user: person('SA0000003', 'khalid'), caption: `لحظة حيّة رقم ${n} من الكورنيش`, placeName: 'الكورنيش', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 86400000).toISOString(), lat: 21.54 + (Math.random() - .5) * .02, lng: 39.17 + (Math.random() - .5) * .02, likes: 0, liked: false, mine: false };
+  mockPosts.unshift(p); liveEmit('post', p);
+}, 40000).unref?.();
+function liveRoute(req, res, url, key) {
+  const json = (code, body) => { console.log(key, url.search, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+  if (key === 'GET /live/status') return json(200, { ok: true, seq: live.seq, waiting: live.waiters.size, buffered: live.events.length, emitted: live.seq, waitDefault: 25, waitMax: 30 });
+  if (key === 'GET /live/wait') {
+    const after = url.searchParams.get('after');
+    if (after == null || after === '') return json(200, { seq: live.seq, events: [], reset: false });
+    const a = Number(after), timeout = Math.min(30, Math.max(0, Number(url.searchParams.get('timeout') ?? 25)));
+    const since = () => live.events.filter((e) => e.seq > a);
+    const send = () => json(200, { seq: live.seq, events: since(), reset: live.events.length > 0 && a < live.events[0].seq - 1 });
+    if (since().length || timeout === 0) return send();
+    const w = () => { clearTimeout(t); send(); };
+    const t = setTimeout(() => { live.waiters.delete(w); send(); }, timeout * 1000);
+    live.waiters.add(w); res.on('close', () => { clearTimeout(t); live.waiters.delete(w); });
+    return true;
+  }
+  return false;
+}
+
 // ---- «الصف» (server/row.js): بث واحد مرتّب بالقرب من المصادر الخمسة لبطاقة الخريطة (mock): سبع بطاقات مختلطة حول جدة
 function rowItems(located) {
   const d = (km) => (located ? km : null);
@@ -932,6 +958,7 @@ http.createServer((req, res) => {
   if (url.pathname === '/me/layout' || url.pathname === '/layout/status') { if (layoutRoute(req, res, url, key)) return; } // ---- home layout
   if (url.pathname === '/offers/map' || url.pathname === '/offers/near') { if (offersMapRoute(req, res, url, key)) return; }
   if (url.pathname === '/row' || url.pathname === '/row/status') { if (rowRoute(req, res, url, key)) return; } // ---- الصف
+  if (url.pathname === '/live/wait' || url.pathname === '/live/status') { if (liveRoute(req, res, url, key)) return; } // ---- القناة الحية
   // ---- jobs (public+admin) start
   if (/^\/(jobs\/hiring|jobs(\/[0-9a-f-]{36})?(\/apply)?|biz\/[^/]+\/jobs|adminapi\/jobs(\/.*)?)$/.test(url.pathname) && jobsPublicRoute(req, res, url, key)) return;
   // ---- jobs (public+admin) end

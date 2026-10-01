@@ -4,18 +4,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/client.dart';
+import '../../api/live_api.dart';
 import '../../api/posts_api.dart';
 import '../../core/app_theme.dart';
+import '../../state/live_providers.dart';
 import '../../state/posts_providers.dart';
+import '../../state/safety_providers.dart';
 import '../../ui/widgets.dart';
 import 'post_viewer.dart';
 
 /// «الخط الزمني»: قائمة مبسّطة بكل المشاركات الموجودة على الخريطة الآن، الأحدث أولاً، تتحدّث وحدها.
 /// صف واحد لكل مشاركة (صورة مصغّرة، الناشر، المكان، الوقت)، ولمسه يفتح العارض عند تلك المشاركة.
-/// التحديث: كل [refreshEvery] وعند العودة إلى التطبيق؛ ما يصل أثناء التمرير يظهر في كبسولة «N جديد» بدل أن يقفز القائمة.
+/// الجديد يصل فوراً عبر «القناة الحية» ([LiveChannel]: لحظة نُشرت تُدرج في مكانها، لحظة حُذفت تُزال)، والجلب الدوري كل
+/// [refreshEvery] وعند العودة إلى التطبيق احتياط فقط؛ ما يصل أثناء التمرير يظهر في كبسولة «N جديد» بدل أن يقفز القائمة.
 class TimelinePage extends ConsumerStatefulWidget {
   const TimelinePage({super.key});
-  static const refreshEvery = Duration(seconds: 20);
+  static const refreshEvery = Duration(seconds: 60);
   @override
   ConsumerState<TimelinePage> createState() => _TimelinePageState();
 }
@@ -23,6 +27,8 @@ class TimelinePage extends ConsumerStatefulWidget {
 class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBindingObserver {
   final _scroll = ScrollController();
   Timer? _timer;
+  StreamSubscription<LiveEvent>? _liveSub;
+  LiveChannel? _live;
   /// المعرّفات المعروضة الآن؛ ما ليس فيها عند وصول جلب جديد يُعدّ «جديداً»
   Set<String> _shown = {};
   List<MapPost> _items = const [];
@@ -34,6 +40,9 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _timer = Timer.periodic(TimelinePage.refreshEvery, (_) { if (mounted) ref.invalidate(timelineProvider); });
+    // قائمة مخزّنة من زيارة سابقة قد تفوتها لحظات وصلت حيّةً آنذاك: جلب جديد عند كل فتح (الفتح الأول يجلب أصلاً)
+    if (ref.read(timelineProvider).hasValue) Future.microtask(() { if (mounted) ref.invalidate(timelineProvider); });
+    _subscribeLive(ref.read(liveChannelProvider));
     _scroll.addListener(() {
       final top = _scroll.offset < 40;
       if (top != _atTop) setState(() => _atTop = top);
@@ -42,9 +51,43 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
     });
   }
 
+  void _subscribeLive(LiveChannel c) {
+    _liveSub?.cancel();
+    _live = c;
+    _liveSub = c.events.listen(_onLive);
+  }
+
+  /// حدث حيّ: لحظة جديدة تُدرج في أعلى القائمة (أو خلف الكبسولة إن كان المستخدم يتصفح)، والمحذوفة تُزال في مكانها
+  void _onLive(LiveEvent e) {
+    if (!mounted) return;
+    if (e.isReset || e.kind == LiveEvent.postRestored) {
+      ref.invalidate(timelineProvider);
+    } else if (e.kind == LiveEvent.post) {
+      final MapPost p;
+      try {
+        p = MapPost.fromJson(e.data);
+      } catch (_) {
+        ref.invalidate(timelineProvider);
+        return;
+      }
+      if (ref.read(blockedIdsProvider).contains(p.user.id.toUpperCase())) return;
+      _onFetched([p, ..._latest.where((x) => x.id != p.id)]);
+    } else if (e.kind == LiveEvent.postRemoved) {
+      final id = e.data['id']?.toString();
+      if (id == null) return;
+      _latest = _latest.where((x) => x.id != id).toList();
+      setState(() {
+        _items = _items.where((x) => x.id != id).toList();
+        _shown.remove(id);
+        if (_pendingNew > 0) _pendingNew = _latest.where((x) => !_shown.contains(x.id)).length;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
+    _liveSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _scroll.dispose();
     super.dispose();
@@ -87,6 +130,9 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
       final v = next.valueOrNull;
       if (v != null) _onFetched(v);
     });
+    // تغيّر الحساب يستبدل القناة: نعيد الاشتراك في الجديدة
+    ref.listen<LiveChannel>(liveChannelProvider, (_, next) { if (next != _live) _subscribeLive(next); });
+    final online = ref.watch(liveChannelProvider).online;
     final state = ref.watch(timelineProvider);
     if (_items.isEmpty && state.hasValue && _shown.isEmpty) {
       // أول جلب وصل قبل أن يسجّل المستمع (الصفحة بُنيت والقيمة جاهزة من ذاكرة المزوّد)
@@ -99,7 +145,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
         actions: [
           // مؤشر «مباشر» وعدد المشاركات في الإجراءات لا في العنوان حتى لا يفيض على الشاشات الضيقة
           Row(mainAxisSize: MainAxisSize.min, children: [
-            const _LiveDot(),
+            ValueListenableBuilder<bool>(valueListenable: online, builder: (_, on, __) => _LiveDot(on: on)),
             const SizedBox(width: 5),
             Text(_items.isEmpty ? 'مباشر' : 'مباشر · ${_items.length}', key: const Key('tl-live'), style: const TextStyle(fontSize: 12, color: Joy.textMuted, fontWeight: FontWeight.w600)),
           ]),
@@ -249,9 +295,10 @@ class _Row extends StatelessWidget {
   static Widget _fallback(IconData icon) => Container(color: Joy.primarySoft, child: Icon(icon, color: Joy.primary, size: 24));
 }
 
-/// نقطة حمراء تنبض: القائمة حيّة.
+/// نقطة حمراء تنبض: القناة الحية متصلة؛ رمادية ثابتة حين تنقطع (يبقى الجلب الدوري).
 class _LiveDot extends StatefulWidget {
-  const _LiveDot();
+  final bool on;
+  const _LiveDot({required this.on});
   @override
   State<_LiveDot> createState() => _LiveDotState();
 }
@@ -265,8 +312,12 @@ class _LiveDotState extends State<_LiveDot> with SingleTickerProviderStateMixin 
   }
 
   @override
-  Widget build(BuildContext context) => FadeTransition(
-        opacity: Tween(begin: .45, end: 1.0).animate(_c),
-        child: Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFFDC2626), shape: BoxShape.circle)),
-      );
+  Widget build(BuildContext context) {
+    if (!widget.on) return Container(key: const Key('tl-live-off'), width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF9CA3AF), shape: BoxShape.circle));
+    return FadeTransition(
+      key: const Key('tl-live-on'),
+      opacity: Tween(begin: .45, end: 1.0).animate(_c),
+      child: Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFFDC2626), shape: BoxShape.circle)),
+    );
+  }
 }

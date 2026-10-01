@@ -232,6 +232,10 @@ class ApiClient {
   Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) =>
       _send(() => _http.get(_uri(path, query), headers: _headers(json: false)), prompt: false);
 
+  /// GET «انتظار طويل» يحجزه الخادم حتى يصل حدث (القناة الحية /live/wait): مهلة أطول من الطلبات العادية.
+  Future<Map<String, dynamic>> getWait(String path, {Map<String, String>? query, Duration timeout = const Duration(seconds: 45)}) =>
+      _send(() => _http.get(_uri(path, query), headers: _headers(json: false)), timeout: timeout, prompt: false);
+
   /// [prompt] false للطلبات الخلفية (تسجيل مشاهدة أو نقرة): رفضها لزائر لا يفتح دعوة الدخول.
   Future<Map<String, dynamic>> post(String path, Object body, {bool prompt = true}) => _send(
         () => _http.post(_uri(path), headers: _headers(), body: jsonEncode(body)),

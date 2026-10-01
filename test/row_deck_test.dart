@@ -69,7 +69,7 @@ bool _publicRoute(Uri u) {
   final p = u.path;
   if (u.queryParameters['mine'] == '1' || p.endsWith('/mine')) return false;
   return p == '/biz' || p.startsWith('/biz/') || p.startsWith('/mapposts') || p.startsWith('/market') || p.startsWith('/events') ||
-      p == '/settings/public' || p == '/safety/words' || p.startsWith('/legal/') || p == '/offers/map' || p == '/offers/near' || p == '/row' || p.startsWith('/tiles/');
+      p == '/settings/public' || p == '/safety/words' || p.startsWith('/legal/') || p == '/offers/map' || p == '/offers/near' || p == '/row' || p.startsWith('/tiles/') || p == '/live/wait' || p == '/live/status';
 }
 
 class _Srv {
@@ -78,6 +78,9 @@ class _Srv {
   /// ما يعيده /row (null = فارغ).
   List<Map<String, dynamic>>? items = _items();
   bool located = true;
+  /// أحداث القناة الحية التي يعيدها طلب /live/wait التالي فوراً (الوهمي لا ينتظر)
+  final live = <Map<String, dynamic>>[];
+  int liveSeq = 0;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
 
   Future<http.Response> handle(http.Request req) async {
@@ -87,6 +90,11 @@ class _Srv {
     switch (key) {
       case 'GET /row':
         return _json({'items': items ?? [], 'located': located});
+      case 'GET /live/wait':
+        if (!req.url.queryParameters.containsKey('after')) return _json({'seq': liveSeq, 'events': [], 'reset': false});
+        final evs = [for (final e in live) {'seq': ++liveSeq, 'kind': e['kind'], 'at': DateTime.now().toUtc().toIso8601String(), 'data': e['data'] ?? {}}];
+        live.clear();
+        return _json({'seq': liveSeq, 'events': evs, 'reset': false});
       case 'GET /me/map-presence':
         return _json({'lat': null, 'lng': null, 'visible': false, 'title': ''});
       case 'GET /notify/unread':
@@ -217,6 +225,24 @@ void main() {
     // العودة إلى التطبيق من الخلفية: جلب ثالث
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _settle(tester);
+    expect(srv.calls.where((c) => c == 'GET /row').length, 3);
+  });
+
+  testWidgets('a moment pushed over the live channel refetches the map posts and the row within seconds', (tester) async {
+    final srv = await _pump(tester);
+    expect(srv.calls.where((c) => c == 'GET /row').length, 1);
+    final posts = srv.calls.where((c) => c == 'GET /mapposts').length;
+    expect(srv.calls, contains('GET /live/wait'), reason: 'الرئيسية تفتح القناة الحية');
+    srv.live.add({'kind': 'post', 'data': _post()});
+    await tester.pump(const Duration(seconds: 3));
+    await _settle(tester);
+    expect(srv.calls.where((c) => c == 'GET /row').length, 2);
+    expect(srv.calls.where((c) => c == 'GET /mapposts').length, posts + 1);
+    // حدثان متتاليان = جلب واحد (تجميع)
+    srv.live.add({'kind': 'post', 'data': _post()});
+    srv.live.add({'kind': 'post_removed', 'data': {'id': _post()['id']}});
+    await tester.pump(const Duration(seconds: 3));
     await _settle(tester);
     expect(srv.calls.where((c) => c == 'GET /row').length, 3);
   });

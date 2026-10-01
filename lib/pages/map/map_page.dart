@@ -32,9 +32,11 @@ import 'map_cluster.dart';
 import 'map_labels.dart';
 import '../../api/client.dart';
 import '../../api/offers_map_api.dart';
+import '../../api/live_api.dart';
 import '../../api/row_api.dart';
 import '../../state/notify_providers.dart';
 import '../../state/offers_providers.dart';
+import '../../state/live_providers.dart';
 import '../../state/row_providers.dart';
 import '../business/offers_page.dart';
 import '../../ui/joy_nav_bar.dart';
@@ -73,6 +75,10 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
   Timer? _fetchDebounce, _frame;
   /// «الصف» يُحدَّث دورياً وعند العودة إلى التطبيق حتى تظهر اللحظات والعروض الجديدة دون تدخل المستخدم.
   Timer? _rowTimer;
+  /// القناة الحية في الرئيسية: لحظة نُشرت أو حُذفت تعيد جلب دبابيس الخريطة والصف بعد تبعثر قصير
+  StreamSubscription<LiveEvent>? _liveSub;
+  Timer? _liveDebounce;
+  LiveChannel? _live;
   static const rowRefreshEvery = Duration(minutes: 2);
   double _zoom = 13;
   LatLngBounds? _bounds;
@@ -112,6 +118,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     if (widget.home) {
       WidgetsBinding.instance.addObserver(this);
       _rowTimer = Timer.periodic(rowRefreshEvery, (_) { if (mounted) ref.invalidate(rowProvider); });
+      _subscribeLive(ref.read(liveChannelProvider));
     }
     _sheet.addListener(() {
       if (!_sheet.isAttached) return;
@@ -125,11 +132,30 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     });
   }
 
+  void _subscribeLive(LiveChannel c) {
+    _liveSub?.cancel();
+    _live = c;
+    _liveSub = c.events.listen(_onLive);
+  }
+
+  /// أحداث متتالية تُجمع في جلب واحد، مع تبعثر عشوائي حتى لا تهجم كل الأجهزة على الخادم في اللحظة نفسها
+  void _onLive(LiveEvent e) {
+    if (!mounted) return;
+    _liveDebounce?.cancel();
+    _liveDebounce = Timer(Duration(milliseconds: 400 + math.Random().nextInt(2000)), () {
+      if (!mounted) return;
+      ref.invalidate(mapPostsProvider);
+      ref.invalidate(rowProvider);
+    });
+  }
+
   @override
   void dispose() {
     _fetchDebounce?.cancel();
     _frame?.cancel();
     _rowTimer?.cancel();
+    _liveSub?.cancel();
+    _liveDebounce?.cancel();
     if (widget.home) WidgetsBinding.instance.removeObserver(this);
     _sheet.dispose();
     super.dispose();
@@ -280,6 +306,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
       } catch (_) {}
     });
     if (widget.home) {
+      ref.listen<LiveChannel>(liveChannelProvider, (_, next) { if (next != _live) _subscribeLive(next); });
       ref.listen<AsyncValue<RowFeed>>(rowProvider, (_, next) {
         final items = next.valueOrNull?.items;
         if (items != null && !next.isLoading) _syncRow(items);

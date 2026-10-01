@@ -30,3 +30,4 @@ await app.register((await import("./account_delete.js")).default, { pool, auth }
 await app.register((await import("./layout.js")).default, { pool, auth });
 await app.register((await import("./profile_ext.js")).default, { pool, auth });
 await app.register((await import("./row.js")).default, { pool, auth });
+await app.register((await import("./live.js")).default, { pool, auth });

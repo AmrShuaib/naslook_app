@@ -147,7 +147,10 @@ export default async function posts(app, opts) {
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now() + ($16 || ' hours')::interval,$17,$18)`,
       [id, uid, kind, mediaUrl, caption, HEX_RE.test(String(b.bg ?? "")) ? String(b.bg) : null, JSON.stringify(overlays), TAGS.has(b.tag) ? b.tag : "moment", str(b.title, 80), price,
        JSON.stringify(cleanCta(b.cta)), lat, lng, str(b.placeName, 80) || null, b.durationSec == null ? null : Math.round(clamp(b.durationSec, 0, 600, 0)), String(ttl), audioUrl, audioSec]);
-    return out((await pool.query(`${SELECT} WHERE p.id=$2`, [uid, id])).rows[0], uid);
+    const row = (await pool.query(`${SELECT} WHERE p.id=$2`, [uid, id])).rows[0];
+    // بث فوري للتطبيقات المفتوحة (الخط الزمني والخريطة) بصيغة المشاهد نفسها؛ من منظور عام (لا mine ولا liked)
+    try { globalThis.naslifeLive?.emit("post", { ...(await out(row, null)), user: await person(uid) }); } catch { /* البث لا يعطّل النشر */ }
+    return out(row, uid);
   });
 
   // ---- القوائم: على الخريطة (حدود)، الأحدث للرئيسية، منشوراتي
@@ -289,6 +292,7 @@ export default async function posts(app, opts) {
     await pool.query("DELETE FROM map_post_likes WHERE post_id=$1", [req.params.id]);
     await pool.query("DELETE FROM map_post_views WHERE post_id=$1", [req.params.id]);
     await pool.query("DELETE FROM map_posts WHERE id=$1", [req.params.id]);
+    globalThis.naslifeLive?.emit("post_removed", { id: req.params.id });
     return { ok: true };
   });
 
@@ -401,6 +405,7 @@ export default async function posts(app, opts) {
     const hidden = req.body?.hidden !== false;
     const r = await pool.query("UPDATE map_posts SET status=$2, updated_at=now() WHERE id=$1 RETURNING user_id, title", [req.params.id, hidden ? "blocked" : "active"]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
+    globalThis.naslifeLive?.emit(hidden ? "post_removed" : "post_restored", { id: req.params.id });
     if (hidden) await notify(r.rows[0].user_id, { kind: "post_blocked", title: "أُخفي منشورك", body: "أخفت الإدارة منشورك من الخريطة لمخالفته قواعد المجتمع", data: { postId: req.params.id }, exclude: uid });
     return { ok: true, status: hidden ? "blocked" : "active" };
   });

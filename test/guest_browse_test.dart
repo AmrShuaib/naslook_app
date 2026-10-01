@@ -53,7 +53,7 @@ bool _publicRoute(Uri u) {
   // ما يخص حساب الزائر حتى تحت البادئات العامة
   if (u.queryParameters['mine'] == '1' || p.endsWith('/mine') || p.startsWith('/biz/orders') || p.startsWith('/market/orders')) return false;
   return p == '/biz' || p.startsWith('/biz/') || p.startsWith('/mapposts') || p.startsWith('/market') || p.startsWith('/events') ||
-      p == '/settings/public' || p == '/safety/words' || p.startsWith('/legal/') || p == '/offers/map' || p == '/offers/near' || p == '/row';
+      p == '/settings/public' || p == '/safety/words' || p.startsWith('/legal/') || p == '/offers/map' || p == '/offers/near' || p == '/row' || p == '/live/wait' || p == '/live/status';
 }
 
 const _bizId = 'biz-ikea';
