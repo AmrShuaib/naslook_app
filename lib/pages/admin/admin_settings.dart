@@ -6,6 +6,7 @@ import '../../api/admin_api.dart';
 import '../../api/client.dart' show ApiException;
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
+import '../../api/hotel_api.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../state/admin_providers.dart';
@@ -79,6 +80,8 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
           ])),
           const SectionTitle('بوابة الدفع (ميسر)'),
           const _PayGatewayCard(),
+          const SectionTitle('حجز الفنادق (Amadeus)'),
+          const _HotelCard(),
           const SectionTitle('الإعلان العام'),
           JoyCard(child: Column(children: [
             TextField(controller: announcement, maxLines: 2, decoration: const InputDecoration(labelText: 'نص يظهر في الرئيسية لكل المستخدمين (اتركه فارغاً لإخفائه)')),
@@ -372,6 +375,264 @@ class _PayGatewayCardState extends ConsumerState<_PayGatewayCard> {
             SelectableText(c.webhookUrl, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
           ],
           if (c.updatedAt != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('آخر تحديث منذ ${timeAgo(c.updatedAt!)}${c.updatedBy.isEmpty ? '' : ' بواسطة ${c.updatedBy}'}', style: const TextStyle(color: Joy.textMuted, fontSize: 11))),
+        ]));
+      },
+    );
+  }
+}
+
+/// إعدادات Amadeus؛ أي خطأ (الإضافة غير منشورة على الخادم بعد) يعيد إعداداً «غير متاح» حتى لا تُرمى صفحة الإعدادات.
+final adminHotelConfigProvider = FutureProvider<HotelAdminConfig>((ref) async {
+  try {
+    return await ref.watch(apiClientProvider).adminHotelConfig();
+  } catch (_) {
+    return const HotelAdminConfig(available: false);
+  }
+});
+
+/// الدوائر المرتبطة بفنادق؛ فارغة عند أي خطأ.
+final adminHotelLinksProvider = FutureProvider<List<HotelLinkRow>>((ref) async {
+  try {
+    return await ref.watch(apiClientProvider).adminHotelLinks();
+  } catch (_) {
+    return const [];
+  }
+});
+
+/// مفاتيح Amadeus (المعرّف والسر والبيئة) من اللوحة بدل ملف البيئة، مع فحص اتصال، وربط دائرة فندقية بفندق لدى Amadeus.
+/// السر لا يُعرض بعد حفظه؛ يظهر تلميح بآخر أحرفه فقط. البطاقة لا ترمي أبداً: الخادم بلا مسار الفنادق = «غير مفعّل».
+class _HotelCard extends ConsumerStatefulWidget {
+  const _HotelCard();
+  @override
+  ConsumerState<_HotelCard> createState() => _HotelCardState();
+}
+
+class _HotelCardState extends ConsumerState<_HotelCard> {
+  final id = TextEditingController(), secret = TextEditingController();
+  final linkBiz = TextEditingController(), linkCity = TextEditingController(text: 'JED'), linkQ = TextEditingController();
+  String? env;
+  bool busy = false, showSecret = false, searching = false;
+  String? testText;
+  bool? testOk;
+  List<HotelSearchHit>? hits;
+
+  @override
+  void dispose() {
+    for (final c in [id, secret, linkBiz, linkCity, linkQ]) { c.dispose(); }
+    super.dispose();
+  }
+
+  static String _clean(String v) => v.replaceAll(RegExp(r'\s+'), '');
+  static bool _masked(String v) => RegExp(r'[*•●]').hasMatch(v);
+
+  String _err(Object e) {
+    final code = e is ApiException ? (e.body?['error']?.toString() ?? '') : '';
+    final msg = e is ApiException ? (e.body?['message']?.toString() ?? '') : '';
+    return switch (code) {
+      'masked-key' => 'المفتاح منسوخ مقنّعاً (فيه نجوم). في لوحة Amadeus for Developers اضغط «Show» لإظهار المفتاح كاملاً ثم انسخه',
+      'both-keys-required' => 'أدخل المعرّف (API Key) والسر (API Secret) معاً',
+      'bad-env' => 'البيئة إما اختبار أو حية',
+      'hotel-disabled' => 'لا توجد مفاتيح محفوظة بعد',
+      'not-linked' => 'هذه الدائرة غير مرتبطة بفندق',
+      'not-found' => 'لم نجد دائرة بهذا المعرّف',
+      'provider-error' => msg.isEmpty ? 'رفض Amadeus الطلب' : 'رفض Amadeus الطلب: $msg',
+      _ => adminErrText(e),
+    };
+  }
+
+  /// تلميح تحت الحقل السري: البادئة وعدد الأحرف كي يتأكد أن اللصق اكتمل دون كشف السر
+  String? _secretHint() {
+    final v = _clean(secret.text);
+    if (v.isEmpty) return null;
+    if (_masked(v)) return 'منسوخ مقنّعاً: فيه نجوم بدل الأحرف';
+    return '${v.substring(0, v.length.clamp(0, 4))}… · ${v.length} حرفاً';
+  }
+
+  Future<void> _save(HotelAdminConfig c, {bool clear = false}) async {
+    id.text = _clean(id.text);
+    secret.text = _clean(secret.text);
+    if (!clear && (_masked(id.text) || _masked(secret.text))) { toast(context, _err(const ApiException(400, 'masked-key', body: {'error': 'masked-key'})), error: true); return; }
+    setState(() { busy = true; testText = null; });
+    try {
+      // حقل غير مرسل يبقى كما هو على الخادم، والفارغ يمسح: المعرّف والسر يُرسلان فقط حين كُتبا
+      final r = clear
+          ? await ref.read(apiClientProvider).adminSaveHotelConfig(clientId: '', clientSecret: '')
+          : await ref.read(apiClientProvider).adminSaveHotelConfig(clientId: id.text.isEmpty ? null : id.text, clientSecret: secret.text.isEmpty ? null : secret.text, env: env ?? c.env);
+      id.clear(); secret.clear();
+      env = null;
+      ref.invalidate(adminHotelConfigProvider);
+      if (mounted) toast(context, clear ? 'أُزيلت المفاتيح' : r.configured ? 'حُفظت المفاتيح: ${r.env == 'live' ? 'البيئة الحية' : 'بيئة الاختبار'}' : 'حُفظ');
+    } catch (e) {
+      if (mounted) toast(context, _err(e), error: true);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _test() async {
+    setState(() { busy = true; testText = null; });
+    try {
+      final r = await ref.read(apiClientProvider).adminTestHotel();
+      final envText = r.env == 'live' ? 'البيئة الحية' : 'بيئة الاختبار';
+      setState(() {
+        testOk = r.ok;
+        testText = r.ok
+            ? 'الاتصال ناجح بـ Amadeus ($envText · المصدر: ${r.source == 'panel' ? 'اللوحة' : 'ملف البيئة'})'
+            : switch (r.error) {
+                'hotel-disabled' => 'لا توجد مفاتيح محفوظة بعد',
+                'bad-credentials' => 'رفض Amadeus المعرّف أو السر؛ تأكد من نسخهما كاملين ومن أن البيئة المختارة ($envText) هي بيئة هذين المفتاحين',
+                'provider-unreachable' => 'تعذر الوصول إلى Amadeus من الخادم${r.message.isEmpty ? '' : ' (${r.message})'}',
+                _ => 'فشل الفحص: ${r.error}${r.message.isEmpty ? '' : ' — ${r.message}'}',
+              };
+      });
+    } catch (e) {
+      setState(() { testOk = false; testText = _err(e); });
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _search() async {
+    setState(() { searching = true; hits = null; });
+    try {
+      final r = await ref.read(apiClientProvider).adminHotelSearch(cityCode: linkCity.text.trim().isEmpty ? 'JED' : linkCity.text, q: linkQ.text);
+      if (mounted) setState(() => hits = r);
+    } catch (e) {
+      if (mounted) toast(context, _err(e), error: true);
+    } finally {
+      if (mounted) setState(() => searching = false);
+    }
+  }
+
+  Future<void> _link(HotelSearchHit h) async {
+    final biz = linkBiz.text.trim();
+    if (biz.isEmpty) { toast(context, 'اكتب معرّف الدائرة الفندقية أولاً', error: true); return; }
+    try {
+      final r = await ref.read(apiClientProvider).linkHotel(biz, hotelId: h.hotelId, hotelName: h.name, cityCode: linkCity.text.trim().isEmpty ? 'JED' : linkCity.text);
+      ref.invalidate(adminHotelLinksProvider);
+      ref.invalidate(adminHotelConfigProvider);
+      if (mounted) { setState(() => hits = null); toast(context, 'رُبطت الدائرة $biz بفندق ${r.hotelName.isNotEmpty ? r.hotelName : h.name}'); }
+    } catch (e) {
+      if (mounted) toast(context, _err(e), error: true);
+    }
+  }
+
+  Future<void> _unlink(HotelLinkRow row) async {
+    final ok = await showDialog<bool>(context: context, builder: (d) => AlertDialog(title: Text('فك ربط ${row.bizName.isNotEmpty ? row.bizName : row.bizId}؟'), content: const Text('تختفي بطاقة الحجز من الدائرة، وتبقى الحجوزات السابقة في سجل المستخدمين.'), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('تراجع')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('فك الربط'))]));
+    if (ok != true) return;
+    try {
+      await ref.read(apiClientProvider).unlinkHotel(row.bizId);
+      ref.invalidate(adminHotelLinksProvider);
+      ref.invalidate(adminHotelConfigProvider);
+      if (mounted) toast(context, 'فُكّ الربط');
+    } catch (e) {
+      if (mounted) toast(context, _err(e), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cfg = ref.watch(adminHotelConfigProvider);
+    final links = ref.watch(adminHotelLinksProvider).valueOrNull ?? const <HotelLinkRow>[];
+    return cfg.when(
+      loading: () => const JoyCard(child: LinearProgressIndicator()),
+      error: (_, __) => const JoyCard(child: Text('غير مفعّل', key: Key('hotel-status'))),
+      data: (c) {
+        final envNow = env ?? c.env;
+        final status = !c.available
+            ? 'غير مفعّل: الخادم لا يعرض مسار الفنادق بعد (الإضافة غير منشورة)'
+            : !c.configured
+                ? 'غير مفعّل: احفظ مفتاحي Amadeus ليظهر زر الحجز في الدوائر المرتبطة'
+                : '${c.env == 'live' ? 'البيئة الحية (حجوزات حقيقية)' : 'بيئة الاختبار (فنادق وهمية، لا حجز حقيقي)'} · المصدر: ${c.source == 'panel' ? 'اللوحة' : 'ملف البيئة على الخادم'} · ${c.linked == 0 ? 'لا دوائر مرتبطة' : c.linked == 1 ? 'دائرة مرتبطة' : '${c.linked} دوائر مرتبطة'}${c.bookings > 0 ? ' · ${c.bookings} حجزاً' : ''}';
+        return JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(c.configured ? Icons.check_circle_rounded : Icons.cancel_rounded, color: c.configured ? (c.env == 'live' ? Joy.primary : Joy.sunText) : Joy.textMuted, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text(status, key: const Key('hotel-status'), style: const TextStyle(fontSize: 13, height: 1.5))),
+          ]),
+          const SizedBox(height: 6),
+          const Text('من developers.amadeus.com ← My Self-Service Workspace ← My apps: انسخ API Key وAPI Secret. مفاتيح الاختبار تعمل على بيانات وهمية بلا حجز حقيقي؛ المال لا يمر عبر ناس لايف (بطاقة الضيف ضمان للفندق).', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
+          const SizedBox(height: 10),
+          TextField(key: const Key('hotel-id'), controller: id, textDirection: TextDirection.ltr, textAlign: TextAlign.left, keyboardType: TextInputType.visiblePassword, autocorrect: false, enableSuggestions: false, style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+              decoration: InputDecoration(labelText: 'المعرّف (API Key)', hintText: c.clientIdSet && c.source == 'panel' ? 'محفوظ: ${c.clientIdHint} (اتركه فارغاً للإبقاء عليه)' : 'AbC…')),
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('hotel-secret'), controller: secret, obscureText: !showSecret, textDirection: TextDirection.ltr, textAlign: TextAlign.left, keyboardType: TextInputType.visiblePassword, autocorrect: false, enableSuggestions: false, style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: 'السر (API Secret)', hintText: c.secretSet && c.source == 'panel' ? 'محفوظ: ${c.secretHint} (اتركه فارغاً للإبقاء عليه)' : '…',
+              helperText: _secretHint(), helperStyle: TextStyle(color: _masked(secret.text) ? Joy.danger : Joy.textMuted, fontSize: 11),
+              suffixIcon: IconButton(key: const Key('hotel-secret-eye'), tooltip: showSecret ? 'إخفاء' : 'إظهار', onPressed: () => setState(() => showSecret = !showSecret), icon: Icon(showSecret ? Icons.visibility_off_outlined : Icons.visibility_outlined)),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(children: [
+            const Text('البيئة', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
+            const SizedBox(width: 10),
+            SegmentedButton<String>(
+              key: const Key('hotel-env'),
+              segments: const [ButtonSegment(value: 'test', label: Text('اختبار', key: Key('hotel-env-test'))), ButtonSegment(value: 'live', label: Text('حي', key: Key('hotel-env-live')))],
+              selected: {envNow == 'live' ? 'live' : 'test'},
+              onSelectionChanged: (s) => setState(() => env = s.first),
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            FilledButton.icon(key: const Key('hotel-save'), onPressed: busy ? null : () => _save(c), icon: const Icon(Icons.save_outlined, size: 18), label: const Text('حفظ')),
+            OutlinedButton.icon(key: const Key('hotel-test'), onPressed: busy || !c.available ? null : _test, icon: const Icon(Icons.wifi_tethering_rounded, size: 18), label: const Text('فحص الاتصال')),
+            if (c.panelSet) TextButton.icon(key: const Key('hotel-clear'), onPressed: busy ? null : () => _save(c, clear: true), style: TextButton.styleFrom(foregroundColor: Joy.danger), icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('إزالة المفاتيح')),
+          ]),
+          if (testText != null) Padding(padding: const EdgeInsets.only(top: 10), child: Row(children: [
+            Icon(testOk == true ? Icons.check_circle_outline_rounded : Icons.error_outline_rounded, size: 18, color: testOk == true ? Joy.primary : Joy.danger),
+            const SizedBox(width: 6),
+            Expanded(child: Text(testText!, key: const Key('hotel-test-result'), style: TextStyle(fontSize: 13, color: testOk == true ? Joy.primary : Joy.danger))),
+          ])),
+          if (c.updatedAt != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('آخر تحديث منذ ${timeAgo(c.updatedAt!)}${c.updatedBy.isEmpty ? '' : ' بواسطة ${c.updatedBy}'}', style: const TextStyle(color: Joy.textMuted, fontSize: 11))),
+          // ---- ربط دائرة فندقية بفندق لدى Amadeus
+          const Divider(height: 28),
+          const Text('ربط دائرة بفندق', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
+          const SizedBox(height: 4),
+          const Text('اكتب معرّف الدائرة الفندقية ورمز المدينة (JED جدة، DMM الدمام، RUH الرياض)، ابحث بالاسم ثم اختر الفندق. تظهر في الدائرة بطاقة «احجز غرفة بأسعار اليوم».', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(flex: 3, child: TextField(key: const Key('hotel-link-biz'), controller: linkBiz, textDirection: TextDirection.ltr, autocorrect: false, decoration: const InputDecoration(labelText: 'معرّف الدائرة', hintText: 'biz-hilton'))),
+            const SizedBox(width: 8),
+            Expanded(flex: 2, child: TextField(key: const Key('hotel-link-city'), controller: linkCity, textDirection: TextDirection.ltr, textCapitalization: TextCapitalization.characters, autocorrect: false, decoration: const InputDecoration(labelText: 'رمز المدينة'))),
+          ]),
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('hotel-link-search'), controller: linkQ, textInputAction: TextInputAction.search, onSubmitted: (_) => _search(),
+            decoration: InputDecoration(labelText: 'ابحث باسم الفندق', hintText: 'hilton', suffixIcon: IconButton(key: const Key('hotel-link-go'), tooltip: 'بحث', onPressed: searching || !c.available ? null : _search, icon: const Icon(Icons.search_rounded))),
+          ),
+          if (searching) const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
+          if (hits != null) ...[
+            const SizedBox(height: 8),
+            if (hits!.isEmpty) const Text('لا نتائج؛ جرّب اسماً أقصر أو مدينة أخرى', key: Key('hotel-link-none'), style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+            for (final h in hits!.take(20))
+              ListRow(
+                key: Key('hotel-link-pick-${h.hotelId}'),
+                leading: const Icon(Icons.hotel_outlined, color: Joy.primary),
+                title: Text(h.name.isEmpty ? h.hotelId : h.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: Text('${h.hotelId}${h.distanceKm != null ? ' · ${h.distanceKm!.toStringAsFixed(1)} كم' : ''}'),
+                trailing: const Icon(Icons.add_link_rounded, color: Joy.primary),
+                onTap: () => _link(h),
+                divider: h != hits!.take(20).last,
+              ),
+          ],
+          if (links.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text('الدوائر المرتبطة', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+            for (final (i, l) in links.indexed)
+              ListRow(
+                key: Key('hotel-link-row-${l.bizId}'),
+                leading: const Icon(Icons.link_rounded, color: Joy.textMuted),
+                title: Text(l.bizName.isNotEmpty ? l.bizName : l.bizId, maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: Text('${l.hotelName.isNotEmpty ? l.hotelName : l.hotelId} · ${l.hotelId}${l.cityCode.isNotEmpty ? ' · ${l.cityCode}' : ''}'),
+                trailing: IconButton(key: Key('hotel-unlink-${l.bizId}'), tooltip: 'فك الربط', onPressed: () => _unlink(l), icon: const Icon(Icons.link_off_rounded, color: Joy.danger)),
+                divider: i < links.length - 1,
+              ),
+          ],
         ]));
       },
     );
