@@ -9,7 +9,8 @@ import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import '../../state/safety_providers.dart';
 import '../business/business_list.dart';
-import '../home/home_page.dart';
+import '../../core/nav_provider.dart';
+import 'post_card.dart';
 import 'circle_detail_page.dart';
 
 class CirclesPage extends ConsumerStatefulWidget {

@@ -31,11 +31,15 @@ import 'map_cluster.dart';
 import 'map_labels.dart';
 import '../../api/client.dart';
 import '../../api/offers_map_api.dart';
+import '../../api/row_api.dart';
 import '../../state/notify_providers.dart';
 import '../../state/offers_providers.dart';
+import '../../state/row_providers.dart';
 import '../business/offers_page.dart';
 import '../../ui/joy_nav_bar.dart';
-import '../home/home_page.dart';
+import '../events/events_page.dart';
+import '../home/row_deck.dart';
+import '../jobs/job_page.dart';
 import '../notifications/notifications_page.dart';
 import '../search/search_page.dart';
 
@@ -43,20 +47,23 @@ import '../search/search_page.dart';
 const double kAreaListZoom = 13;
 
 class MapPage extends ConsumerStatefulWidget {
-  /// وضع الرئيسية (نظام «الخريطة أولاً»): بحث زجاجي وجرس فوق الخريطة، وأقسام الرئيسية القابلة للتخصيص داخل الورقة
-  /// السفلية، مع مساحة أسفلها لشريط التنقّل العائم.
+  /// وضع الرئيسية (نظام «واحد»/«الصف»): خريطة كاملة، بحث زجاجي وجرس فوقها، وبطاقة واحدة مدمجة في الأسفل تُسحب جانبياً
+  /// والخريطة تتبعها. لا ورقة ولا رقائق ولا أقسام ولا تخصيص. الوضع غير الرئيسي يُبقي الرقائق ولوحة المنطقة كما كانت.
   final bool home;
-  const MapPage({super.key, this.home = false});
+  /// الخريطة تمتد خلف كبسولة التنقّل العائمة (HomeShell) فتُرفع البطاقة فوقها؛ واجهة الزائر بشريط عادي فلا تحتاج ذلك.
+  final bool floatingNav;
+  const MapPage({super.key, this.home = false, this.floatingNav = true});
   @override
   ConsumerState<MapPage> createState() => _MapPageState();
 }
+
+/// مستوى التكبير الذي تنتقل إليه الخريطة لتتبع بطاقة «الصف».
+const double kRowFollowZoom = 15.5;
 
 class _MapPageState extends ConsumerState<MapPage> {
   final _map = MapController();
   final _sheet = DraggableScrollableController();
   bool showPeople = true, showPins = true, showStories = true, showBusinesses = true, showMarket = true, showOffers = true;
-  // وضع التحرير في المكان: أقسام الرئيسية صفوفاً تُسحب داخل الورقة
-  bool _editing = false;
   // «وظائف»: يحصر الدوائر في التي لديها وظائف مفتوحة (يعمل حتى لو أُطفئت طبقة المتاجر)
   bool showHiring = false;
   // فلاتر الأنشطة التجارية: مفتوح الآن، وفئات محددة (فارغة = الكل)
@@ -67,10 +74,13 @@ class _MapPageState extends ConsumerState<MapPage> {
   LatLngBounds? _bounds;
   double _sheetFraction = _sheetInitial;
   bool _ready = false;
+  // «الصف» (وضع الرئيسية): البطاقة المختارة وفهرسها، وارتفاع الخريطة لحساب إزاحة الدبّوس عند التتبع
+  int _rowIndex = 0;
+  RowItem? _rowSel;
+  bool _rowSyncPending = false;
+  double _mapHeight = 0;
 
-  static const _sheetMin = 0.11, _sheetInitial = 0.26;
-  // في وضع الرئيسية تُفتح الورقة حتى تكاد تملأ الشاشة لتُقرأ الأقسام كصفحة
-  double get _sheetMax => widget.home ? 0.92 : 0.74;
+  static const _sheetMin = 0.11, _sheetInitial = 0.26, _sheetMax = 0.74;
 
   void _onMapEvent(MapEvent e) {
     // تحديث فوري (مُخفَّف لإطار واحد) للتجميع ولوحة المنطقة
@@ -115,7 +125,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     super.dispose();
   }
 
-  List<MapItem> _collect() {
+  List<MapItem> _collect(List<RowItem> rowItems) {
     final people = ref.watch(presenceProvider).value ?? const <Presence>[];
     final pins = ref.watch(pinsProvider).value ?? const <Pin>[];
     final stories = ref.watch(storiesProvider).value ?? const <Story>[];
@@ -174,7 +184,74 @@ class _MapPageState extends ConsumerState<MapPage> {
         }
       }
     }
+    // عناصر «الصف» بعد الطبقات (المفتاح نفسه فلا تكرار): الفعاليات والوظائف دبابيسها من هنا فقط، والبقية احتياط حين لا
+    // تشملها حدود الخريطة بعد حتى يبقى للبطاقة المختارة دبّوس دائماً
+    for (final r in rowItems) {
+      add(MapItem.row(r));
+    }
     return out;
+  }
+
+  // ------------------------------------------------------------------ الصف
+
+  List<RowItem> get _rowItems => widget.home ? (ref.read(rowProvider).valueOrNull?.items ?? const <RowItem>[]) : const <RowItem>[];
+
+  /// يختار بطاقة ويحرّك الخريطة إليها.
+  void _selectRow(List<RowItem> items, int i) {
+    if (items.isEmpty) return;
+    final k = i.clamp(0, items.length - 1);
+    setState(() {
+      _rowIndex = k;
+      _rowSel = items[k];
+    });
+    _followRow(items[k]);
+  }
+
+  /// عند وصول الصف أو تحديثه: نبقي البطاقة المختارة إن بقيت، وإلا الأولى. تُؤجَّل إلى ما بعد الإطار لأن المستمع قد
+  /// يُستدعى أثناء البناء.
+  void _syncRow(List<RowItem> items) {
+    if (_rowSyncPending) return;
+    _rowSyncPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _rowSyncPending = false;
+      if (!mounted) return;
+      if (items.isEmpty) {
+        if (_rowSel != null) setState(() => _rowSel = null);
+        return;
+      }
+      var i = _rowSel == null ? -1 : items.indexWhere((r) => r.pinKey == _rowSel!.pinKey);
+      if (i < 0) i = 0;
+      _selectRow(items, i);
+    });
+  }
+
+  /// تتبع البطاقة: المركز أسفل الدبّوس بـ 8٪ من ارتفاع الخريطة حتى يستقر الدبّوس عند نحو 42٪ منها فوق البطاقة.
+  void _followRow(RowItem it) {
+    if (it.lat == 0 && it.lng == 0) return;
+    final p = projectToPixels(it.lat, it.lng, kRowFollowZoom);
+    final c = unprojectPixels(p.x, p.y + _mapHeight * .08, kRowFollowZoom);
+    try {
+      _map.move(LatLng(c.lat, c.lng), kRowFollowZoom);
+    } catch (_) {
+      // الخريطة لم تُهيَّأ بعد: يُعاد التتبع في onMapReady
+    }
+  }
+
+  /// زر البطاقة: رحلة العنصر القائمة بحسب نوعه.
+  void _actRow(RowItem it) {
+    switch (it.kind) {
+      case 'moment':
+        if (it.payload.isEmpty) return;
+        Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => PostViewerPage(posts: [MapPost.fromJson(it.payload)], initial: 0)));
+      case 'offer':
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleOffersPage(bizId: it.refId, title: it.who.isEmpty ? null : it.who)));
+      case 'event':
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: it.refId)));
+      case 'job':
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => JobPage(id: it.refId)));
+      case 'listing':
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(it.refId)));
+    }
   }
 
   @override
@@ -186,17 +263,27 @@ class _MapPageState extends ConsumerState<MapPage> {
         _map.move(LatLng(next.lat, next.lng), 16.5);
       } catch (_) {}
     });
+    if (widget.home) {
+      ref.listen<AsyncValue<RowFeed>>(rowProvider, (_, next) {
+        final items = next.valueOrNull?.items;
+        if (items != null && !next.isLoading) _syncRow(items);
+      });
+    }
     final mine = ref.watch(myPresenceProvider).value;
     // الزائر لا يرى الأشخاص ولا الدبابيس (بيانات النواة الخاصة بالحسابات) ولا زر إظهار موقعه
     final signedIn = ref.watch(signedInProvider);
     final loading = ref.watch(presenceProvider).isLoading || ref.watch(storiesProvider).isLoading || ref.watch(pinsProvider).isLoading || ref.watch(businessesProvider).isLoading || ref.watch(mapPostsProvider).isLoading || ref.watch(mapMarketProvider).isLoading;
-    final items = _collect();
+    final row = widget.home ? ref.watch(rowProvider) : null;
+    final rowItems = row?.valueOrNull?.items ?? const <RowItem>[];
+    // الصف وصل قبل أن تُبنى الخريطة (مثلاً عند العودة إلى التبويب): نختار الأولى
+    if (widget.home && rowItems.isNotEmpty && _rowSel == null) _syncRow(rowItems);
+    final items = _collect(rowItems);
     final b = _bounds;
     final visible = b == null ? items : itemsInBounds(items, minLat: b.south, minLng: b.west, maxLat: b.north, maxLng: b.east);
     final panelItems = sortForPanel(visible);
-    // أقسام الرئيسية داخل الورقة (وضع الرئيسية فقط)
-    final blocks = widget.home ? [for (final w in homeBlockWidgets(context, ref)) Padding(padding: const EdgeInsets.symmetric(horizontal: 18), child: w)] : const <Widget>[];
-    final bell = widget.home ? ref.watch(unreadCountProvider) + (ref.watch(notifyUnreadProvider).valueOrNull ?? 0) : 0;
+    // جرس التنبيهات للمسجّلين فقط (الزائر لا يطلب مسارات الحساب)
+    final bell = widget.home && signedIn ? ref.watch(unreadCountProvider) + (ref.watch(notifyUnreadProvider).valueOrNull ?? 0) : 0;
+    final selectedKey = widget.home && rowItems.isNotEmpty ? rowItems[_rowIndex.clamp(0, rowItems.length - 1)].pinKey : null;
 
     // بلا تجميع: كل عنصر نقطة صغيرة بلونها ورمزها حسب نوع المحتوى، وحجمها يتبع مستوى التكبير
     final dot = dotSizeFor(_zoom);
@@ -204,17 +291,19 @@ class _MapPageState extends ConsumerState<MapPage> {
       for (final it in items)
         Marker(
           point: LatLng(it.lat, it.lng),
-          width: _markerBox(it.kind, dot),
-          height: _markerBox(it.kind, dot),
-          child: _ItemMarker(item: it, dot: dot, onTap: () => _tapDot(it, items, dot)),
+          width: _markerBox(it.kind, dot) + (it.key == selectedKey ? 14 : 0),
+          height: _markerBox(it.kind, dot) + (it.key == selectedKey ? 14 : 0),
+          child: _ItemMarker(item: it, dot: dot, selected: it.key == selectedKey, dimmed: selectedKey != null && it.key != selectedKey, onTap: () => _tapDot(it, items, dot)),
         ),
     ];
 
     return LayoutBuilder(builder: (context, box) {
-      final sheetPx = (_sheetFraction.clamp(0, 1) * box.maxHeight);
-      // في وضع الرئيسية الورقة المطوية تبقى فوق شريط التنقّل العائم
-      final sheetMin = widget.home ? ((JoyNavBar.inset(context) + 48) / box.maxHeight).clamp(_sheetMin, 0.3) : _sheetMin;
-      final controlsHidden = _sheetFraction > 0.45;
+      _mapHeight = box.maxHeight;
+      final sheetPx = widget.home ? 0.0 : (_sheetFraction.clamp(0, 1) * box.maxHeight);
+      final controlsHidden = !widget.home && _sheetFraction > 0.45;
+      // في وضع الرئيسية البطاقة فوق كبسولة التنقّل العائمة، والأزرار العائمة فوق البطاقة
+      final deckBottom = (widget.floatingNav ? JoyNavBar.inset(context) : MediaQuery.paddingOf(context).bottom) + 8;
+      final controlsBottom = widget.home ? deckBottom + RowDeck.heightFor(context) + 12 : sheetPx + 12;
       return Stack(children: [
         FlutterMap(
           mapController: _map,
@@ -225,7 +314,12 @@ class _MapPageState extends ConsumerState<MapPage> {
             maxZoom: 18,
             onMapEvent: _onMapEvent,
             onLongPress: (_, latlng) => _hereMenu(latlng),
-            onMapReady: () => _onMapEvent(MapEventMoveEnd(camera: _map.camera, source: MapEventSource.mapController)),
+            onMapReady: () {
+              _onMapEvent(MapEventMoveEnd(camera: _map.camera, source: MapEventSource.mapController));
+              // بطاقة اختيرت قبل تهيئة الخريطة: نتبعها الآن
+              final sel = _rowSel;
+              if (widget.home && sel != null) _followRow(sel);
+            },
             interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
           ),
           children: [
@@ -237,43 +331,41 @@ class _MapPageState extends ConsumerState<MapPage> {
             const SimpleAttributionWidget(source: Text('© OpenStreetMap contributors', style: TextStyle(fontSize: 10))),
           ],
         ),
-        // بحث زجاجي وجرس (وضع الرئيسية) ثم شريط التصفية
+        // وضع الرئيسية: بحث زجاجي وجرس فقط؛ وإلا شريط التصفية
         Positioned(
           top: 10,
           left: 12,
           right: 12,
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            if (widget.home) _HomeTopBar(bell: bell),
-            if (widget.home) const SizedBox(height: 8),
-            Row(children: [
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(children: [
-                  if (signedIn) _chip('أشخاص', Icons.person_rounded, showPeople, () => setState(() => showPeople = !showPeople)),
-                  _chip('لحظات', Icons.auto_awesome_rounded, showStories, () => setState(() => showStories = !showStories)),
-                  if (signedIn) _chip('دبابيس', Icons.push_pin_rounded, showPins, () => setState(() => showPins = !showPins)),
-                  _chip('متاجر', Icons.storefront_rounded, showBusinesses, () => setState(() => showBusinesses = !showBusinesses)),
-                  _chip('السوق', Icons.shopping_bag_rounded, showMarket, () => setState(() => showMarket = !showMarket)),
-                  _chip('عروض', Icons.local_offer_rounded, showOffers, () => setState(() => showOffers = !showOffers), key: const Key('map-chip-offers')),
-                  if (ref.watch(jobsEnabledProvider)) _chip('وظائف', Icons.work_outline_rounded, showHiring, () => setState(() => showHiring = !showHiring), key: const Key('map-chip-hiring')),
-                  if (showBusinesses) ...[
-                    _chip('مفتوح الآن', Icons.schedule_rounded, openOnly, () => setState(() => openOnly = !openOnly)),
-                    for (final c in BizCategory.values)
-                      _chip(c.plural, c.icon, bizCats.contains(c.key), () => setState(() => bizCats.contains(c.key) ? bizCats.remove(c.key) : bizCats.add(c.key))),
-                  ],
+          child: widget.home
+              ? _HomeTopBar(bell: bell, signedIn: signedIn)
+              : Row(children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(children: [
+                        if (signedIn) _chip('أشخاص', Icons.person_rounded, showPeople, () => setState(() => showPeople = !showPeople)),
+                        _chip('لحظات', Icons.auto_awesome_rounded, showStories, () => setState(() => showStories = !showStories)),
+                        if (signedIn) _chip('دبابيس', Icons.push_pin_rounded, showPins, () => setState(() => showPins = !showPins)),
+                        _chip('متاجر', Icons.storefront_rounded, showBusinesses, () => setState(() => showBusinesses = !showBusinesses)),
+                        _chip('السوق', Icons.shopping_bag_rounded, showMarket, () => setState(() => showMarket = !showMarket)),
+                        _chip('عروض', Icons.local_offer_rounded, showOffers, () => setState(() => showOffers = !showOffers), key: const Key('map-chip-offers')),
+                        if (ref.watch(jobsEnabledProvider)) _chip('وظائف', Icons.work_outline_rounded, showHiring, () => setState(() => showHiring = !showHiring), key: const Key('map-chip-hiring')),
+                        if (showBusinesses) ...[
+                          _chip('مفتوح الآن', Icons.schedule_rounded, openOnly, () => setState(() => openOnly = !openOnly)),
+                          for (final c in BizCategory.values)
+                            _chip(c.plural, c.icon, bizCats.contains(c.key), () => setState(() => bizCats.contains(c.key) ? bizCats.remove(c.key) : bizCats.add(c.key))),
+                        ],
+                      ]),
+                    ),
+                  ),
+                  if (loading) const Padding(padding: EdgeInsets.only(left: 8), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
                 ]),
-              ),
-            ),
-            if (loading) const Padding(padding: EdgeInsets.only(left: 8), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
-            ]),
-          ]),
         ),
-        // أزرار التحكم تطفو فوق لوحة المنطقة
+        // أزرار التحكم تطفو فوق البطاقة (الرئيسية) أو لوحة المنطقة
         AnimatedPositioned(
           duration: const Duration(milliseconds: 120),
           left: 12,
-          bottom: sheetPx + 12,
+          bottom: controlsBottom,
           child: IgnorePointer(
             ignoring: controlsHidden,
             child: AnimatedOpacity(
@@ -294,7 +386,7 @@ class _MapPageState extends ConsumerState<MapPage> {
         AnimatedPositioned(
           duration: const Duration(milliseconds: 120),
           right: 12,
-          bottom: sheetPx + 12,
+          bottom: controlsBottom,
           child: IgnorePointer(
             ignoring: controlsHidden,
             child: AnimatedOpacity(
@@ -313,39 +405,45 @@ class _MapPageState extends ConsumerState<MapPage> {
             ),
           ),
         ),
-        // لوحة مشاركات المنطقة
-        Positioned.fill(
-          child: DraggableScrollableSheet(
-            controller: _sheet,
-            initialChildSize: math.max(_sheetInitial, sheetMin + 0.16),
-            minChildSize: sheetMin,
-            maxChildSize: _sheetMax,
-            snap: true,
-            snapSizes: [math.max(_sheetInitial, sheetMin + 0.16)],
-            builder: (context, scroll) => _AreaPanel(
-              scroll: scroll,
-              items: panelItems,
-              total: items.length,
-              zoom: _zoom,
-              ready: _ready,
-              extra: blocks,
-              bottomPad: widget.home ? JoyNavBar.inset(context) : 0,
-              home: widget.home,
-              editing: _editing,
-              onEditToggle: widget.home
-                  ? () {
-                      setState(() => _editing = !_editing);
-                      if (_editing) _sheet.animateTo(_sheetMax, duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
-                    }
-                  : null,
-              onZoomIn: () => _map.move(_map.camera.center, math.max(_zoom + 2, kAreaListZoom + 1)),
-              onSelect: _focus,
-              onExpand: () => _sheet.animateTo(_sheetMax, duration: const Duration(milliseconds: 220), curve: Curves.easeOut),
-              onCollapse: () => _sheet.animateTo(_sheetInitial, duration: const Duration(milliseconds: 220), curve: Curves.easeOut),
-              expanded: _sheetFraction > 0.5,
+        // «الصف»: عدّاد وبطاقة واحدة فوق شريط التنقّل
+        if (widget.home)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: deckBottom,
+            child: RowDeck(
+              items: rowItems,
+              index: _rowIndex,
+              loading: row?.isLoading ?? false,
+              located: row?.valueOrNull?.located ?? true,
+              onIndex: (i) => _selectRow(rowItems, i),
+              onAct: _actRow,
             ),
           ),
-        ),
+        // لوحة مشاركات المنطقة (الوضع غير الرئيسي)
+        if (!widget.home)
+          Positioned.fill(
+            child: DraggableScrollableSheet(
+              controller: _sheet,
+              initialChildSize: _sheetInitial,
+              minChildSize: _sheetMin,
+              maxChildSize: _sheetMax,
+              snap: true,
+              snapSizes: const [_sheetInitial],
+              builder: (context, scroll) => _AreaPanel(
+                scroll: scroll,
+                items: panelItems,
+                total: items.length,
+                zoom: _zoom,
+                ready: _ready,
+                onZoomIn: () => _map.move(_map.camera.center, math.max(_zoom + 2, kAreaListZoom + 1)),
+                onSelect: _focus,
+                onExpand: () => _sheet.animateTo(_sheetMax, duration: const Duration(milliseconds: 220), curve: Curves.easeOut),
+                onCollapse: () => _sheet.animateTo(_sheetInitial, duration: const Duration(milliseconds: 220), curve: Curves.easeOut),
+                expanded: _sheetFraction > 0.5,
+              ),
+            ),
+          ),
       ]);
     });
   }
@@ -360,11 +458,18 @@ class _MapPageState extends ConsumerState<MapPage> {
     ref.invalidate(mapPostsProvider);
     ref.invalidate(mapMarketProvider);
     ref.invalidate(hiringBizProvider);
+    if (widget.home) ref.invalidate(rowProvider);
   }
 
   /// يقرّب الخريطة إلى العنصر ويفتح تفاصيله.
   /// نقرة على نقطة: إن تراكبت مع نقاط أخرى في الموضع نفسه نعرض قائمتها، وإلا نفتح العنصر مباشرة.
   void _tapDot(MapItem item, List<MapItem> all, double dot) {
+    // وضع الرئيسية: دبّوس من «الصف» يقفز بالبطاقة إليه بدل فتح تفاصيله
+    if (widget.home) {
+      final rows = _rowItems;
+      final i = rows.indexWhere((r) => r.pinKey == item.key);
+      if (i >= 0) return _selectRow(rows, i);
+    }
     final p = projectToPixels(item.lat, item.lng, _zoom);
     final near = [for (final o in all) if (projectToPixels(o.lat, o.lng, _zoom).distanceTo(p) <= dot * .8) o];
     if (near.length <= 1) return _showItem(item);
@@ -530,6 +635,8 @@ class _MapPageState extends ConsumerState<MapPage> {
       );
 
   void _showItem(MapItem item) {
+    // دبّوس احتياطي من «الصف» (بياناته RowItem لا كائن الطبقة): رحلته من البطاقة نفسها
+    if (item.data is RowItem) return _actRow(item.data as RowItem);
     switch (item.kind) {
       case MapItemKind.person:
         _showPerson(item.data as Presence);
@@ -546,6 +653,9 @@ class _MapPageState extends ConsumerState<MapPage> {
       case MapItemKind.offer:
         final o = item.data as MapOffer;
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleOffersPage(bizId: o.bizId, title: o.bizName)));
+      case MapItemKind.event:
+      case MapItemKind.job:
+        break; // بياناتهما RowItem دائماً وعولجت أعلاه
     }
   }
 
@@ -749,12 +859,14 @@ Color _kindColor(MapItemKind k) => switch (k) {
       MapItemKind.post => Joy.accent,
       MapItemKind.listing => const Color(0xFF00897B),
       MapItemKind.offer => Joy.sun,
+      MapItemKind.event => const Color(0xFF6A1B9A),
+      MapItemKind.job => const Color(0xFF1565C0),
     };
 
 Color _kindOn(MapItemKind k) => switch (k) {
       MapItemKind.story => Joy.sunText,
       MapItemKind.offer => Joy.sunText,
-      MapItemKind.listing => Colors.white,
+      MapItemKind.listing || MapItemKind.event || MapItemKind.job => Colors.white,
       _ => Joy.primaryOn,
     };
 
@@ -766,6 +878,8 @@ IconData _kindIcon(MapItemKind k) => switch (k) {
       MapItemKind.post => Icons.auto_awesome_motion_rounded,
       MapItemKind.listing => Icons.shopping_bag_rounded,
       MapItemKind.offer => Icons.local_offer_rounded,
+      MapItemKind.event => Icons.event_rounded,
+      MapItemKind.job => Icons.work_rounded,
     };
 
 String _kindLabel(MapItemKind k) => switch (k) {
@@ -776,6 +890,8 @@ String _kindLabel(MapItemKind k) => switch (k) {
       MapItemKind.post => 'منشور',
       MapItemKind.listing => 'عرض في السوق',
       MapItemKind.offer => 'عرض',
+      MapItemKind.event => 'فعالية',
+      MapItemKind.job => 'وظيفة',
     };
 
 const _markerShadow = [BoxShadow(color: Color(0x33000000), blurRadius: 4, offset: Offset(0, 1.5))];
@@ -785,6 +901,7 @@ double dotSizeFor(double zoom) => zoom >= 15 ? 22 : zoom >= 13 ? 17 : zoom >= 11
 
 /// لون النقطة حسب نوع المحتوى؛ منشورات الخريطة تأخذ لون تصنيفها (عرض، إعلان، استثمار، فعالية، وظيفة، لحظة).
 Color _itemColor(MapItem item) {
+  if (item.data is RowItem) return rowKindColor((item.data as RowItem).kind);
   if (item.kind == MapItemKind.post) {
     return switch ((item.data as MapPost).tag) {
       'offer' => Joy.accent,
@@ -801,6 +918,7 @@ Color _itemColor(MapItem item) {
 
 /// رمز النقطة: نوع الوسيط للمنشور (صورة/فيديو/صوت/نص)، وتخصص المتجر، ونجمة للتقييم.
 IconData _itemIcon(MapItem item) => switch (item.kind) {
+      _ when item.data is RowItem => rowKindIcon((item.data as RowItem).kind),
       MapItemKind.post => switch ((item.data as MapPost).kind) {
           'image' => Icons.photo_camera_rounded,
           'video' => Icons.videocam_rounded,
@@ -813,15 +931,18 @@ IconData _itemIcon(MapItem item) => switch (item.kind) {
       MapItemKind.person => Icons.person_rounded,
       MapItemKind.listing => (item.data as Listing).kind == 'service' ? Icons.handyman_rounded : Icons.shopping_bag_rounded,
       MapItemKind.offer => Icons.local_offer_rounded,
+      MapItemKind.event => Icons.event_rounded,
+      MapItemKind.job => Icons.work_rounded,
     };
 
 /// نقطة صغيرة احترافية لعنصر واحد: دائرة ملونة بحدّ أبيض وظل خفيف ورمز يعبّر عن نوع المحتوى؛
-/// الأشخاص يظهرون بصورتهم المصغّرة.
+/// الأشخاص يظهرون بصورتهم المصغّرة. في وضع الرئيسية: دبّوس البطاقة المختارة أكبر بحلقة خضراء، والبقية باهتة.
 class _ItemMarker extends StatelessWidget {
   final MapItem item;
   final double dot;
   final VoidCallback onTap;
-  const _ItemMarker({required this.item, required this.dot, required this.onTap});
+  final bool selected, dimmed;
+  const _ItemMarker({required this.item, required this.dot, required this.onTap, this.selected = false, this.dimmed = false});
 
   @override
   Widget build(BuildContext context) {
@@ -843,8 +964,19 @@ class _ItemMarker extends StatelessWidget {
         child: dot >= 12 ? Icon(_itemIcon(item), size: dot * .55, color: on) : null,
       );
     }
+    if (selected) {
+      child = Container(
+        key: const Key('map-pin-selected'),
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.surface, border: Border.all(color: Joy.primary, width: 3), boxShadow: const [BoxShadow(color: Color(0x40000000), blurRadius: 10, offset: Offset(0, 2))]),
+        child: Transform.scale(scale: 1.15, child: child),
+      );
+    } else if (dimmed) {
+      child = Opacity(opacity: .6, child: child);
+    }
     return Semantics(
       button: true,
+      selected: selected,
       label: '${_kindLabel(item.kind)} ${item.title}',
       child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: onTap, child: Center(child: child)),
     );
@@ -876,14 +1008,6 @@ class _AreaPanel extends StatelessWidget {
   final bool expanded;
   final VoidCallback onZoomIn, onExpand, onCollapse;
   final ValueChanged<MapItem> onSelect;
-  /// أقسام الرئيسية بعد عناصر المنطقة، ومساحة سفلية لشريط التنقّل العائم.
-  final List<Widget> extra;
-  final double bottomPad;
-  /// وضع الرئيسية: العنوان «حولك الآن» قبل التقريب.
-  final bool home;
-  /// وضع التحرير في المكان (النموذج ٣) وزره في رأس الورقة.
-  final bool editing;
-  final VoidCallback? onEditToggle;
   const _AreaPanel({
     required this.scroll,
     required this.items,
@@ -891,11 +1015,6 @@ class _AreaPanel extends StatelessWidget {
     required this.zoom,
     required this.ready,
     required this.expanded,
-    this.extra = const [],
-    this.bottomPad = 0,
-    this.home = false,
-    this.editing = false,
-    this.onEditToggle,
     required this.onZoomIn,
     required this.onExpand,
     required this.onCollapse,
@@ -917,14 +1036,7 @@ class _AreaPanel extends StatelessWidget {
         boxShadow: [BoxShadow(color: Color(0x1F000000), blurRadius: 14, offset: Offset(0, -3))],
       ),
       clipBehavior: Clip.antiAlias,
-      child: editing
-          ? Column(children: [
-              const SizedBox(height: 8),
-              Container(width: 40, height: 4, decoration: BoxDecoration(color: Joy.control, borderRadius: BorderRadius.circular(2))),
-              const Padding(padding: EdgeInsets.fromLTRB(18, 10, 18, 6), child: Row(children: [Icon(Icons.tune_rounded, size: 20, color: Joy.primary), SizedBox(width: 8), Expanded(child: Text('تعديل الرئيسية', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)))])),
-              Expanded(child: HomeEditList(scroll: scroll, onDone: onEditToggle ?? () {}, bottomPad: bottomPad)),
-            ])
-          : ListView(
+      child: ListView(
         controller: scroll,
         padding: EdgeInsets.zero,
         children: [
@@ -941,7 +1053,7 @@ class _AreaPanel extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      !ready || !zoomedIn ? (home ? 'حولك الآن' : 'حول هذه المنطقة') : 'في هذه المنطقة',
+                      !ready || !zoomedIn ? 'حول هذه المنطقة' : 'في هذه المنطقة',
                       style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                     ),
                   ),
@@ -951,7 +1063,6 @@ class _AreaPanel extends StatelessWidget {
                       decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)),
                       child: Text('${items.length}', style: const TextStyle(color: Joy.primary, fontWeight: FontWeight.w700, fontSize: 12.5)),
                     ),
-                  if (onEditToggle != null) IconButton(key: const Key('home-edit'), tooltip: 'تعديل الرئيسية', visualDensity: VisualDensity.compact, onPressed: onEditToggle, icon: const Icon(Icons.tune_rounded, color: Joy.textMuted, size: 20)),
                   Icon(expanded ? Icons.expand_more_rounded : Icons.expand_less_rounded, color: Joy.textMuted),
                 ]),
               ),
@@ -981,19 +1092,19 @@ class _AreaPanel extends StatelessWidget {
             )
           else
             for (var i = 0; i < items.length; i++) _ItemRow(item: items[i], onTap: () => onSelect(items[i]), divider: i < items.length - 1),
-          if (extra.isNotEmpty) const Divider(height: 18, color: Joy.line),
-          ...extra,
-          SizedBox(height: 24 + bottomPad),
+          const SizedBox(height: 24),
         ],
       ),
     );
   }
 }
 
-/// بحث زجاجي مع صورة الحساب، وجرس التنبيهات: فوق الخريطة في وضع الرئيسية.
+/// بحث زجاجي مع صورة الحساب، وجرس التنبيهات: فوق الخريطة في وضع الرئيسية. الزائر يُدعى للدخول عند البحث أو الجرس
+/// (صفحتاهما تطلبان مسارات حساب).
 class _HomeTopBar extends ConsumerWidget {
   final int bell;
-  const _HomeTopBar({required this.bell});
+  final bool signedIn;
+  const _HomeTopBar({required this.bell, required this.signedIn});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final me = ref.watch(appStateProvider.select((s) => s.user));
@@ -1007,7 +1118,10 @@ class _HomeTopBar extends ConsumerWidget {
           child: InkWell(
             key: const Key('home-search'),
             borderRadius: BorderRadius.circular(999),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage())),
+            onTap: () {
+              if (!requireAccount(context)) return;
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage()));
+            },
             child: Padding(
               padding: const EdgeInsetsDirectional.fromSTEB(14, 7, 6, 7),
               child: Row(children: [
@@ -1029,7 +1143,10 @@ class _HomeTopBar extends ConsumerWidget {
         child: InkWell(
           key: const Key('home-bell'),
           customBorder: const CircleBorder(),
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsPage())),
+          onTap: () {
+            if (!requireAccount(context)) return;
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsPage()));
+          },
           child: SizedBox(width: 44, height: 44, child: Badge(isLabelVisible: bell > 0, label: Text('$bell'), backgroundColor: Joy.accent, offset: const Offset(-4, 6), child: const Icon(Icons.notifications_outlined, color: Joy.text))),
         ),
       ),

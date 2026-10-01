@@ -1,5 +1,5 @@
 // البث العمودي «الآن حولك»: يطلب /mapposts/feed ويعرض اللحظة الأولى بمكانها ومسافتها، التمرير الرأسي ينتقل ويجلب الصفحة
-// التالية بالمؤشر، الإعجاب يعمل، وبطاقة الرئيسية وشريط الأماكن الرائجة يفتحان البث (مصفّى بالمكان).
+// التالية بالمؤشر، والإعجاب يعمل.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -11,7 +11,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:naslook/api/client.dart';
 import 'package:naslook/api/session.dart';
-import 'package:naslook/pages/home/home_page.dart';
 import 'package:naslook/pages/posts/feed_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
@@ -140,30 +139,5 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getDouble('feed_radius'), 2);
     expect(prefs.getBool('feed_friends'), isTrue);
-  });
-
-  testWidgets('home shows the feed card and trending places; a place opens the feed filtered by it', (tester) async {
-    final srv = await _pump(tester, const Scaffold(body: HomePage()), height: 1600);
-    expect(find.byKey(const Key('feed-open')), findsOneWidget);
-    expect(find.text('الأماكن الرائجة اليوم'), findsOneWidget);
-    expect(find.byKey(const Key('trend-biz:biz-cafe')), findsOneWidget);
-    expect(find.text('4 لحظة · 3 شخص'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('trend-biz:biz-cafe')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(srv.queries['GET /mapposts/feed']!['place'], 'biz:biz-cafe');
-    expect(find.text('مقهى البث'), findsWidgets);
-    expect(find.text('لحظات هذا المكان'), findsOneWidget);
-    expect(find.text('لحظة رقم 1'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('feed-close')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('feed-open')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('الآن حولك'), findsWidgets);
-    expect(find.text('لحظة رقم 1'), findsOneWidget);
-    await tester.pump(const Duration(seconds: 15));
   });
 }

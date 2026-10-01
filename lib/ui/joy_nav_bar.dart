@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../core/app_theme.dart';
-import '../core/home_layout.dart';
+import '../core/nav_provider.dart';
 
-/// شريط تنقّل عائم (كبسولة) بأربعة أقسام وزر كاميرا مرتفع في الوسط، حسب نظام «الخريطة أولاً».
-/// الأقسام من تخصيص المستخدم: «الخريطة» أولاً و«ماي سبيس» آخراً وبينهما قسمان.
+/// شريط تنقّل عائم (كبسولة) بأربعة أقسام ثابتة (الخريطة، الدوائر، المحادثات، ماي سبيس) وزر كاميرا مرتفع في الوسط.
 class JoyNavBar extends StatelessWidget {
   final List<String> tabs;
   final int index;
