@@ -29,12 +29,8 @@ import '../state/notify_providers.dart';
 import '../state/providers.dart';
 import '../screens/login_page.dart';
 import '../screens/verify_email_page.dart';
-import '../core/home_layout.dart';
-import '../state/layout_providers.dart';
 import '../ui/joy_nav_bar.dart';
 import '../pages/posts/my_posts_page.dart';
-import '../pages/jobs/jobs_page.dart';
-import '../pages/wallet/my_offers_page.dart';
 import '../pages/map/map_page.dart';
 import '../pages/circles/circles_page.dart';
 import '../pages/myspace/myspace_page.dart';
@@ -102,18 +98,14 @@ class AuthGate extends ConsumerWidget {
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
-  /// صفحة كل قسم من أقسام الشريط. الأقسام المستقلة (السوق والعروض والوظائف والفعاليات) لها شريطها العلوي.
+  /// صفحة كل قسم من الأقسام الأربعة الثابتة. الخريطة وحدها بلا شريط علوي (بحثها وجرسها فوق الخريطة).
   static Widget pageOf(String tab) => switch (tab) {
         'home' => const MapPage(home: true),
         'circles' => const CirclesPage(),
         'chats' => const ChatsPage(),
-        'market' => const MarketPage(),
-        'offers' => const MyOffersPage(),
-        'jobs' => const JobsPage(),
-        'events' => const EventsPage(),
         _ => const MySpacePage(),
       };
-  static bool ownBar(String tab) => const {'home', 'market', 'offers', 'jobs', 'events'}.contains(tab);
+  static bool ownBar(String tab) => tab == 'home';
 
   @override
   ConsumerState<HomeShell> createState() => _HomeShellState();
@@ -264,8 +256,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    // أقسام الشريط من تخصيص المستخدم: «الخريطة» أولاً و«ماي سبيس» آخراً وبينهما قسمان
-    final tabs = ref.watch(navTabsProvider);
+    // الأقسام الأربعة ثابتة (لا تخصيص للشريط)
+    const tabs = navTabIds;
     final i = ref.watch(navIndexProvider).clamp(0, tabs.length - 1);
     final current = tabs[i];
     final badge = ref.watch(unreadCountProvider);
@@ -356,8 +348,9 @@ class _GuestShellState extends ConsumerState<GuestShell> {
     });
   }
 
+  // الزائر يرى الرئيسية المعتمدة نفسها (الخريطة و«الصف»)، وشريطه العادي لا يطفو فوق الخريطة
   Widget _screen(int i) => switch (i) {
-        0 => const MapPage(),
+        0 => const MapPage(home: true, floatingNav: false),
         1 => Scaffold(backgroundColor: Joy.bg, appBar: AppBar(title: const Text('الأماكن')), body: const BizListView()),
         2 => const MarketPage(),
         3 => const EventsPage(),

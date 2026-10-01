@@ -4,9 +4,10 @@ import '../../api/commerce_models.dart';
 import '../../api/offers_map_api.dart';
 import '../../api/models.dart';
 import '../../api/posts_api.dart';
+import '../../api/row_api.dart';
 
-/// نوع العنصر المعروض على الخريطة.
-enum MapItemKind { person, story, pin, business, post, listing, offer }
+/// نوع العنصر المعروض على الخريطة. الفعالية والوظيفة تأتيان من «الصف» فقط (لا طبقة خريطة لهما).
+enum MapItemKind { person, story, pin, business, post, listing, offer, event, job }
 
 /// عنصر موحّد على الخريطة (شخص/لحظة/دبوس/متجر) مع موقعه وصاحبه ووقته.
 class MapItem {
@@ -123,6 +124,22 @@ class MapItem {
       data: b,
     );
   }
+
+  /// دبّوس من عنصر «الصف»: بالمفتاح نفسه الذي تعطيه طبقات الخريطة (post/offer/listing) حتى يفوز دبّوس الطبقة إن وُجد
+  /// ويبقى هذا احتياطاً حين لا تشمله حدود الخريطة بعد؛ الفعالية والوظيفة لا طبقة لهما فهذا دبّوسهما الوحيد.
+  static MapItem? row(RowItem r) {
+    if (r.lat == 0 && r.lng == 0) return null;
+    final kind = switch (r.kind) {
+      'moment' => MapItemKind.post,
+      'offer' => MapItemKind.offer,
+      'listing' => MapItemKind.listing,
+      'event' => MapItemKind.event,
+      'job' => MapItemKind.job,
+      _ => null,
+    };
+    if (kind == null) return null;
+    return MapItem(kind: kind, id: r.id, lat: r.lat, lng: r.lng, title: r.title, subtitle: r.subtitle, at: r.at, data: r);
+  }
 }
 
 /// مجموعة عناصر متقاربة على الشاشة.
@@ -176,6 +193,15 @@ math.Point<double> projectToPixels(double lat, double lng, double zoom) {
   final phi = lat.clamp(-85.05112878, 85.05112878) * math.pi / 180.0;
   final y = (1.0 - math.log(math.tan(phi) + 1.0 / math.cos(phi)) / math.pi) / 2.0 * scale;
   return math.Point(x, y);
+}
+
+/// عكس [projectToPixels]: من بكسلات العالم عند مستوى تكبير إلى إحداثيات (لتحريك مركز الخريطة بإزاحة على الشاشة).
+({double lat, double lng}) unprojectPixels(double x, double y, double zoom) {
+  final scale = 256.0 * math.pow(2.0, zoom);
+  final lng = x / scale * 360.0 - 180.0;
+  final n = math.pi - 2.0 * math.pi * y / scale;
+  final lat = 180.0 / math.pi * math.atan(0.5 * (math.exp(n) - math.exp(-n)));
+  return (lat: lat, lng: lng);
 }
 
 /// نصف قطر التجميع المناسب بالبكسل لمستوى التكبير: تجميع واسع عند التصغير،

@@ -12,7 +12,7 @@ import '../../ui/profile_avatar.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import 'post_editor_page.dart';
-import '../home/home_page.dart';
+import 'post_card.dart';
 
 final vesselDetailProvider = FutureProvider.family<(Vessel, List<Post>), String>((ref, id) async {
   final hidden = await ref.watch(hiddenPostsProvider.future);

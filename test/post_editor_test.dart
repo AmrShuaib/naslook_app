@@ -15,7 +15,7 @@ import 'package:naslook/api/session.dart';
 import 'package:naslook/core/text/post_markup.dart';
 import 'package:naslook/pages/circles/circles_page.dart';
 import 'package:naslook/pages/circles/post_editor_page.dart';
-import 'package:naslook/pages/home/home_page.dart';
+import 'package:naslook/pages/circles/post_card.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
 import 'package:naslook/state/providers.dart';

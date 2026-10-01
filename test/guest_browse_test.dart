@@ -53,7 +53,7 @@ bool _publicRoute(Uri u) {
   // ما يخص حساب الزائر حتى تحت البادئات العامة
   if (u.queryParameters['mine'] == '1' || p.endsWith('/mine') || p.startsWith('/biz/orders') || p.startsWith('/market/orders')) return false;
   return p == '/biz' || p.startsWith('/biz/') || p.startsWith('/mapposts') || p.startsWith('/market') || p.startsWith('/events') ||
-      p == '/settings/public' || p == '/safety/words' || p.startsWith('/legal/') || p == '/offers/map' || p == '/offers/near';
+      p == '/settings/public' || p == '/safety/words' || p.startsWith('/legal/') || p == '/offers/map' || p == '/offers/near' || p == '/row';
 }
 
 const _bizId = 'biz-ikea';
@@ -92,6 +92,7 @@ class _Srv {
       case 'GET /market/$_lid/questions': return _json([]);
       case 'GET /market/$_lid/reviews': return _json([]);
       case 'GET /events': return _json([]);
+      case 'GET /row': return _json({'items': [], 'located': false});
     }
     return _json({'error': 'not-found'}, 404);
   }
@@ -209,6 +210,7 @@ void main() {
       await _tab(tester, k);
     }
     expect(srv.calls, contains('GET /mapposts'));
+    expect(srv.calls, contains('GET /row'), reason: 'الرئيسية المعتمدة («الصف») عامة للزائر');
     expect(srv.calls, contains('GET /market/home'));
     expect(find.text('هذا يحتاج حساباً'), findsNothing, reason: 'القراءات الخلفية لا تزعج الزائر');
 
