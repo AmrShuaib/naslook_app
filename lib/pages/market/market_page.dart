@@ -13,6 +13,7 @@ import '../../core/require_account.dart';
 import '../../api/client.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
+import '../../state/row_providers.dart';
 import '../../ui/widgets.dart';
 import 'bazaar_page.dart';
 import 'listing_form.dart';
@@ -64,7 +65,7 @@ final marketListProvider = FutureProvider.family<List<Listing>, MarketQuery>((re
 /// عروض اخترتها للمقارنة (حتى ٣)
 final compareProvider = StateProvider<List<Listing>>((_) => const []);
 
-void invalidateMarket(WidgetRef ref) { ref.invalidate(marketHomeProvider); ref.invalidate(marketListProvider); ref.invalidate(myListingsProvider); }
+void invalidateMarket(WidgetRef ref) { ref.invalidate(marketHomeProvider); ref.invalidate(marketListProvider); ref.invalidate(myListingsProvider); ref.invalidate(rowProvider); }
 
 class MarketPage extends ConsumerStatefulWidget {
   const MarketPage({super.key});

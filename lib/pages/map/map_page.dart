@@ -60,7 +60,7 @@ class MapPage extends ConsumerStatefulWidget {
 /// مستوى التكبير الذي تنتقل إليه الخريطة لتتبع بطاقة «الصف».
 const double kRowFollowZoom = 15.5;
 
-class _MapPageState extends ConsumerState<MapPage> {
+class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
   final _map = MapController();
   final _sheet = DraggableScrollableController();
   bool showPeople = true, showPins = true, showStories = true, showBusinesses = true, showMarket = true, showOffers = true;
@@ -70,6 +70,9 @@ class _MapPageState extends ConsumerState<MapPage> {
   bool openOnly = false;
   final Set<String> bizCats = {};
   Timer? _fetchDebounce, _frame;
+  /// «الصف» يُحدَّث دورياً وعند العودة إلى التطبيق حتى تظهر اللحظات والعروض الجديدة دون تدخل المستخدم.
+  Timer? _rowTimer;
+  static const rowRefreshEvery = Duration(minutes: 2);
   double _zoom = 13;
   LatLngBounds? _bounds;
   double _sheetFraction = _sheetInitial;
@@ -105,6 +108,10 @@ class _MapPageState extends ConsumerState<MapPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.home) {
+      WidgetsBinding.instance.addObserver(this);
+      _rowTimer = Timer.periodic(rowRefreshEvery, (_) { if (mounted) ref.invalidate(rowProvider); });
+    }
     _sheet.addListener(() {
       if (!_sheet.isAttached) return;
       final f = _sheet.size;
@@ -121,8 +128,16 @@ class _MapPageState extends ConsumerState<MapPage> {
   void dispose() {
     _fetchDebounce?.cancel();
     _frame?.cancel();
+    _rowTimer?.cancel();
+    if (widget.home) WidgetsBinding.instance.removeObserver(this);
     _sheet.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // العودة من الخلفية (أو من تطبيق الكاميرا) تعيد جلب الصف فيظهر ما نُشر أثناء الغياب
+    if (state == AppLifecycleState.resumed && widget.home && mounted) ref.invalidate(rowProvider);
   }
 
   List<MapItem> _collect(List<RowItem> rowItems) {

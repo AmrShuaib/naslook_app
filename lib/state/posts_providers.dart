@@ -5,6 +5,7 @@ import '../api/posts_api.dart';
 import '../core/location.dart';
 import 'app_state.dart';
 import 'providers.dart';
+import 'row_providers.dart';
 
 /// منشورات الخريطة ضمن الحدود المرئية.
 final mapPostsProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClientProvider).posts(bbox: ref.watch(bboxProvider)));
@@ -33,4 +34,6 @@ void invalidatePosts(WidgetRef ref) {
   ref.invalidate(mapPostsProvider);
   ref.invalidate(recentPostsProvider);
   ref.invalidate(myPostsProvider);
+  // اللحظة الجديدة تظهر في «الصف» فور نشرها بدل انتظار التحديث الدوري
+  ref.invalidate(rowProvider);
 }

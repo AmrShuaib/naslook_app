@@ -9,6 +9,8 @@
 export const KINDS = ["moment", "offer", "event", "job", "listing"];
 // فعل البطاقة الوحيد لكل نوع: يفتح رحلة الشاشة القائمة (المشاهد، عروض الدائرة، الفعالية، الوظيفة، الإعلان)
 export const ACT = { moment: "شاهد", offer: "استخدم", event: "تذكرة", job: "قدّم", listing: "اطلب" };
+// عنوان احتياطي للحظة بلا تعليق: «صورة من الروضة» أو «فيديو من amr»
+const MEDIA_AR = { image: "صورة", video: "فيديو", audio: "تسجيل صوتي", text: "لحظة" };
 const TABLES = { moment: "map_posts", offer: "biz_offers", event: "events", job: "jobs", listing: "market_listings" };
 const TYPE_AR = { full: "دوام كامل", part: "دوام جزئي", remote: "عن بُعد", intern: "تدريب", shift: "ورديات", freelance: "عمل حر" };
 export const CAND = 60, MAX_PER_KIND = 12, MAX_RUN = 3, LIMIT_DEFAULT = 30, LIMIT_MAX = 50, RADIUS_DEFAULT = 15, RADIUS_MAX = 100;
@@ -140,7 +142,7 @@ export default async function row(app, opts = {}) {
       userId: (p) => p.user_id,
       item: (p, ctx, who) => ({
         kind: "moment", id: p.id, refId: p.id,
-        title: cut(p.caption, 60) || cut(p.title, 60) || (p.place_name ? `لحظة من ${cut(p.place_name, 40)}` : "لحظة قريبة"),
+        title: cut(p.caption, 60) || cut(p.title, 60) || `${MEDIA_AR[p.kind] ?? "لحظة"} من ${p.place_name ? cut(p.place_name, 40) : who.nickname || "جار قريب"}`,
         subtitle: cut([agoText(p.created_at, ctx.now), Number(p.likes) > 0 ? likesText(Number(p.likes)) : p.place_name].filter(Boolean).join(" · "), 60),
         who: who.nickname, logoUrl: who.avatarUrl, imageUrl: p.kind === "image" || p.kind === "video" ? p.media_url ?? null : null,
         ...place(ctx, p, p.km), at: iso(p.created_at), endsAt: iso(p.expires_at), act: ACT.moment, payload: postOut(p, ctx.uid, who),

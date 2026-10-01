@@ -148,6 +148,11 @@ double _pinY(WidgetTester t, double lat, double lng) {
   return cam.latLngToScreenOffset(LatLng(lat, lng)).dy / cam.nonRotatedSize.height;
 }
 
+/// فترة التحديث الدوري للصف كما تعرّفها الرئيسية.
+class _MapRefresh {
+  static const every = Duration(minutes: 2, seconds: 1);
+}
+
 void main() {
   tearDown(() {
     ApiClient.onUnauthorized = null;
@@ -196,6 +201,24 @@ void main() {
     expect(find.byKey(const Key('map-pin-selected')), findsOneWidget);
     expect(find.byIcon(Icons.event_rounded), findsOneWidget, reason: 'دبّوس الفعالية من الصف');
     expect(find.byIcon(Icons.work_rounded), findsOneWidget, reason: 'دبّوس الوظيفة من الصف');
+  });
+
+  testWidgets('the row is refetched every two minutes and when the app resumes, keeping the selected card', (tester) async {
+    final srv = await _pump(tester);
+    expect(srv.calls.where((c) => c == 'GET /row').length, 1);
+    await tester.tap(find.byKey(const Key('row-next')));
+    await _afterSwitch(tester);
+    expect(_count(tester), startsWith('2 من'));
+    // مرور دقيقتين: جلب ثانٍ دون أن تتبدّل البطاقة المختارة
+    await tester.pump(_MapRefresh.every);
+    await _settle(tester);
+    expect(srv.calls.where((c) => c == 'GET /row').length, 2);
+    expect(_count(tester), startsWith('2 من'));
+    // العودة إلى التطبيق من الخلفية: جلب ثالث
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await _settle(tester);
+    expect(srv.calls.where((c) => c == 'GET /row').length, 3);
   });
 
   testWidgets('arrows move forward and back with wrap-around, the map follows and the highlighted pin changes', (tester) async {
