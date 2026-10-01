@@ -1,5 +1,5 @@
 <title>نظام واحد</title>
-<meta name="description" content="نظام «واحد» لخريطة ناس لايف: شيء واحد في المرة، إيماءة واحدة، زر واحد، ولا شيء آخر على الشاشة. شكلان: بطاقة تُسحب جانبياً وشاشة تُسحب للأعلى.">
+<meta name="description" content="نظام «واحد» لخريطة ناس لايف: شيء واحد في المرة، إيماءة واحدة، زر واحد، ولا شيء آخر على الشاشة. شكلان: بطاقة تُسحب جانبياً وشاشة تُسحب للأعلى، ومفتاح يجمعهما.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Baloo+Bhaijaan+2:wght@600;700;800&display=swap">
 <style>
 /* Layout: concept switch + screen switch on top; three phones side by side (one at a time under 1250px). Phones are the app's own white UI; the accent family is the brand teal. */
@@ -350,7 +350,13 @@ h1{margin:0;font:800 26px/1.2 var(--font-display);text-wrap:balance}
 .fitem .fcnt{position:absolute;top:70px;right:14px;font-size:12px;color:#fff;background:rgba(0,0,0,.45);padding:4px 10px;border-radius:999px;font-weight:600}
 .uph{position:absolute;left:50%;transform:translateX(-50%);bottom:86px;display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:#fff;background:rgba(0,0,0,.45);padding:4px 11px;border-radius:999px;pointer-events:none;transition:opacity .4s}
 .uph.gone{opacity:0}
-.scr .top{z-index:5}
+.scr>.top{position:absolute;top:10px;right:0;left:0;display:flex;flex-direction:column;gap:8px;z-index:5}
+/* ج · المفتاح */
+.mode{position:absolute;inset:0}
+.mode>.map{position:absolute;inset:0}
+.tog{display:inline-flex;gap:2px;background:#F2F2F7;border-radius:999px;padding:2px;flex:none}
+.tog button{width:30px;height:28px;border:0;border-radius:999px;background:transparent;color:#6B7280;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.tog button.on{background:#111;color:#fff}
 /* صفحة */
 .gone-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px 16px;font-size:13.5px;line-height:1.6;border:1px solid var(--line);border-radius:14px;padding:12px 16px}
 .gone-list div{display:flex;gap:8px;align-items:center}
@@ -360,16 +366,17 @@ h1{margin:0;font:800 26px/1.2 var(--font-display);text-wrap:balance}
 <div class="wrap">
   <header>
     <h1>نظام «واحد»</h1>
-    <p class="sub">أبسط ما يمكن أن يكون عليه التطبيق: شيء واحد في المرة، إيماءة واحدة يعرفها كل من أمسك هاتفاً، زر واحد، ولا شيء آخر على الشاشة سوى البحث. لا ورقة ولا رقائق ولا أقسام ولا تخصيص ولا مرشّحات ولا تبويبات؛ الترتيب واحد ذكي: الأقرب أولاً، مع تقديم ما ينتهي قريباً وما نُشر للتو. العروض والوظائف والسوق واللحظات والفعاليات كلها بطاقات متساوية في الصف نفسه. الشكلان أدناه هما النظام نفسه بإيماءتين مختلفتين؛ اختر الإيماءة.</p>
+    <p class="sub">أبسط ما يمكن أن يكون عليه التطبيق: شيء واحد في المرة، إيماءة واحدة يعرفها كل من أمسك هاتفاً، زر واحد، ولا شيء آخر على الشاشة سوى البحث. لا ورقة ولا رقائق ولا أقسام ولا تخصيص ولا مرشّحات ولا تبويبات؛ الترتيب واحد ذكي: الأقرب أولاً، مع تقديم ما ينتهي قريباً وما نُشر للتو. العروض والوظائف والسوق واللحظات والفعاليات كلها بطاقات متساوية في الصف نفسه. الشكلان الأولان هما النظام نفسه بإيماءتين مختلفتين، والثالث يترك للمستخدم اختيار الإيماءة بمفتاح واحد في شريط البحث.</p>
     <div class="gone-list">
       <div><i>×</i><span>الورقة السفلية</span></div><div><i>×</i><span>صف الرقائق</span></div><div><i>×</i><span>الأقسام الـ12</span></div>
       <div><i>×</i><span>شاشة التخصيص ووضع التحرير</span></div><div><i>×</i><span>تبويبات الملف والدائرة من الرئيسية</span></div><div><i>×</i><span>مفاتيح الطبقات</span></div>
       <div class="keep"><i>✓</i><span>البحث</span></div><div class="keep"><i>✓</i><span>الخريطة أو الصورة</span></div><div class="keep"><i>✓</i><span>بطاقة واحدة وزر واحد</span></div>
     </div>
     <div class="rowh">
-      <div class="seg" id="seg" role="tablist" aria-label="الشكلان">
+      <div class="seg" id="seg" role="tablist" aria-label="الأشكال">
         <button class="on" data-go="a" role="tab"><i>أ</i>بطاقة · سحب جانبي</button>
         <button data-go="b" role="tab"><i>ب</i>شاشة · سحب للأعلى</button>
+        <button data-go="c" role="tab"><i>ج</i>الاثنان بمفتاح</button>
       </div>
     </div>
   </header>
@@ -425,25 +432,70 @@ h1{margin:0;font:800 26px/1.2 var(--font-display);text-wrap:balance}
           <span class="fcnt">٧ من ٧</span></section></div><div class="top"><div class="search glass">@@i-search@@<span style="flex-grow:1">ابحث في جدة</span><span class="avm"><img src="@@avatar@@" alt=""></span></div></div><span class="uph" data-uph>@@i-up@@ اسحب للأعلى</span><nav class="nav pill"><button data-nav="home" class=on>@@i-map@@<span>الخريطة</span></button><button data-nav="circles">@@i-groups@@<span>الدوائر</span></button><button class="c" aria-label="لحظة جديدة">@@i-cam@@</button><button data-nav="chats">@@i-chat@@<span>المحادثات</span></button><button data-nav="me">@@i-me@@<span>ماي سبيس</span></button></nav></div></div></div>
       <p class="note">الإيماءة الأكثر رسوخاً في أيدي الناس: اسحب للأعلى. كل عنصر يملأ الشاشة بصورته، وبوصلة صغيرة في الزاوية تدلّ على اتجاهه عنك ومسافته، وزر واحد. الخريطة الكاملة تُفتح من البوصلة أو من تبويبها عند الحاجة فقط. الأنسب لمن يفتح التطبيق ليتسلّى بما حوله، والأسهل تعلّماً على الإطلاق، على حساب أن الخريطة لم تعد أول ما يُرى.</p>
     </section>
+    <section class="slot" id="s-c">
+      <h2><span>ج</span>الاثنان بمفتاح <small>· المستخدم يختار الإيماءة، والتطبيق يتذكّر</small></h2>
+      <div class="phone"><div class="screen" data-concept="c"><div class="scr abs" data-scr="home"><div class="mode" data-mode="card"><div class="map onemap"><div class="cam" data-cam><svg class="base" viewBox="0 0 390 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+<rect width="390" height="700" fill="#F1EFE8"/>
+<path d="M0 0H118C150 110 88 250 128 372C160 462 96 600 138 700H0Z" fill="#D5E5F1"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#DCD9D0" stroke-width="11"/>
+<path d="M150 90C170 170 130 240 166 330C190 390 150 470 170 540C182 590 160 650 176 700" fill="none" stroke="#fff" stroke-width="8"/>
+<g stroke="#fff" stroke-width="6"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g stroke="#DCD9D0" stroke-width="1"><path d="M150 180H390"/><path d="M158 300H390"/><path d="M160 420H390"/><path d="M172 560H390"/><path d="M260 90V700"/><path d="M330 120V700"/></g>
+<g fill="#E8E5DC"><rect x="178" y="196" width="66" height="88" rx="6"/><rect x="276" y="196" width="40" height="88" rx="6"/><rect x="180" y="318" width="64" height="86" rx="6"/><rect x="276" y="318" width="40" height="86" rx="6"/><rect x="346" y="318" width="40" height="86" rx="6"/><rect x="184" y="438" width="60" height="106" rx="6"/><rect x="276" y="438" width="40" height="106" rx="6"/><rect x="346" y="438" width="40" height="106" rx="6"/><rect x="190" y="578" width="54" height="110" rx="6"/><rect x="276" y="578" width="40" height="110" rx="6"/></g>
+<ellipse cx="300" cy="140" rx="34" ry="22" fill="#DCE8D2"/>
+<g font-family="Rubik,Tahoma,sans-serif" font-size="11" fill="#8A8F87"><text x="215" y="250">الشاطئ</text><text x="215" y="370">الحمراء</text><text x="222" y="500">الروضة</text><text x="228" y="640">التحلية</text><text x="40" y="330" fill="#7FA3BF">البحر الأحمر</text><text x="282" y="145" fill="#7A9A6C">حديقة</text></g>
+</svg><div class="pins"><span class="pin" data-id="m1" style="right:78%;top:30%"><img src="@@p16@@" alt=""><i class="k">@@i-cam@@</i></span><span class="pin" data-id="m2" style="right:40%;top:58%"><img src="@@p42@@" alt=""></span><span class="pin" data-id="m3" style="right:30%;top:79%"><img src="@@p274@@" alt=""><i class="k">@@i-play@@</i></span><span class="pin" data-id="m4" style="right:62%;top:49%"><img src="@@p63@@" alt=""><i class="k">@@i-mic@@</i></span><span class="pin" data-id="m5" style="right:52%;top:66%"><img src="@@avatar@@" alt=""></span><span class="plabel" data-id="b1" style="right:42%;top:68%"><img src="@@overdose@@" alt="">أوفردوز</span><span class="plabel" data-id="b2" style="right:26%;top:36%"><img src="@@halfmillion@@" alt="">هاف مليون</span><span class="plabel" data-id="b3" style="right:66%;top:60%"><img src="@@3brews@@" alt="">ثري بروز</span><span class="plabel" data-id="b4" style="right:20%;top:50%"><img src="@@rawnah@@" alt="">رونة</span><span class="me" data-id="me" style="right:56%;top:44%"></span></div></div>
+      <div class="deck" data-deck>
+        <div class="cnt"><button class="arr" data-prev aria-label="السابق">@@i-right@@</button><span data-cnt>١ من ٧ · الأقرب أولاً</span><button class="arr" data-next aria-label="التالي">@@i-left@@</button></div>
+        <div class="dwin"><div class="dcard" data-dcard>
+          <img class="ph" src="@@p63@@" alt="" data-oimg>
+          <div class="b"><span class="k"><img src="@@overdose@@" alt="" data-ologo><span data-okind>عرض · أوفردوز</span><em data-odist>٦٥٠ م</em></span><span class="t" data-ot>خصم ٢٠٪ على اللاتيه</span><span class="d" data-od>الروضة · للأعضاء · ينتهي الليلة</span></div>
+          <button class="btn sm" data-oact>استخدم</button>
+        </div></div>
+        <span class="swh">اسحب البطاقة للتالي · أو المس أي دبّوس</span>
+      </div></div></div><div class="mode" data-mode="full" hidden><div class="feed" data-feed><section class="fitem" data-fi="0"><img class="bg" src="@@p63@@" alt=""><div class="shade"></div>
+          <div class="mini"><svg viewBox="0 0 72 72" width="72" height="72" aria-hidden="true"><circle cx="36" cy="36" r="34" fill="rgba(255,255,255,.92)"/><circle cx="36" cy="36" r="24" fill="none" stroke="#E5E7EB" stroke-dasharray="3 3"/><line x1="36" y1="36" x2="48.1" y2="56.7" stroke="#0A6E78" stroke-width="2" stroke-linecap="round"/><circle cx="36" cy="36" r="4.5" fill="#1E88FF" stroke="#fff" stroke-width="2"/><circle cx="48.1" cy="56.7" r="5.5" fill="#0A6E78" stroke="#fff" stroke-width="2"/></svg><b>٦٥٠ م</b></div>
+          <div class="info"><span class="k"><img src="@@overdose@@" alt="">عرض · أوفردوز</span><b>خصم ٢٠٪ على اللاتيه</b><span class="d">الروضة · للأعضاء · ينتهي الليلة</span><button class="btn">استخدم</button></div>
+          <span class="fcnt">١ من ٧</span></section><section class="fitem" data-fi="1"><img class="bg" src="@@p184@@" alt=""><div class="shade"></div>
+          <div class="mini"><svg viewBox="0 0 72 72" width="72" height="72" aria-hidden="true"><circle cx="36" cy="36" r="34" fill="rgba(255,255,255,.92)"/><circle cx="36" cy="36" r="24" fill="none" stroke="#E5E7EB" stroke-dasharray="3 3"/><line x1="36" y1="36" x2="54.1" y2="51.8" stroke="#0A6E78" stroke-width="2" stroke-linecap="round"/><circle cx="36" cy="36" r="4.5" fill="#1E88FF" stroke="#fff" stroke-width="2"/><circle cx="54.1" cy="51.8" r="5.5" fill="#0A6E78" stroke="#fff" stroke-width="2"/></svg><b>٨٠٠ م</b></div>
+          <div class="info"><span class="k"><img src="@@p26@@" alt="">لحظة · سارة</span><b>سارة في الروضة</b><span class="d">قبل ٢٥ دقيقة · ١٢ إعجاباً</span><button class="btn">شاهد</button></div>
+          <span class="fcnt">٢ من ٧</span></section><section class="fitem" data-fi="2"><img class="bg" src="@@p42@@" alt=""><div class="shade"></div>
+          <div class="mini"><svg viewBox="0 0 72 72" width="72" height="72" aria-hidden="true"><circle cx="36" cy="36" r="34" fill="rgba(255,255,255,.92)"/><circle cx="36" cy="36" r="24" fill="none" stroke="#E5E7EB" stroke-dasharray="3 3"/><line x1="36" y1="36" x2="59.2" y2="29.8" stroke="#0A6E78" stroke-width="2" stroke-linecap="round"/><circle cx="36" cy="36" r="4.5" fill="#1E88FF" stroke="#fff" stroke-width="2"/><circle cx="59.2" cy="29.8" r="5.5" fill="#0A6E78" stroke="#fff" stroke-width="2"/></svg><b>٩٠٠ م</b></div>
+          <div class="info"><span class="k"><img src="@@halfmillion@@" alt="">فعالية · هاف مليون</span><b>بازار الحي</b><span class="d">حديقة الشاطئ · اليوم ٥ م · ١٢ طاولة</span><button class="btn">تذكرة</button></div>
+          <span class="fcnt">٣ من ٧</span></section><section class="fitem" data-fi="3"><img class="bg" src="@@p16@@" alt=""><div class="shade"></div>
+          <div class="mini"><svg viewBox="0 0 72 72" width="72" height="72" aria-hidden="true"><circle cx="36" cy="36" r="34" fill="rgba(255,255,255,.92)"/><circle cx="36" cy="36" r="24" fill="none" stroke="#E5E7EB" stroke-dasharray="3 3"/><line x1="36" y1="36" x2="15.8" y2="23.1" stroke="#0A6E78" stroke-width="2" stroke-linecap="round"/><circle cx="36" cy="36" r="4.5" fill="#1E88FF" stroke="#fff" stroke-width="2"/><circle cx="15.8" cy="23.1" r="5.5" fill="#0A6E78" stroke="#fff" stroke-width="2"/></svg><b>١.١ كم</b></div>
+          <div class="info"><span class="k"><img src="@@avatar@@" alt="">لحظة · فهد</span><b>فهد على الكورنيش</b><span class="d">قبل ١٢ دقيقة · ٢٤ إعجاباً</span><button class="btn">شاهد</button></div>
+          <span class="fcnt">٤ من ٧</span></section><section class="fitem" data-fi="4"><img class="bg" src="@@p250@@" alt=""><div class="shade"></div>
+          <div class="mini"><svg viewBox="0 0 72 72" width="72" height="72" aria-hidden="true"><circle cx="36" cy="36" r="34" fill="rgba(255,255,255,.92)"/><circle cx="36" cy="36" r="24" fill="none" stroke="#E5E7EB" stroke-dasharray="3 3"/><line x1="36" y1="36" x2="17.6" y2="51.4" stroke="#0A6E78" stroke-width="2" stroke-linecap="round"/><circle cx="36" cy="36" r="4.5" fill="#1E88FF" stroke="#fff" stroke-width="2"/><circle cx="17.6" cy="51.4" r="5.5" fill="#0A6E78" stroke="#fff" stroke-width="2"/></svg><b>١.٤ كم</b></div>
+          <div class="info"><span class="k"><img src="@@p119@@" alt="">سوق · عبدالله</span><b>كاميرا فوجي X-T20</b><span class="d">2,650 ر.س · الحمراء · توصيل</span><button class="btn">اطلب</button></div>
+          <span class="fcnt">٥ من ٧</span></section><section class="fitem" data-fi="5"><img class="bg" src="@@p60@@" alt=""><div class="shade"></div>
+          <div class="mini"><svg viewBox="0 0 72 72" width="72" height="72" aria-hidden="true"><circle cx="36" cy="36" r="34" fill="rgba(255,255,255,.92)"/><circle cx="36" cy="36" r="24" fill="none" stroke="#E5E7EB" stroke-dasharray="3 3"/><line x1="36" y1="36" x2="23.3" y2="56.4" stroke="#0A6E78" stroke-width="2" stroke-linecap="round"/><circle cx="36" cy="36" r="4.5" fill="#1E88FF" stroke="#fff" stroke-width="2"/><circle cx="23.3" cy="56.4" r="5.5" fill="#0A6E78" stroke="#fff" stroke-width="2"/></svg><b>٢.١ كم</b></div>
+          <div class="info"><span class="k"><img src="@@3brews@@" alt="">وظيفة · ثري بروز</span><b>يوظّف باريستا</b><span class="d">دوام جزئي · ٤٬٥٠٠ ر.س · يطابق ملفك ٨٧٪</span><button class="btn">قدّم</button></div>
+          <span class="fcnt">٦ من ٧</span></section><section class="fitem" data-fi="6"><img class="bg" src="@@p274@@" alt=""><div class="shade"></div>
+          <div class="mini"><svg viewBox="0 0 72 72" width="72" height="72" aria-hidden="true"><circle cx="36" cy="36" r="34" fill="rgba(255,255,255,.92)"/><circle cx="36" cy="36" r="24" fill="none" stroke="#E5E7EB" stroke-dasharray="3 3"/><line x1="36" y1="36" x2="50.3" y2="55.3" stroke="#0A6E78" stroke-width="2" stroke-linecap="round"/><circle cx="36" cy="36" r="4.5" fill="#1E88FF" stroke="#fff" stroke-width="2"/><circle cx="50.3" cy="55.3" r="5.5" fill="#0A6E78" stroke="#fff" stroke-width="2"/></svg><b>٣.٤ كم</b></div>
+          <div class="info"><span class="k"><img src="@@p154@@" alt="">فيديو · نورة</span><b>نورة في التحلية</b><span class="d">قبل ساعة · ٠:٠٩</span><button class="btn">شاهد</button></div>
+          <span class="fcnt">٧ من ٧</span></section></div><span class="uph" data-uph>@@i-up@@ اسحب للأعلى</span></div><div class="top"><div class="search glass">@@i-search@@<span style="flex-grow:1">ابحث في جدة</span><span class="tog" data-tog><button class="on" data-form="card" aria-label="بطاقة على الخريطة">@@i-mapsm@@</button><button data-form="full" aria-label="ملء الشاشة">@@i-full@@</button></span><span class="avm"><img src="@@avatar@@" alt=""></span></div></div><nav class="nav pill"><button data-nav="home" class=on>@@i-map@@<span>الخريطة</span></button><button data-nav="circles">@@i-groups@@<span>الدوائر</span></button><button class="c" aria-label="لحظة جديدة">@@i-cam@@</button><button data-nav="chats">@@i-chat@@<span>المحادثات</span></button><button data-nav="me">@@i-me@@<span>ماي سبيس</span></button></nav></div></div></div>
+      <p class="note">الشكلان على الصف نفسه، ومفتاح صغير برمزين في شريط البحث يبدّل بينهما. الموضع محفوظ عند التبديل: إن كنت على البطاقة الثالثة فستفتح الشاشة الثالثة، والعكس. الاختيار يُحفظ في الحساب فلا يُسأل المستخدم شيئاً عند الدخول، والافتراضي للجميع «بطاقة» لأنه يُبقي الخريطة أول ما يُرى. جرّب: اسحب بطاقتين ثم بدّل المفتاح.</p>
+    </section>
   </div>
 
   <div class="tblwrap"><table class="cmp">
-    <thead><tr><th>المعيار</th><th>أ · بطاقة</th><th>ب · شاشة</th></tr></thead>
+    <thead><tr><th>المعيار</th><th>أ · بطاقة</th><th>ب · شاشة</th><th>ج · الاثنان بمفتاح</th></tr></thead>
     <tbody>
-      <tr><th>الإيماءة الوحيدة</th><td>سحب جانبي (أو لمس دبّوس)</td><td>سحب للأعلى</td></tr>
-      <tr><th>ما على الشاشة</th><td>خريطة، بطاقة، عدّاد، بحث</td><td>صورة، بوصلة، بطاقة، بحث</td></tr>
-      <tr><th>وقت التعلّم</th><td>ثوانٍ</td><td><b>صفر</b></td></tr>
-      <tr><th>هوية الخريطة</th><td><b>كاملة</b>: الخريطة تتحرّك مع كل بطاقة</td><td>بوصلة صغيرة؛ الخريطة عند الطلب</td></tr>
-      <tr><th>كم عنصراً يرى المستخدم في دقيقة</th><td>نحو ١٠ إلى ١٥</td><td>نحو ١٥ إلى ٢٠</td></tr>
-      <tr><th>العروض والوظائف والسوق</th><td colspan="2">بطاقات متساوية في الصف نفسه بالترتيب الذكي، بلا أقسام ولا طبقات</td></tr>
-      <tr><th>ما يحتاجه الخادم</th><td colspan="2">مسار واحد: «الصف» (الأقرب والأحدث وما ينتهي قريباً) بحدّ ٣٠ عنصراً، وكل الأنواع موجودة بإحداثياتها ووقتها</td></tr>
-      <tr><th>أثر التنفيذ</th><td>صغير: شاشة واحدة بدل الرئيسية والورقة والتخصيص</td><td>صغير</td></tr>
+      <tr><th>الإيماءة</th><td>سحب جانبي (أو لمس دبّوس)</td><td>سحب للأعلى</td><td>ما يختاره المستخدم</td></tr>
+      <tr><th>ما على الشاشة</th><td>خريطة، بطاقة، عدّاد، بحث</td><td>صورة، بوصلة، بطاقة، بحث</td><td>الشكل المختار + مفتاح برمزين</td></tr>
+      <tr><th>وقت التعلّم</th><td>ثوانٍ</td><td><b>صفر</b></td><td>ثوانٍ، والمفتاح لا يحتاج شرحاً</td></tr>
+      <tr><th>هوية الخريطة</th><td><b>كاملة</b></td><td>بوصلة صغيرة</td><td>كاملة افتراضياً</td></tr>
+      <tr><th>العروض والوظائف والسوق</th><td colspan="3">بطاقات متساوية في الصف نفسه بالترتيب الذكي، بلا أقسام ولا طبقات</td></tr>
+      <tr><th>ما يحتاجه الخادم</th><td colspan="2">مسار واحد: «الصف» بحدّ ٣٠ عنصراً من كل الأنواع</td><td>المسار نفسه + حفظ الاختيار في إعدادات الحساب (موجودة)</td></tr>
+      <tr><th>أثر التنفيذ</th><td>صغير</td><td>صغير</td><td>صغير + يومان للشكل الثاني والمفتاح والاختبارات</td></tr>
+      <tr><th>الخطر</th><td>لا شيء يُذكر</td><td>الخريطة تختفي من الانطباع الأول</td><td>شكلان يُختبران ويُصانان معاً</td></tr>
     </tbody>
   </table></div>
 
   <div class="reco">
     <b>توصيتي</b>
-    <span>«أ · بطاقة» لأنه يحقّق البساطة نفسها ويبقي الخريطة بطلة الشاشة؛ وحركة الخريطة مع كل بطاقة تجعل المستخدم يفهم المكان دون أن يقرأ. إن كان الهدف أوسع جمهور بأقل تعلّم فـ«ب · شاشة». وفي الحالتين نحذف من التطبيق الرئيسية القديمة والورقة والتخصيص ووضع التحرير وطبقات الخريطة، فتقل الشاشات بدل أن تزيد.</span>
+    <span>نعم، التخيير ممكن بلا عودة إلى الازدحام بشرطين: مفتاح واحد في مكان واحد لا يُسأل عنه المستخدم عند الدخول، وافتراضي واحد للجميع هو «بطاقة». الصف والبطاقات والزر واحدة في الشكلين فلا تتضاعف الشاشات، وتبقى كلفة الشكل الثاني يومين تقريباً. وبعد شهر من الإطلاق تخبرنا الأرقام أيهما يُستخدم، فإن هجر الناس أحدهما نحذفه ونعود إلى شكل واحد.</span>
   </div>
 </div>
 
@@ -451,26 +503,27 @@ h1{margin:0;font:800 26px/1.2 var(--font-display);text-wrap:balance}
 
 (function(){
   var D = {"items": [{"pin": "b1", "img": "p63", "logo": "overdose", "kind": "عرض", "who": "أوفردوز", "t": "خصم ٢٠٪ على اللاتيه", "d": "الروضة · للأعضاء · ينتهي الليلة", "dist": "٦٥٠ م", "act": "استخدم"}, {"pin": "m2", "img": "p184", "logo": "p26", "kind": "لحظة", "who": "سارة", "t": "سارة في الروضة", "d": "قبل ٢٥ دقيقة · ١٢ إعجاباً", "dist": "٨٠٠ م", "act": "شاهد"}, {"pin": "b2", "img": "p42", "logo": "halfmillion", "kind": "فعالية", "who": "هاف مليون", "t": "بازار الحي", "d": "حديقة الشاطئ · اليوم ٥ م · ١٢ طاولة", "dist": "٩٠٠ م", "act": "تذكرة"}, {"pin": "m1", "img": "p16", "logo": "avatar", "kind": "لحظة", "who": "فهد", "t": "فهد على الكورنيش", "d": "قبل ١٢ دقيقة · ٢٤ إعجاباً", "dist": "١.١ كم", "act": "شاهد"}, {"pin": "m4", "img": "p250", "logo": "p119", "kind": "سوق", "who": "عبدالله", "t": "كاميرا فوجي X-T20", "d": "2,650 ر.س · الحمراء · توصيل", "dist": "١.٤ كم", "act": "اطلب"}, {"pin": "b3", "img": "p60", "logo": "3brews", "kind": "وظيفة", "who": "ثري بروز", "t": "يوظّف باريستا", "d": "دوام جزئي · ٤٬٥٠٠ ر.س · يطابق ملفك ٨٧٪", "dist": "٢.١ كم", "act": "قدّم"}, {"pin": "m3", "img": "p274", "logo": "p154", "kind": "فيديو", "who": "نورة", "t": "نورة في التحلية", "d": "قبل ساعة · ٠:٠٩", "dist": "٣.٤ كم", "act": "شاهد"}], "pos": {"m1": [78, 30], "m2": [40, 58], "m3": [30, 79], "m4": [62, 49], "m5": [52, 66], "b1": [42, 68], "b2": [26, 36], "b3": [66, 60], "b4": [20, 50]}, "me": [56, 44]};
-  var slots = {a:'s-a', b:'s-b'};
+  var slots = {a:'s-a', b:'s-b', c:'s-c'};
   function go(id){
     Object.keys(slots).forEach(function(k){ document.getElementById(slots[k]).classList.toggle('active', k===id); });
     document.querySelectorAll('#seg button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-go')===id); });
     if (window.innerWidth <= 1250) window.scrollTo({top:0, behavior:'smooth'});
     try { localStorage.setItem('nl-one-concept', id); } catch(e){}
+    setTimeout(function(){ window.dispatchEvent(new Event('resize')); }, 60);   // الخريطة المخفية تعيد التركيز بعد الظهور
   }
   document.querySelectorAll('#seg button').forEach(function(b){ b.addEventListener('click', function(){ go(b.getAttribute('data-go')); }); });
   var saved = null; try { saved = localStorage.getItem('nl-one-concept'); } catch(e){}
   if (saved && slots[saved]) go(saved);
   var AR = '٠١٢٣٤٥٦٧٨٩'; function ar(n){ return String(n).replace(/\d/g, function(d){ return AR[+d]; }); }
 
-  // ---- أ · بطاقة
-  (function(){
-    var root = document.querySelector('[data-concept=a]'); if(!root) return;
+  // ---- البطاقة على الخريطة (تُستخدم في أ و ج)
+  function initDeck(root, slotId){
     var map = root.querySelector('.map'), cam = root.querySelector('[data-cam]'), card = root.querySelector('[data-dcard]');
     var S = 1.5, i = 0, srcs = {};
     root.querySelectorAll('.pin img,.plabel img').forEach(function(im){ srcs[im.parentNode.getAttribute('data-id')] = im.src; });
     function focus(pin){
       var W = map.clientWidth, H = map.clientHeight, p = D.pos[pin];
+      if (!W || !H) return;
       var px = W - W*p[0]/100, py = H*p[1]/100, cx = W/2, cy = H/2, tx = W/2, ty = H*0.33;
       var dx = tx - cx - (px - cx)*S, dy = ty - cy - (py - cy)*S;
       cam.style.transform = 'translate('+dx+'px,'+dy+'px) scale('+S+')';
@@ -510,15 +563,34 @@ h1{margin:0;font:800 26px/1.2 var(--font-display);text-wrap:balance}
       var id = p.getAttribute('data-id'); var j = -1; D.items.forEach(function(it, k){ if (it.pin===id && j<0) j = k; });
       if (j >= 0 && j !== i) goTo(j, j > i ? -1 : 1);
     }); });
-    document.addEventListener('keydown', function(e){ if (!document.getElementById('s-a').classList.contains('active')) return; if (e.key==='ArrowLeft') goTo(i+1, -1); if (e.key==='ArrowRight') goTo(i-1, 1); });
+    document.addEventListener('keydown', function(e){ if (!document.getElementById(slotId).classList.contains('active') || root.offsetParent===null) return; if (e.key==='ArrowLeft') goTo(i+1, -1); if (e.key==='ArrowRight') goTo(i-1, 1); });
     fill(); window.addEventListener('resize', function(){ focus(D.items[i].pin); }); setTimeout(function(){ focus(D.items[i].pin); }, 350);
-  })();
-
-  // ---- ب · شاشة
-  (function(){
-    var root = document.querySelector('[data-concept=b]'); if(!root) return;
+    return { index: function(){ return i; }, jump: function(j){ i = (j + D.items.length) % D.items.length; fill(); }, refocus: function(){ focus(D.items[i].pin); } };
+  }
+  // ---- ملء الشاشة (تُستخدم في ب و ج)
+  function initFeed(root){
     var feed = root.querySelector('[data-feed]'), hint = root.querySelector('[data-uph]');
     feed.addEventListener('scroll', function(){ hint.classList.toggle('gone', feed.scrollTop > 40); }, {passive:true});
-  })();
+    return { index: function(){ return Math.round(feed.scrollTop / (feed.clientHeight || 1)); }, show: function(j){ feed.scrollTop = j * feed.clientHeight; hint.classList.toggle('gone', j > 0); } };
+  }
+
+  var a = document.querySelector('[data-concept=a]'); if (a) initDeck(a, 's-a');
+  var b = document.querySelector('[data-concept=b]'); if (b) initFeed(b);
+
+  // ---- ج · المفتاح: شكلان على الصف نفسه، والموضع محفوظ، والاختيار يُتذكّر
+  var c = document.querySelector('[data-concept=c]');
+  if (c) {
+    var cardMode = c.querySelector('[data-mode=card]'), fullMode = c.querySelector('[data-mode=full]');
+    var deck = initDeck(cardMode, 's-c'), feed = initFeed(fullMode);
+    function form(f){
+      c.querySelectorAll('[data-form]').forEach(function(x){ x.classList.toggle('on', x.getAttribute('data-form')===f); });
+      if (f === 'full') { var j = deck.index(); fullMode.hidden = false; cardMode.hidden = true; feed.show(j); }
+      else { var k = feed.index(); cardMode.hidden = false; fullMode.hidden = true; deck.jump(k); requestAnimationFrame(function(){ deck.refocus(); }); }
+      try { localStorage.setItem('nl-one-form', f); } catch(e){}
+    }
+    c.querySelectorAll('[data-form]').forEach(function(x){ x.addEventListener('click', function(){ form(x.getAttribute('data-form')); }); });
+    var sf = null; try { sf = localStorage.getItem('nl-one-form'); } catch(e){}
+    if (sf === 'full') form('full');
+  }
 })();
 </script>
