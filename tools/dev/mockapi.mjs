@@ -792,6 +792,39 @@ function offersMapRoute(req, res, url, key) {
   if (key === 'GET /offers/near') return json(200, { items: MOCK_MAP_OFFERS, located: url.searchParams.has('lat') });
   return false;
 }
+// ---- حجز الفنادق (server/hotels.js) وهمياً: هيلتون جدة مربوط بفندق Amadeus تجريبي، عرضان، حجز يعيد تأكيداً
+const hotelState = { cfg: { clientId: 'MockClientId0001', clientSecret: 'MockSecret000001', env: 'test' }, links: { 'biz-hilton': { hotelId: 'HLJEDHIL', hotelName: 'Hilton Jeddah', cityCode: 'JED' } }, bookings: [] };
+const hotelCfgOut = () => { const c = hotelState.cfg; const on = !!(c.clientId && c.clientSecret); return { configured: on, env: c.env || 'test', source: on ? 'panel' : null, clientIdSet: on, clientIdHint: on ? c.clientId.slice(0, 3) + '…' + c.clientId.slice(-4) : '', secretSet: on, secretHint: on ? c.clientSecret.slice(0, 3) + '…' + c.clientSecret.slice(-4) : '', panelSet: on, envPresent: false, updatedAt: now, updatedBy: 'SA0000001', linked: Object.keys(hotelState.links).length, bookings: hotelState.bookings.length }; };
+const hotelOffer = (id, room, bed, total, cancel, nights) => ({ id, roomName: room, roomCode: 'A1K', bedType: bed, beds: 1, description: 'إطلالة على البحر الأحمر، 42 م²', boardType: 'مع الإفطار', total: total * 100, currency: 'SAR', totalText: total.toLocaleString('en-US') + ' ر.س', perNightText: Math.round(total / nights).toLocaleString('en-US') + ' ر.س/ليلة', refundable: cancel, cancelBy: cancel ? new Date(Date.now() + 86400000).toISOString() : null, cancelText: cancel ? 'إلغاء مجاني حتى الغد' : 'غير قابل للاسترداد', paymentType: 'guarantee', paymentText: 'بطاقة ضمان؛ الدفع في الفندق', guests: 2 });
+function hotelRoute(req, res, url, key) {
+  const json = (code, body) => { console.log(key, url.search, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+  const readBody = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => cb(JSON.parse(raw || '{}'))); };
+  const on = !!(hotelState.cfg.clientId && hotelState.cfg.clientSecret), env = hotelState.cfg.env || 'test';
+  if (key === 'GET /hotel/status') return json(200, { ok: true, configured: on, env: on ? env : null, source: on ? 'panel' : null, linked: Object.keys(hotelState.links).length, testCard: on && env === 'test' ? { vendorCode: 'VI', number: '4151289722471370', expiry: '2028-08', holderName: 'TEST GUEST' } : null });
+  if (key === 'GET /hotel/bookings/mine') return json(200, hotelState.bookings);
+  let m = url.pathname.match(/^\/biz\/([^/]+)\/hotel(\/(offers|book|link))?$/);
+  if (m) {
+    const bizId = m[1], link = hotelState.links[bizId], sub = m[3];
+    if (req.method === 'GET' && !sub) return json(200, link ? { linked: true, bizId, ...link, env, configured: on } : { linked: false });
+    if (req.method === 'GET' && sub === 'offers') {
+      if (!on) return json(503, { error: 'hotel-disabled' }); if (!link) return json(404, { error: 'not-linked' });
+      const ci = url.searchParams.get('checkIn'), co = url.searchParams.get('checkOut'); const nights = Math.max(1, Math.round((Date.parse(co) - Date.parse(ci)) / 86400000));
+      if (!ci || !co || nights < 1) return json(400, { error: 'bad-dates' });
+      const empty = url.searchParams.get('adults') === '9';
+      return json(200, { hotel: { hotelId: link.hotelId, name: link.hotelName, cityCode: link.cityCode }, checkIn: ci, checkOut: co, nights, adults: Number(url.searchParams.get('adults') || 2), rooms: Number(url.searchParams.get('rooms') || 1), currency: 'SAR', env, available: !empty, offers: empty ? [] : [hotelOffer('MOCK-DLX', 'غرفة ديلوكس', 'سرير كينغ', 690 * nights, true, nights), hotelOffer('MOCK-SUI', 'جناح', 'سرير كينغ', 1450 * nights, false, nights)] });
+    }
+    if (req.method === 'POST' && sub === 'book') { readBody((b) => { if (!on) return json(503, { error: 'hotel-disabled' }); if (!link) return json(404, { error: 'not-linked' }); if (b.offerId === 'MOCK-SUI') return json(409, { error: 'offer-unavailable', message: 'sold out' }); const bk = { id: 'hb-' + (hotelState.bookings.length + 1), bizId, bizName: 'هيلتون جدة', hotelId: link.hotelId, hotelName: link.hotelName, orderId: 'ORD' + Date.now().toString().slice(-5), confirmation: 'CONF-' + Math.random().toString(36).slice(2, 6).toUpperCase(), status: 'confirmed', checkIn: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10), checkOut: new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10), nights: 2, adults: 2, rooms: 1, roomName: 'غرفة ديلوكس', total: 138000, currency: 'SAR', totalText: '1,380 ر.س', guestName: `${b.guest?.firstName ?? ''} ${b.guest?.lastName ?? ''}`.trim(), guestEmail: b.guest?.email ?? '', cancelText: 'إلغاء مجاني حتى الغد', env, upcoming: true, createdAt: new Date().toISOString() }; hotelState.bookings.unshift(bk); json(200, bk); }); return true; }
+    if (req.method === 'PUT' && sub === 'link') { readBody((b) => { hotelState.links[bizId] = { hotelId: String(b.hotelId || '').toUpperCase(), hotelName: b.hotelName || 'فندق', cityCode: (b.cityCode || 'JED').toUpperCase() }; json(200, { linked: true, bizId, ...hotelState.links[bizId], env, configured: on }); }); return true; }
+    if (req.method === 'DELETE' && sub === 'link') { delete hotelState.links[bizId]; return json(200, { ok: true }); }
+  }
+  if (key === 'GET /adminapi/hotels/config') return json(200, hotelCfgOut());
+  if (key === 'PUT /adminapi/hotels/config') { readBody((b) => { for (const f of ['clientId', 'clientSecret', 'env']) if (b[f] !== undefined) hotelState.cfg[f] = String(b[f]); json(200, hotelCfgOut()); }); return true; }
+  if (key === 'POST /adminapi/hotels/test') return json(200, on ? { ok: true, env, source: 'panel', expiresIn: 1799 } : { ok: false, error: 'hotel-disabled', env: null, source: null });
+  if (key === 'GET /adminapi/hotels/search') { const q = (url.searchParams.get('q') || '').toLowerCase(); const all = [{ hotelId: 'HLJEDHIL', name: 'Hilton Jeddah', lat: 21.57, lng: 39.11, distanceKm: 2.3 }, { hotelId: 'PHJEDPRK', name: 'Park Hyatt Jeddah', lat: 21.55, lng: 39.14, distanceKm: 3.1 }, { hotelId: 'RTJEDRIT', name: 'The Ritz-Carlton Jeddah', lat: 21.52, lng: 39.17, distanceKm: 4 }]; return json(200, { hotels: all.filter((h) => !q || h.name.toLowerCase().includes(q)) }); }
+  if (key === 'GET /adminapi/hotels/links') return json(200, Object.entries(hotelState.links).map(([bizId, l]) => ({ bizId, bizName: bizId === 'biz-hilton' ? 'هيلتون جدة' : bizId, ...l, createdAt: now })));
+  return false;
+}
+
 // ---- «القناة الحية» (server/live.js): انتظار طويل على /live/wait؛ الوهمي يبث لحظة مزيّفة كل 40 ثانية ليُرى الخط الزمني والصف يتحدّثان وحدهما
 const live = { seq: 0, events: [], waiters: new Set() };
 function liveEmit(kind, data) { const ev = { seq: ++live.seq, kind, at: new Date().toISOString(), data }; live.events.push(ev); if (live.events.length > 300) live.events.shift(); for (const w of [...live.waiters]) { live.waiters.delete(w); w(); } }
@@ -959,6 +992,7 @@ http.createServer((req, res) => {
   if (url.pathname === '/offers/map' || url.pathname === '/offers/near') { if (offersMapRoute(req, res, url, key)) return; }
   if (url.pathname === '/row' || url.pathname === '/row/status') { if (rowRoute(req, res, url, key)) return; } // ---- الصف
   if (url.pathname === '/live/wait' || url.pathname === '/live/status') { if (liveRoute(req, res, url, key)) return; } // ---- القناة الحية
+  if (url.pathname.startsWith('/hotel/') || url.pathname.startsWith('/adminapi/hotels') || /^\/biz\/[^/]+\/hotel(\/|$)/.test(url.pathname)) { if (hotelRoute(req, res, url, key)) return; } // ---- حجز الفنادق
   // ---- jobs (public+admin) start
   if (/^\/(jobs\/hiring|jobs(\/[0-9a-f-]{36})?(\/apply)?|biz\/[^/]+\/jobs|adminapi\/jobs(\/.*)?)$/.test(url.pathname) && jobsPublicRoute(req, res, url, key)) return;
   // ---- jobs (public+admin) end
