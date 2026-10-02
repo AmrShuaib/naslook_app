@@ -2,7 +2,7 @@ import 'client.dart';
 import 'commerce_models.dart' show money;
 import 'models.dart' show asList, asMap;
 
-// حجز الفنادق عبر Amadeus (server/hotels.js): دائرة فندقية مرتبطة بفندق حقيقي، عروض بأسعار اليوم، وحجز ببطاقة ضمان
+// حجز الفنادق عبر Nuitee Connect (LiteAPI) (server/hotels.js): دائرة فندقية مرتبطة بفندق حقيقي، عروض بأسعار اليوم، وحجز بلا بطاقة ضيف
 // تُمرَّر إلى الفندق ولا تُخزَّن. التواريخ على السلك نص YYYY-MM-DD.
 
 String _s(Map m, String k, [String d = '']) => m[k]?.toString() ?? d;
@@ -21,7 +21,7 @@ DateTime? parseHotelDate(String? s) {
   return DateTime(y, m, d);
 }
 
-/// ربط الدائرة بفندق لدى Amadeus (`GET /biz/:id/hotel`).
+/// ربط الدائرة بفندق لدى LiteAPI (`GET /biz/:id/hotel`).
 class HotelLink {
   final bool linked, configured;
   final String bizId, hotelId, hotelName, cityCode, env;
@@ -108,13 +108,15 @@ class HotelStatus {
   final String env, source;
   final int linked;
   final HotelTestCard? testCard;
-  const HotelStatus({this.ok = false, this.configured = false, this.env = '', this.source = '', this.linked = 0, this.testCard});
+  /// هل يطلب المزوّد بطاقة الضيف؟ LiteAPI لا يطلبها (الاختبار يُحاكي الدفع والحي يحصّل عبر ناس لايف)
+  final bool cardRequired;
+  const HotelStatus({this.ok = false, this.configured = false, this.env = '', this.source = '', this.linked = 0, this.testCard, this.cardRequired = true});
   factory HotelStatus.fromJson(Map m) => HotelStatus(
-        ok: m['ok'] == true, configured: m['configured'] == true, env: _s(m, 'env'), source: _s(m, 'source'), linked: _i(m['linked']), testCard: m['testCard'] is Map ? HotelTestCard.fromJson(asMap(m['testCard'])) : null);
+        ok: m['ok'] == true, configured: m['configured'] == true, env: _s(m, 'env'), source: _s(m, 'source'), linked: _i(m['linked']), testCard: m['testCard'] is Map ? HotelTestCard.fromJson(asMap(m['testCard'])) : null, cardRequired: m['cardRequired'] != false);
   bool get isTest => env == 'test';
 }
 
-/// إعدادات Amadeus من لوحة الإدارة (المعرّف والسر لا يُعادان؛ تلميح فقط).
+/// إعدادات LiteAPI من لوحة الإدارة (المفتاح لا يُعاد؛ تلميح فقط).
 class HotelAdminConfig {
   final bool configured, clientIdSet, secretSet, panelSet, envPresent;
   /// false حين لا يعرض الخادم مسار الفنادق أصلاً (الإضافة غير منشورة أو خطأ)؛ البطاقة تعرض «غير مفعّل» بلا رمي.
@@ -132,7 +134,7 @@ class HotelAdminConfig {
         linked: _i(m['linked']), bookings: _i(m['bookings']));
 }
 
-/// نتيجة فحص الاتصال بـ Amadeus.
+/// نتيجة فحص الاتصال بـ LiteAPI.
 class HotelTestResult {
   final bool ok;
   final String env, source, error, message;
@@ -164,23 +166,23 @@ extension HotelApi on ApiClient {
   Future<HotelOffers> hotelOffers(String bizId, {required String checkIn, required String checkOut, int adults = 2, int rooms = 1}) async =>
       HotelOffers.fromJson(await get('/biz/$bizId/hotel/offers', query: {'checkIn': checkIn, 'checkOut': checkOut, 'adults': '$adults', 'rooms': '$rooms'}));
   /// البطاقة تُمرَّر إلى الفندق ضماناً ولا تُخزَّن لدينا.
+  /// البطاقة اختيارية: تُرسل فقط حين يطلبها المزوّد (`HotelStatus.cardRequired`)
   Future<HotelBooking> hotelBook(String bizId, {
     required String offerId, required String title, required String firstName, required String lastName, required String phone, required String email,
-    required String vendorCode, required String cardNumber, required String expiry, required String holderName,
+    String? vendorCode, String? cardNumber, String? expiry, String? holderName,
   }) async =>
       HotelBooking.fromJson(await post('/biz/$bizId/hotel/book', {
         'offerId': offerId,
         'guest': {'title': title, 'firstName': firstName.trim(), 'lastName': lastName.trim(), 'phone': phone.trim(), 'email': email.trim()},
-        'card': {'vendorCode': vendorCode, 'number': cardNumber.replaceAll(RegExp(r'\s+'), ''), 'expiry': expiry.trim(), 'holderName': holderName.trim()},
+        if (cardNumber != null && cardNumber.trim().isNotEmpty) 'card': {'vendorCode': vendorCode ?? 'VI', 'number': cardNumber.replaceAll(RegExp(r'\s+'), ''), 'expiry': (expiry ?? '').trim(), 'holderName': (holderName ?? '').trim()},
       }));
   Future<List<HotelBooking>> myHotelBookings() async => asList(await getList('/hotel/bookings/mine')).map(HotelBooking.fromJson).toList();
   Future<HotelBooking> hotelBooking(String id) async => HotelBooking.fromJson(await get('/hotel/bookings/$id'));
 
   // ---- الإدارة: حقل غير مرسل يبقى، وحقل فارغ يُمسح
   Future<HotelAdminConfig> adminHotelConfig() async => HotelAdminConfig.fromJson(await get('/adminapi/hotels/config'));
-  Future<HotelAdminConfig> adminSaveHotelConfig({String? clientId, String? clientSecret, String? env}) async => HotelAdminConfig.fromJson(await put('/adminapi/hotels/config', {
-        if (clientId != null) 'clientId': clientId.trim(),
-        if (clientSecret != null) 'clientSecret': clientSecret.trim(),
+  Future<HotelAdminConfig> adminSaveHotelConfig({String? apiKey, String? env}) async => HotelAdminConfig.fromJson(await put('/adminapi/hotels/config', {
+        if (apiKey != null) 'apiKey': apiKey.trim(),
         if (env != null) 'env': env,
       }));
   Future<HotelTestResult> adminTestHotel() async => HotelTestResult.fromJson(await post('/adminapi/hotels/test', const {}));

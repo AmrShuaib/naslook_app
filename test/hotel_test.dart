@@ -1,5 +1,5 @@
-// حجز الفنادق عبر Amadeus: بطاقة الدخول في الدائرة الفندقية المرتبطة، رحلة الحجز الثلاثية (التواريخ والغرف ← التأكيد
-// ببطاقة الاختبار ← تم الحجز)، قسم «حجوزات الفنادق» في حجوزاتي، وبطاقة Amadeus في إعدادات الإدارة (المفاتيح والربط).
+// حجز الفنادق عبر Nuitee Connect (LiteAPI): بطاقة الدخول في الدائرة الفندقية المرتبطة، رحلة الحجز الثلاثية (التواريخ والغرف ←
+// التأكيد بلا بطاقة ضيف ← تم الحجز)، قسم «حجوزات الفنادق» في حجوزاتي، وبطاقة LiteAPI في إعدادات الإدارة (المفتاح والربط).
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -63,7 +63,7 @@ class _Srv {
     switch (key) {
       case 'GET /biz/$_bizId': return _json(_biz());
       case 'GET /biz/$_bizId/hotel': return _json(linked ? {'linked': true, 'bizId': _bizId, 'hotelId': _hotelId, 'hotelName': 'Hilton Jeddah', 'cityCode': 'JED', 'env': 'test', 'configured': true} : {'linked': false});
-      case 'GET /hotel/status': return _json({'ok': true, 'configured': true, 'env': 'test', 'source': 'panel', 'linked': 1, 'testCard': {'vendorCode': 'VI', 'number': '4151289722471370', 'expiry': '2028-08', 'holderName': 'TEST GUEST'}});
+      case 'GET /hotel/status': return _json({'ok': true, 'provider': 'liteapi', 'configured': true, 'env': 'test', 'source': 'panel', 'linked': 1, 'cardRequired': false, 'testCard': null});
       case 'GET /biz/$_bizId/hotel/offers':
         return _json({'hotel': {'hotelId': _hotelId, 'name': 'Hilton Jeddah', 'cityCode': 'JED'}, 'checkIn': q['checkIn'], 'checkOut': q['checkOut'], 'nights': 2, 'adults': int.parse(q['adults']!), 'rooms': int.parse(q['rooms']!), 'currency': 'SAR', 'env': 'test',
           'available': !noOffers, 'offers': noOffers ? [] : [_offer()]});
@@ -82,9 +82,9 @@ class _Srv {
       case 'GET /adminapi/hotels/config': return _json(hotelCfg);
       case 'PUT /adminapi/hotels/config':
         final b = bodies[key]!;
-        if ('${b['clientId'] ?? ''}${b['clientSecret'] ?? ''}'.contains('*')) return _json({'error': 'masked-key'}, 400);
-        final on = (b['clientId'] ?? '') != '' && (b['clientSecret'] ?? '') != '';
-        hotelCfg = {'configured': on, 'env': b['env'] ?? hotelCfg['env'], 'source': on ? 'panel' : null, 'clientIdSet': on, 'clientIdHint': on ? 'AbC…456' : '', 'secretSet': on, 'secretHint': on ? 'sEc…654' : '', 'panelSet': on, 'envPresent': false, 'updatedAt': DateTime.now().toUtc().toIso8601String(), 'updatedBy': 'SA0000001', 'linked': links.length, 'bookings': 0};
+        if ('${b['apiKey'] ?? ''}'.contains('*')) return _json({'error': 'masked-key'}, 400);
+        final on = (b['apiKey'] ?? '') != '';
+        hotelCfg = {'configured': on, 'env': b['env'] ?? hotelCfg['env'], 'source': on ? 'panel' : null, 'secretSet': on, 'secretHint': on ? 'sEcR…7654' : '', 'panelSet': on, 'envPresent': false, 'updatedAt': DateTime.now().toUtc().toIso8601String(), 'updatedBy': 'SA0000001', 'linked': links.length, 'bookings': 0};
         return _json(hotelCfg);
       case 'POST /adminapi/hotels/test': return _json(hotelCfg['configured'] == true ? {'ok': true, 'env': hotelCfg['env'], 'source': 'panel', 'expiresIn': 1799} : {'ok': false, 'error': 'hotel-disabled', 'env': 'test', 'source': null});
       case 'GET /adminapi/hotels/search': return _json({'hotels': [{'hotelId': _hotelId, 'name': 'Hilton Jeddah', 'lat': 21.6, 'lng': 39.1, 'distanceKm': 2.3}]});
@@ -147,6 +147,8 @@ void main() {
     expect(b.isTest, isTrue);
     expect(HotelLink.fromJson(const {'linked': false}).linked, isFalse);
     expect(HotelStatus.fromJson(const {'ok': true, 'configured': true, 'env': 'live'}).testCard, isNull);
+    expect(HotelStatus.fromJson(const {'ok': true}).cardRequired, isTrue);
+    expect(HotelStatus.fromJson(const {'ok': true, 'cardRequired': false}).cardRequired, isFalse);
     expect(HotelAdminConfig.fromJson(const {}).env, 'test');
   });
 
@@ -203,10 +205,10 @@ void main() {
     expect(find.text('3 بالغين · غرفة واحدة'), findsOneWidget);
     expect(find.text('1,250 ر.س'), findsOneWidget);
     expect(find.textContaining('بطاقة ضمان؛ الدفع في الفندق'), findsOneWidget);
-    expect(find.byKey(const Key('hotel-test-chip')), findsOneWidget);
-    expect(tester.widget<TextField>(find.byKey(const Key('hotel-card-number'))).controller!.text, '4151289722471370');
-    expect(tester.widget<TextField>(find.byKey(const Key('hotel-card-expiry'))).controller!.text, '2028-08');
-    expect(tester.widget<TextField>(find.byKey(const Key('hotel-card-holder'))).controller!.text, 'TEST GUEST');
+    // المزوّد لا يطلب بطاقة ضيف: لا نموذج بطاقة، وسطر يوضح ذلك
+    expect(find.byKey(const Key('hotel-no-card')), findsOneWidget);
+    expect(find.byKey(const Key('hotel-card-number')), findsNothing);
+    expect(find.byKey(const Key('hotel-test-chip')), findsNothing);
     expect(tester.widget<TextField>(find.byKey(const Key('hotel-first'))).controller!.text, 'amr'); // من الملف الشخصي
     await _fillGuest(tester);
     await tester.tap(find.byKey(const Key('hotel-book')));
@@ -214,7 +216,7 @@ void main() {
     final body = srv.bodies['POST /biz/$_bizId/hotel/book']!;
     expect(body['offerId'], 'OFF1');
     expect(body['guest'], {'title': 'MR', 'firstName': 'Amr', 'lastName': 'Shuaib', 'phone': '+966500000000', 'email': 'amr@example.com'});
-    expect(body['card'], {'vendorCode': 'VI', 'number': '4151289722471370', 'expiry': '2028-08', 'holderName': 'TEST GUEST'});
+    expect(body.containsKey('card'), isFalse, reason: 'لا بطاقة تُرسل حين لا يطلبها المزوّد');
     // تم الحجز: رقم التأكيد والحالة
     expect(find.byKey(const Key('hotel-done')), findsOneWidget);
     expect(find.byKey(const Key('hotel-confirm')), findsNothing);
@@ -281,17 +283,17 @@ void main() {
     await _pump(tester, srv, const Scaffold(body: AdminSettingsPage()), size: const Size(700, 3400));
     expect(find.textContaining('غير مفعّل:'), findsOneWidget);
     expect(find.byKey(const Key('hotel-clear')), findsNothing);
-    // حفظ المعرّف والسر والبيئة الحية
-    await tester.enterText(find.byKey(const Key('hotel-id')), ' AbCdEf123456 ');
-    await tester.enterText(find.byKey(const Key('hotel-secret')), 'sEcReT987654');
+    // حفظ المفتاح والبيئة الحية
+    expect(find.byKey(const Key('hotel-id')), findsNothing, reason: 'مفتاح واحد فقط');
+    await tester.enterText(find.byKey(const Key('hotel-secret')), ' sEcReT987654 ');
     await tester.tap(find.byKey(const Key('hotel-env-live')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('hotel-save')));
     await tester.pumpAndSettle();
-    expect(srv.bodies['PUT /adminapi/hotels/config'], {'clientId': 'AbCdEf123456', 'clientSecret': 'sEcReT987654', 'env': 'live'});
+    expect(srv.bodies['PUT /adminapi/hotels/config'], {'apiKey': 'sEcReT987654', 'env': 'live'});
     expect(find.textContaining('البيئة الحية'), findsWidgets);
-    expect(find.textContaining('AbC…456'), findsOneWidget); // تلميح فقط، لا المعرّف كاملاً
-    expect(find.text('AbCdEf123456'), findsNothing);
+    expect(find.textContaining('sEcR…7654'), findsOneWidget); // تلميح فقط، لا المفتاح كاملاً
+    expect(find.text('sEcReT987654'), findsNothing);
     expect(find.byKey(const Key('hotel-clear')), findsOneWidget);
     // سر منسوخ مقنّعاً → يُكتشف محلياً بلا طلب
     srv.bodies.remove('PUT /adminapi/hotels/config');
@@ -300,7 +302,7 @@ void main() {
     expect(find.textContaining('منسوخ مقنّعاً: فيه نجوم'), findsOneWidget);
     await tester.tap(find.byKey(const Key('hotel-save')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('اضغط «Show»'), findsOneWidget);
+    expect(find.textContaining('أيقونة الإظهار'), findsOneWidget);
     expect(srv.bodies['PUT /adminapi/hotels/config'], isNull);
     // فحص الاتصال
     await tester.tap(find.byKey(const Key('hotel-test')));

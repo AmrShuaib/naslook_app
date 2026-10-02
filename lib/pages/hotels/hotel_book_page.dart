@@ -13,7 +13,7 @@ import '../../ui/widgets.dart';
 import '../business/business_page.dart' show dayLabel, shortDate;
 import '../business/my_bookings_page.dart';
 
-// رحلة «واحد» لحجز غرفة فندقية عبر Amadeus: بطاقة في الدائرة ← شاشة التواريخ والغرف ← تأكيد ← تذكرة.
+// رحلة «واحد» لحجز غرفة فندقية عبر Nuitee Connect (LiteAPI): بطاقة في الدائرة ← شاشة التواريخ والغرف ← تأكيد ← تذكرة.
 // هادئة وقليلة العناصر: زر رئيسي واحد في كل شاشة، صفوف مفتاح/قيمة، وكتلة «تم» بعلامة صح (نموذج التدفقات المعتمد).
 
 /// أسماء المسارات الثلاثة: «العودة إلى الدائرة» تُسقط كل ما يبدأ بـ hotel- فتعود إلى الصفحة التي بدأت الرحلة.
@@ -53,7 +53,7 @@ String _dateText(String ymd) {
   return day == 'اليوم' || day == 'غداً' ? '$day · ${shortDate(d)}' : day;
 }
 
-/// شارة صغيرة «بيئة اختبار» حين يكون مفتاح Amadeus تجريبياً (لا حجز حقيقي).
+/// شارة صغيرة «بيئة اختبار» حين يكون مفتاح المزوّد تجريبياً (لا حجز حقيقي).
 class _TestChip extends StatelessWidget {
   final String text;
   const _TestChip({super.key, this.text = 'بيئة اختبار'});
@@ -122,7 +122,7 @@ class _Stepper extends StatelessWidget {
 
 // ------------------------------------------------------------------ بطاقة الدخول في صفحة الدائرة
 
-/// بطاقة بارزة في الدائرة الفندقية المرتبطة بفندق لدى Amadeus؛ غير المرتبطة لا تعرض شيئاً (غرف الكتالوج تبقى كما هي).
+/// بطاقة بارزة في الدائرة الفندقية المرتبطة بفندق لدى LiteAPI؛ غير المرتبطة لا تعرض شيئاً (غرف الكتالوج تبقى كما هي).
 class HotelEntryCard extends ConsumerWidget {
   final Biz biz;
   const HotelEntryCard({super.key, required this.biz});
@@ -372,6 +372,8 @@ class _ConfirmPage extends ConsumerStatefulWidget {
 }
 
 class _ConfirmPageState extends ConsumerState<_ConfirmPage> {
+  /// من `/hotel/status`؛ true افتراضياً حتى يصل الرد
+  bool cardRequired = true;
   final first = TextEditingController(), last = TextEditingController(), phone = TextEditingController(), email = TextEditingController();
   final cardNumber = TextEditingController(), cardExpiry = TextEditingController(), cardHolder = TextEditingController();
   String title = 'MR', vendor = 'VI';
@@ -404,6 +406,7 @@ class _ConfirmPageState extends ConsumerState<_ConfirmPage> {
     if (first.text.trim().isEmpty || last.text.trim().isEmpty) return 'اكتب الاسم الأول واسم العائلة';
     if (phone.text.trim().length < 7) return 'اكتب رقم الجوال';
     if (!email.text.contains('@')) return 'اكتب بريداً إلكترونياً صحيحاً';
+    if (!cardRequired) return null;
     final n = cardNumber.text.replaceAll(RegExp(r'\s+'), '');
     if (n.length < 12 || n.length > 19 || !RegExp(r'^\d+$').hasMatch(n)) return 'رقم البطاقة غير صحيح';
     if (!RegExp(r'^\d{4}-\d{2}$').hasMatch(cardExpiry.text.trim())) return 'تاريخ الانتهاء بصيغة YYYY-MM مثل 2028-08';
@@ -420,7 +423,7 @@ class _ConfirmPageState extends ConsumerState<_ConfirmPage> {
     try {
       final b = await ref.read(apiClientProvider).hotelBook(widget.bizId,
           offerId: widget.offer.id, title: title, firstName: first.text, lastName: last.text, phone: phone.text, email: email.text,
-          vendorCode: vendor, cardNumber: cardNumber.text, expiry: cardExpiry.text, holderName: cardHolder.text);
+          vendorCode: cardRequired ? vendor : null, cardNumber: cardRequired ? cardNumber.text : null, expiry: cardRequired ? cardExpiry.text : null, holderName: cardRequired ? cardHolder.text : null);
       ref.invalidate(myHotelBookingsProvider);
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(settings: const RouteSettings(name: _routeDone), builder: (_) => _DonePage(booking: b, title: widget.title)));
@@ -434,8 +437,9 @@ class _ConfirmPageState extends ConsumerState<_ConfirmPage> {
   @override
   Widget build(BuildContext context) {
     final s = widget.search, o = widget.offer;
-    // بطاقة الاختبار من الخادم (بيئة الاختبار فقط) تُعبّأ مرة واحدة
+    // بطاقة الاختبار من الخادم (بيئة الاختبار فقط) تُعبّأ مرة واحدة؛ ومزوّد لا يطلب بطاقة يخفي النموذج كله
     final status = ref.watch(hotelStatusProvider).valueOrNull;
+    cardRequired = status?.cardRequired ?? true;
     final test = status?.testCard;
     if (test != null && !cardPrefilled) {
       cardPrefilled = true;
@@ -489,6 +493,10 @@ class _ConfirmPageState extends ConsumerState<_ConfirmPage> {
           const SizedBox(height: 8),
           TextField(key: const Key('hotel-email'), controller: email, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, autocorrect: false, decoration: const InputDecoration(labelText: 'البريد الإلكتروني', helperText: 'يصلك عليه تأكيد الفندق')),
         ])),
+        if (!cardRequired)
+          // لا بطاقة ضيف: الاختبار يُحاكي الدفع، والحي يحصّل عبر ناس لايف عند التأكيد
+          const Padding(key: Key('hotel-no-card'), padding: EdgeInsets.fromLTRB(4, 12, 4, 0), child: _FineLine('لا تحتاج بطاقة الآن: في بيئة الاختبار لا يُحصَّل شيء، وفي الحجز الفعلي يُطلب الدفع عبر ناس لايف عند التأكيد.')),
+        if (cardRequired) ...[
         const SizedBox(height: 16),
         Row(children: [
           const Expanded(child: SectionTitle('بطاقة الضمان')),
@@ -510,6 +518,7 @@ class _ConfirmPageState extends ConsumerState<_ConfirmPage> {
           ]),
         ])),
         const Padding(padding: EdgeInsets.fromLTRB(4, 10, 4, 0), child: _FineLine('لا يُخصم شيء الآن: البطاقة تُمرَّر إلى الفندق ضماناً للحجز ولا تُحفظ في ناس لايف.')),
+        ],
       ]),
       bottomNavigationBar: _Footer(
         child: FilledButton(

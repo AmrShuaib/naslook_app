@@ -80,7 +80,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
           ])),
           const SectionTitle('بوابة الدفع (ميسر)'),
           const _PayGatewayCard(),
-          const SectionTitle('حجز الفنادق (Amadeus)'),
+          const SectionTitle('حجز الفنادق (Nuitee Connect · LiteAPI)'),
           const _HotelCard(),
           const SectionTitle('الإعلان العام'),
           JoyCard(child: Column(children: [
@@ -362,7 +362,7 @@ class _PayGatewayCardState extends ConsumerState<_PayGatewayCard> {
           Wrap(spacing: 8, runSpacing: 8, children: [
             FilledButton.icon(key: const Key('pay-save'), onPressed: busy ? null : () => _save(), icon: const Icon(Icons.save_outlined, size: 18), label: const Text('حفظ المفاتيح')),
             OutlinedButton.icon(key: const Key('pay-test'), onPressed: busy || !c.enabled && pk.text.isEmpty ? null : _test, icon: const Icon(Icons.wifi_tethering_rounded, size: 18), label: const Text('فحص الاتصال')),
-            if (c.panelKeysSet) TextButton.icon(key: const Key('pay-clear'), onPressed: busy ? null : () => _save(clear: true), style: TextButton.styleFrom(foregroundColor: Joy.danger), icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('إزالة المفاتيح')),
+            if (c.panelKeysSet) TextButton.icon(key: const Key('pay-clear'), onPressed: busy ? null : () => _save(clear: true), style: TextButton.styleFrom(foregroundColor: Joy.danger), icon: const Icon(Icons.delete_outline_rounded, size: 18), label: const Text('إزالة المفتاح')),
           ]),
           if (testText != null) Padding(padding: const EdgeInsets.only(top: 10), child: Row(children: [
             Icon(testOk == true ? Icons.check_circle_outline_rounded : Icons.error_outline_rounded, size: 18, color: testOk == true ? Joy.primary : Joy.danger),
@@ -381,7 +381,7 @@ class _PayGatewayCardState extends ConsumerState<_PayGatewayCard> {
   }
 }
 
-/// إعدادات Amadeus؛ أي خطأ (الإضافة غير منشورة على الخادم بعد) يعيد إعداداً «غير متاح» حتى لا تُرمى صفحة الإعدادات.
+/// إعدادات LiteAPI؛ أي خطأ (الإضافة غير منشورة على الخادم بعد) يعيد إعداداً «غير متاح» حتى لا تُرمى صفحة الإعدادات.
 final adminHotelConfigProvider = FutureProvider<HotelAdminConfig>((ref) async {
   try {
     return await ref.watch(apiClientProvider).adminHotelConfig();
@@ -399,7 +399,7 @@ final adminHotelLinksProvider = FutureProvider<List<HotelLinkRow>>((ref) async {
   }
 });
 
-/// مفاتيح Amadeus (المعرّف والسر والبيئة) من اللوحة بدل ملف البيئة، مع فحص اتصال، وربط دائرة فندقية بفندق لدى Amadeus.
+/// مفتاح LiteAPI والبيئة من اللوحة بدل ملف البيئة، مع فحص اتصال، وربط دائرة فندقية بفندق لدى LiteAPI.
 /// السر لا يُعرض بعد حفظه؛ يظهر تلميح بآخر أحرفه فقط. البطاقة لا ترمي أبداً: الخادم بلا مسار الفنادق = «غير مفعّل».
 class _HotelCard extends ConsumerStatefulWidget {
   const _HotelCard();
@@ -408,7 +408,7 @@ class _HotelCard extends ConsumerStatefulWidget {
 }
 
 class _HotelCardState extends ConsumerState<_HotelCard> {
-  final id = TextEditingController(), secret = TextEditingController();
+  final secret = TextEditingController();
   final linkBiz = TextEditingController(), linkCity = TextEditingController(text: 'JED'), linkQ = TextEditingController();
   String? env;
   bool busy = false, showSecret = false, searching = false;
@@ -418,7 +418,7 @@ class _HotelCardState extends ConsumerState<_HotelCard> {
 
   @override
   void dispose() {
-    for (final c in [id, secret, linkBiz, linkCity, linkQ]) { c.dispose(); }
+    for (final c in [secret, linkBiz, linkCity, linkQ]) { c.dispose(); }
     super.dispose();
   }
 
@@ -429,13 +429,13 @@ class _HotelCardState extends ConsumerState<_HotelCard> {
     final code = e is ApiException ? (e.body?['error']?.toString() ?? '') : '';
     final msg = e is ApiException ? (e.body?['message']?.toString() ?? '') : '';
     return switch (code) {
-      'masked-key' => 'المفتاح منسوخ مقنّعاً (فيه نجوم). في لوحة Amadeus for Developers اضغط «Show» لإظهار المفتاح كاملاً ثم انسخه',
-      'both-keys-required' => 'أدخل المعرّف (API Key) والسر (API Secret) معاً',
+      'masked-key' => 'المفتاح منسوخ مقنّعاً (فيه نجوم). في لوحة Nuitee Connect اضغط أيقونة الإظهار ثم انسخ المفتاح كاملاً',
+      'bad-key' => 'صيغة المفتاح غير صحيحة',
       'bad-env' => 'البيئة إما اختبار أو حية',
       'hotel-disabled' => 'لا توجد مفاتيح محفوظة بعد',
       'not-linked' => 'هذه الدائرة غير مرتبطة بفندق',
       'not-found' => 'لم نجد دائرة بهذا المعرّف',
-      'provider-error' => msg.isEmpty ? 'رفض Amadeus الطلب' : 'رفض Amadeus الطلب: $msg',
+      'provider-error' => msg.isEmpty ? 'رفض LiteAPI الطلب' : 'رفض LiteAPI الطلب: $msg',
       _ => adminErrText(e),
     };
   }
@@ -449,19 +449,18 @@ class _HotelCardState extends ConsumerState<_HotelCard> {
   }
 
   Future<void> _save(HotelAdminConfig c, {bool clear = false}) async {
-    id.text = _clean(id.text);
     secret.text = _clean(secret.text);
-    if (!clear && (_masked(id.text) || _masked(secret.text))) { toast(context, _err(const ApiException(400, 'masked-key', body: {'error': 'masked-key'})), error: true); return; }
+    if (!clear && _masked(secret.text)) { toast(context, _err(const ApiException(400, 'masked-key', body: {'error': 'masked-key'})), error: true); return; }
     setState(() { busy = true; testText = null; });
     try {
       // حقل غير مرسل يبقى كما هو على الخادم، والفارغ يمسح: المعرّف والسر يُرسلان فقط حين كُتبا
       final r = clear
-          ? await ref.read(apiClientProvider).adminSaveHotelConfig(clientId: '', clientSecret: '')
-          : await ref.read(apiClientProvider).adminSaveHotelConfig(clientId: id.text.isEmpty ? null : id.text, clientSecret: secret.text.isEmpty ? null : secret.text, env: env ?? c.env);
-      id.clear(); secret.clear();
+          ? await ref.read(apiClientProvider).adminSaveHotelConfig(apiKey: '')
+          : await ref.read(apiClientProvider).adminSaveHotelConfig(apiKey: secret.text.isEmpty ? null : secret.text, env: env ?? c.env);
+      secret.clear();
       env = null;
       ref.invalidate(adminHotelConfigProvider);
-      if (mounted) toast(context, clear ? 'أُزيلت المفاتيح' : r.configured ? 'حُفظت المفاتيح: ${r.env == 'live' ? 'البيئة الحية' : 'بيئة الاختبار'}' : 'حُفظ');
+      if (mounted) toast(context, clear ? 'أُزيل المفتاح' : r.configured ? 'حُفظ المفتاح: ${r.env == 'live' ? 'البيئة الحية' : 'بيئة الاختبار'}' : 'حُفظ');
     } catch (e) {
       if (mounted) toast(context, _err(e), error: true);
     } finally {
@@ -477,11 +476,11 @@ class _HotelCardState extends ConsumerState<_HotelCard> {
       setState(() {
         testOk = r.ok;
         testText = r.ok
-            ? 'الاتصال ناجح بـ Amadeus ($envText · المصدر: ${r.source == 'panel' ? 'اللوحة' : 'ملف البيئة'})'
+            ? 'الاتصال ناجح بـ LiteAPI ($envText · المصدر: ${r.source == 'panel' ? 'اللوحة' : 'ملف البيئة'})'
             : switch (r.error) {
                 'hotel-disabled' => 'لا توجد مفاتيح محفوظة بعد',
-                'bad-credentials' => 'رفض Amadeus المعرّف أو السر؛ تأكد من نسخهما كاملين ومن أن البيئة المختارة ($envText) هي بيئة هذين المفتاحين',
-                'provider-unreachable' => 'تعذر الوصول إلى Amadeus من الخادم${r.message.isEmpty ? '' : ' (${r.message})'}',
+                'bad-credentials' => 'رفض LiteAPI المفتاح؛ تأكد من نسخه كاملاً',
+                'provider-unreachable' => 'تعذر الوصول إلى LiteAPI من الخادم${r.message.isEmpty ? '' : ' (${r.message})'}',
                 _ => 'فشل الفحص: ${r.error}${r.message.isEmpty ? '' : ' — ${r.message}'}',
               };
       });
@@ -542,7 +541,7 @@ class _HotelCardState extends ConsumerState<_HotelCard> {
         final status = !c.available
             ? 'غير مفعّل: الخادم لا يعرض مسار الفنادق بعد (الإضافة غير منشورة)'
             : !c.configured
-                ? 'غير مفعّل: احفظ مفتاحي Amadeus ليظهر زر الحجز في الدوائر المرتبطة'
+                ? 'غير مفعّل: احفظ مفتاح LiteAPI ليظهر زر الحجز في الدوائر المرتبطة'
                 : '${c.env == 'live' ? 'البيئة الحية (حجوزات حقيقية)' : 'بيئة الاختبار (فنادق وهمية، لا حجز حقيقي)'} · المصدر: ${c.source == 'panel' ? 'اللوحة' : 'ملف البيئة على الخادم'} · ${c.linked == 0 ? 'لا دوائر مرتبطة' : c.linked == 1 ? 'دائرة مرتبطة' : '${c.linked} دوائر مرتبطة'}${c.bookings > 0 ? ' · ${c.bookings} حجزاً' : ''}';
         return JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
@@ -551,16 +550,13 @@ class _HotelCardState extends ConsumerState<_HotelCard> {
             Expanded(child: Text(status, key: const Key('hotel-status'), style: const TextStyle(fontSize: 13, height: 1.5))),
           ]),
           const SizedBox(height: 6),
-          const Text('من developers.amadeus.com ← My Self-Service Workspace ← My apps: انسخ API Key وAPI Secret. مفاتيح الاختبار تعمل على بيانات وهمية بلا حجز حقيقي؛ المال لا يمر عبر ناس لايف (بطاقة الضيف ضمان للفندق).', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
+          const Text('من liteapi.travel ← اللوحة ← Developer ← API Keys: انسخ Sandbox key (مفتاح الإنتاج يحتاج ربط بطاقة في حسابهم). مفتاح الاختبار يبحث في مخزون حقيقي ويحاكي الحجز بلا تحصيل؛ الحجز الحي معلّق حتى يُعتمد تحصيل كل حجز من المستخدم عبر ميسر.', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
           const SizedBox(height: 10),
-          TextField(key: const Key('hotel-id'), controller: id, textDirection: TextDirection.ltr, textAlign: TextAlign.left, keyboardType: TextInputType.visiblePassword, autocorrect: false, enableSuggestions: false, style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
-              decoration: InputDecoration(labelText: 'المعرّف (API Key)', hintText: c.clientIdSet && c.source == 'panel' ? 'محفوظ: ${c.clientIdHint} (اتركه فارغاً للإبقاء عليه)' : 'AbC…')),
-          const SizedBox(height: 8),
           TextField(
             key: const Key('hotel-secret'), controller: secret, obscureText: !showSecret, textDirection: TextDirection.ltr, textAlign: TextAlign.left, keyboardType: TextInputType.visiblePassword, autocorrect: false, enableSuggestions: false, style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              labelText: 'السر (API Secret)', hintText: c.secretSet && c.source == 'panel' ? 'محفوظ: ${c.secretHint} (اتركه فارغاً للإبقاء عليه)' : '…',
+              labelText: 'مفتاح API (Sandbox أو Production)', hintText: c.secretSet && c.source == 'panel' ? 'محفوظ: ${c.secretHint} (اتركه فارغاً للإبقاء عليه)' : '…',
               helperText: _secretHint(), helperStyle: TextStyle(color: _masked(secret.text) ? Joy.danger : Joy.textMuted, fontSize: 11),
               suffixIcon: IconButton(key: const Key('hotel-secret-eye'), tooltip: showSecret ? 'إخفاء' : 'إظهار', onPressed: () => setState(() => showSecret = !showSecret), icon: Icon(showSecret ? Icons.visibility_off_outlined : Icons.visibility_outlined)),
             ),
@@ -589,11 +585,11 @@ class _HotelCardState extends ConsumerState<_HotelCard> {
             Expanded(child: Text(testText!, key: const Key('hotel-test-result'), style: TextStyle(fontSize: 13, color: testOk == true ? Joy.primary : Joy.danger))),
           ])),
           if (c.updatedAt != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('آخر تحديث منذ ${timeAgo(c.updatedAt!)}${c.updatedBy.isEmpty ? '' : ' بواسطة ${c.updatedBy}'}', style: const TextStyle(color: Joy.textMuted, fontSize: 11))),
-          // ---- ربط دائرة فندقية بفندق لدى Amadeus
+          // ---- ربط دائرة فندقية بفندق لدى LiteAPI
           const Divider(height: 28),
           const Text('ربط دائرة بفندق', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
           const SizedBox(height: 4),
-          const Text('اكتب معرّف الدائرة الفندقية ورمز المدينة (JED جدة، DMM الدمام، RUH الرياض)، ابحث بالاسم ثم اختر الفندق. تظهر في الدائرة بطاقة «احجز غرفة بأسعار اليوم».', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
+          const Text('اكتب معرّف الدائرة الفندقية والمدينة (JED جدة، DMM الدمام، RUH الرياض، أو اسم المدينة بالإنجليزية)، ابحث بالاسم ثم اختر الفندق. تظهر في الدائرة بطاقة «احجز غرفة بأسعار اليوم».', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.6)),
           const SizedBox(height: 8),
           Row(children: [
             Expanded(flex: 3, child: TextField(key: const Key('hotel-link-biz'), controller: linkBiz, textDirection: TextDirection.ltr, autocorrect: false, decoration: const InputDecoration(labelText: 'معرّف الدائرة', hintText: 'biz-hilton'))),
