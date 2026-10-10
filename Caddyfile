@@ -1,0 +1,8 @@
+# يقدّم build/web كتطبيق صفحة واحدة؛ أي مسار غير موجود يعود إلى index.html
+# حتى تعمل مسارات go_router عند التحديث المباشر للصفحة.
+:80 {
+	root * /srv
+	encode zstd gzip
+	try_files {path} /index.html
+	file_server
+}
