@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 
-final lightTheme = ThemeData(
-  useMaterial3: true,
-  brightness: Brightness.light,
-  colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-);
+/// ثيمات التطبيق. الوضع الفاتح هو المستخدم حالياً، والداكن جاهز للتفعيل لاحقاً.
+class AppTheme {
+  static final ThemeData light = ThemeData(
+    useMaterial3: true,
+    colorSchemeSeed: Colors.blue,
+    fontFamily: 'Cairo', // أضف الخط إلى pubspec.yaml لاحقاً
+  );
 
-final darkTheme = ThemeData(
-  useMaterial3: true,
-  brightness: Brightness.dark,
-  colorScheme: ColorScheme.fromSeed(
-    seedColor: Colors.blue,
+  static final ThemeData dark = ThemeData(
+    useMaterial3: true,
     brightness: Brightness.dark,
-  ),
-);
+    colorSchemeSeed: Colors.blue,
+    fontFamily: 'Cairo',
+  );
+}
