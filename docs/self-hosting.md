@@ -9,6 +9,39 @@ wsl --install -d Ubuntu
 
 ثم نفّذ كل ما يلي داخل طرفية Ubuntu.
 
+## ملاحظات خاصة بـ WSL2 على ويندوز
+
+- اعمل داخل مجلد Linux الخاص بك `~` وليس داخل `/mnt/c`، فالبناء هناك أبطأ بكثير.
+- تخطَّ خطوات SSH وufw في المرحلة 1؛ جدار ويندوز يحمي الجهاز وWSL2 معزول خلف NAT.
+- يجب تفعيل systemd قبل Docker وCoolify. تحقق:
+
+```bash
+grep -q 'systemd=true' /etc/wsl.conf && echo "systemd مفعّل" || echo "غير مفعّل"
+```
+
+إن كان غير مفعّل:
+
+```bash
+sudo tee /etc/wsl.conf >/dev/null <<'EOF'
+[boot]
+systemd=true
+EOF
+```
+
+ثم من PowerShell: `wsl --shutdown` ثم افتح Ubuntu من جديد، وتحقق بـ `systemctl is-system-running`.
+
+- WSL2 يتوقف عند إغلاق آخر نافذة طرفية. أبقِ نافذة مفتوحة أثناء التجربة، أو أنشئ مهمة تعمل عند الدخول من PowerShell كمسؤول:
+
+```powershell
+$a = New-ScheduledTaskAction -Execute "wsl.exe" -Argument "-d Ubuntu -- sleep infinity"
+$t = New-ScheduledTaskTrigger -AtLogOn
+$s = New-ScheduledTaskSettingsSet -Hidden -ExecutionTimeLimit 0
+Register-ScheduledTask -TaskName "KeepWSL" -Action $a -Trigger $t -Settings $s
+powercfg /change standby-timeout-ac 0
+```
+
+- من ويندوز نفسه تصل إلى الخدمات عبر `http://localhost:PORT`، ومن الهاتف عبر عنوان Tailscale الذي يُثبَّت داخل Ubuntu.
+
 ## المرحلة 1: التحديث والأمان الأساسي
 
 ```bash
