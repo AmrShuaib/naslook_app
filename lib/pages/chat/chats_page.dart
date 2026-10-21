@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/jobs_models.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
+import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/chat/codes.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../state/safety_providers.dart';
@@ -40,6 +42,36 @@ class ChatSearchHit {
   }
 }
 
+/// معاينة آخر رسالة في صف القائمة: أيقونة ونص قصير بحسب النوع (وسائط، رمز اختصار، نص)، بدل الإيموجي داخل النص.
+({IconData? icon, String text}) chatPreview(String? type, String? content) {
+  if (content == null || content.isEmpty) return (icon: null, text: 'ابدأ المحادثة');
+  switch (Message.kindOf(type ?? 'text', content)) {
+    case 'image':
+      return (icon: Icons.photo_camera_rounded, text: 'صورة');
+    case 'video':
+      return (icon: Icons.videocam_rounded, text: 'فيديو');
+    case 'audio':
+      return (icon: Icons.mic_rounded, text: 'رسالة صوتية');
+    case 'file':
+      return (icon: Icons.attach_file_rounded, text: 'ملف');
+  }
+  // أمر اختصار (/pay، /meet…) يُعرض باسمه لا بنصه الخام
+  final cmd = parseCommand(content);
+  if (cmd != null) {
+    return switch (cmd.kind) {
+      CodeKind.pay => (icon: Icons.payments_rounded, text: 'طلب مبلغ'),
+      CodeKind.send => (icon: Icons.send_rounded, text: 'تحويل مبلغ'),
+      CodeKind.split => (icon: Icons.call_split_rounded, text: 'تقسيم حساب'),
+      CodeKind.meet => (icon: Icons.event_rounded, text: 'موعد'),
+      CodeKind.invite => (icon: Icons.group_add_rounded, text: 'دعوة'),
+      CodeKind.where || CodeKind.loc => (icon: Icons.place_rounded, text: 'موقع'),
+      CodeKind.me => (icon: Icons.person_pin_circle_rounded, text: 'بطاقتي'),
+      _ => (icon: Icons.bolt_rounded, text: content.replaceAll(RegExp(r'\s+'), ' ').trim()),
+    };
+  }
+  return (icon: null, text: content.replaceAll(RegExp(r'\s+'), ' ').trim());
+}
+
 class ChatsPage extends ConsumerStatefulWidget {
   const ChatsPage({super.key});
   @override
@@ -54,6 +86,8 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
   String _q = '';
   List<ChatSearchHit> _hits = const [];
   bool _searchingServer = false;
+  /// حضور وصل من القناة الحية (حدث presence) ويغلب ما جاء مع قائمة المحادثات.
+  final _live = <String, bool>{};
 
   @override
   void initState() {
@@ -66,6 +100,9 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
         if (isMessage || ev == 'read' || ev == 'delivered' || ev == '_connected') {
           ref.invalidate(chatsProvider);
           if (isMessage && e['isRequest'] == true) ref.invalidate(requestsProvider);
+        } else if (ev == 'presence') {
+          final id = (e['peerId'] ?? e['userId'] ?? e['from'] ?? e['id'])?.toString().toUpperCase();
+          if (id != null && id.isNotEmpty && mounted) setState(() => _live[id] = e['online'] == true);
         }
       });
     });
@@ -99,6 +136,68 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
     } catch (_) {
       // الخادم لا يدعم البحث أو رفضه: نكتفي بالبحث المحلي
       if (mounted) setState(() { _hits = const []; _searchingServer = false; });
+    }
+  }
+
+  /// السحب للتحديث ينتظر وصول القائمة فعلاً حتى يبقى المؤشر ظاهراً ريثما تصل.
+  Future<void> _refresh() async {
+    ref.invalidate(chatsProvider);
+    ref.invalidate(requestsProvider);
+    ref.invalidate(jobsInboxProvider);
+    try {
+      await ref.read(chatsProvider.future);
+    } catch (_) {
+      // الخطأ يظهر في القائمة نفسها
+    }
+  }
+
+  /// قائمة الصف بالضغط المطوّل: تعليم كمقروءة، كتم/إلغاء كتم (server/safety.js)، والملف الشخصي.
+  Future<void> _rowMenu(Chat c, {required bool muted}) async {
+    final api = ref.read(apiClientProvider);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: ProfileAvatar(person: c.peer, size: 40),
+            title: Text(c.peer.nickname, style: const TextStyle(fontWeight: FontWeight.w700)),
+            subtitle: Text(c.peer.id, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+          ),
+          const Divider(height: 1),
+          if (c.unread > 0)
+            ListTile(key: const Key('chat-menu-read'), leading: const Icon(Icons.mark_chat_read_rounded, color: Joy.primary), title: const Text('تعليم كمقروءة'), onTap: () => Navigator.pop(ctx, 'read')),
+          ListTile(
+            key: Key(muted ? 'chat-menu-unmute' : 'chat-menu-mute'),
+            leading: Icon(muted ? Icons.volume_up_rounded : Icons.volume_off_rounded, color: Joy.primary),
+            title: Text(muted ? 'إلغاء كتم الإشعارات' : 'كتم الإشعارات'),
+            subtitle: muted ? null : const Text('لا تنبيه ولا شارة لهذه المحادثة', style: TextStyle(fontSize: 12)),
+            onTap: () => Navigator.pop(ctx, muted ? 'unmute' : 'mute'),
+          ),
+          ListTile(key: const Key('chat-menu-profile'), leading: const Icon(Icons.person_outline_rounded, color: Joy.primary), title: const Text('الملف الشخصي'), onTap: () => Navigator.pop(ctx, 'profile')),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    if (action == null || !mounted) return;
+    try {
+      switch (action) {
+        case 'read':
+          await api.markRead(c.peer.id);
+          ref.invalidate(chatsProvider);
+        case 'mute':
+          await api.mute(c.peer.id);
+          ref.invalidate(mutesProvider);
+          if (mounted) toast(context, 'كُتمت محادثة ${c.peer.nickname}');
+        case 'unmute':
+          await api.unmute(c.peer.id);
+          ref.invalidate(mutesProvider);
+          if (mounted) toast(context, 'أُلغي كتم محادثة ${c.peer.nickname}');
+        case 'profile':
+          if (mounted) openProfile(context, c.peer);
+      }
+    } catch (e) {
+      if (mounted) toast(context, errText(e), error: true);
     }
   }
 
@@ -159,8 +258,10 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
             return EmptyState(icon: Icons.chat_bubble_outline_rounded, title: 'لا محادثات بعد', subtitle: 'أضف صديقاً بنك نيمه وابدأ الحديث.', action: OutlinedButton(onPressed: _newChat, child: const Text('محادثة جديدة')));
           }
           return RefreshIndicator(
-            onRefresh: () async => ref.invalidate(chatsProvider),
+            onRefresh: _refresh,
             child: ListView(
+              // قابلة للسحب دائماً حتى يعمل السحب للتحديث ولو كانت المحادثات قليلة
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.only(bottom: 96),
               children: [
                 // أول عرض وظيفي بانتظار الرد مثبّت فوق المحادثات
@@ -208,7 +309,14 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
                     trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
                   ),
                 if (list.isEmpty && _hits.isEmpty && !_searchingServer) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('لا نتائج', style: TextStyle(color: Joy.textMuted)))),
-                for (final (i, c) in list.indexed) _ChatRow(c, muted: muted.contains(c.peer.id), divider: i < list.length - 1 || _hits.isNotEmpty),
+                for (final (i, c) in list.indexed)
+                  _ChatRow(
+                    c,
+                    muted: muted.contains(c.peer.id),
+                    online: _live[c.peer.id.toUpperCase()] ?? c.peer.online,
+                    divider: i < list.length - 1 || _hits.isNotEmpty,
+                    onLongPress: () => _rowMenu(c, muted: muted.contains(c.peer.id)),
+                  ),
                 if (_q.length >= 2) ...[
                   if (_searchingServer) const Padding(padding: EdgeInsets.all(12), child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))),
                   if (_hits.isNotEmpty) const Padding(padding: EdgeInsets.fromLTRB(16, 14, 16, 4), child: Text('رسائل', style: TextStyle(fontWeight: FontWeight.w700, color: Joy.textMuted, fontSize: 13))),
@@ -218,7 +326,7 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
             ),
           );
         },
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const _ChatsSkeleton(),
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(chatsProvider)),
       );
 
@@ -267,31 +375,92 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
   }
 }
 
+/// صف محادثة: صورة 48 مع نقطة الحضور، اسم عريض، سطر معاينة (أيقونة الوسائط أو الرمز، و«أنت:» مع علامة الإرسال لرسالتي)،
+/// الوقت النسبي، وشارة غير المقروء بلون العلامة (تُخفى للمكتومة وتحلّ محلها أيقونة الكتم). الضغط المطوّل يفتح قائمة الصف.
 class _ChatRow extends StatelessWidget {
   final Chat c;
-  final bool divider, muted;
-  const _ChatRow(this.c, {this.divider = true, this.muted = false});
+  final bool divider, muted, online;
+  final VoidCallback? onLongPress;
+  const _ChatRow(this.c, {this.divider = true, this.muted = false, this.online = false, this.onLongPress});
+
   @override
   Widget build(BuildContext context) {
-    final preview = c.lastContent == null ? 'ابدأ المحادثة' : Message.previewOf(c.lastType ?? 'text', c.lastContent!);
     final unread = c.unread > 0 && !muted;
-    return ListRow(
-      divider: divider,
+    final mine = c.lastMine && c.lastContent != null;
+    final pv = chatPreview(c.lastType, c.lastContent);
+    final id = c.peer.id;
+    return InkWell(
+      key: Key('chat-row-$id'),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: c.peer))),
-      leading: ProfileAvatar(person: c.peer, size: 52),
-      title: Text(c.peer.nickname, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text('${c.lastMine ? 'أنت: ' : ''}$preview', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: unread ? Joy.text : Joy.textMuted, fontWeight: unread ? FontWeight.w600 : FontWeight.w500)),
-      trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          if (muted) const Padding(padding: EdgeInsetsDirectional.only(end: 4), child: Icon(Icons.volume_off_rounded, size: 14, color: Joy.textMuted)),
-          Text(timeAgo(c.lastAt), style: TextStyle(fontSize: 11.5, color: unread ? Joy.primary : Joy.textMuted, fontWeight: unread ? FontWeight.w600 : FontWeight.w500)),
-        ]),
-        const SizedBox(height: 4),
-        if (unread)
-          Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.primary, borderRadius: BorderRadius.circular(999)), child: Text('${c.unread}', style: const TextStyle(color: Joy.primaryOn, fontSize: 11, fontWeight: FontWeight.w700)))
-        else
-          const SizedBox(height: 18),
+      onLongPress: onLongPress,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(16, 10, 12, 10),
+          child: Row(children: [
+            ProfileAvatar(key: Key('chat-avatar-$id'), person: c.peer, size: 48, online: online),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(c.peer.nickname, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: unread ? FontWeight.w800 : FontWeight.w700, fontSize: 15.5, color: Joy.text)),
+                const SizedBox(height: 3),
+                Row(children: [
+                  // علامة الإرسال لرسالتي (قائمة المحادثات لا تحمل حالة القراءة؛ علامة واحدة = أُرسلت)
+                  if (mine) Padding(padding: const EdgeInsetsDirectional.only(end: 3), child: Icon(Icons.done_rounded, key: Key('chat-tick-$id'), size: 15, color: Joy.textMuted)),
+                  if (pv.icon != null) Padding(padding: const EdgeInsetsDirectional.only(end: 4), child: Icon(pv.icon, size: 15, color: unread ? Joy.primary : Joy.textMuted)),
+                  Expanded(
+                    child: Text('${mine ? 'أنت: ' : ''}${pv.text}', maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13, color: unread ? Joy.text : Joy.textMuted, fontWeight: unread ? FontWeight.w600 : FontWeight.w500)),
+                  ),
+                ]),
+              ]),
+            ),
+            const SizedBox(width: 8),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
+              Text(timeAgo(c.lastAt), style: TextStyle(fontSize: 11.5, color: unread ? Joy.primary : Joy.textMuted, fontWeight: unread ? FontWeight.w700 : FontWeight.w500)),
+              const SizedBox(height: 5),
+              if (unread)
+                Container(
+                  key: Key('chat-unread-$id'),
+                  constraints: const BoxConstraints(minWidth: 20),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: Joy.primary, borderRadius: BorderRadius.circular(999)),
+                  alignment: Alignment.center,
+                  child: Text(c.unread > 99 ? '99+' : '${c.unread}', style: const TextStyle(color: Joy.primaryOn, fontSize: 11, fontWeight: FontWeight.w700)),
+                )
+              else if (muted)
+                const Icon(Icons.volume_off_rounded, size: 16, color: Joy.textMuted)
+              else
+                const SizedBox(height: 18),
+            ]),
+          ]),
+        ),
+        if (divider) const Padding(padding: EdgeInsetsDirectional.only(start: 76), child: Divider(height: 1)),
       ]),
+    );
+  }
+}
+
+/// هيكل القائمة أثناء الجلب الأول: صفوف رمادية ثابتة بلا حركة (لا تستهلك البطارية ولا تعلّق pumpAndSettle في الاختبارات).
+/// لا يظهر عند التحديث لأن المزوّد يبقي القائمة السابقة ريثما تصل الجديدة.
+class _ChatsSkeleton extends StatelessWidget {
+  const _ChatsSkeleton();
+  @override
+  Widget build(BuildContext context) {
+    Widget bar(double w, double h) => Container(height: h, width: w, decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(6)));
+    return ListView.builder(
+      key: const Key('chats-skeleton'),
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: 8,
+      itemBuilder: (_, i) => Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(16, 10, 12, 10),
+        child: Row(children: [
+          Container(width: 48, height: 48, decoration: const BoxDecoration(color: Joy.surface2, shape: BoxShape.circle)),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [bar(90.0 + (i % 3) * 30, 13), const SizedBox(height: 8), bar(150.0 + (i % 2) * 40, 11)])),
+          const SizedBox(width: 8),
+          bar(28, 10),
+        ]),
+      ),
     );
   }
 }
