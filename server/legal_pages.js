@@ -79,7 +79,7 @@ export default async function legalPages(app, opts = {}) {
 <main>
 ${body}
 </main>
-<footer><span>© ${new Date().getFullYear()} شركة أريب الرقمية · Areeb Digital</span><a href="/privacy">سياسة الخصوصية</a><a href="/terms">شروط الاستخدام</a><a href="/support">الدعم</a><a href="/">naslife.app</a></footer>
+<footer><span>© ${new Date().getFullYear()} شركة أريب الرقمية · Areeb Alraqmiah Company</span><a href="/privacy">سياسة الخصوصية</a><a href="/terms">شروط الاستخدام</a><a href="/support">الدعم</a><a href="/">naslife.app</a></footer>
 </body>
 </html>`;
   const send = (reply, html) => reply.type("text/html; charset=utf-8").header("cache-control", "public, max-age=300").send(html);

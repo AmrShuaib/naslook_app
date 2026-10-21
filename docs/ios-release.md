@@ -20,7 +20,7 @@
 
 ## خطوات المالك بالترتيب
 
-1. **حساب Apple Developer** باسم الشركة (يحتاج رقم D-U-N-S). بعد القبول أنشئ التطبيق في App Store Connect:
+1. **حساب Apple Developer** باسم الشركة (يحتاج رقم D-U-N-S). الاسم القانوني الإنجليزي كما في السجل التجاري هو **Areeb Alraqmiah Company** ويُكتب حرفياً في طلب D-U-N-S وتسجيل المنظمة لدى أبل؛ «Areeb Digital» اسم تجاري يظهر للجمهور فقط. طلب D-U-N-S قُدّم عبر نموذج أبل في 10 أكتوبر 2026 وتسلّمت D&B الملف في 21 أكتوبر. بعد القبول أنشئ التطبيق في App Store Connect:
    - Bundle ID: `app.naslife`، SKU: `naslife-ios`، اللغة الأساسية: العربية.
    - الاسم «ناس لايف» (إن كان محجوزاً: «ناس لايف – Naslife»).
    - التصنيف: Social Networking، والثانوي Lifestyle.
@@ -49,7 +49,7 @@
 | Privacy Policy URL | https://naslife.app/privacy |
 | Support URL | https://naslife.app/support |
 | Marketing URL | https://naslife.app |
-| Copyright | 2026 Areeb Digital |
+| Copyright | 2026 Areeb Alraqmiah Company |
 | Export compliance | لا تشفير غير معفى (مضبوط في Info.plist) |
 | لقطات الشاشة | آيفون 6.9 إنش (1320×2868)؛ أبل تصغّرها للمقاسات الأخرى |
 

@@ -70,7 +70,7 @@
 
 ## الشركة
 
-- الشركة: أريب الرقمية (Areeb Digital)، النطاق `areebd.sa`. موقع الشركة في المستودع المستقل `AmrShuaib/areebdigital` (فرع `main`، جلسة مستقلة تبنيه) بنفس نمط النشر (Caddy + مؤقّت سحب `areeb-pull.timer` إلى `/opt/areeb/site`) على الخادم نفسه. **بريد الشركة** (تحقق DNS في 9 أكتوبر 2026): نطاق `areebd.sa` على Cloudflare وسجلات MX تشير إلى Cloudflare Email Routing (تحويل مجاني إلى صندوق خارجي، لا صناديق ولا إرسال)، ولا يوجد Google Workspace مفعّل. نطاق `naslife.app` على name.com وMX إلى الوارد الخاص بـ Resend (صناديق الفريق الداخلية في `server/inbox.js`).
+- الشركة: أريب الرقمية؛ الاسم القانوني الإنجليزي في السجل التجاري **Areeb Alraqmiah Company** (يُستخدم حرفياً لدى أبل وD&B والعقود)، و«Areeb Digital» اسم تجاري للجمهور. النطاق `areebd.sa`. موقع الشركة في المستودع المستقل `AmrShuaib/areebdigital` (فرع `main`، جلسة مستقلة تبنيه) بنفس نمط النشر (Caddy + مؤقّت سحب `areeb-pull.timer` إلى `/opt/areeb/site`) على الخادم نفسه. **بريد الشركة** (تحقق DNS في 9 أكتوبر 2026): نطاق `areebd.sa` على Cloudflare وسجلات MX تشير إلى Cloudflare Email Routing (تحويل مجاني إلى صندوق خارجي، لا صناديق ولا إرسال)، ولا يوجد Google Workspace مفعّل. نطاق `naslife.app` على name.com وMX إلى الوارد الخاص بـ Resend (صناديق الفريق الداخلية في `server/inbox.js`).
 - حسابات المتاجر (Apple Developer وGoogle Play) ستُفتح باسم الشركة وتحتاج رقم D-U-N-S وموقعاً باسم الشركة وصفحتي خصوصية ودعم.
 
 ## اصطلاحات

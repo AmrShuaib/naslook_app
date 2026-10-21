@@ -6,7 +6,8 @@ export const LEGAL_VERSION = "2026-09-25";
 export const LEGAL_UPDATED_AR = "25 سبتمبر 2026";
 export const LEGAL_UPDATED_EN = "25 September 2026";
 export const COMPANY_AR = "شركة أريب الرقمية";
-export const COMPANY_EN = "Areeb Digital";
+// الاسم القانوني كما في السجل التجاري؛ «Areeb Digital» اسم تجاري فقط
+export const COMPANY_EN = "Areeb Alraqmiah Company (Areeb Digital)";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const mail = (e) => `<a href="mailto:${esc(e)}" dir="ltr">${esc(e)}</a>`;
