@@ -168,26 +168,44 @@ void main() {
     expect(srv.calls, contains('POST /chat/upload'));
     expect(find.byKey(const Key('verify-doc-preview')), findsOneWidget);
     expect(tester.widget<FilledButton>(find.byKey(const Key('verify-submit'))).onPressed, isNotNull);
-    // وثيقة العمل الحر: رقم قصير يُرفض وطويل يُقبل
+    // وثيقة العمل الحر: رقم قصير يُرفض مع سبب تحت الحقل، وبالشرطة كما في الوثيقة يُقبل
     await tester.tap(find.byKey(const Key('verify-kind-freelance')));
     await tester.pump();
     await tester.enterText(find.byKey(const Key('verify-number')), 'abc');
     await tester.pump();
     expect(tester.widget<FilledButton>(find.byKey(const Key('verify-submit'))).onPressed, isNull);
-    await tester.enterText(find.byKey(const Key('verify-number')), 'FL12345678');
+    expect(find.text('الرقم بين 8 و20 حرفاً أو رقماً'), findsOneWidget, reason: 'الزر معطّل فالسبب يظهر تحت الحقل');
+    await tester.enterText(find.byKey(const Key('verify-number')), 'FL-12345678');
     await tester.pump();
-    expect(tester.widget<FilledButton>(find.byKey(const Key('verify-submit'))).onPressed, isNotNull);
+    expect(find.text('الرقم بين 8 و20 حرفاً أو رقماً'), findsNothing);
+    expect(tester.widget<FilledButton>(find.byKey(const Key('verify-submit'))).onPressed, isNotNull, reason: 'الشرطة تُزال قبل التحقق');
     await tester.tap(find.byKey(const Key('verify-kind-cr')));
-    await tester.enterText(find.byKey(const Key('verify-number')), '١٠١٠١٢٣٤٥٦');
+    await tester.enterText(find.byKey(const Key('verify-number')), '١٠١٠١٢٣');
     await tester.pump();
+    expect(find.text('السجل التجاري 10 أرقام'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.byKey(const Key('verify-submit'))).onPressed, isNull);
+    await tester.enterText(find.byKey(const Key('verify-number')), '١٠١٠ ١٢٣-٤٥٦');
+    await tester.pump();
+    expect(find.text('السجل التجاري 10 أرقام'), findsNothing);
     await tester.tap(find.byKey(const Key('verify-submit')));
     await tester.pumpAndSettle();
     final body = srv.bodies['POST /biz/$_id/verification']!;
     expect(body['entityKind'], 'cr');
-    expect(body['entityNumber'], '1010123456', reason: 'الأرقام العربية تُحوَّل');
+    expect(body['entityNumber'], '1010123456', reason: 'الأرقام العربية تُحوَّل والمسافات والشرطات تُزال');
     expect(body['docUrl'], '/chat/media/doc.jpg');
     expect(find.byKey(const Key('verify-pending')), findsOneWidget);
     expect(find.text('قيد المراجعة من الإدارة، عادةً خلال يوم عمل'), findsOneWidget);
+  });
+
+  test('entity number: dashes and spaces are stripped before validation and submission', () {
+    expect(normalizeEntityNumber(' FL-1234 5678 '), 'FL12345678');
+    expect(validEntityNumber('freelance', 'FL-12345678'), isTrue);
+    expect(validEntityNumber('freelance', 'FL-123'), isFalse);
+    expect(validEntityNumber('cr', '1010-123456'), isTrue);
+    expect(validEntityNumber('cr', '1010123456789'), isFalse);
+    expect(entityNumberError('cr', ''), isNull, reason: 'لا خطأ قبل الكتابة');
+    expect(entityNumberError('cr', '12'), 'السجل التجاري 10 أرقام');
+    expect(entityNumberError('freelance', 'FL12345678'), isNull);
   });
 
   testWidgets('verify page: approved and rejected states; rejected shows the reason and «أعد الإرسال» reveals the form', (tester) async {

@@ -111,10 +111,19 @@ class _RegisterCirclePageState extends ConsumerState<RegisterCirclePage> {
     _debounce = Timer(const Duration(milliseconds: 600), () => _check(n));
   }
 
+  /// موقع للفحص بلا طلب إذن: آخر موقع معروف، أو تحديد جديد فقط إن كان الإذن ممنوحاً من قبل.
+  /// طلب الإذن نفسه يُترك لخطوة الحضور (4) حيث يُشرح سببه؛ وبلا موقع يفحص الخادم الاسم بلا تصفية بالمسافة.
+  static Future<LatLng?> knownLocation() async {
+    final l = DeviceLocation.last;
+    if (l != null) return l;
+    if (DeviceLocation.status != LocationStatus.granted) return null;
+    return DeviceLocation.current(precise: false, timeout: const Duration(seconds: 3));
+  }
+
   Future<void> _check(String n) async {
     setState(() => checking = true);
     try {
-      final loc = DeviceLocation.last ?? await DeviceLocation.current(precise: false, timeout: const Duration(seconds: 3));
+      final loc = await knownLocation();
       final r = await ref.read(apiClientProvider).registerCheck(n, lat: loc?.latitude, lng: loc?.longitude);
       if (!mounted || nameAr.text.trim() != n) return;
       setState(() => dups = r.duplicates);

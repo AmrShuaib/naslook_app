@@ -167,6 +167,28 @@ void main() {
     expect(registerErrStep(const ApiException(400, 'x', body: {'error': 'logo-required'})), 2);
   });
 
+  testWidgets('name step never asks for the location permission: unknown → check without lat/lng; granted → a fresh fix is used', (tester) async {
+    var asked = 0;
+    DeviceLocation.override = () async { asked++; return const LatLng(21.5433, 39.1728); };
+    final srv = await _pump(tester, const RegisterCirclePage());
+    await tester.tap(find.byKey(const Key('reg-cat-cafe')));
+    await tester.pump();
+    await _next(tester);
+    await tester.enterText(find.byKey(const Key('reg-name')), 'قهوة المرسى');
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+    expect(srv.calls, contains('GET /biz/register/check'));
+    expect(asked, 0, reason: 'لا طلب موقع (ولا حوار إذن) في خطوة الاسم');
+    expect(srv.queries['GET /biz/register/check']!.containsKey('lat'), isFalse, reason: 'بلا موقع يفحص الخادم الاسم وحده');
+    // الإذن ممنوح من قبل (شاشة سابقة): يجوز تحديد جديد بلا حوار
+    DeviceLocation.status = LocationStatus.granted;
+    await tester.enterText(find.byKey(const Key('reg-name')), 'قهوة المرسى الجديدة');
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+    expect(asked, 1);
+    expect(srv.queries['GET /biz/register/check']!['lat'], '21.54330');
+  });
+
   testWidgets('fixed circle: six steps post the category, normalised phone, logo and location, then the done page', (tester) async {
     final srv = await _pump(tester, const RegisterCirclePage());
     expect(find.text('1 من 6'), findsOneWidget);
@@ -176,8 +198,9 @@ void main() {
     await tester.tap(find.byKey(const Key('reg-cat-cafe')));
     await tester.pump();
     await _next(tester);
-    // الاسم: فحص التكرار بعد 600 مللي ثانية بالاسم وموقع الجهاز
+    // الاسم: فحص التكرار بعد 600 مللي ثانية بالاسم وآخر موقع معروف للجهاز
     expect(find.text('2 من 6'), findsOneWidget);
+    DeviceLocation.last = const LatLng(21.5433, 39.1728);
     await tester.enterText(find.byKey(const Key('reg-name')), 'قهوة المرسى');
     await tester.pump(const Duration(milliseconds: 300));
     expect(srv.calls, isNot(contains('GET /biz/register/check')), reason: 'المهلة لم تنقضِ بعد');

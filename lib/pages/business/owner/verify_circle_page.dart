@@ -37,10 +37,19 @@ String verifyErrText(Object e) {
   return s;
 }
 
-/// صحة رقم الكيان: السجل التجاري 10 أرقام، ووثيقة العمل الحر 8–20 حرفاً أو رقماً.
+/// رقم الكيان كما يُرسل: أرقام لاتينية بلا مسافات ولا شرطات (المستخدم ينسخه من الوثيقة بصيغة «FL-…» أو «1010 123456»).
+String normalizeEntityNumber(String number) => latinDigits(number.trim()).replaceAll(RegExp(r'[\s\-]'), '');
+
+/// صحة رقم الكيان بعد التطبيع: السجل التجاري 10 أرقام، ووثيقة العمل الحر 8–20 حرفاً أو رقماً.
 bool validEntityNumber(String kind, String number) {
-  final n = latinDigits(number.trim());
+  final n = normalizeEntityNumber(number);
   return kind == 'cr' ? RegExp(r'^\d{10}$').hasMatch(n) : RegExp(r'^[A-Za-z0-9]{8,20}$').hasMatch(n);
+}
+
+/// سبب رفض الرقم ليظهر تحت الحقل أثناء الكتابة (الزر معطّل حينها فلا رسالة أخرى تصل للمستخدم).
+String? entityNumberError(String kind, String number) {
+  if (number.trim().isEmpty || validEntityNumber(kind, number)) return null;
+  return kind == 'cr' ? 'السجل التجاري 10 أرقام' : 'الرقم بين 8 و20 حرفاً أو رقماً';
 }
 
 /// صفحة التوثيق: نوع الكيان ورقمه وصورة المستند، ثم إحدى ثلاث حالات (قيد المراجعة، موثّقة، مرفوضة مع السبب وإعادة الإرسال).
@@ -55,14 +64,8 @@ class VerifyCirclePage extends ConsumerStatefulWidget {
 class _VerifyCirclePageState extends ConsumerState<VerifyCirclePage> {
   String kind = 'cr';
   final number = TextEditingController();
-  String? docUrl, numberError;
+  String? docUrl;
   bool uploading = false, busy = false, resubmitting = false;
-
-  @override
-  void initState() {
-    super.initState();
-    number.addListener(() { if (numberError != null) setState(() => numberError = null); });
-  }
 
   @override
   void dispose() {
@@ -135,7 +138,7 @@ class _VerifyCirclePageState extends ConsumerState<VerifyCirclePage> {
           keyboardType: kind == 'cr' ? TextInputType.number : TextInputType.text,
           textDirection: TextDirection.ltr,
           onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(labelText: kind == 'cr' ? 'رقم السجل التجاري (10 أرقام)' : 'رقم وثيقة العمل الحر', hintText: kind == 'cr' ? '1010XXXXXX' : 'FL-XXXXXXXX', errorText: numberError),
+          decoration: InputDecoration(labelText: kind == 'cr' ? 'رقم السجل التجاري (10 أرقام)' : 'رقم وثيقة العمل الحر (8–20 حرفاً أو رقماً)', hintText: kind == 'cr' ? '1010123456' : 'FL12345678', errorText: entityNumberError(kind, number.text)),
         ),
       ),
       const SectionTitle('صورة المستند'),
@@ -188,11 +191,9 @@ class _VerifyCirclePageState extends ConsumerState<VerifyCirclePage> {
   }
 
   Future<void> _submit() async {
-    final n = latinDigits(number.text.trim());
-    if (!validEntityNumber(kind, n)) {
-      setState(() => numberError = kind == 'cr' ? 'السجل التجاري 10 أرقام' : 'الرقم بين 8 و20 حرفاً أو رقماً');
-      return;
-    }
+    final n = normalizeEntityNumber(number.text);
+    // الزر معطّل والخطأ ظاهر تحت الحقل ما دام الرقم غير صحيح؛ هذا حارس فقط
+    if (!validEntityNumber(kind, n)) return;
     final doc = docUrl;
     if (doc == null) { toast(context, 'صورة المستند مطلوبة', error: true); return; }
     setState(() => busy = true);
