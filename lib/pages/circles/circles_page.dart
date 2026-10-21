@@ -9,6 +9,7 @@ import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import '../../state/safety_providers.dart';
 import '../business/business_list.dart';
+import '../business/register_circle_page.dart';
 import '../../core/nav_provider.dart';
 import 'post_card.dart';
 import 'circle_detail_page.dart';
@@ -49,6 +50,26 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
             ]),
           ),
         ),
+        // دعوة صاحب النشاط إلى تسجيل دائرته (معالج ست خطوات) في أعلى «اكتشف»
+        if (tab == 1)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+            child: InkWell(
+              key: const Key('register-banner'),
+              onTap: () => openRegisterCircle(context),
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(14)),
+                child: const Row(children: [
+                  Icon(Icons.storefront_rounded, color: Joy.primary, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('هل تملك نشاطاً؟ سجّل دائرتك في دقيقتين', style: TextStyle(color: Joy.primary, fontWeight: FontWeight.w600, fontSize: 13))),
+                  Icon(Icons.chevron_left_rounded, color: Joy.primary),
+                ]),
+              ),
+            ),
+          ),
         if (tab == 1)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
@@ -157,11 +178,17 @@ class _MineTab extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
               child: JoyCard(
                 color: Joy.sunSoft,
-                child: Row(children: [
-                  const Icon(Icons.groups_rounded, color: Joy.sunText),
-                  const SizedBox(width: 10),
-                  const Expanded(child: Text('لم تنضم لأي دائرة بعد. اكتشف الدوائر النشطة حولك أو أنشئ دائرتك.', style: TextStyle(color: Joy.sunText))),
-                  TextButton(onPressed: onDiscover, child: const Text('اكتشف')),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Row(children: [
+                    Icon(Icons.groups_rounded, color: Joy.sunText),
+                    SizedBox(width: 10),
+                    Expanded(child: Text('لم تنضم لأي دائرة بعد. اكتشف الدوائر النشطة حولك أو أنشئ دائرتك.', style: TextStyle(color: Joy.sunText))),
+                  ]),
+                  Row(children: [
+                    TextButton(onPressed: onDiscover, child: const Text('اكتشف')),
+                    // صاحب نشاط بلا دوائر: التسجيل الموثّق من هنا أيضاً
+                    TextButton.icon(key: const Key('register-mine'), onPressed: () => openRegisterCircle(context), icon: const Icon(Icons.storefront_rounded, size: 18), label: const Text('سجّل نشاطك')),
+                  ]),
                 ]),
               ),
             ),

@@ -11,6 +11,7 @@ import '../pages/wallet/my_offers_page.dart';
 import '../pages/business/owner/business_dashboard_page.dart';
 import '../pages/business/owner/job_candidate_page.dart';
 import '../pages/business/owner/job_candidates_page.dart';
+import '../pages/business/owner/verify_circle_page.dart';
 import '../pages/events/events_page.dart';
 import '../pages/jobs/job_offer_page.dart';
 import '../pages/jobs/job_offers_page.dart';
@@ -58,6 +59,10 @@ Widget? notificationTarget(AppNotification n) {
       return biz == null ? null : BusinessDashboardPage(id: biz, initialTab: 5);
     case 'biz_owner':
       return biz == null ? null : BusinessDashboardPage(id: biz);
+    // قرار التوثيق (قبول أو رفض بسبب): صفحة التوثيق في لوحة الدائرة
+    case 'biz_verified':
+    case 'biz_verification_rejected':
+      return biz == null ? null : VerifyCirclePage(bizId: biz);
     case 'claim_decided':
       return biz == null ? null : (n.data['approved'] == true ? BusinessDashboardPage(id: biz) : BusinessPage(id: biz));
     case 'review_reply':
@@ -159,6 +164,12 @@ Widget? notificationTarget(AppNotification n) {
     case 'admin_granted':
     case 'account_restored':
       return (icon: Icons.verified_user_outlined, color: Joy.primary);
+    case 'biz_verified':
+      return (icon: Icons.verified_rounded, color: Joy.success);
+    case 'biz_verification_rejected':
+      return (icon: Icons.gpp_bad_outlined, color: Joy.danger);
+    case 'biz_verification':
+      return (icon: Icons.fact_check_outlined, color: Joy.primary);
     case 'wish_price_drop':
     case 'wish_available':
     case 'wish_event_reminder':

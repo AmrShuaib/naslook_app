@@ -25,7 +25,14 @@ enum BizCategory {
   cafe('cafe', 'مقاهٍ مختصة', 'مقهى مختص', Icons.coffee_rounded),
   restaurant('restaurant', 'مطاعم', 'مطعم', Icons.restaurant_rounded),
   company('company', 'شركات كبرى', 'شركة', Icons.corporate_fare_rounded),
-  university('university', 'جامعات', 'جامعة', Icons.school_rounded);
+  university('university', 'جامعات', 'جامعة', Icons.school_rounded),
+  // فئات التسجيل الذاتي (أكتوبر 2026): أي نشاط محلي يسجّل دائرته بنفسه
+  shop('shop', 'متاجر', 'متجر', Icons.shopping_bag_rounded),
+  services('services', 'خدمات وورش', 'خدمات وورش', Icons.handyman_rounded),
+  salon('salon', 'صالونات وتجميل', 'صالون وتجميل', Icons.content_cut_rounded),
+  clinic('clinic', 'عيادات', 'عيادة', Icons.medical_services_rounded),
+  entertainment('entertainment', 'ترفيه', 'ترفيه', Icons.attractions_rounded),
+  other('other', 'أخرى', 'أخرى', Icons.category_rounded);
 
   final String key;
   final String plural;
@@ -36,10 +43,37 @@ enum BizCategory {
   static BizCategory of(String? key) => values.firstWhere((c) => c.key == key, orElse: () => BizCategory.brand);
 
   /// نوع العنصر الرئيسي في كتالوج هذه الفئة.
-  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car', hospital => 'clinic', airport => 'info', cafe => 'product', restaurant => 'product', company => 'info', university => 'info' };
-  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات', airport => 'مرافق المطار والخدمات', cafe => 'القائمة', restaurant => 'القائمة', company => 'الخدمات والأقسام', university => 'الكليات والخدمات' };
-  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً', airport => 'التفاصيل', cafe => 'اطلب', restaurant => 'اطلب', company => 'التفاصيل', university => 'التفاصيل' };
-  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد', airport => 'طلب', cafe => 'طلب', restaurant => 'طلب', company => 'طلب', university => 'طلب' };
+  String get itemKind => switch (this) { brand => 'product', cinema => 'showtime', hotel => 'room', carRental => 'car', hospital => 'clinic', airport => 'info', cafe => 'product', restaurant => 'product', company => 'info', university => 'info', shop => 'product', services => 'product', salon => 'clinic', clinic => 'clinic', entertainment => 'showtime', other => 'info' };
+  String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات', airport => 'مرافق المطار والخدمات', cafe => 'القائمة', restaurant => 'القائمة', company => 'الخدمات والأقسام', university => 'الكليات والخدمات', shop => 'المنتجات', services => 'الخدمات', salon => 'الخدمات والمواعيد', clinic => 'العيادات والمواعيد', entertainment => 'الفعاليات والتذاكر', other => 'الخدمات' };
+  String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً', airport => 'التفاصيل', cafe => 'اطلب', restaurant => 'اطلب', company => 'التفاصيل', university => 'التفاصيل', shop => 'اشترِ', services => 'اطلب', salon => 'احجز موعداً', clinic => 'احجز موعداً', entertainment => 'احجز تذاكر', other => 'التفاصيل' };
+  String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد', airport => 'طلب', cafe => 'طلب', restaurant => 'طلب', company => 'طلب', university => 'طلب', shop => 'طلب', services => 'طلب', salon => 'موعد', clinic => 'موعد', entertainment => 'تذكرة', other => 'طلب' };
+}
+
+/// «HH:MM» بالتوقيت المحلي (لبطاقة «هنا اليوم حتى …»).
+String clockLabel(DateTime t) {
+  final l = t.toLocal();
+  return '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+}
+
+/// نطاق خدمة الدائرة المتنقلة: مركز ونصف قطر بالكيلومتر وأحياء اختيارية.
+class ServiceArea {
+  final double lat, lng, radiusKm;
+  final List<String> districts;
+  const ServiceArea({required this.lat, required this.lng, this.radiusKm = 15, this.districts = const []});
+  factory ServiceArea.fromJson(Map m) => ServiceArea(lat: _d(m['lat']) ?? 0, lng: _d(m['lng']) ?? 0, radiusKm: _d(m['radiusKm']) ?? 15, districts: _strings(m['districts']));
+  /// «يخدم ضمن 15 كم».
+  String get label => 'يخدم ضمن ${radiusKm % 1 == 0 ? radiusKm.toInt() : radiusKm} كم';
+}
+
+/// دبوس «هنا اليوم» المؤقت: موقع حتى ساعة محددة.
+class HerePin {
+  final double lat, lng;
+  final DateTime until;
+  const HerePin({required this.lat, required this.lng, required this.until});
+  factory HerePin.fromJson(Map m) => HerePin(lat: _d(m['lat']) ?? 0, lng: _d(m['lng']) ?? 0, until: _t(m['until']) ?? DateTime.now());
+  bool get active => until.isAfter(DateTime.now());
+  /// «هنا اليوم حتى 18:00».
+  String get label => 'هنا اليوم حتى ${clockLabel(until)}';
 }
 
 /// دائرة تجارية (براند/سينما/فندق/تأجير سيارات/مستشفى/مطار).
@@ -68,12 +102,22 @@ class Biz {
   /// عدد العروض السارية وأقرب انتهاء (من server/offers.js).
   final int offers;
   final DateTime? offerEndsAt;
+  /// التسجيل الموثّق (server/biz_onboard.js): الحضور (fixed|mobile)، نطاق الخدمة للمتنقلة، دبوس «هنا اليوم»،
+  /// حالة التوثيق (none|pending|approved|rejected)، هل يُسمح بالبيع، الدرجة (published|complete|verified|active)،
+  /// نوع الكيان (للفريق فقط)، وتوثيق الجوال.
+  final String presence;
+  final ServiceArea? serviceArea;
+  final HerePin? here;
+  final String verificationStatus, tier;
+  final bool canSell, phoneVerified;
+  final String? entityKind;
 
   const Biz({
     required this.id, required this.name, this.nameAr = '', required this.category, this.sector = '', this.description = '', required this.lat, required this.lng,
     this.address = '', this.hours = '', this.phone, this.website, this.colorHex, this.highlights = const [], this.verified = false, this.official = false,
     this.following = false, this.followers = 0, this.rating, this.ratingCount = 0, this.minPrice, this.itemsCount = 0, this.items = const [], this.reviews = const [], this.myOrders = const [],
     this.posts = const [], this.logoUrl, this.coverUrl, this.ownerId, this.myRole, this.active = true, this.views = 0, this.createdAt, this.openNow, this.distanceKm, this.matchedItem, this.offers = 0, this.offerEndsAt,
+    this.presence = 'fixed', this.serviceArea, this.here, this.verificationStatus = 'none', this.tier = 'published', this.canSell = false, this.phoneVerified = false, this.entityKind,
   });
 
   factory Biz.fromJson(Map m) => Biz(
@@ -86,7 +130,16 @@ class Biz {
         posts: asList(m['posts']).map(BizPost.fromJson).toList(), logoUrl: m['logoUrl']?.toString(), coverUrl: m['coverUrl']?.toString(), ownerId: m['ownerId']?.toString(), myRole: m['myRole']?.toString(),
         active: m['active'] != false, views: _i(m['views']), createdAt: _t(m['createdAt']),
         openNow: m['openNow'] is bool ? m['openNow'] as bool : null, distanceKm: _d(m['distanceKm']), matchedItem: m['matchedItem']?.toString(), offers: _i(m['offers']), offerEndsAt: _t(m['offerEndsAt']),
+        presence: m['presence'] == 'mobile' ? 'mobile' : 'fixed', serviceArea: m['serviceArea'] is Map ? ServiceArea.fromJson(_m(m['serviceArea'])) : null, here: m['here'] is Map ? HerePin.fromJson(_m(m['here'])) : null,
+        verificationStatus: m['verificationStatus']?.toString() ?? (m['verified'] == true ? 'approved' : 'none'), tier: m['tier']?.toString() ?? 'published',
+        canSell: m['canSell'] is bool ? m['canSell'] as bool : m['verified'] == true, phoneVerified: m['phoneVerified'] == true, entityKind: m['entityKind']?.toString(),
       );
+
+  bool get isMobile => presence == 'mobile';
+  /// دبوس «هنا اليوم» ساري الآن.
+  bool get hereActive => here?.active == true;
+  String get tierLabel => tierLabelOf(tier);
+  String get verificationLabel => verificationLabelOf(verificationStatus);
 
   /// نص المسافة: «850 م» أو «3.2 كم».
   String? get distanceLabel {
@@ -417,4 +470,120 @@ class ManageOffers {
   final int members;
   const ManageOffers({this.offers = const [], this.templates = const [], this.members = 0});
   factory ManageOffers.fromJson(Map m) => ManageOffers(offers: asList(m['offers']).map(BizOffer.fromJson).toList(), templates: asList(m['templates']).map(OfferTemplate.fromJson).toList(), members: _i(m['members']));
+}
+
+
+// ------------------------------------------------------------------ التسجيل الموثّق (server/biz_onboard.js)
+
+/// يحوّل الأرقام العربية والفارسية إلى لاتينية (المستخدم يكتب ٠٥٥…).
+String latinDigits(String s) {
+  const ar = '٠١٢٣٤٥٦٧٨٩', fa = '۰۱۲۳۴۵۶۷۸۹';
+  final b = StringBuffer();
+  for (final r in s.runes) {
+    final c = String.fromCharCode(r);
+    final i = ar.contains(c) ? ar.indexOf(c) : fa.indexOf(c);
+    b.write(i >= 0 ? '$i' : c);
+  }
+  return b.toString();
+}
+
+/// جوال سعودي بأي صيغة (05XXXXXXXX، 5XXXXXXXX، +9665…، 009665…) → `+9665XXXXXXXX`، أو null إن لم يكن صحيحاً.
+String? normalizeSaudiMobile(String raw) {
+  var s = latinDigits(raw).replaceAll(RegExp(r'[\s\-()]'), '');
+  if (s.startsWith('+')) s = s.substring(1);
+  if (s.startsWith('00')) s = s.substring(2);
+  if (s.startsWith('966')) s = s.substring(3);
+  if (s.startsWith('0')) s = s.substring(1);
+  return RegExp(r'^5\d{8}$').hasMatch(s) ? '+966$s' : null;
+}
+
+String tierLabelOf(String tier) => switch (tier) { 'complete' => 'مكتملة', 'verified' => 'موثّقة', 'active' => 'نشطة', _ => 'منشورة' };
+String verificationLabelOf(String status) => switch (status) { 'pending' => 'قيد المراجعة', 'approved' => 'موثّقة', 'rejected' => 'مرفوض', _ => 'غير موثّقة' };
+String entityKindLabel(String? kind) => switch (kind) { 'cr' => 'سجل تجاري', 'freelance' => 'وثيقة العمل الحر', _ => '—' };
+
+/// حالة توثيق الدائرة كما تعود مع الاكتمال أو بعد الإرسال (السبب والمستند للفريق فقط).
+class VerificationInfo {
+  final String status;
+  final String? entityKind, entityNumber, reason, docUrl;
+  final DateTime? submittedAt, reviewedAt;
+  const VerificationInfo({this.status = 'none', this.entityKind, this.entityNumber, this.reason, this.docUrl, this.submittedAt, this.reviewedAt});
+  factory VerificationInfo.fromJson(Map m) => VerificationInfo(
+        status: m['status']?.toString() ?? 'none', entityKind: m['entityKind']?.toString(), entityNumber: m['entityNumber']?.toString(),
+        reason: (m['reason']?.toString().isNotEmpty == true) ? m['reason'].toString() : null, docUrl: m['docUrl']?.toString(), submittedAt: _t(m['submittedAt']), reviewedAt: _t(m['reviewedAt']),
+      );
+  bool get approved => status == 'approved';
+  bool get pending => status == 'pending';
+  bool get rejected => status == 'rejected';
+  String get label => verificationLabelOf(status);
+}
+
+/// بنود قائمة الاكتمال: الأساسيات، الصور والكتالوج (لديك/المطلوب)، وحالة الكيان.
+class CompletenessChecks {
+  final bool logo, location, phone, hours, description, phoneVerified, offer30d, post30d;
+  final int photosHave, photosNeed, catalogHave, catalogNeed;
+  final String entityStatus;
+  const CompletenessChecks({this.logo = false, this.location = false, this.phone = false, this.hours = false, this.description = false, this.phoneVerified = false, this.offer30d = false, this.post30d = false, this.photosHave = 0, this.photosNeed = 3, this.catalogHave = 0, this.catalogNeed = 3, this.entityStatus = 'none'});
+  factory CompletenessChecks.fromJson(Map m) {
+    final ph = _m(m['photos']), ca = _m(m['catalog']), en = _m(m['entity']);
+    return CompletenessChecks(
+      logo: m['logo'] == true, location: m['location'] == true, phone: m['phone'] == true, hours: m['hours'] == true, description: m['description'] == true,
+      phoneVerified: m['phoneVerified'] == true, offer30d: m['offer30d'] == true, post30d: m['post30d'] == true,
+      photosHave: _i(ph['have']), photosNeed: ph['need'] == null ? 3 : _i(ph['need']), catalogHave: _i(ca['have']), catalogNeed: ca['need'] == null ? 3 : _i(ca['need']), entityStatus: en['status']?.toString() ?? 'none',
+    );
+  }
+  bool get photos => photosHave >= photosNeed;
+  bool get catalog => catalogHave >= catalogNeed;
+  bool get entity => entityStatus == 'approved';
+}
+
+/// الخطوة التالية المقترحة مع التبويب الذي تفتحه في اللوحة (profile|catalog|posts|offers|verify).
+class NextStep {
+  final String key, title, hint, tab;
+  final int minutes;
+  const NextStep({required this.key, required this.title, this.hint = '', this.tab = 'profile', this.minutes = 2});
+  factory NextStep.fromJson(Map m) => NextStep(key: m['key']?.toString() ?? '', title: m['title']?.toString() ?? '', hint: m['hint']?.toString() ?? '', tab: m['tab']?.toString() ?? 'profile', minutes: m['minutes'] == null ? 2 : _i(m['minutes']));
+}
+
+/// اكتمال الدائرة: الدرجة والنسبة وقائمة البنود والخطوة التالية وحالة التوثيق (GET /biz/:id/completeness).
+class Completeness {
+  final String tier;
+  final int percent;
+  final bool canSell;
+  final CompletenessChecks checks;
+  final NextStep? next;
+  final VerificationInfo verification;
+  const Completeness({this.tier = 'published', this.percent = 0, this.canSell = false, this.checks = const CompletenessChecks(), this.next, this.verification = const VerificationInfo()});
+  factory Completeness.fromJson(Map m) => Completeness(
+        tier: m['tier']?.toString() ?? 'published', percent: _i(m['percent']).clamp(0, 100), canSell: m['canSell'] == true, checks: CompletenessChecks.fromJson(_m(m['checks'])),
+        next: m['next'] is Map ? NextStep.fromJson(_m(m['next'])) : null, verification: VerificationInfo.fromJson(_m(m['verification'])),
+      );
+  String get tierLabel => tierLabelOf(tier);
+}
+
+/// دائرة مشابهة قريبة وُجدت أثناء التسجيل (GET /biz/register/check).
+class RegisterDuplicate {
+  final String id, name, nameAr;
+  final BizCategory category;
+  final double? distanceKm;
+  final String? ownerId, logoUrl;
+  const RegisterDuplicate({required this.id, this.name = '', this.nameAr = '', this.category = BizCategory.brand, this.distanceKm, this.ownerId, this.logoUrl});
+  factory RegisterDuplicate.fromJson(Map m) => RegisterDuplicate(id: m['id'].toString(), name: m['name']?.toString() ?? '', nameAr: m['nameAr']?.toString() ?? '', category: BizCategory.of(m['category']?.toString()), distanceKm: _d(m['distanceKm']), ownerId: m['ownerId']?.toString(), logoUrl: m['logoUrl']?.toString());
+  String get title => nameAr.isNotEmpty ? nameAr : name;
+  /// بلا مالك: يمكن استلامها؛ ولها مالك: نخبر المسجّل أنها مملوكة.
+  bool get claimable => ownerId == null || ownerId!.isEmpty;
+  String? get distanceLabel => distanceKm == null ? null : (distanceKm! < 1 ? '${(distanceKm! * 1000).round()} م' : '${distanceKm!.toStringAsFixed(1)} كم');
+}
+
+class RegisterCheck {
+  final List<RegisterDuplicate> duplicates;
+  const RegisterCheck({this.duplicates = const []});
+  factory RegisterCheck.fromJson(Map m) => RegisterCheck(duplicates: asList(m['duplicates']).map(RegisterDuplicate.fromJson).toList());
+}
+
+/// ما يعود به POST /biz/register: الدائرة (بدور المالك) واكتمالها الأولي.
+class Registered {
+  final Biz biz;
+  final Completeness completeness;
+  const Registered({required this.biz, required this.completeness});
+  factory Registered.fromJson(Map m) => Registered(biz: Biz.fromJson(_m(m['biz'])), completeness: Completeness.fromJson(_m(m['completeness'])));
 }

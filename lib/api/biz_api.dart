@@ -80,3 +80,17 @@ extension BizApi on ApiClient {
         if (endsAt != null) 'endsAt': endsAt.toUtc().toIso8601String(),
       }));
 }
+
+/// التسجيل الموثّق للدوائر (server/biz_onboard.js): فحص التكرار، التسجيل في ست خطوات، الاكتمال، التوثيق، و«هنا اليوم».
+extension BizOnboardApi on ApiClient {
+  /// دوائر مشابهة الاسم ضمن 3 كم من الموقع (إن مُرِّر) حتى لا تُنشأ نسخة ثانية.
+  Future<RegisterCheck> registerCheck(String name, {double? lat, double? lng}) async =>
+      RegisterCheck.fromJson(await get('/biz/register/check', query: {'name': name, if (lat != null && lng != null) ...{'lat': lat.toStringAsFixed(5), 'lng': lng.toStringAsFixed(5)}}));
+  Future<Registered> registerBiz(Map<String, dynamic> body) async => Registered.fromJson(await post('/biz/register', body));
+  Future<Completeness> bizCompleteness(String id) async => Completeness.fromJson(await get('/biz/$id/completeness'));
+  Future<VerificationInfo> submitVerification(String id, {required String entityKind, required String entityNumber, required String docUrl}) async =>
+      VerificationInfo.fromJson(asMap((await post('/biz/$id/verification', {'entityKind': entityKind, 'entityNumber': entityNumber, 'docUrl': docUrl}))['verification']));
+  Future<HerePin> setHere(String id, {required double lat, required double lng, required int hours}) async =>
+      HerePin.fromJson(asMap((await post('/biz/$id/here', {'lat': lat, 'lng': lng, 'hours': hours}))['here']));
+  Future<void> clearHere(String id) => delete('/biz/$id/here', body: const {});
+}

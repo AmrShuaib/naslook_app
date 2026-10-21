@@ -9,8 +9,9 @@ import '../../../state/biz_providers.dart';
 import '../../../ui/profile_avatar.dart';
 import '../../../ui/widgets.dart';
 import '../business_page.dart' show openBusiness, BizLogo;
+import '../register_circle_page.dart';
 import 'business_dashboard_page.dart';
-import 'business_editor.dart';
+import 'business_editor.dart' show ownerErrText;
 
 /// دوائري التجارية: ما أملكه أو أعمل فيه، مع إنشاء دائرة جديدة وطلبات الملكية.
 class MyBusinessesPage extends ConsumerWidget {
@@ -27,8 +28,10 @@ class MyBusinessesPage extends ConsumerWidget {
           if (mine.valueOrNull?.admin == true) IconButton(tooltip: 'طلبات الملكية', icon: const Icon(Icons.fact_check_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ClaimsPage()))),
         ],
       ),
+      // الإنشاء عبر معالج التسجيل الموثّق (ست خطوات)؛ المحرّر القديم يبقى للتعديل من اللوحة
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => openBusinessEditor(context),
+        key: const Key('my-biz-register'),
+        onPressed: () => openRegisterCircle(context),
         backgroundColor: Joy.primary,
         foregroundColor: Joy.primaryOn,
         icon: const Icon(Icons.add_business_outlined),
@@ -39,7 +42,7 @@ class MyBusinessesPage extends ConsumerWidget {
           onRefresh: () async => ref.invalidate(myBusinessesProvider),
           child: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 96), children: [
             if (m.circles.isEmpty && m.claims.isEmpty)
-              const EmptyState(icon: Icons.storefront_outlined, title: 'لا دوائر تجارية بعد', subtitle: 'أنشئ دائرة لنشاطك: متجر أو مقهى أو سينما أو فندق أو تأجير سيارات، وأدر كتالوجك وطلباتك من هنا. أو اطلب ملكية دائرة موجودة من صفحتها.'),
+              const EmptyState(icon: Icons.storefront_outlined, title: 'لا دوائر تجارية بعد', subtitle: 'سجّل دائرة نشاطك في دقيقتين: متجر أو مقهى أو عيادة أو خدمة متنقلة، وتظهر على الخريطة فوراً. أو اطلب ملكية دائرة موجودة من صفحتها.'),
             if (m.circles.isNotEmpty) const SectionTitle('دوائري'),
             for (final b in m.circles) Padding(padding: const EdgeInsets.only(bottom: 10), child: _OwnedRow(b)),
             if (m.claims.isNotEmpty) ...[
