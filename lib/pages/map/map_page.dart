@@ -65,8 +65,7 @@ const double kRowFollowZoom = 15.5;
 
 /// حضور دائرة على الخريطة (حزمة تسجيل الدوائر الموثّقة): متنقلة بمنطقة خدمة (`presence: mobile` + `serviceArea`)،
 /// أو دبّوس مؤقت «هنا اليوم» (`here` حتى `until`). يُقرأ من JSON الخام لـ `/biz` هنا لا من نموذج [Biz] الذي تملكه
-/// حزمة التسجيل، حتى لا تتعارض الحزمتان؛ عند إضافة الحقول إلى [Biz] يُحذف [mapBizPresenceProvider] ويُقرأ الحضور
-/// من [mapBizProvider] مباشرة (طلب واحد بدل اثنين).
+/// حزمة التسجيل، حتى لا تتعارض الحزمتان؛ عند إضافة الحقول إلى [Biz] يُقرأ الحضور منه مباشرة ويُحذف هذا النموذج.
 class BizPresence {
   final String id;
   final bool mobile;
@@ -98,17 +97,33 @@ class BizPresence {
   }
 }
 
-/// حضور الدوائر ضمن حدود الخريطة الحالية (انظر [BizPresence]): طلب `/biz` نفسه يُقرأ خاماً.
-final mapBizPresenceProvider = FutureProvider<Map<String, BizPresence>>((ref) async {
-  final rows = await ref.watch(apiClientProvider).getList('/biz', query: {'bbox': ref.watch(bboxProvider).query});
-  final out = <String, BizPresence>{};
-  for (final r in rows) {
-    if (r is! Map) continue;
-    final p = BizPresence.fromJson(r);
-    if (p != null) out[p.id] = p;
+/// دوائر الخريطة وحضورها من حمولة `/biz` واحدة (انظر [mapCirclesProvider]).
+class MapCircles {
+  final List<Biz> circles;
+  final Map<String, BizPresence> presence;
+  const MapCircles({this.circles = const [], this.presence = const {}});
+  static const empty = MapCircles();
+
+  /// يحلّل صفوف `/biz` الخام مرة واحدة إلى القائمة والحضور معاً.
+  factory MapCircles.fromRows(List rows) {
+    final circles = <Biz>[];
+    final presence = <String, BizPresence>{};
+    for (final r in rows) {
+      if (r is! Map) continue;
+      circles.add(Biz.fromJson(r));
+      final p = BizPresence.fromJson(r);
+      if (p != null) presence[p.id] = p;
+    }
+    return MapCircles(circles: circles, presence: presence);
   }
-  return out;
-});
+}
+
+/// الدوائر ضمن حدود الخريطة الحالية: طلب `/biz` واحد لكل تغيير في الحدود تُشتق منه قائمة [Biz] والحضور معاً، فلا
+/// يصل أحدهما قبل الآخر (قائمة جديدة مع حضور قديم كانت تضع دبّوساً عند مركز المتنقلة لإطار قبل أن يحلّ القرص محلّه).
+/// الخريطة لا تقرأ `mapBizProvider` (في `biz_providers.dart`) الآن، فمن يدمج حزمة التسجيل يجعله مشتقاً من هذا المزوّد
+/// حتى يعود `invalidateBizAll` يحدّث الخريطة فور تعديل الدائرة من لوحتها.
+final mapCirclesProvider = FutureProvider<MapCircles>((ref) async =>
+    MapCircles.fromRows(await ref.watch(apiClientProvider).getList('/biz', query: {'bbox': ref.watch(bboxProvider).query})));
 
 /// نص تلميح الدبّوس المؤقت: «هنا اليوم حتى 18:30» بالتوقيت المحلي.
 String hereUntilLabel(DateTime until) {
@@ -231,8 +246,9 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     final pins = ref.watch(pinsProvider).value ?? const <Pin>[];
     final stories = ref.watch(storiesProvider).value ?? const <Story>[];
     final businesses = ref.watch(businessesProvider).value ?? const <Business>[];
-    final circles = ref.watch(mapBizProvider).value ?? const <Biz>[];
-    final presence = ref.watch(mapBizPresenceProvider).valueOrNull ?? const <String, BizPresence>{}; // طبقة اختيارية كذلك
+    final mapCircles = ref.watch(mapCirclesProvider).valueOrNull ?? MapCircles.empty; // طبقة اختيارية: خطؤها لا يُسقط الخريطة
+    final circles = mapCircles.circles;
+    final presence = mapCircles.presence;
     final posts = ref.watch(mapPostsProvider).value ?? const <MapPost>[];
     final listings = ref.watch(mapMarketProvider).value ?? const <Listing>[];
     final offers = ref.watch(mapOffersProvider).valueOrNull ?? const <MapOffer>[]; // طبقة اختيارية: خطؤها لا يُسقط الخريطة
@@ -386,7 +402,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
       final i = rows.indexWhere((r) => r.pinKey == 'business:$bizId');
       if (i >= 0) return _selectRow(rows, i);
     }
-    final circles = ref.read(mapBizProvider).valueOrNull ?? const <Biz>[];
+    final circles = ref.read(mapCirclesProvider).valueOrNull?.circles ?? const <Biz>[];
     final c = circles.where((c) => c.id == bizId).firstOrNull;
     if (c != null) _showBusiness(c.toBusiness());
   }
@@ -628,8 +644,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     ref.invalidate(mapPostsProvider);
     ref.invalidate(mapMarketProvider);
     ref.invalidate(hiringBizProvider);
-    ref.invalidate(mapBizProvider);
-    ref.invalidate(mapBizPresenceProvider);
+    ref.invalidate(mapCirclesProvider);
     if (widget.home) ref.invalidate(rowProvider);
   }
 

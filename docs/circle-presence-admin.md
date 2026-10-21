@@ -21,9 +21,9 @@
 - **الدبّوس الاحتياطي من الصف**: بطاقة `circle` في الصف تضيف دبّوس دائرة بمفتاح طبقة الدوائر نفسه (`business:<id>`) ونهاية الدبّوس من `payload.until`، فإن كانت الدائرة ضمن الحدود يفوز دبّوس الطبقة (لا تكرار)، وإلا يبقى للبطاقة دبّوس يُبرز عند اختيارها.
 - التجميع والأسماء (`map_cluster.dart`، `map_labels.dart`) لم يُمسّا: الدبّوس المؤقت عنصر `business` عادي يحمل `Business` بموقع الدبّوس، فتظهر تسميته وتُحتسب في اللوحة كالمعتاد.
 
-### قراءة الحضور (`BizPresence` و`mapBizPresenceProvider`)
+### قراءة الحضور (`BizPresence` و`mapCirclesProvider`)
 
-نموذج `Biz` في `lib/api/biz_models.dart` تملكه حزمة التسجيل، فحضور الدائرة يُقرأ هنا من JSON الخام لطلب `/biz` نفسه بحدود الخريطة إلى نموذج صغير `BizPresence` (`id`، `mobile`، `area {lat,lng,radiusKm}`، `here {lat,lng,until}`)؛ الثابتة بلا دبّوس مؤقت لا تُحفظ. **تكرار مؤقت**: عند إضافة `presence/serviceArea/here` إلى `Biz` يُحذف هذا المزوّد ويُقرأ الحضور من `mapBizProvider` مباشرة فيعود الطلب واحداً بدل اثنين. زر «تحديث» يعيد جلب الاثنين.
+نموذج `Biz` في `lib/api/biz_models.dart` تملكه حزمة التسجيل، فحضور الدائرة يُقرأ هنا من JSON الخام لطلب `/biz` إلى نموذج صغير `BizPresence` (`id`، `mobile`، `area {lat,lng,radiusKm}`، `here {lat,lng,until}`)؛ الثابتة بلا دبّوس مؤقت لا تُحفظ. الخريطة تطلب `/biz?bbox=` **مرة واحدة** لكل تغيير في الحدود عبر `mapCirclesProvider` (في `map_page.dart`) الذي يحلّل الحمولة نفسها إلى `MapCircles {circles: List<Biz>, presence: Map<String, BizPresence>}`؛ فلا طلب ثانٍ للحضور، ولا إطار تصل فيه قائمة جديدة مع حضور قديم (كان يضع دبّوساً عند مركز المتنقلة قبل القرص، أو عند موقع الدائرة الأصلي قبل القفز إلى «هنا اليوم»). زر «تحديث» يعيد جلبه. **ملاحظة للمدمج**: الخريطة لم تعد تقرأ `mapBizProvider` في `lib/state/biz_providers.dart`، فتبطيل `invalidateBizAll` له لا يصل إلى الخريطة الآن (تتحدّث الدوائر عند تغيّر الحدود أو زر «تحديث»)؛ عند دمج حزمة التسجيل يُجعل `mapBizProvider` مشتقاً من `mapCirclesProvider` (أو يُنقل الأخير إلى `biz_providers.dart`) فيعود تعديل الدائرة من لوحتها يحدّث الخريطة فوراً، وعند إضافة `presence/serviceArea/here` إلى `Biz` يُحذف `BizPresence` ويُقرأ الحضور من `Biz`.
 
 ## الصف (`lib/api/row_api.dart`، `lib/pages/home/row_deck.dart`)
 
@@ -56,13 +56,13 @@
 
 ## الاختبارات
 
-- `test/map_presence_test.dart`: تحليل `BizPresence`، نص التلميح، القرص بنصف قطر 5000 م بلا دبّوس للمتنقلة، الدبّوس عند موقع «هنا اليوم» بشارة وتلميح، تجاهل الدبّوس المنتهي، لمس الدبّوس والقرص يفتح ورقة الدائرة، وفي الرئيسية فوز دبّوس الطبقة على الاحتياطي ثم الاحتياطي حين تغيب الطبقة.
+- `test/map_presence_test.dart`: تحليل `BizPresence`، نص التلميح، القرص بنصف قطر 5000 م بلا دبّوس للمتنقلة، الدبّوس عند موقع «هنا اليوم» بشارة وتلميح، تجاهل الدبّوس المنتهي، طلب `/biz` واحد لكل حدود، وصول القائمة والحضور في الإطار نفسه من حمولة محجوزة (بلا دبّوس عند مركز المتنقلة أو موقع الدائرة الأصلي)، لمس الدبّوس والقرص يفتح ورقة الدائرة، وفي الرئيسية فوز دبّوس الطبقة على الاحتياطي ثم الاحتياطي حين تغيب الطبقة.
 - `test/row_deck_test.dart`: تحليل `circle` ونوع غير معروف، بطاقة «هنا اليوم» وزر «زيارة» يفتح صفحة الدائرة، والبطاقة الافتراضية للنوع غير المعروف.
 - `test/admin_verifications_test.dart`: القائمة والحقول، «مطابق»، «مرفوض» بسبب إلزامي (الحمولة)، الاستعلام الرسمي عبر البديل، النسخ، الفلاتر، وبطاقة النظرة العامة وتحويلها إلى القسم.
 - `server/test/harness_admin_overview.mjs` (`NASLIFE_TEST_DB=naslife_test_regmap server/test/run.sh harness_admin_overview.mjs`): الحقول بأصفار قبل العمود، ثم العدّ والمستويات بعد إضافته، واعتماد معلّقة ينقلها إلى الموثّقة، والمخفية ليست منشورة.
 
 ## ملاحظات الدمج
 
-- `BizPresence` في `map_page.dart` و`adminBizCategoryLabel` في `admin_biz.dart` (أسماء الفئات الست الجديدة) تكراران مؤقتان لما يجب أن يعيش في `biz_models.dart`؛ عند دمج حزمة التسجيل تُقرأ الحقول من `Biz` وتُستخدم `BizCategory.of(key).label` وتُحذف النسختان.
+- `BizPresence` في `map_page.dart` و`adminBizCategoryLabel` في `admin_biz.dart` (أسماء الفئات الست الجديدة) تكراران مؤقتان لما يجب أن يعيش في `biz_models.dart`؛ عند دمج حزمة التسجيل تُقرأ الحقول من `Biz` وتُستخدم `BizCategory.of(key).label` وتُحذف النسختان. و`mapBizProvider` في `biz_providers.dart` صار بلا قارئ: يُشتق من `mapCirclesProvider` حتى يصل `invalidateBizAll` إلى الخريطة (انظر «قراءة الحضور»).
 - `RowItem.pinKey` للنوع `circle` يعتمد على أن `refId` هو معرّف الدائرة كما في العقد.
 - مسارات الإشعارات `biz_verification` (للمدير → قسم التوثيق) و`biz_verified` / `biz_verification_rejected` (للمالك → لوحة الدائرة) تُضاف في `lib/core/notify_open.dart` من حزمة التسجيل؛ القسم جاهز عبر `adminBizSegmentProvider = 'verifications'`.

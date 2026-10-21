@@ -1,7 +1,9 @@
 // حضور الدوائر على الخريطة (حزمة تسجيل الدوائر الموثّقة): الدائرة المتنقلة بمنطقة خدمة تُرسم قرصاً شفافاً بنصف قطرها
 // بالأمتار بلا دبّوس، والدائرة بدبّوس «هنا اليوم» تظهر عند موقع الدبّوس بشارة ساعة وتلميح بالوقت، والدبّوس المنتهي
 // يُهمل، ولمس الدبّوس أو القرص يفتح ورقة الدائرة كالمعتاد؛ وفي الرئيسية بطاقة «هنا اليوم» في الصف يفوز دبّوس الطبقة
-// على دبّوسها الاحتياطي حين تكون الدائرة ضمن الحدود، ويبقى الاحتياطي بشارته حين تغيب الطبقة.
+// على دبّوسها الاحتياطي حين تكون الدائرة ضمن الحدود، ويبقى الاحتياطي بشارته حين تغيب الطبقة. القائمة والحضور يأتيان من
+// طلب `/biz` واحد لكل حدود، فلا يظهر دبّوس عند مركز المتنقلة أو عند موقع الدائرة الأصلي في الإطار الذي تصل فيه الدوائر.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -50,6 +52,10 @@ Map<String, dynamic> _circleRow() => {
 
 class _Srv {
   final calls = <String>[];
+  /// استعلامات `/biz` (الحدود) بترتيبها: طلب واحد لكل حدود، لا طلب للقائمة وآخر للحضور.
+  final bizQueries = <String>[];
+  /// إن وُجد يُحجز رد `/biz` حتى يكتمل، لفحص الإطار الذي تصل فيه الدوائر.
+  Completer<void>? bizGate;
   List<Map<String, dynamic>> circles = _circles();
   List<Map<String, dynamic>> row = const [];
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
@@ -59,6 +65,8 @@ class _Srv {
     calls.add(key);
     switch (key) {
       case 'GET /biz':
+        bizQueries.add(req.url.query);
+        if (bizGate != null) await bizGate!.future;
         return _json(circles);
       case 'GET /row':
         return _json({'items': row, 'located': true});
@@ -135,7 +143,8 @@ void main() {
 
   testWidgets('a mobile circle is a translucent service-area disc without a pin; a here-pinned circle sits at its pin with a clock badge; expired pins are ignored', (tester) async {
     final srv = await _pump(tester);
-    expect(srv.calls.where((c) => c == 'GET /biz').length, greaterThanOrEqualTo(1));
+    expect(srv.bizQueries, isNotEmpty);
+    expect(srv.bizQueries.toSet().length, srv.bizQueries.length, reason: 'طلب /biz واحد لكل حدود: القائمة والحضور من حمولة واحدة');
     // القرص: دائرة واحدة بنصف قطر 5 كم بالأمتار عند مركز المنطقة
     final layer = tester.widget<CircleLayer<String>>(find.byKey(const Key('map-service-areas')));
     expect(layer.circles.length, 1);
@@ -153,6 +162,31 @@ void main() {
     // شارة واحدة وتلميح بالوقت المحلي
     expect(find.byKey(const Key('map-here-badge')), findsOneWidget);
     expect(find.byTooltip(hereUntilLabel(_until)), findsOneWidget);
+  });
+
+  testWidgets('the circle list and the presence land in the same frame from one /biz payload', (tester) async {
+    final srv = _Srv()..bizGate = Completer<void>();
+    await _pump(tester, srv: srv);
+    // الرد محجوز: طلب واحد لكل حدود (الحدود تتغيّر عند الإقلاع ثم عند الانتقال إلى موقع الجهاز) ولا دوائر ولا أقراص بعد
+    expect(srv.bizQueries, isNotEmpty);
+    expect(srv.bizQueries.toSet().length, srv.bizQueries.length);
+    expect(find.byKey(const Key('map-service-areas')), findsNothing);
+    expect(_markersAt(tester, 21.545, 39.175), 0);
+    expect(_markersAt(tester, 21.54, 39.165), 0);
+    srv.bizGate!.complete();
+    // الرد يمرّ بعدة خطوات غير متزامنة، فنلتقط أول إطار تظهر فيه أي دائرة ونفحصه
+    const spots = [(21.56, 39.17), (21.50, 39.10), (21.545, 39.175), (21.54, 39.165)];
+    bool anyCircle() => find.byKey(const Key('map-service-areas')).evaluate().isNotEmpty || spots.any((s) => _markersAt(tester, s.$1, s.$2) > 0);
+    for (var i = 0; i < 20 && !anyCircle(); i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    // الإطار الذي تصل فيه الدوائر يحمل القرص والدبّوس المؤقت معاً: لا دبّوس عند مركز المتنقلة ولا عند موقع الدائرة الأصلي
+    expect(find.byKey(const Key('map-service-areas')), findsOneWidget);
+    expect(_markersAt(tester, 21.56, 39.17), 0, reason: 'لا دبّوس عند مركز المتنقلة قبل القرص');
+    expect(_markersAt(tester, 21.50, 39.10), 0, reason: 'لا دبّوس عند موقع الدائرة الأصلي قبل القفز إلى «هنا اليوم»');
+    expect(_markersAt(tester, 21.545, 39.175), 1);
+    expect(_markersAt(tester, 21.54, 39.165), 1);
+    expect(srv.bizQueries.toSet().length, srv.bizQueries.length, reason: 'لا طلب ثانٍ للحضور');
   });
 
   testWidgets('tapping the here pin opens the circle sheet like any circle pin', (tester) async {
