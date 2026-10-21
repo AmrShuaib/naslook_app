@@ -59,17 +59,22 @@ List<double> resamplePeaks(List<double> src, int n) {
   return out;
 }
 
-/// مشغّلات الرسائل الصوتية الحيّة بمفتاح الرابط: وصول رسالة جديدة يزحزح عناصر القائمة فتُعاد فقاعاتها، فيبقى المشغّل
-/// هنا ما دام يعمل ويلتقطه الفقاعة الجديدة، وتُصرَف كلها عند إغلاق المحادثة.
+/// مشغّلات الرسائل الصوتية الحيّة بمفتاح الرابط **لصفحة محادثة واحدة**: وصول رسالة جديدة يزحزح عناصر القائمة
+/// فتُعاد فقاعاتها، فيبقى المشغّل هنا ما دام يعمل وتلتقطه الفقاعة الجديدة. كل صفحة تملك سجلّها وتصرفه عند إغلاقها
+/// (لا سجل عام: محادثة متداخلة فوق أخرى كانت تصرف مشغّلات الأولى عند إغلاقها).
 class VoiceNotePlayers {
-  static final _byUrl = <String, VoicePlayer>{};
+  final _byUrl = <String, VoicePlayer>{};
+  bool _disposed = false;
 
-  static VoicePlayer? existing(String url) => _byUrl[url];
+  int get length => _byUrl.length;
+  bool get disposed => _disposed;
 
-  static VoicePlayer acquire(String url) => _byUrl.putIfAbsent(url, () => VoicePlayer()..setSource(url: url));
+  VoicePlayer? existing(String url) => _byUrl[url];
+
+  VoicePlayer acquire(String url) => _byUrl.putIfAbsent(url, () => VoicePlayer()..setSource(url: url));
 
   /// يصرف المشغّل إن لم يكن يعمل (أو دائماً مع [force]).
-  static void release(String url, {bool force = false}) {
+  void release(String url, {bool force = false}) {
     final p = _byUrl[url];
     if (p == null) return;
     if (!force && p.state.playing) return;
@@ -77,7 +82,8 @@ class VoiceNotePlayers {
     p.dispose();
   }
 
-  static void disposeAll() {
+  void disposeAll() {
+    _disposed = true;
     for (final p in _byUrl.values) {
       p.dispose();
     }
@@ -85,7 +91,16 @@ class VoiceNotePlayers {
   }
 }
 
-/// أعمدة الموجة: المقطع المسموع بلون التشغيل والباقي باهت؛ [progress] من 0 إلى 1.
+/// موضع مركز العمود [i] من [n] عمود على عرض [width]: العمود الأول عند حافة **البداية** (اليمين في العربية) حتى
+/// يتفق الرسم مع موضع اللمس المعكوس في الاتجاه RTL ومع موضع زر التشغيل.
+double waveBarX(int i, int n, double width, TextDirection dir) {
+  final slot = width / n;
+  final x = slot * i + slot / 2;
+  return dir == TextDirection.rtl ? width - x : x;
+}
+
+/// أعمدة الموجة: المقطع المسموع بلون التشغيل والباقي باهت؛ [progress] من 0 إلى 1 يُملأ من حافة البداية
+/// (حسب [Directionality]) فيتفق مع موضع اللمس المعكوس في RTL.
 class WaveformBars extends StatelessWidget {
   final List<double> peaks;
   final double progress;
@@ -97,7 +112,9 @@ class WaveformBars extends StatelessWidget {
   Widget build(BuildContext context) => SizedBox(
         height: height,
         width: double.infinity,
-        child: CustomPaint(painter: _WavePainter(peaks: peaks, progress: progress, color: color, playedColor: playedColor)),
+        child: CustomPaint(
+          painter: _WavePainter(peaks: peaks, progress: progress, color: color, playedColor: playedColor, textDirection: Directionality.maybeOf(context) ?? TextDirection.ltr),
+        ),
       );
 }
 
@@ -105,7 +122,8 @@ class _WavePainter extends CustomPainter {
   final List<double> peaks;
   final double progress;
   final Color color, playedColor;
-  _WavePainter({required this.peaks, required this.progress, required this.color, required this.playedColor});
+  final TextDirection textDirection;
+  _WavePainter({required this.peaks, required this.progress, required this.color, required this.playedColor, required this.textDirection});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -118,14 +136,15 @@ class _WavePainter extends CustomPainter {
     final cut = progress * n;
     for (var i = 0; i < n; i++) {
       final h = math.max(3.0, peaks[i].clamp(0.0, 1.0) * size.height);
-      final x = slot * i + slot / 2;
+      final x = waveBarX(i, n, size.width, textDirection);
       final y0 = (size.height - h) / 2, y1 = y0 + h;
       canvas.drawLine(Offset(x, y0), Offset(x, y1), i < cut ? played : rest);
     }
   }
 
   @override
-  bool shouldRepaint(_WavePainter old) => old.progress != progress || old.peaks != peaks || old.color != color || old.playedColor != playedColor;
+  bool shouldRepaint(_WavePainter old) =>
+      old.progress != progress || old.peaks != peaks || old.color != color || old.playedColor != playedColor || old.textDirection != textDirection;
 }
 
 /// مشغّل رسالة صوتية: تشغيل/إيقاف، موجة من 48 عموداً تُسحب للانتقال، والوقت المتبقي. يعمل عبر [VoicePlayer]
@@ -137,7 +156,9 @@ class AudioBubble extends StatefulWidget {
   /// القمم الحقيقية من extra.peaks، وإلا موجة زائفة من [seed] (مفتاح الرسالة).
   final List<double>? peaks;
   final String seed;
-  const AudioBubble({super.key, required this.url, this.durationMs, required this.mine, this.pending = false, this.peaks, required this.seed});
+  /// سجل مشغّلات الصفحة (يبقي المشغّل حياً حين تُعاد الفقاعة)؛ بلا سجل تملك الفقاعة مشغّلها وتصرفه بنفسها.
+  final VoiceNotePlayers? players;
+  const AudioBubble({super.key, required this.url, this.durationMs, required this.mine, this.pending = false, this.peaks, required this.seed, this.players});
 
   @override
   State<AudioBubble> createState() => _AudioBubbleState();
@@ -145,6 +166,8 @@ class AudioBubble extends StatefulWidget {
 
 class _AudioBubbleState extends State<AudioBubble> {
   VoicePlayer? _player;
+  /// المشغّل ملك هذه الفقاعة (لا سجل) فتصرفه عند إزالتها.
+  bool _owned = false;
   StreamSubscription<VoiceState>? _sub;
   Object? _err;
   /// موضع السحب على الموجة أثناء السحب (كسر من 0 إلى 1) قبل تنفيذ الانتقال.
@@ -157,7 +180,7 @@ class _AudioBubbleState extends State<AudioBubble> {
     // فقاعة أُعيد إنشاؤها ومشغّلها ما زال يعمل: نلتقطه بدل البدء من الصفر
     final url = widget.url;
     if (url != null) {
-      final p = VoiceNotePlayers.existing(url);
+      final p = widget.players?.existing(url);
       if (p != null) _attach(p);
     }
   }
@@ -166,23 +189,34 @@ class _AudioBubbleState extends State<AudioBubble> {
   void didUpdateWidget(AudioBubble old) {
     super.didUpdateWidget(old);
     if (old.peaks != widget.peaks || old.seed != widget.seed) _bars = widget.peaks ?? pseudoPeaks(widget.seed);
-    if (old.url != widget.url) {
-      _sub?.cancel();
-      _sub = null;
-      _player = null;
+    if (old.url != widget.url || old.players != widget.players) {
+      _detach(old.url, old.players);
       _err = null;
       final url = widget.url;
-      final p = url == null ? null : VoiceNotePlayers.existing(url);
+      final p = url == null ? null : widget.players?.existing(url);
       if (p != null) _attach(p);
     }
   }
 
   @override
   void dispose() {
-    _sub?.cancel();
-    final url = widget.url;
-    if (url != null && _player != null) VoiceNotePlayers.release(url);
+    _detach(widget.url, widget.players);
     super.dispose();
+  }
+
+  /// يفكّ الاشتراك ويعيد المشغّل إلى السجل (يُصرف إن لم يكن يعمل) أو يصرفه إن كان ملك الفقاعة.
+  void _detach(String? url, VoiceNotePlayers? players) {
+    _sub?.cancel();
+    _sub = null;
+    final p = _player;
+    _player = null;
+    if (p == null) return;
+    if (_owned) {
+      p.dispose();
+    } else if (url != null) {
+      players?.release(url);
+    }
+    _owned = false;
   }
 
   void _attach(VoicePlayer p) {
@@ -199,7 +233,14 @@ class _AudioBubbleState extends State<AudioBubble> {
     if (url == null) return null;
     var p = _player;
     if (p == null) {
-      p = VoiceNotePlayers.acquire(url);
+      final reg = widget.players;
+      if (reg != null && !reg.disposed) {
+        p = reg.acquire(url);
+        _owned = false;
+      } else {
+        p = VoicePlayer()..setSource(url: url);
+        _owned = true;
+      }
       _attach(p);
       setState(() {});
     }

@@ -82,6 +82,8 @@ class ChatBubble extends StatefulWidget {
   final CodeAction? onCode;
   /// قمم الموجة الصوتية (من extra.peaks) إن وُجدت.
   final List<double>? peaks;
+  /// سجل مشغّلات الصوت الخاص بالصفحة (يبقي التشغيل حياً حين تُعاد الفقاعة).
+  final VoiceNotePlayers? players;
   const ChatBubble(this.m,
       {super.key,
       required this.mine,
@@ -110,7 +112,8 @@ class ChatBubble extends StatefulWidget {
       this.request,
       this.busy = false,
       this.onCode,
-      this.peaks});
+      this.peaks,
+      this.players});
 
   @override
   State<ChatBubble> createState() => _ChatBubbleState();
@@ -212,7 +215,7 @@ class _ChatBubbleState extends State<ChatBubble> {
           ),
         );
       case 'audio':
-        return AudioBubble(url: url, durationMs: m.durationMs, mine: widget.mine, pending: m.isPending, peaks: widget.peaks, seed: m.key);
+        return AudioBubble(url: url, durationMs: m.durationMs, mine: widget.mine, pending: m.isPending, peaks: widget.peaks, seed: m.key, players: widget.players);
       case 'video':
         // يُشغَّل داخل التطبيق بملء الشاشة بدل فتحه خارجه
         return InkWell(

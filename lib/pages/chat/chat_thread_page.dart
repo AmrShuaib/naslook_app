@@ -115,6 +115,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   /// مرتبة من الأقدم إلى الأحدث.
   List<Message> _messages = const [];
   final _metaFetched = <String>{};
+  /// آخر جلب للبيانات الإضافية (يُنتظر قبل إعادة إرسال الصندوق حتى تُعرف clientId للرسائل المحمّلة).
+  Future<void>? _metaInFlight;
   /// تفاعلات الرسائل بمعرّف الرسالة (تصل مع البيانات الإضافية وتُحدَّث دورياً)، وعدّاد انبثاق القلب لكل رسالة
   final _reactions = <String, List<Reaction>>{};
   final _bursts = <String, int>{};
@@ -129,6 +131,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   Timer? _requestRetryTimer;
   /// قمم الموجة الصوتية بمفتاح الرسالة (تُحسب مرة من extra.peaks حتى لا تُعاد مع كل بناء).
   final _peaks = <String, List<double>?>{};
+  /// مشغّلات الرسائل الصوتية لهذه الصفحة وحدها (محادثة متداخلة فوقها لا تصرفها عند إغلاقها).
+  final _players = VoiceNotePlayers();
   /// بايتات الوسائط المحلية قبل/أثناء الرفع (للمعاينة وإعادة المحاولة).
   final _localBytes = <String, _Media>{};
   /// مفاتيح الرسائل التي تدخل بحركة (وصلت أو أُرسلت والمحادثة مفتوحة)؛ تُحذف بعد أول عرض.
@@ -175,6 +179,14 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   /// مفتاح ثابت لعنصر القائمة: المعرّف المحلي يبقى بعد وصول معرّف الخادم فلا تُعاد الفقاعة.
   String _stableKey(Message m) => m.localId ?? m.id;
 
+  /// طلب ثانوي لا ننتظره ونتجاهل خطأه. (لا `catchError((_) {})`: `setMessageMeta` مُعلنة `Future<void>` لكن
+  /// الكائن الفعلي `Future<Map>` فيرمي المعالج ArgumentError عند أول فشل بدل أن يبتلعه.)
+  static Future<void> _quiet(Future<void> f) async {
+    try {
+      await f;
+    } catch (_) {}
+  }
+
   /// نقطة توسعة للمدمج: إجراءات إضافية في قائمة المرفقات (مثل «مشاركة موقعي الحي» عبر showLiveShareSheet).
   List<AttachAction> get _extraAttachActions => const [];
 
@@ -208,7 +220,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     _rec?.dispose();
     _text.dispose();
     _searchCtl.dispose();
-    VoiceNotePlayers.disposeAll();
+    _players.disposeAll();
     super.dispose();
   }
 
@@ -397,10 +409,14 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   }
 
   /// يجلب بيانات الرد/التوجيه/المدة للرسائل التي لم تُجلب لها بعد.
-  Future<void> _fetchMeta() async {
+  Future<void> _fetchMeta() {
     final ids = _messages.where((m) => m.id.isNotEmpty && !m.id.startsWith('local-') && !_metaFetched.contains(m.id)).map((m) => m.id).toList();
-    if (ids.isEmpty) return;
+    if (ids.isEmpty) return _metaInFlight ?? Future.value();
     _metaFetched.addAll(ids);
+    return _metaInFlight = _fetchMetaFor(ids);
+  }
+
+  Future<void> _fetchMetaFor(List<String> ids) async {
     try {
       final meta = await _api.messageMeta(ids);
       if (!mounted || meta.isEmpty) return;
@@ -648,6 +664,12 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       _outboxReady = true;
     }
     if (!mounted) return;
+    // طلب وصل الخادم وضاع ردّه (مهلة أو 500 بعد الحفظ): النسخة في السجل المحمّل الآن، فلا نرسلها ثانية
+    try {
+      await _metaInFlight;
+    } catch (_) {}
+    if (!mounted) return;
+    restored = [for (final m in restored) if (!_alreadyDelivered(m)) m];
     if (restored.isEmpty) {
       _persistOutbox();
       return;
@@ -664,6 +686,27 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       if (cur == null || !cur.isPending) continue;
       await _send(type: 'text', content: cur.content, retry: cur, quiet: true);
     }
+  }
+
+  /// نافذة مطابقة النص عند غياب clientId: رسالة مُرسلة بالنص نفسه من لحظة الإرسال المحلي (بتسامح ثوانٍ لفرق
+  /// الساعات) حتى عشر دقائق بعدها.
+  static const _deliveredBefore = Duration(seconds: 30), _deliveredAfter = Duration(minutes: 10);
+
+  /// هل توجد نسخة مُرسلة من رسالة الصندوق [local] في السجل المحمّل؟ بمعرّفها المحلي في `extra.clientId` إن أعاده
+  /// الخادم، وإلا بالنص نفسه ضمن النافذة الزمنية.
+  bool _alreadyDelivered(Message local) {
+    final text = local.content.trim();
+    final at = local.sentAt;
+    for (final m in _messages) {
+      if (m.isPending || !_mine(m)) continue;
+      if (local.localId != null && m.extra['clientId'] == local.localId) return true;
+      if (m.mediaKind != 'text' || m.content.trim() != text) continue;
+      final srvAt = m.sentAt;
+      if (at == null || srvAt == null) return true;
+      final d = srvAt.difference(at);
+      if (d >= -_deliveredBefore && d <= _deliveredAfter) return true;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------
@@ -957,7 +1000,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       if (body.isEmpty) throw const ApiException(0, 'لا محتوى للإرسال');
       // الخادم الأساسي يقبل النص فقط: الوسائط تُرسل كرابط مطلق ويُستنتج نوعها من امتداده
       if (local.type != 'text') body = _api.absolute(body);
-      final extra = {...localExtra, if (local.type != 'text') 'kind': local.type};
+      // clientId = المعرّف المحلي: يميّز النسخ عند إعادة الإرسال من الصندوق (ويتيح للخادم إزالة التكرار لاحقاً)
+      final extra = {...localExtra, if (local.type != 'text') 'kind': local.type, if (local.localId != null) 'clientId': local.localId};
       final m = await _api.sendMessage(_peerId, body, type: 'text', replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: extra);
       if (!mounted) return;
       final serverId = m.id.isNotEmpty && m.senderId != 'me' ? m.id : null;
@@ -973,7 +1017,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         _rebuild();
       });
       if (serverId != null && (local.quote != null || local.forwardedFrom != null || extra.isNotEmpty)) {
-        _api.setMessageMeta(serverId, peerId: _peerId, replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: extra).catchError((_) {});
+        _quiet(_api.setMessageMeta(serverId, peerId: _peerId, replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: extra));
       }
       if (serverId != null && onSent != null) await onSent(serverId);
       ref.invalidate(chatsProvider);
@@ -1020,12 +1064,16 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   }
 
   // ---- التسجيل الصوتي (5 دقائق كحد أقصى)
-  Future<void> _startRecording() async {
-    if (_recording) return;
+  /// يبدأ التسجيل ويرجع true إن بدأ فعلاً (المؤلّف يلغي فوراً إن رُفع الإصبع قبل ذلك، ويتجاهل الفشل).
+  Future<bool> _startRecording() async {
+    if (_recording) return false;
     try {
       final rec = _rec ??= VoiceRecordSession();
       await rec.start(); // يطلب إذن الميكروفون أولاً
-      if (!mounted) return;
+      if (!mounted) {
+        await rec.cancel();
+        return false;
+      }
       setState(() { _recording = true; _recElapsed = Duration.zero; });
       _recTimer?.cancel();
       _recTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -1033,9 +1081,11 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         setState(() => _recElapsed += const Duration(seconds: 1));
         if (_recElapsed >= maxVoiceDuration) _stopRecording(send: true);
       });
+      return true;
     } catch (e) {
-      if (!mounted || handlePermissionError(context, e)) return;
+      if (!mounted || handlePermissionError(context, e)) return false;
       toast(context, 'تعذر بدء التسجيل: ${errText(e)}', error: true);
+      return false;
     }
   }
 
@@ -1070,11 +1120,13 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     );
     if (target == null || !mounted) return;
     final from = _mine(m) ? myName : widget.peer.nickname;
+    // النسخة المعاد توجيهها رسالة جديدة: لا تحمل clientId الأصل
+    final extra = {...m.extra}..remove('clientId');
     try {
-      final sent = await _api.sendMessage(target.id, m.type == 'text' ? m.content : _api.absolute(m.content), type: 'text', forwardedFrom: from, extra: m.extra);
+      final sent = await _api.sendMessage(target.id, m.type == 'text' ? m.content : _api.absolute(m.content), type: 'text', forwardedFrom: from, extra: extra);
       if (sent.id.isNotEmpty && sent.senderId != 'me') {
-        _api.setMessageMeta(sent.id, peerId: target.id, forwardedFrom: from, extra: m.extra.isEmpty ? null : m.extra).catchError((_) {});
-        if (target.id == _peerId && mounted) setState(() { _merge([sent.copyWith(forwardedFrom: from, extra: m.extra)], animate: true); });
+        _quiet(_api.setMessageMeta(sent.id, peerId: target.id, forwardedFrom: from, extra: extra.isEmpty ? null : extra));
+        if (target.id == _peerId && mounted) setState(() { _merge([sent.copyWith(forwardedFrom: from, extra: extra)], animate: true); });
       }
       ref.invalidate(chatsProvider);
       if (mounted) toast(context, 'أُعيد التوجيه إلى ${target.nickname}');
@@ -1391,6 +1443,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           onQuoteTap: m.quote == null ? null : () { if (!_jumpToKey(m.quote!.id)) _revealMessage(m.quote!.id); },
           parsed: m.mediaKind == 'text' ? _parsedOf(m) : null,
           peaks: m.mediaKind == 'audio' ? _peaksOf(m) : null,
+          players: _players,
           cards: _cards,
           resolvedRefs: _cards.keys.toSet(),
           request: _requests[m.id],

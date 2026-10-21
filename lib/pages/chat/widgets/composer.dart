@@ -41,7 +41,8 @@ class ChatComposer extends StatefulWidget {
   final VoidCallback? onCancelReply;
   final bool recording;
   final Duration recElapsed, maxRecord;
-  final VoidCallback onStartRecording;
+  /// يبدأ التسجيل ويكتمل بـ true حين يبدأ فعلاً (بعد إذن الميكروفون) أو false إن فشل أو كان جارياً.
+  final Future<bool> Function() onStartRecording;
   final void Function({required bool send}) onStopRecording;
   const ChatComposer({
     super.key,
@@ -93,9 +94,12 @@ class _ChatComposerState extends State<ChatComposer> {
       widget.controller.addListener(_onText);
     }
     if (widget.recording && !old.recording && _releasedEarly) {
-      // رفع الإصبع قبل أن يبدأ التسجيل فعلاً (انتظار إذن الميكروفون): لا نترك تسجيلاً مفتوحاً
+      // احتياط لمسار الإمساك في [_holdStart]: رفع الإصبع قبل أن يبدأ التسجيل فعلاً. لا استدعاء أثناء البناء
+      // (الصفحة تستدعي setState في الإيقاف) بل بعد الإطار
       _releasedEarly = false;
-      widget.onStopRecording(send: false);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.recording) widget.onStopRecording(send: false);
+      });
     }
     if (!widget.recording && old.recording) {
       _hold = false;
@@ -185,8 +189,16 @@ class _ChatComposerState extends State<ChatComposer> {
         ),
       );
 
+  // ---- النقرة على الميكروفون (المسار القديم): تبدأ التسجيل حتى الإرسال أو الإلغاء
+  void _tapRecord() {
+    // بقايا إمساك سابق لم يبدأ تسجيله لا تلغي هذا التسجيل
+    _releasedEarly = false;
+    _hold = false;
+    widget.onStartRecording();
+  }
+
   // ---- الضغط المطوّل على الميكروفون
-  void _holdStart(LongPressStartDetails _) {
+  Future<void> _holdStart(LongPressStartDetails _) async {
     if (_hasText || widget.recording) return;
     _hold = true;
     _locked = false;
@@ -195,7 +207,26 @@ class _ChatComposerState extends State<ChatComposer> {
     _lockDy = 0;
     HapticFeedback.mediumImpact();
     setState(() {});
-    widget.onStartRecording();
+    var started = false;
+    try {
+      started = await widget.onStartRecording();
+    } catch (_) {
+      started = false;
+    }
+    if (!mounted) return;
+    if (!started) {
+      // فشل البدء (إذن مرفوض مثلاً): ننسى الإمساك كله حتى لا تلغي بقاياه النقرة التالية
+      _releasedEarly = false;
+      _hold = false;
+      _locked = false;
+      setState(() { _cancelDx = 0; _lockDy = 0; });
+      return;
+    }
+    if (_releasedEarly) {
+      // رُفع الإصبع قبل أن يبدأ التسجيل فعلاً (انتظار إذن الميكروفون): نلغيه فور بدئه بلا ترك ميكروفون مفتوحاً
+      _releasedEarly = false;
+      widget.onStopRecording(send: false);
+    }
   }
 
   void _holdMove(LongPressMoveUpdateDetails d) {
@@ -347,7 +378,7 @@ class _ChatComposerState extends State<ChatComposer> {
     return GestureDetector(
       key: const Key('composer-main'),
       behavior: HitTestBehavior.opaque,
-      onTap: rec ? () => widget.onStopRecording(send: true) : (_hasText ? widget.onSend : widget.onStartRecording),
+      onTap: rec ? () => widget.onStopRecording(send: true) : (_hasText ? widget.onSend : _tapRecord),
       onLongPressStart: _holdStart,
       onLongPressMoveUpdate: _holdMove,
       onLongPressEnd: _holdEnd,
