@@ -1,7 +1,8 @@
 // سلامة المال (أكتوبر 2026) في commerce.js وbusiness.js على Postgres المحلي عبر fastify.inject:
 // إعادة محاولة المعاملة عند تعارض الأقفال، تحويلات متعاكسة متوازية بلا 500، إلغاء فعالية بعد إنفاق إيرادها (402 بلا تغيير)،
-// استرداد مرة واحدة فقط (إلغاءان متوازيان، إلغاء بعد الاكتمال، حسم نزاع مرتين)، لا بيع زائد للمخزون أو الموعد عند طلبين متوازيين،
-// قفل رمز التسليم بعد خمس محاولات، دائرة بلا مالك ترفض الطلب المدفوع وتقبل المجاني، والشحن التجريبي بنوعه وإغلاقه في الوضع الحي.
+// استرداد مرة واحدة فقط (إلغاءان متوازيان، إلغاء بعد الاكتمال، حسم نزاع مرتين، إلغاء مع نزاع أو تسليم في اللحظة نفسها)،
+// لا بيع زائد للمخزون أو الموعد عند طلبين متوازيين، قفل رمز التسليم بعد خمس محاولات (متتابعة أو دفعة متوازية)،
+// دائرة بلا مالك ترفض الطلب المدفوع وتقبل المجاني، والشحن التجريبي بنوعه وإغلاقه في الوضع الحي.
 import Fastify from 'fastify';
 import pg from 'pg';
 process.env.WALLET_TEST_TOPUP = '1'; process.env.NODE_ENV = 'test'; process.env.NASLIFE_HEALTH_BRIDGE = '0';
@@ -14,8 +15,9 @@ await pool.query("UPDATE users SET is_admin=true WHERE id=$1", [ADMIN]);
 for (const sql of ['DELETE FROM wallet_tx WHERE user_id = ANY($1)', 'DELETE FROM wallet_accounts WHERE user_id = ANY($1)', 'DELETE FROM tickets WHERE user_id = ANY($1)',
   'DELETE FROM ticket_tiers WHERE event_id IN (SELECT id FROM events WHERE host_id = ANY($1))', 'DELETE FROM events WHERE host_id = ANY($1)',
   'DELETE FROM market_orders WHERE seller_id = ANY($1)', 'DELETE FROM market_listings WHERE seller_id = ANY($1)',
-  'DELETE FROM biz_orders WHERE user_id = ANY($1)', 'DELETE FROM biz_items WHERE biz_id IN (SELECT id FROM biz WHERE id LIKE $2)', 'DELETE FROM biz WHERE id LIKE $2']) {
-  try { await pool.query(sql, sql.includes('$2') ? [IDS, 'biz-ms-%'] : [IDS]); } catch { /* أول تشغيل: الجداول تُنشأ عند التسجيل */ }
+  'DELETE FROM biz_orders WHERE user_id = ANY($1)', 'DELETE FROM biz_orders WHERE biz_id LIKE $1', 'DELETE FROM biz_items WHERE biz_id LIKE $1', 'DELETE FROM biz WHERE id LIKE $1']) {
+  // كل جملة بمعاملها الوحيد: معامل غير مستخدم يفشل في Postgres بصمت هنا فيبقى biz-ms-cafe ويسقط التشغيل الثاني
+  try { await pool.query(sql, sql.includes('LIKE') ? ['biz-ms-%'] : [IDS]); } catch { /* أول تشغيل: الجداول تُنشأ عند التسجيل */ }
 }
 const notes = []; globalThis.naslifeNotify = async (ids, p) => { notes.push({ ids: [].concat(ids), ...p }); }; globalThis.naslifeNotifyAdmins = async () => {};
 globalThis.naslifeSettings = { maxTopup: 2000000, marketCommissionPct: 0 };
@@ -110,6 +112,31 @@ const O5 = await call('POST', `/market/${L.id}/order`, { body: { qty: 1 }, user:
 await call('POST', `/market/orders/${O5.id}/dispute`, { body: { reason: 'وصل ناقصاً جداً' }, user: BUYER, expect: 200 });
 const d3 = await Promise.all([inject('POST', `/adminapi/market/disputes/${O5.id}`, { body: { resolution: 'release' }, user: ADMIN }), inject('POST', `/adminapi/market/disputes/${O5.id}`, { body: { resolution: 'split' }, user: ADMIN })]);
 check(statuses(d3) === '200,409' && ((await txCount(O5.id, 'market_sale')) + (await txCount(O5.id, 'refund'))) <= 2 && (await pool.query("SELECT count(*)::int AS n FROM wallet_tx WHERE ref=$1 AND kind='market_sale'", [O5.id])).rows[0].n === 1, 'parallel release/split: one resolution applied, one seller payout', statuses(d3));
+// الأبواب الجانبية للاسترداد: نزاع أو مرحلة تُكتب فوق إلغاء سبق كانت تعيد الطلب إلى حالة يُدفع منها للبائع بعد استرداد المشتري
+const orderRow = async (id) => (await pool.query('SELECT status, code_fails FROM market_orders WHERE id=$1', [id])).rows[0];
+// سباق مضمون: نمسك قفل صف الطلب حتى يجتاز الطلبان فحصهما المسبق (قراءة بلا قفل) ثم نحرّره فتتصادم الكتابتان فعلاً
+const raced = async (orderId, reqs) => {
+  const c = await pool.connect(); await c.query('BEGIN'); await c.query('SELECT 1 FROM market_orders WHERE id=$1 FOR UPDATE', [orderId]);
+  const p = Promise.all(reqs.map((f) => f())); await new Promise((r) => setTimeout(r, 200)); await c.query('COMMIT'); c.release(); return p;
+};
+const sellerBefore8 = await bal(SELLER);
+const O8 = await call('POST', `/market/${L.id}/order`, { body: { qty: 1 }, user: BUYER, expect: 200 });
+const cd = await raced(O8.id, [() => inject('POST', `/market/orders/${O8.id}/cancel`, { user: SELLER }), () => inject('POST', `/market/orders/${O8.id}/dispute`, { body: { reason: 'لم يصل الطلب أبداً' }, user: BUYER })]);
+check(cd[0].statusCode === 200 && [200, 409].includes(cd[1].statusCode) && (await orderRow(O8.id)).status === 'cancelled', 'parallel seller cancel and buyer dispute: the order never ends disputed once refunded', statuses(cd) + ' ' + (await orderRow(O8.id)).status);
+check((await call('POST', `/adminapi/market/disputes/${O8.id}`, { body: { resolution: 'release' }, user: ADMIN, expect: 409 })).error === 'bad-status', 'admin release on the cancelled order is 409');
+check((await txCount(O8.id, 'refund')) === 1 && (await txCount(O8.id, 'market_sale')) === 0 && (await bal(SELLER)) === sellerBefore8, 'exactly one refund row, no payout, seller balance unchanged');
+check((await call('POST', `/market/orders/${O8.id}/dispute`, { body: { reason: 'لم يصل الطلب أبداً' }, user: BUYER, expect: 409 })).error === 'bad-status', 'dispute after cancel is 409 bad-status');
+const O9 = await call('POST', `/market/${L.id}/order`, { body: { qty: 1 }, user: BUYER, expect: 200 });
+const cs = await raced(O9.id, [() => inject('POST', `/market/orders/${O9.id}/cancel`, { user: SELLER }), () => inject('POST', `/market/orders/${O9.id}/stage`, { body: { stage: 'delivered' }, user: SELLER })]);
+check(cs[0].statusCode === 200 && [200, 409].includes(cs[1].statusCode) && (await orderRow(O9.id)).status === 'cancelled', 'parallel seller cancel and seller deliver: the order never ends delivered once refunded', statuses(cs) + ' ' + (await orderRow(O9.id)).status);
+check((await call('POST', `/market/orders/${O9.id}/confirm`, { user: BUYER, expect: 409 })).error === 'bad-status', 'buyer confirm after the refund is 409');
+await pool.query("UPDATE market_orders SET delivered_at=now() - interval '80 hours' WHERE id=$1", [O9.id]); await globalThis.naslifeMarketSweep();
+check((await txCount(O9.id, 'refund')) === 1 && (await txCount(O9.id, 'market_sale')) === 0 && (await orderRow(O9.id)).status === 'cancelled', 'neither buyer confirm nor the 72h sweep pays the seller after the refund');
+check((await call('POST', `/market/orders/${O9.id}/stage`, { body: { stage: 'preparing' }, user: SELLER, expect: 409 })).error === 'bad-status', 'stage after cancel is 409 bad-status');
+const O10 = await call('POST', `/market/${L.id}/order`, { body: { qty: 1 }, user: BUYER, expect: 200 });
+const st2 = await raced(O10.id, [() => inject('POST', `/market/orders/${O10.id}/stage`, { body: { stage: 'delivered' }, user: SELLER }), () => inject('POST', `/market/orders/${O10.id}/stage`, { body: { stage: 'preparing' }, user: SELLER })]);
+// إن تصادمت الكتابتان: 200 و409؛ وإن تتابعتا بترتيب ما: لا رجوع للخلف أبداً («تم التسليم» الناجح لا يُكتب فوقه «قيد التحضير»)
+check(st2.some((r) => r.statusCode === 200) && st2.every((r) => [200, 409].includes(r.statusCode)) && (await orderRow(O10.id)).status === (st2[0].statusCode === 200 ? 'delivered' : 'preparing'), 'two parallel stage moves from the same state: one applies and the order never moves backward', statuses(st2) + ' ' + (await orderRow(O10.id)).status);
 
 // ---------- 4. لا بيع زائد: مخزون واحد وطلبان متوازيان، وموعد واحد وطلبان متوازيان
 await topup(BUYER2, 100000);
@@ -142,6 +169,19 @@ const O7 = await call('POST', `/market/${L.id}/order`, { body: { qty: 1 }, user:
 await call('POST', `/market/orders/${O7.id}/confirm`, { body: { code: '0000' }, user: SELLER, expect: 400 });
 check((await call('GET', `/market/orders/${O7.id}`, { user: SELLER, expect: 200 })).codeLocked === false, 'one wrong attempt does not lock');
 await call('POST', `/market/orders/${O7.id}/confirm`, { body: { code: O7.code }, user: SELLER, expect: 200 });
+// دفعة متوازية: الفحص والزيادة جملة واحدة فلا يتجاوز العدّاد الحد، ولا يمر الرمز الصحيح بعد تسجيل خمس محاولات
+const O11 = await call('POST', `/market/${L.id}/order`, { body: { qty: 1 }, user: BUYER, expect: 200 });
+const burst = await Promise.all(Array.from({ length: 12 }, () => inject('POST', `/market/orders/${O11.id}/confirm`, { body: { code: '0000' }, user: SELLER })));
+const n400 = burst.filter((r) => r.statusCode === 400).length, n429 = burst.filter((r) => r.statusCode === 429).length;
+check(n400 === 5 && n429 === 7 && (await orderRow(O11.id)).code_fails === 5, '12 parallel wrong codes: exactly 5 x 400 and 7 x 429, code_fails == 5', `${n400}x400 ${n429}x429 fails=${(await orderRow(O11.id)).code_fails}`);
+const burst2 = await Promise.all([...Array.from({ length: 8 }, () => inject('POST', `/market/orders/${O11.id}/confirm`, { body: { code: '0000' }, user: SELLER })), inject('POST', `/market/orders/${O11.id}/confirm`, { body: { code: O11.code }, user: SELLER })]);
+check(burst2.every((r) => r.statusCode === 429) && (await orderRow(O11.id)).status === 'paid', 'locked order: a parallel burst including the right code is all 429 and the order stays paid', statuses(burst2));
+const O12 = await call('POST', `/market/${L.id}/order`, { body: { qty: 1 }, user: BUYER, expect: 200 });
+const mixed = await Promise.all([...Array.from({ length: 29 }, () => inject('POST', `/market/orders/${O12.id}/confirm`, { body: { code: '0000' }, user: SELLER })), inject('POST', `/market/orders/${O12.id}/confirm`, { body: { code: O12.code }, user: SELLER })]);
+const right = mixed[29], row12 = await orderRow(O12.id), wrong400 = mixed.slice(0, 29).filter((r) => r.statusCode === 400).length;
+check(row12.code_fails <= 5 && wrong400 === row12.code_fails && mixed.slice(0, 29).every((r) => [400, 429, 409].includes(r.statusCode)), '29 wrong + 1 right in one burst: the counter never passes 5 and every wrong code is counted or refused', `fails=${row12.code_fails} 400s=${wrong400}`);
+check((right.statusCode === 200) === (row12.status === 'completed' && row12.code_fails < 5) && (right.statusCode === 200 || (right.statusCode === 429 && row12.code_fails === 5 && row12.status === 'paid')), 'the right code completes only while fewer than 5 failures are recorded, otherwise 429', `right=${right.statusCode} status=${row12.status} fails=${row12.code_fails}`);
+check((await txCount(O12.id, 'market_sale')) === (row12.status === 'completed' ? 1 : 0), 'the seller is paid at most once and only on completion');
 
 // ---------- 6. دائرة بلا مالك: الصنف المدفوع 409 no-owner بلا خصم، والمجاني يُطلب
 const biz = await call('POST', '/biz', { body: { name: 'MS Cafe', nameAr: 'مقهى سلامة', category: 'cafe', lat: 21.54, lng: 39.17, address: 'الروضة' }, user: HOST, expect: 200 });

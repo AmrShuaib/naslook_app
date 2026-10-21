@@ -691,16 +691,23 @@ export default async function commerce(app, opts) {
     if (asCourier && !["on_the_way", "delivered"].includes(stage)) return bad(reply, 403, "courier-stage");
     const from = ORDER_STAGES.indexOf(o.status), to = ORDER_STAGES.indexOf(stage);
     if (from < 0 || to <= from || to >= ORDER_STAGES.indexOf("completed")) return bad(reply, 409, "bad-status");
-    await pool.query(`UPDATE market_orders SET status=$2, updated_at=now(), accepted_at=COALESCE(accepted_at, now())${stage === "delivered" ? ", delivered_at=now()" : ""} WHERE id=$1`, [o.id, stage]);
+    // الانتقال مشروط بالحالة التي فُحصت: إلغاء متوازٍ سبق (استرداد) لا يُكتب فوقه «تم التسليم» فيدفع التأكيد أو الاكتمال التلقائي للبائع مرة ثانية
+    const moved = await pool.query(`UPDATE market_orders SET status=$2, updated_at=now(), accepted_at=COALESCE(accepted_at, now())${stage === "delivered" ? ", delivered_at=now()" : ""} WHERE id=$1 AND status=$3 RETURNING id`, [o.id, stage, o.status]);
+    if (!moved.rowCount) return bad(reply, 409, "bad-status");
     await notify(o.buyer_id, { kind: "market_status", title: `طلبك: ${STAGE_LABEL[stage]}`, body: stage === "delivered" ? `${o.title}: أكد البائع التسليم. أكّد الاستلام من صفحة الطلب أو أعطه رمزك ${o.code}` : `${o.title}: ${STAGE_LABEL[stage]}`, data: { orderId: o.id, status: stage } });
     return { ok: true, status: stage };
   };
   app.post("/market/orders/:id/stage", async (req, reply) => advance(req, reply, ["preparing", "on_the_way", "delivered"].includes(req.body?.stage) ? req.body.stage : "delivered"));
   app.post("/market/orders/:id/deliver", async (req, reply) => advance(req, reply, "delivered"));
   // اكتمال الطلب وتحرير المبلغ للبائع بعد خصم العمولة (تُقيَّد لحساب المنصة)
-  const complete = async (o, { by = "buyer" } = {}) => {
+  const complete = async (o, { by = "buyer", lockCode = false } = {}) => {
     const net = Number(o.total) - Number(o.commission ?? 0);
     await tx(async (c) => {
+      if (lockCode) {
+        // رمز البائع يُفحص تحت قفل الصف نفسه الذي يزيد عدّاد الأخطاء، فلا تتجاوز دفعة متوازية حد المحاولات
+        const cur = (await c.query("SELECT code_fails FROM market_orders WHERE id=$1 FOR UPDATE", [o.id])).rows[0];
+        if (cur && Number(cur.code_fails) >= CODE_MAX_FAILS) throw Object.assign(new Error("code-locked"), { code: "code-locked" });
+      }
       const r = await c.query("UPDATE market_orders SET status='completed', completed_at=now(), updated_at=now() WHERE id=$1 AND status IN ('paid','preparing','on_the_way','delivered') RETURNING id", [o.id]);
       if (!r.rowCount) throw Object.assign(new Error("bad-status"), { code: "bad-status" });
       if (net > 0) await ledger(c, o.seller_id, "market_sale", net, { peerId: o.buyer_id, ref: o.id, note: o.title });
@@ -721,11 +728,17 @@ export default async function commerce(app, opts) {
       // قفل رمز التسليم: لا تخمين بلا حدود؛ المحاولة الخاطئة تُحسب ويُعاد ما تبقى، وبعد القفل يُرفض حتى الرمز الصحيح
       if (Number(o.code_fails ?? 0) >= CODE_MAX_FAILS) return bad(reply, 429, "code-locked");
       if (String(req.body?.code ?? "").trim() !== String(o.code)) {
-        const fails = Number((await pool.query("UPDATE market_orders SET code_fails=code_fails+1 WHERE id=$1 RETURNING code_fails", [o.id])).rows[0]?.code_fails ?? CODE_MAX_FAILS);
-        return bad(reply, 400, "bad-code", { left: Math.max(0, CODE_MAX_FAILS - fails) });
+        // الفحص والزيادة في جملة واحدة: دفعة متوازية من الرموز الخاطئة لا تتجاوز الحد لأن كل زيادة مشروطة بأن العدّاد ما زال دونه
+        const r = await pool.query("UPDATE market_orders SET code_fails=code_fails+1 WHERE id=$1 AND code_fails < $2 AND status IN ('paid','preparing','on_the_way','delivered') RETURNING code_fails", [o.id, CODE_MAX_FAILS]);
+        if (!r.rowCount) {
+          const cur = (await pool.query("SELECT status FROM market_orders WHERE id=$1", [o.id])).rows[0];
+          return ["paid", "preparing", "on_the_way", "delivered"].includes(cur?.status) ? bad(reply, 429, "code-locked") : bad(reply, 409, "bad-status");
+        }
+        return bad(reply, 400, "bad-code", { left: Math.max(0, CODE_MAX_FAILS - Number(r.rows[0].code_fails)) });
       }
     }
-    try { await complete(o, { by: isBuyer ? "buyer" : "seller" }); } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
+    try { await complete(o, { by: isBuyer ? "buyer" : "seller", lockCode: isSeller }); }
+    catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); if (e.code === "code-locked") return bad(reply, 429, "code-locked"); throw e; }
     return { ok: true, status: "completed" };
   });
   const refund = async (o, { status = "cancelled", amount = null, note = null } = {}) => {
@@ -764,7 +777,9 @@ export default async function commerce(app, opts) {
     if (o.buyer_id !== uid) return bad(reply, 403, "buyer-only");
     if (!["paid", "preparing", "on_the_way", "delivered"].includes(o.status)) return bad(reply, 409, "bad-status");
     const reason = String(req.body?.reason ?? "").trim().slice(0, 600); if (reason.length < 5) return bad(reply, 400, "bad-reason");
-    await pool.query("UPDATE market_orders SET status='disputed', dispute_status='open', dispute_reason=$2, updated_at=now() WHERE id=$1", [o.id, reason]);
+    // الانتقال مشروط بالحالة: إلغاء أو اكتمال سبق في اللحظة نفسها لا يُكتب فوقه «متنازَع عليه» فيحرّر الحسم المبلغ للبائع بعد استرداده
+    const r = await pool.query("UPDATE market_orders SET status='disputed', dispute_status='open', dispute_reason=$2, updated_at=now() WHERE id=$1 AND status IN ('paid','preparing','on_the_way','delivered') RETURNING id", [o.id, reason]);
+    if (!r.rowCount) return bad(reply, 409, "bad-status");
     await notify(o.seller_id, { kind: "market_dispute", title: "نزاع على طلب", body: `${o.title}: ${reason.slice(0, 100)}`, data: { orderId: o.id } });
     globalThis.naslifeNotifyAdmins?.({ kind: "market_dispute", title: "نزاع جديد في السوق", body: `${o.title} (${sar(o.total)}): ${reason.slice(0, 100)}`, data: { orderId: o.id } }).catch?.(() => {});
     return { ok: true, status: "disputed" };
