@@ -390,20 +390,56 @@ class AdminOverview {
   final bool reportsAvailable, testTopup;
   final List<({DateTime day, int users, int orders, int revenue})> daily;
   final Map<String, dynamic> server;
+  /// توثيق الدوائر بانتظار القرار، ومستويات الاكتمال (منشورة/مكتملة/موثّقة/نشطة) من `circles.tiers`؛ أصفار قبل وصول أعمدة التوثيق.
+  final int pendingVerifications;
+  final ({int published, int complete, int verified, int active}) tiers;
   const AdminOverview({
     this.usersTotal = 0, this.usersNew7 = 0, this.usersSuspended = 0, this.admins = 0, this.usersActive7, this.orders7 = 0, this.revenue7 = 0, this.circlesActive = 0, this.circlesInactive = 0, this.circlesOwned = 0,
     this.claims = 0, this.reportsOpen = 0, this.reportsAvailable = false, this.walletAccounts = 0, this.walletBalance = 0, this.testTopup = false, this.daily = const [], this.server = const {},
+    this.pendingVerifications = 0, this.tiers = (published: 0, complete: 0, verified: 0, active: 0),
   });
   factory AdminOverview.fromJson(Map m) {
-    final u = _m(m['users']), o = _m(m['orders7']), c = _m(m['circles']), r = _m(m['reports']), w = _m(m['wallets']), s = _m(m['server']);
+    final u = _m(m['users']), o = _m(m['orders7']), c = _m(m['circles']), r = _m(m['reports']), w = _m(m['wallets']), s = _m(m['server']), t = _m(c['tiers']);
     return AdminOverview(
       usersTotal: _i(u['total']), usersNew7: _i(u['new7']), usersSuspended: _i(u['suspended']), admins: _i(u['admins']), usersActive7: u['active7'] == null ? null : _i(u['active7']),
       orders7: _i(o['count']), revenue7: _i(o['revenue']), circlesActive: _i(c['active']), circlesInactive: _i(c['inactive']), circlesOwned: _i(c['owned']), claims: _i(c['claims']),
       reportsOpen: _i(r['open']), reportsAvailable: r['available'] == true, walletAccounts: _i(w['accounts']), walletBalance: _i(w['balance']), testTopup: s['testTopup'] == true,
       daily: [for (final d in asList(m['daily'])) (day: DateTime.tryParse(d['day']?.toString() ?? '') ?? DateTime.now(), users: _i(d['users']), orders: _i(d['orders']), revenue: _i(d['revenue']))],
       server: s,
+      pendingVerifications: _i(c['pendingVerifications']),
+      tiers: (published: _i(t['published']), complete: _i(t['complete']), verified: _i(t['verified']), active: _i(t['active'])),
     );
   }
+}
+
+/// صف في طابور توثيق الدوائر (`GET /adminapi/biz/verifications`): الدائرة ومالكها ونوع الكيان ورقمه ومستند التوثيق
+/// ورابط الاستعلام الرسمي (وزارة التجارة للسجل التجاري، ومنصة العمل الحر للوثيقة).
+class VerificationRow {
+  final String bizId, name, nameAr, category, presence, entityKind, entityNumber, status, reason;
+  final String? logoUrl, docUrl, ownerId, lookupUrl;
+  final Person? owner;
+  final DateTime? submittedAt, reviewedAt;
+  const VerificationRow({
+    required this.bizId, this.name = '', this.nameAr = '', this.category = 'brand', this.presence = 'fixed', this.entityKind = '', this.entityNumber = '', this.status = 'pending', this.reason = '',
+    this.logoUrl, this.docUrl, this.ownerId, this.lookupUrl, this.owner, this.submittedAt, this.reviewedAt,
+  });
+  factory VerificationRow.fromJson(Map m) => VerificationRow(
+        bizId: m['bizId']?.toString() ?? m['id']?.toString() ?? '', name: m['name']?.toString() ?? '', nameAr: m['nameAr']?.toString() ?? '', category: m['category']?.toString() ?? 'brand',
+        presence: m['presence']?.toString() ?? 'fixed', entityKind: m['entityKind']?.toString() ?? '', entityNumber: m['entityNumber']?.toString() ?? '', status: m['status']?.toString() ?? 'pending',
+        reason: m['reason']?.toString() ?? '', logoUrl: _s(m['logoUrl']), docUrl: _s(m['docUrl']), ownerId: _s(m['ownerId']), lookupUrl: _s(m['lookupUrl']),
+        owner: m['owner'] is Map ? Person.fromJson(_m(m['owner'])) : null, submittedAt: _t(m['submittedAt']), reviewedAt: _t(m['reviewedAt']),
+      );
+  static String? _s(Object? v) {
+    final s = v?.toString() ?? '';
+    return s.isEmpty ? null : s;
+  }
+
+  /// الاسم المعروض: العربي إن وُجد.
+  String get title => nameAr.isNotEmpty ? nameAr : name;
+  bool get isCr => entityKind == 'cr';
+  String get entityLabel => switch (entityKind) { 'cr' => 'سجل تجاري', 'freelance' => 'وثيقة عمل حر', _ => 'كيان' };
+  String get presenceLabel => presence == 'mobile' ? 'دائرة متنقلة' : 'موقع ثابت';
+  String get statusLabel => switch (status) { 'approved' => 'موثّقة', 'rejected' => 'مرفوضة', _ => 'بانتظار القرار' };
 }
 
 class AdminUser {
@@ -744,6 +780,11 @@ extension AdminApi on ApiClient {
   Future<void> adminBizUpdate(String id, {bool? verified, bool? active, String? ownerId, bool clearOwner = false}) => post('/adminapi/biz/$id', {if (verified != null) 'verified': verified, if (active != null) 'active': active, if (ownerId != null || clearOwner) 'ownerId': ownerId});
   Future<List<Map<String, dynamic>>> adminClaims() async => asList(await getList('/adminapi/claims'));
   Future<void> adminClaimDecide(String bizId, String userId, {required bool approve}) => post('/adminapi/claims/$bizId/$userId/${approve ? 'approve' : 'reject'}', const {});
+  /// طابور توثيق الدوائر بحسب الحالة (pending | approved | rejected | all).
+  Future<List<VerificationRow>> adminBizVerifications({String status = 'pending'}) async => asList(await getList('/adminapi/biz/verifications', query: {'status': status})).map(VerificationRow.fromJson).toList();
+  /// قرار التوثيق: «مطابق» يوثّق الدائرة، و«مرفوض» يحتاج سبباً (3..300 حرفاً) يصل المالك في الإشعار.
+  Future<Map<String, dynamic>> decideVerification(String bizId, {required bool approve, String? reason}) =>
+      post('/adminapi/biz/$bizId/verification/${approve ? 'approve' : 'reject'}', {if (reason != null && reason.isNotEmpty) 'reason': reason});
   Future<AdminFinance> adminFinance({int days = 14}) async => AdminFinance.fromJson(await get('/adminapi/finance', query: {'days': '$days'}));
   String adminExportUrl({int days = 30, String? user, String? token}) => absolute('/adminapi/finance/export.csv?days=$days${user != null ? '&user=$user' : ''}${token != null ? '&token=${Uri.encodeQueryComponent(token)}' : ''}');
   Future<AdminContent> adminContent() async => AdminContent.fromJson(await get('/adminapi/content'));

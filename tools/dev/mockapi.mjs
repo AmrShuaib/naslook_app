@@ -826,6 +826,50 @@ function hotelRoute(req, res, url, key) {
   return false;
 }
 
+// ---- circle presence + verification queue (stream 3) start — تحاكي حضور الدوائر في /biz (presence/serviceArea/here من biz_onboard.js)،
+// بطاقة «هنا اليوم» في الصف، وطابور توثيق الدوائر في الإدارة (/adminapi/biz/verifications والقرار) وعدّاداته في النظرة العامة.
+// ستاربكس «هنا اليوم» 6 ساعات عند الكورنيش، ونايكي دائرة متنقلة بمنطقة خدمة 6 كم حول الزهراء (بلا دبّوس)
+const circlePresence = {
+  'biz-starbucks': { presence: 'fixed', serviceArea: null, here: { lat: 21.5433, lng: 39.1728, until: new Date(Date.now() + 6 * 3600e3).toISOString() } },
+  'biz-nike': { presence: 'mobile', serviceArea: { lat: 21.5832, lng: 39.1409, radiusKm: 6, districts: ['الزهراء', 'السلامة'] }, here: null },
+};
+const presenceOf = (id) => { const p = circlePresence[id]; const here = p?.here && new Date(p.here.until) > new Date() ? p.here : null; return { presence: p?.presence ?? 'fixed', serviceArea: p?.serviceArea ?? null, here }; };
+const hhmm = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const circleRowItems = (located) => { const h = presenceOf('biz-starbucks').here; if (!h) return []; return [{ kind: 'circle', id: 'biz-starbucks', refId: 'biz-starbucks', title: 'ستاربكس', subtitle: `هنا اليوم حتى ${hhmm(h.until)} · مقهى`, who: '', logoUrl: null, imageUrl: null, lat: h.lat, lng: h.lng, distanceKm: located ? 0.3 : null, at: ago(30), endsAt: h.until, act: 'زيارة', payload: { here: true, until: h.until, category: 'cafe' } }]; };
+// روابط الاستعلام الرسمي: الخادم (biz_onboard.js) هو مصدرها الفعلي ويقبل تجاوزها من إعدادات المنصة crLookupUrl/freelanceLookupUrl
+const LOOKUP_URLS = { cr: 'https://mc.gov.sa/', freelance: 'https://freelance.sa/' };
+const DOC_IMG = 'https://naslife.app/assets/assets/biz/dmm-albaik.png';
+const verifState = { rows: [
+  { bizId: 'biz-starbucks', name: 'Starbucks', nameAr: 'ستاربكس', category: 'cafe', logoUrl: null, presence: 'fixed', ownerId: 'SA0000002', owner: person('SA0000002', 'sara'), entityKind: 'cr', entityNumber: '4030123456', docUrl: DOC_IMG, submittedAt: ago(90), status: 'pending', reason: null, reviewedAt: null },
+  { bizId: 'biz-nike', name: 'Nike', nameAr: 'نايكي', category: 'services', logoUrl: null, presence: 'mobile', ownerId: 'SA0000003', owner: person('SA0000003', 'khalid'), entityKind: 'freelance', entityNumber: 'FL20481',  docUrl: DOC_IMG, submittedAt: ago(600), status: 'pending', reason: null, reviewedAt: null },
+  { bizId: 'biz-ikea', name: 'IKEA', nameAr: 'إيكيا', category: 'brand', logoUrl: null, presence: 'fixed', ownerId: 'SA0000001', owner: me, entityKind: 'cr', entityNumber: '4030999001', docUrl: DOC_IMG, submittedAt: ago(4000), status: 'approved', reason: null, reviewedAt: ago(3000) },
+  { bizId: 'biz-zara', name: 'Zara', nameAr: 'زارا', category: 'shop', logoUrl: null, presence: 'fixed', ownerId: 'SA0000002', owner: person('SA0000002', 'sara'), entityKind: 'cr', entityNumber: '4030000777', docUrl: DOC_IMG, submittedAt: ago(5000), status: 'rejected', reason: 'الرقم لا يطابق اسم المنشأة في السجل', reviewedAt: ago(4500) },
+] };
+const verifCounts = () => ({ pendingVerifications: verifState.rows.filter(r => r.status === 'pending').length, tiers: { published: SEED.filter(b => b.active !== false).length, complete: 9, verified: verifState.rows.filter(r => r.status === 'approved').length, active: 1 } });
+function verifRoute(req, res, url, key) {
+  const json = (code, body) => { console.log(key, url.search, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+  const readBody = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => cb(JSON.parse(raw || '{}'))); };
+  // حقن الحقول في ردود مسارات أخرى دون لمس دوالها: صفوف /biz تحمل الحضور، والنظرة العامة تحمل عدّادات التوثيق
+  const patchEnd = (fn) => { const end = res.end.bind(res); res.end = (body) => { try { body = JSON.stringify(fn(JSON.parse(body))); } catch { /* ليس JSON */ } return end(body); }; return false; };
+  if (key === 'GET /biz') return patchEnd((list) => Array.isArray(list) ? list.map(b => ({ ...b, ...presenceOf(b.id) })) : list);
+  if (key === 'GET /adminapi/overview') return patchEnd((o) => ({ ...o, circles: { ...(o.circles ?? {}), ...verifCounts() } }));
+  if (key === 'GET /adminapi/biz/verifications') { const st = url.searchParams.get('status') || 'pending'; return json(200, verifState.rows.filter(r => st === 'all' || r.status === st).map(r => ({ ...r, lookupUrl: LOOKUP_URLS[r.entityKind] ?? null }))); }
+  const m = key.match(/^POST \/adminapi\/biz\/([^/]+)\/verification\/(approve|reject)$/);
+  if (m) {
+    readBody((b) => {
+      const r = verifState.rows.find(x => x.bizId === m[1]); if (!r) return json(404, { error: 'not-found' });
+      if (r.status === 'approved') return json(409, { error: 'already-approved' });
+      const reason = String(b.reason ?? '').trim();
+      if (m[2] === 'reject' && (reason.length < 3 || reason.length > 300)) return json(400, { error: 'reason-required' });
+      r.status = m[2] === 'approve' ? 'approved' : 'rejected'; r.reason = m[2] === 'reject' ? reason : null; r.reviewedAt = new Date().toISOString();
+      json(200, { ok: true, status: r.status });
+    });
+    return true;
+  }
+  return false;
+}
+// ---- circle presence + verification queue (stream 3) end
+
 // ---- «القناة الحية» (server/live.js): انتظار طويل على /live/wait؛ الوهمي يبث لحظة مزيّفة كل 40 ثانية ليُرى الخط الزمني والصف يتحدّثان وحدهما
 const live = { seq: 0, events: [], waiters: new Set() };
 function liveEmit(kind, data) { const ev = { seq: ++live.seq, kind, at: new Date().toISOString(), data }; live.events.push(ev); if (live.events.length > 300) live.events.shift(); for (const w of [...live.waiters]) { live.waiters.delete(w); w(); } }
@@ -857,6 +901,7 @@ function rowItems(located) {
   const d = (km) => (located ? km : null);
   const p0 = mockPosts[0], p1 = mockPosts[1], ev = routes['GET /events'][0], lst = routes['GET /market'][1];
   return [
+    ...circleRowItems(located), // ---- circle presence (stream 3): بطاقة «هنا اليوم» أولاً لأنها الأقرب
     { kind: 'offer', id: 'off-1', refId: 'biz-brew92', title: 'خصم 20٪ على أول طلب', subtitle: 'برو 92 · ينتهي الليلة', who: 'برو 92', logoUrl: null, imageUrl: null, lat: 21.585, lng: 39.16, distanceKm: d(0.7), at: ago(180), endsAt: new Date(Date.now() + 5 * 3600e3).toISOString(), act: 'استخدم', payload: {} },
     { kind: 'moment', id: p0.id, refId: p0.id, title: p0.caption, subtitle: 'قبل 60 د · 5 إعجابات', who: p0.user.nickname, logoUrl: null, imageUrl: null, lat: p0.lat, lng: p0.lng, distanceKm: d(1.1), at: p0.createdAt, endsAt: p0.expiresAt, act: 'شاهد', payload: p0 },
     { kind: 'event', id: ev.id, refId: ev.id, title: ev.title, subtitle: 'جدة · غداً 7 م · من 50 ر.س', who: ev.host.nickname, logoUrl: null, imageUrl: null, lat: ev.lat, lng: ev.lng, distanceKm: d(2.4), at: ev.startsAt, endsAt: null, act: 'تذكرة', payload: {} },
@@ -1058,6 +1103,8 @@ http.createServer((req, res) => {
     rm = url.pathname.match(/^\/biz\/(biz-reg-\d+)$/);
     if (rm && req.method === 'GET' && reg.extra[rm[1]]) { const b = SEED.find((z) => z.id === rm[1]); if (b) return rjson(200, regOut(b, reg.extra[rm[1]])); }
   }
+  // ---- circle presence + verification queue (stream 3): حضور الدوائر في /biz، وطابور التوثيق وعدّاداته في الإدارة (الحقن يُكمل إلى المسار الأصلي)
+  if (key === 'GET /biz' || key === 'GET /adminapi/overview' || /^\/adminapi\/biz\/(verifications|[^/]+\/verification\/(approve|reject))$/.test(url.pathname)) { if (verifRoute(req, res, url, key)) return; }
   // ---- jobs (public+admin) start
   if (/^\/(jobs\/hiring|jobs(\/[0-9a-f-]{36})?(\/apply)?|biz\/[^/]+\/jobs|adminapi\/jobs(\/.*)?)$/.test(url.pathname) && jobsPublicRoute(req, res, url, key)) return;
   // ---- jobs (public+admin) end

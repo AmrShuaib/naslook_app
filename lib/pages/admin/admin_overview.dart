@@ -23,6 +23,19 @@ class AdminOverviewPage extends ConsumerWidget {
             StatTile(label: 'طلبات 7 أيام', value: '${o.orders7}', icon: Icons.shopping_bag_outlined, color: Joy.accent, hint: money(o.revenue7)),
             StatTile(label: 'الدوائر التجارية', value: '${o.circlesActive}', icon: Icons.storefront_outlined, hint: '${o.circlesOwned} مملوكة · ${o.circlesInactive} موقوفة', onTap: () => onGo('biz')),
             StatTile(label: 'طلبات ملكية', value: '${o.claims}', icon: Icons.fact_check_outlined, color: o.claims > 0 ? Joy.warning : Joy.textMuted, hint: 'بانتظار القرار', onTap: () => onGo('biz')),
+            // توثيق الدوائر: العدد بانتظار القرار (كهرماني حين يوجد) ومستويات الاكتمال؛ اللمسة تفتح قسم «التوثيق» في الدوائر
+            StatTile(
+              key: const Key('tile-verifications'),
+              label: 'توثيق بانتظار القرار',
+              value: '${o.pendingVerifications}',
+              icon: Icons.verified_outlined,
+              color: o.pendingVerifications > 0 ? Joy.warning : Joy.textMuted,
+              hint: 'منشورة ${o.tiers.published} · مكتملة ${o.tiers.complete} · موثّقة ${o.tiers.verified} · نشطة ${o.tiers.active}',
+              onTap: () {
+                ref.read(adminBizSegmentProvider.notifier).state = 'verifications';
+                onGo('biz');
+              },
+            ),
             StatTile(label: 'بلاغات مفتوحة', value: o.reportsAvailable ? '${o.reportsOpen}' : '—', icon: Icons.flag_outlined, color: o.reportsOpen > 0 ? Joy.danger : Joy.textMuted, hint: o.reportsAvailable ? 'تحتاج مراجعة' : 'جدول البلاغات غير متاح', onTap: () => onGo('reports')),
             StatTile(label: 'أرصدة المحافظ', value: money(o.walletBalance), icon: Icons.account_balance_wallet_outlined, color: Joy.success, hint: '${o.walletAccounts} محفظة', onTap: () => onGo('finance')),
             StatTile(label: 'حسابات موقوفة', value: '${o.usersSuspended}', icon: Icons.block_rounded, color: o.usersSuspended > 0 ? Joy.danger : Joy.textMuted, hint: '${o.admins} مدير نظام'),

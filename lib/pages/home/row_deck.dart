@@ -199,7 +199,8 @@ class _Thumb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fallback = Container(width: 68, height: 68, color: color.withValues(alpha: .14), child: Icon(rowKindIcon(item.kind), color: color, size: 28));
-    final url = item.imageUrl;
+    // الدائرة «هنا اليوم»: شعارها هو صورتها (الخادم يرسله في imageUrl، وlogoUrl احتياط)
+    final url = item.imageUrl ?? (item.kind == 'circle' ? item.logoUrl : null);
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: SizedBox(width: 68, height: 68, child: url == null ? fallback : Image.network(thumbUrl(url), fit: BoxFit.cover, errorBuilder: (_, __, ___) => fallback)),
@@ -245,12 +246,14 @@ class _Skeleton extends StatelessWidget {
   }
 }
 
-/// لون النوع على البطاقة ودبّوسه (الفعالية بنفسجية والوظيفة زرقاء كتصنيفات المنشورات).
+/// لون النوع على البطاقة ودبّوسه (الفعالية بنفسجية والوظيفة زرقاء كتصنيفات المنشورات، والدائرة «هنا اليوم» بلون
+/// دبّوس الدوائر). نوع غير معروف يأخذ لون اللحظة فلا تسقط البطاقة.
 Color rowKindColor(String kind) => switch (kind) {
       'offer' => Joy.sunText,
       'event' => const Color(0xFF6A1B9A),
       'job' => const Color(0xFF1565C0),
       'listing' => const Color(0xFF00897B),
+      'circle' => Joy.primary,
       _ => Joy.accent,
     };
 
@@ -259,5 +262,6 @@ IconData rowKindIcon(String kind) => switch (kind) {
       'event' => Icons.event_rounded,
       'job' => Icons.work_rounded,
       'listing' => Icons.shopping_bag_rounded,
+      'circle' => Icons.storefront_rounded,
       _ => Icons.auto_awesome_rounded,
     };
