@@ -441,4 +441,6 @@ async function setup(app, opts) {
     return { ok: r.ok, credited: r.credited === true, error: r.ok ? undefined : r.error };
   });
   globalThis.naslifePaySettle = settle;
+  // وضع البوابة الحالي (test | live | null) لإضافات أخرى: commerce.js يغلق الشحن التجريبي في الوضع الحي
+  globalThis.naslifePayMode = () => PAY().mode;
 }

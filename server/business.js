@@ -764,6 +764,8 @@ export default async function business(app, opts) {
         const code = "NAS-" + crypto.randomBytes(4).toString("hex").toUpperCase();
         const label = `${b.name_ar || b.name} · ${it.title}`;
         if (total > 0) {
+          // دائرة بلا مالك لا تستقبل مالاً: الخصم من المشتري بلا قيد مقابل يُضيع المبلغ؛ الأصناف المجانية تبقى قابلة للطلب
+          if (!b.owner_id) throw fail("no-owner");
           await ledger(c, uid, "biz", -total, { ref: id, note: label, points: Math.floor(total / 1000), peerId: b.owner_id ?? null });
           // يُقيَّد المبلغ فوراً لمحفظة صاحب النشاط (كالتذاكر)، ويُخصم منه عند الاسترداد
           if (b.owner_id && b.owner_id !== uid) await ledger(c, b.owner_id, "biz_sale", total, { peerId: uid, ref: id, note: label, allowNegative: true });
@@ -774,6 +776,7 @@ export default async function business(app, opts) {
       });
     } catch (err) {
       if (err.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds");
+      if (err.code === "no-owner") return bad(reply, 409, "no-owner");
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       if (["sold-out", "unavailable"].includes(err.code)) return bad(reply, 409, err.code, { left: err.left ?? 0 });
       if (["bad-slot", "bad-date", "bad-range", "in-past", "too-many", "not-orderable"].includes(err.code)) return bad(reply, 400, err.code);

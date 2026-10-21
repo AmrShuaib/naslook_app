@@ -1,8 +1,8 @@
 // إضافة Fastify للتجارة في Naslife: المحفظة، الفعاليات والتذاكر، سوق الخدمات والمنتجات.
 // التسجيل في src/index.js قبل app.listen (pool وauth معرّفان هناك):
 //   await app.register((await import("./commerce.js")).default, { pool, auth });
-// المبالغ بالهللة (عدد صحيح). لا توجد بوابة دفع بعد: الشحن عبر المدير (/admin/wallet/credit)
-// أو شحن تجريبي إذا WALLET_TEST_TOPUP=1.
+// المبالغ بالهللة (عدد صحيح). الشحن الحقيقي عبر ميسر (server/market_b.js) أو من لوحة الإدارة (/adminapi/users/:id/credit في admin.js)،
+// والشحن التجريبي (kind=test_topup) إذا WALLET_TEST_TOPUP=1 وما دامت بوابة الدفع ليست في الوضع الحي.
 import crypto from "node:crypto";
 
 const SAR = (h) => Math.round(Number(h) || 0);
@@ -52,7 +52,8 @@ export default async function commerce(app, opts) {
     ALTER TABLE market_orders ADD COLUMN IF NOT EXISTS code TEXT, ADD COLUMN IF NOT EXISTS variant TEXT, ADD COLUMN IF NOT EXISTS coupon TEXT, ADD COLUMN IF NOT EXISTS discount BIGINT NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS commission BIGINT NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS slot TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS dispute_reason TEXT, ADD COLUMN IF NOT EXISTS dispute_status TEXT, ADD COLUMN IF NOT EXISTS dispute_note TEXT, ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS courier_id TEXT, ADD COLUMN IF NOT EXISTS courier_note TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS courier_at TIMESTAMPTZ;
+      ADD COLUMN IF NOT EXISTS courier_id TEXT, ADD COLUMN IF NOT EXISTS courier_note TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS courier_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS code_fails INT NOT NULL DEFAULT 0;
     UPDATE market_orders SET status='completed', completed_at=COALESCE(completed_at, updated_at) WHERE status='delivered' AND delivered_at IS NULL;
     CREATE TABLE IF NOT EXISTS market_reviews (order_id UUID PRIMARY KEY, listing_id UUID NOT NULL, seller_id TEXT NOT NULL, buyer_id TEXT NOT NULL, rating INT NOT NULL, text TEXT NOT NULL DEFAULT '',
       reply TEXT, reply_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -122,11 +123,19 @@ export default async function commerce(app, opts) {
     await client.query("INSERT INTO wallet_tx(id,user_id,kind,amount,peer_id,ref,note) VALUES($1,$2,$3,$4,$5,$6,$7)",
       [crypto.randomUUID(), userId, kind, amount, peerId, ref, note]);
   }
+  // تعارض أقفال (40P01) أو تسلسل (40001) في Postgres يُعاد تنفيذه حتى ثلاث مرات بدل أن يصل للمستخدم خطأ 500
+  const RETRY_SQL = new Set(["40P01", "40001"]);
   async function tx(fn) {
-    const c = await pool.connect();
-    try { await c.query("BEGIN"); const out = await fn(c); await c.query("COMMIT"); return out; }
-    catch (e) { await c.query("ROLLBACK").catch(() => {}); throw e; }
-    finally { c.release(); }
+    for (let attempt = 1; ; attempt++) {
+      const c = await pool.connect();
+      try { await c.query("BEGIN"); const out = await fn(c); await c.query("COMMIT"); return out; }
+      catch (e) {
+        await c.query("ROLLBACK").catch(() => {});
+        if (RETRY_SQL.has(e?.code) && attempt < 3) { await new Promise((r) => setTimeout(r, attempt === 1 ? 10 : 50)); continue; }
+        throw e;
+      }
+      finally { c.release(); }
+    }
   }
   const txRow = async (x) => ({ id: x.id, kind: x.kind, amount: Number(x.amount), peer: x.peer_id ? await person(x.peer_id) : null, ref: x.ref, note: x.note, createdAt: x.created_at });
 
@@ -137,7 +146,7 @@ export default async function commerce(app, opts) {
     const t = await pool.query("SELECT * FROM wallet_tx WHERE user_id=$1 ORDER BY created_at DESC LIMIT 10", [uid]);
     const tickets = (await pool.query("SELECT count(*)::int AS n FROM tickets t JOIN events e ON e.id=t.event_id WHERE t.user_id=$1 AND t.status='valid' AND e.starts_at > now() - interval '6 hours'", [uid])).rows[0].n;
     return { balance: Number(a.balance), points: a.points, currency: "SAR", upcomingTickets: tickets, recent: await Promise.all(t.rows.map(txRow)),
-      testTopup: process.env.WALLET_TEST_TOPUP === "1" };
+      testTopup: process.env.WALLET_TEST_TOPUP === "1", maxTopup: Number(globalThis.naslifeSettings?.maxTopup) || 10000000 };
   });
   app.get("/wallet/transactions", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -145,25 +154,20 @@ export default async function commerce(app, opts) {
     const t = await pool.query("SELECT * FROM wallet_tx WHERE user_id=$1 AND ($2::timestamptz IS NULL OR created_at < $2) ORDER BY created_at DESC LIMIT 50", [uid, before]);
     return Promise.all(t.rows.map(txRow));
   });
+  // الشحن التجريبي: مال وهمي بنوع مستقل (test_topup) حتى لا يختلط بشحن البطاقة (topup)، ويُغلق للجميع عندما تكون مفاتيح ميسر حية
   app.post("/wallet/topup", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (globalThis.naslifePayMode?.() === "live") return bad(reply, 403, "topup-disabled-live");
     if (process.env.WALLET_TEST_TOPUP !== "1" && !(await isAdmin(uid))) return bad(reply, 403, "topup-disabled");
     if (iosNative(req) && !(await isAdmin(uid))) return bad(reply, 403, "unavailable");
     const amount = SAR(req.body?.amount);
     // حتى 100,000 ر.س للشحن التجريبي الواحد (أسعار الفنادق والسيارات تتجاوز السقف القديم 5,000)
     const maxTopup = Number(globalThis.naslifeSettings?.maxTopup) || 10000000;
     if (amount <= 0 || amount > maxTopup) return bad(reply, 400, "bad-amount", { max: maxTopup });
-    await tx((c) => ledger(c, uid, "topup", amount, { note: "شحن" }));
+    await tx((c) => ledger(c, uid, "test_topup", amount, { note: "شحن تجريبي" }));
     return { ok: true };
   });
-  app.post("/admin/wallet/credit", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
-    if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
-    const { userId, note } = req.body ?? {}; const amount = SAR(req.body?.amount);
-    if (!ID_RE.test(userId ?? "") || amount === 0) return bad(reply, 400, "bad-request");
-    await tx((c) => ledger(c, userId, amount > 0 ? "credit" : "debit", amount, { note: String(note ?? "").slice(0, 120), peerId: uid }));
-    return { ok: true };
-  });
+  // أُزيل POST /admin/wallet/credit (بلا سقف ولا سجل تدقيق)؛ المسار المدقَّق هو /adminapi/users/:id/credit في admin.js
   // تحويل بين محفظتين (يستخدمه المسار أدناه وإضافة رموز المحادثة عبر globalThis.naslifeWalletTransfer)؛ الأخطاء تحمل code:
   // bad-recipient | bad-amount | suspended | not-found | insufficient-funds
   async function transfer({ from, to, amount, note = "", ref = null }) {
@@ -175,6 +179,9 @@ export default async function commerce(app, opts) {
     const recipient = await userRow(to);
     if (!recipient || recipient.deleted_at || recipient.deleted === true) throw fail("not-found");
     await tx(async (c) => {
+      // المحفظتان تُنشآن ثم تُقفلان معاً بترتيب ثابت، فلا يتعارض تحويلان متعاكسان (أ→ب وب→أ) في الوقت نفسه
+      for (const u of [from, to].sort()) await c.query("INSERT INTO wallet_accounts(user_id) VALUES($1) ON CONFLICT DO NOTHING", [u]);
+      await c.query("SELECT user_id FROM wallet_accounts WHERE user_id = ANY($1::text[]) ORDER BY user_id FOR UPDATE", [[from, to]]);
       await ledger(c, from, "transfer_out", -amount, { peerId: to, note, ref });
       await ledger(c, to, "transfer_in", amount, { peerId: from, note, ref });
     });
@@ -336,15 +343,27 @@ export default async function commerce(app, opts) {
     const ev = (await pool.query("SELECT * FROM events WHERE id=$1", [req.params.id])).rows[0];
     if (!ev) return bad(reply, 404, "not-found");
     if (ev.host_id !== uid) return bad(reply, 403, "host-only");
-    const holders = await tx(async (c) => {
-      await c.query("UPDATE events SET cancelled=true WHERE id=$1", [ev.id]);
-      const ts = (await c.query("UPDATE tickets SET status='refunded' WHERE event_id=$1 AND status='valid' RETURNING user_id, paid", [ev.id])).rows;
-      for (const t of ts) if (Number(t.paid) > 0) {
-        await ledger(c, t.user_id, "refund", Number(t.paid), { peerId: uid, ref: ev.id, note: ev.title });
-        await ledger(c, uid, "refund_out", -Number(t.paid), { peerId: t.user_id, ref: ev.id, note: ev.title });
-      }
-      return ts;
-    });
+    // قبل أي تعديل: مجموع ما يُسترد للتذاكر الصالحة مقابل رصيد المضيف؛ من أنفق الإيراد يُرفض إلغاؤه بـ402 بدل خطأ 500 والفعالية تبقى كما هي
+    const hostBalance = async () => Number((await pool.query("SELECT balance FROM wallet_accounts WHERE user_id=$1", [uid])).rows[0]?.balance ?? 0);
+    const due = Number((await pool.query("SELECT COALESCE(SUM(paid),0)::bigint AS s FROM tickets WHERE event_id=$1 AND status='valid'", [ev.id])).rows[0].s);
+    const have = await hostBalance();
+    if (due > have) return bad(reply, 402, "insufficient-funds", { need: due - have, have });
+    let holders;
+    try {
+      holders = await tx(async (c) => {
+        await c.query("UPDATE events SET cancelled=true WHERE id=$1", [ev.id]);
+        const ts = (await c.query("UPDATE tickets SET status='refunded' WHERE event_id=$1 AND status='valid' RETURNING user_id, paid", [ev.id])).rows;
+        for (const t of ts) if (Number(t.paid) > 0) {
+          await ledger(c, t.user_id, "refund", Number(t.paid), { peerId: uid, ref: ev.id, note: ev.title });
+          await ledger(c, uid, "refund_out", -Number(t.paid), { peerId: t.user_id, ref: ev.id, note: ev.title });
+        }
+        return ts;
+      });
+    } catch (e) {
+      // سباق: أُنفق الرصيد بين الفحص والمعاملة؛ المعاملة تراجعت كاملة
+      if (e.code === "insufficient-funds") { const now = await hostBalance(); return bad(reply, 402, "insufficient-funds", { need: Math.max(0, due - now), have: now }); }
+      throw e;
+    }
     const refunded = new Map();
     for (const t of holders) refunded.set(t.user_id, (refunded.get(t.user_id) ?? 0) + Number(t.paid));
     for (const [u, paid] of refunded) await notify(u, { kind: "event_cancelled", title: "أُلغيت الفعالية", body: `${ev.title}${paid > 0 ? " · استُرد " + sar(paid) + " إلى محفظتك" : ""}`, data: { eventId: ev.id }, exclude: uid });
@@ -354,6 +373,8 @@ export default async function commerce(app, opts) {
   // ---- السوق (النسخة الثانية): صور متعددة، تصنيفات فرعية، خيارات ومخزون، مواعيد للخدمات، بحث بالقرب والفلاتر،
   // طلب بمراحل ورمز تسليم، كوبونات، عمولة للمنصة، نزاعات. الميزات التكميلية (سبوت لايت، تقييمات، بائعون…) في market_plus.js
   const PLATFORM = String(process.env.PLATFORM_ACCOUNT_ID ?? "SA0000000");
+  // رمز التسليم: بعد خمس محاولات خاطئة من البائع يُقفل الرمز نهائياً (حتى الصحيح)، ويبقى تأكيد المشتري متاحاً
+  const CODE_MAX_FAILS = 5;
   const settingsOf = () => globalThis.naslifeSettings ?? {};
   const commissionPct = () => { const v = Number(settingsOf().marketCommissionPct); return Number.isFinite(v) && v >= 0 && v <= 30 ? v : 0; };
   const CONTACT_RE = /(\+?966|\b0)5\d{8}\b|https?:\/\/|www\.|wa\.me|t\.me|instagram\.com|snapchat\.com|tiktok\.com|@[a-z0-9_.]{4,}/i;
@@ -562,7 +583,7 @@ export default async function commerce(app, opts) {
     code: o.buyer_id === uid ? o.code ?? null : null, buyer: await person(o.buyer_id), seller: await person(o.seller_id), mineAsSeller: o.seller_id === uid,
     courier: o.courier_id ? await person(o.courier_id) : null, courierNote: o.courier_note ?? "", mineAsCourier: !!o.courier_id && o.courier_id === uid,
     deliveredAt: o.delivered_at ?? null, completedAt: o.completed_at ?? null, disputeStatus: o.dispute_status ?? null, disputeReason: o.dispute_reason ?? null, disputeNote: o.dispute_note ?? null,
-    reviewed: o.reviewed === true, createdAt: o.created_at, updatedAt: o.updated_at,
+    reviewed: o.reviewed === true, codeLocked: Number(o.code_fails ?? 0) >= CODE_MAX_FAILS, createdAt: o.created_at, updatedAt: o.updated_at,
   });
   globalThis.naslifeMarketOrderOut = orderOut;
   const ORDER_SQL = "SELECT o.*, l.title, l.image_url, l.kind, (r.order_id IS NOT NULL) AS reviewed FROM market_orders o JOIN market_listings l ON l.id=o.listing_id LEFT JOIN market_reviews r ON r.order_id=o.id";
@@ -604,33 +625,37 @@ export default async function commerce(app, opts) {
     const variantName = String(b.variant ?? "").trim(); const couponCode = String(b.coupon ?? "").trim().toUpperCase().slice(0, 24);
     const slot = b.slot ? new Date(b.slot) : null;
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const l = (await pool.query("SELECT * FROM market_listings WHERE id=$1 AND status='active'", [req.params.id])).rows[0];
-    if (!l) return bad(reply, 404, "not-found");
-    if (l.seller_id === uid) return bad(reply, 400, "own-listing");
-    // لا طلب بين طرفين بينهما حظر (بأي اتجاه)
-    if ((await blockedIds(uid)).includes(l.seller_id)) return bad(reply, 404, "not-found");
-    let unit = Number(l.price); let variant = null;
-    const variants = Array.isArray(l.variants) ? l.variants : [];
-    if (variants.length) {
-      variant = variants.find((v) => v.name === variantName); if (!variant) return bad(reply, 400, "variant-required", { variants: variants.map((v) => v.name) });
-      unit = Number(variant.price); if (variant.stock != null && Number(variant.stock) < qty) return bad(reply, 409, "out-of-stock");
-    } else if (l.stock != null && Number(l.stock) < qty) return bad(reply, 409, "out-of-stock");
-    if (l.kind === "service" && l.availability) {
-      if (!slot || Number.isNaN(slot.getTime())) return bad(reply, 400, "slot-required");
-      if (!slotOk(l.availability, slot)) return bad(reply, 400, "slot-unavailable");
-      if ((await pool.query("SELECT 1 FROM market_orders WHERE listing_id=$1 AND slot=$2 AND status NOT IN ('cancelled','refunded')", [l.id, slot])).rowCount) return bad(reply, 409, "slot-taken");
-    }
-    const subtotal = unit * qty; let discount = 0; let coupon = null;
-    if (couponCode) {
-      const c = (await pool.query("SELECT * FROM market_coupons WHERE code=$1 AND seller_id=$2 AND active AND (expires_at IS NULL OR expires_at > now()) AND (max_uses IS NULL OR used < max_uses)", [couponCode, l.seller_id])).rows[0];
-      if (!c) return bad(reply, 400, "bad-coupon");
-      if (subtotal < Number(c.min_total ?? 0)) return bad(reply, 400, "coupon-min", { minTotal: Number(c.min_total) });
-      discount = c.percent != null ? Math.floor(subtotal * Number(c.percent) / 100) : Math.min(subtotal, Number(c.amount ?? 0)); coupon = c.code;
-    }
-    const total = Math.max(0, subtotal - discount); const commission = Math.floor(total * commissionPct() / 100);
+    const blocked = await blockedIds(uid);
     const id = crypto.randomUUID(); const code = String(1000 + crypto.randomInt(9000));
+    const fail = (err, extra = {}) => Object.assign(new Error(err), { code: err, ...extra });
+    let l, variant = null, total = 0, discount = 0, commission = 0;
     try {
+      // قراءة العرض بقفل داخل المعاملة نفسها: فحص المخزون والخيار والموعد والخصم في وحدة واحدة فلا بيع زائد عند طلبين متوازيين
       await tx(async (c) => {
+        l = (await c.query("SELECT * FROM market_listings WHERE id=$1 AND status='active' FOR UPDATE", [req.params.id])).rows[0];
+        if (!l) throw fail("not-found");
+        if (l.seller_id === uid) throw fail("own-listing");
+        // لا طلب بين طرفين بينهما حظر (بأي اتجاه)
+        if (blocked.includes(l.seller_id)) throw fail("not-found");
+        let unit = Number(l.price);
+        const variants = Array.isArray(l.variants) ? l.variants : [];
+        if (variants.length) {
+          variant = variants.find((v) => v.name === variantName); if (!variant) throw fail("variant-required", { variants: variants.map((v) => v.name) });
+          unit = Number(variant.price); if (variant.stock != null && Number(variant.stock) < qty) throw fail("out-of-stock");
+        } else if (l.stock != null && Number(l.stock) < qty) throw fail("out-of-stock");
+        if (l.kind === "service" && l.availability) {
+          if (!slot || Number.isNaN(slot.getTime())) throw fail("slot-required");
+          if (!slotOk(l.availability, slot)) throw fail("slot-unavailable");
+          if ((await c.query("SELECT 1 FROM market_orders WHERE listing_id=$1 AND slot=$2 AND status NOT IN ('cancelled','refunded')", [l.id, slot])).rowCount) throw fail("slot-taken");
+        }
+        const subtotal = unit * qty; let coupon = null;
+        if (couponCode) {
+          const cp = (await c.query("SELECT * FROM market_coupons WHERE code=$1 AND seller_id=$2 AND active AND (expires_at IS NULL OR expires_at > now()) AND (max_uses IS NULL OR used < max_uses) FOR UPDATE", [couponCode, l.seller_id])).rows[0];
+          if (!cp) throw fail("bad-coupon");
+          if (subtotal < Number(cp.min_total ?? 0)) throw fail("coupon-min", { minTotal: Number(cp.min_total) });
+          discount = cp.percent != null ? Math.floor(subtotal * Number(cp.percent) / 100) : Math.min(subtotal, Number(cp.amount ?? 0)); coupon = cp.code;
+        }
+        total = Math.max(0, subtotal - discount); commission = Math.floor(total * commissionPct() / 100);
         if (total > 0) await ledger(c, uid, "market", -total, { peerId: l.seller_id, ref: id, note: l.title, points: Math.floor(total / 1000) });
         await c.query("INSERT INTO market_orders(id,listing_id,buyer_id,seller_id,qty,total,note,code,variant,coupon,discount,commission,slot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
           [id, l.id, uid, l.seller_id, qty, total, note, code, variant?.name ?? null, coupon, discount, commission, slot && !Number.isNaN(slot.getTime()) ? slot : null]);
@@ -638,7 +663,18 @@ export default async function commerce(app, opts) {
         else await c.query("UPDATE market_listings SET stock = CASE WHEN stock IS NULL THEN NULL ELSE GREATEST(0, stock-$2) END, sold=sold+$2, updated_at=now() WHERE id=$1", [l.id, qty]);
         if (coupon) await c.query("UPDATE market_coupons SET used=used+1 WHERE code=$1 AND seller_id=$2", [coupon, l.seller_id]);
       });
-    } catch (e) { if (e.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds"); throw e; }
+    } catch (e) {
+      switch (e.code) {
+        case "not-found": return bad(reply, 404, "not-found");
+        case "own-listing": return bad(reply, 400, "own-listing");
+        case "variant-required": return bad(reply, 400, "variant-required", { variants: e.variants });
+        case "out-of-stock": case "slot-taken": return bad(reply, 409, e.code);
+        case "slot-required": case "slot-unavailable": case "bad-coupon": return bad(reply, 400, e.code);
+        case "coupon-min": return bad(reply, 400, "coupon-min", { minTotal: e.minTotal });
+        case "insufficient-funds": return bad(reply, 402, "insufficient-funds");
+        default: throw e;
+      }
+    }
     await notify(l.seller_id, { kind: "market_order", title: "طلب جديد في السوق", body: `${await nickOf(uid)} طلب ${l.title}${variant ? " (" + variant.name + ")" : ""}${qty > 1 ? " × " + qty : ""} بقيمة ${sar(total)}${note ? " · " + note.slice(0, 80) : ""}`, data: { orderId: id, listingId: l.id } });
     return { ok: true, id, total, discount, commission, code };
   });
@@ -655,16 +691,23 @@ export default async function commerce(app, opts) {
     if (asCourier && !["on_the_way", "delivered"].includes(stage)) return bad(reply, 403, "courier-stage");
     const from = ORDER_STAGES.indexOf(o.status), to = ORDER_STAGES.indexOf(stage);
     if (from < 0 || to <= from || to >= ORDER_STAGES.indexOf("completed")) return bad(reply, 409, "bad-status");
-    await pool.query(`UPDATE market_orders SET status=$2, updated_at=now(), accepted_at=COALESCE(accepted_at, now())${stage === "delivered" ? ", delivered_at=now()" : ""} WHERE id=$1`, [o.id, stage]);
+    // الانتقال مشروط بالحالة التي فُحصت: إلغاء متوازٍ سبق (استرداد) لا يُكتب فوقه «تم التسليم» فيدفع التأكيد أو الاكتمال التلقائي للبائع مرة ثانية
+    const moved = await pool.query(`UPDATE market_orders SET status=$2, updated_at=now(), accepted_at=COALESCE(accepted_at, now())${stage === "delivered" ? ", delivered_at=now()" : ""} WHERE id=$1 AND status=$3 RETURNING id`, [o.id, stage, o.status]);
+    if (!moved.rowCount) return bad(reply, 409, "bad-status");
     await notify(o.buyer_id, { kind: "market_status", title: `طلبك: ${STAGE_LABEL[stage]}`, body: stage === "delivered" ? `${o.title}: أكد البائع التسليم. أكّد الاستلام من صفحة الطلب أو أعطه رمزك ${o.code}` : `${o.title}: ${STAGE_LABEL[stage]}`, data: { orderId: o.id, status: stage } });
     return { ok: true, status: stage };
   };
   app.post("/market/orders/:id/stage", async (req, reply) => advance(req, reply, ["preparing", "on_the_way", "delivered"].includes(req.body?.stage) ? req.body.stage : "delivered"));
   app.post("/market/orders/:id/deliver", async (req, reply) => advance(req, reply, "delivered"));
   // اكتمال الطلب وتحرير المبلغ للبائع بعد خصم العمولة (تُقيَّد لحساب المنصة)
-  const complete = async (o, { by = "buyer" } = {}) => {
+  const complete = async (o, { by = "buyer", lockCode = false } = {}) => {
     const net = Number(o.total) - Number(o.commission ?? 0);
     await tx(async (c) => {
+      if (lockCode) {
+        // رمز البائع يُفحص تحت قفل الصف نفسه الذي يزيد عدّاد الأخطاء، فلا تتجاوز دفعة متوازية حد المحاولات
+        const cur = (await c.query("SELECT code_fails FROM market_orders WHERE id=$1 FOR UPDATE", [o.id])).rows[0];
+        if (cur && Number(cur.code_fails) >= CODE_MAX_FAILS) throw Object.assign(new Error("code-locked"), { code: "code-locked" });
+      }
       const r = await c.query("UPDATE market_orders SET status='completed', completed_at=now(), updated_at=now() WHERE id=$1 AND status IN ('paid','preparing','on_the_way','delivered') RETURNING id", [o.id]);
       if (!r.rowCount) throw Object.assign(new Error("bad-status"), { code: "bad-status" });
       if (net > 0) await ledger(c, o.seller_id, "market_sale", net, { peerId: o.buyer_id, ref: o.id, note: o.title });
@@ -681,14 +724,29 @@ export default async function commerce(app, opts) {
     const isBuyer = o.buyer_id === uid, isSeller = o.seller_id === uid;
     if (!isBuyer && !isSeller) return bad(reply, 403, "forbidden");
     if (!["paid", "preparing", "on_the_way", "delivered"].includes(o.status)) return bad(reply, 409, "bad-status");
-    if (isSeller && String(req.body?.code ?? "").trim() !== String(o.code)) return bad(reply, 400, "bad-code");
-    try { await complete(o, { by: isBuyer ? "buyer" : "seller" }); } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
+    if (isSeller) {
+      // قفل رمز التسليم: لا تخمين بلا حدود؛ المحاولة الخاطئة تُحسب ويُعاد ما تبقى، وبعد القفل يُرفض حتى الرمز الصحيح
+      if (Number(o.code_fails ?? 0) >= CODE_MAX_FAILS) return bad(reply, 429, "code-locked");
+      if (String(req.body?.code ?? "").trim() !== String(o.code)) {
+        // الفحص والزيادة في جملة واحدة: دفعة متوازية من الرموز الخاطئة لا تتجاوز الحد لأن كل زيادة مشروطة بأن العدّاد ما زال دونه
+        const r = await pool.query("UPDATE market_orders SET code_fails=code_fails+1 WHERE id=$1 AND code_fails < $2 AND status IN ('paid','preparing','on_the_way','delivered') RETURNING code_fails", [o.id, CODE_MAX_FAILS]);
+        if (!r.rowCount) {
+          const cur = (await pool.query("SELECT status FROM market_orders WHERE id=$1", [o.id])).rows[0];
+          return ["paid", "preparing", "on_the_way", "delivered"].includes(cur?.status) ? bad(reply, 429, "code-locked") : bad(reply, 409, "bad-status");
+        }
+        return bad(reply, 400, "bad-code", { left: Math.max(0, CODE_MAX_FAILS - Number(r.rows[0].code_fails)) });
+      }
+    }
+    try { await complete(o, { by: isBuyer ? "buyer" : "seller", lockCode: isSeller }); }
+    catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); if (e.code === "code-locked") return bad(reply, 429, "code-locked"); throw e; }
     return { ok: true, status: "completed" };
   });
   const refund = async (o, { status = "cancelled", amount = null, note = null } = {}) => {
     const amt = amount == null ? Number(o.total) : amount;
     await tx(async (c) => {
-      await c.query("UPDATE market_orders SET status=$2, dispute_status=CASE WHEN dispute_status IS NULL THEN NULL ELSE 'resolved' END, dispute_note=COALESCE($3, dispute_note), updated_at=now() WHERE id=$1", [o.id, status, note]);
+      // حارس الحالة قبل أي قيد في الدفتر: التحديث يقفل الصف ويفشل إن سبقه إلغاء أو اكتمال، فلا استرداد مرتين ولا بعد وصول المبلغ للبائع
+      const r = await c.query("UPDATE market_orders SET status=$2, dispute_status=CASE WHEN dispute_status IS NULL THEN NULL ELSE 'resolved' END, dispute_note=COALESCE($3, dispute_note), updated_at=now() WHERE id=$1 AND status IN ('paid','preparing','on_the_way','delivered','disputed') RETURNING id", [o.id, status, note]);
+      if (!r.rowCount) throw Object.assign(new Error("bad-status"), { code: "bad-status" });
       if (amt > 0) await ledger(c, o.buyer_id, "refund", amt, { peerId: o.seller_id, ref: o.id, note: o.title });
       // إرجاع المخزون والكوبون عند الإلغاء الكامل
       if (status === "cancelled") {
@@ -706,7 +764,7 @@ export default async function commerce(app, opts) {
     if (!byBuyer && o.seller_id !== uid) return bad(reply, 403, "forbidden");
     // المشتري يلغي قبل أن يبدأ البائع؛ البائع يلغي في أي مرحلة قبل الاكتمال
     if (byBuyer ? o.status !== "paid" : !["paid", "preparing", "on_the_way", "delivered"].includes(o.status)) return bad(reply, 409, "bad-status");
-    await refund(o);
+    try { await refund(o); } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
     await notify(byBuyer ? o.seller_id : o.buyer_id, { kind: "market_status", title: byBuyer ? "أُلغي طلب" : "أُلغي طلبك",
       body: byBuyer ? `${await nickOf(uid)} ألغى طلب ${o.title}` : `${o.title}: ألغى البائع الطلب${Number(o.total) > 0 ? " واستُرد " + sar(o.total) + " إلى محفظتك" : ""}`, data: { orderId: o.id, status: "cancelled" } });
     return { ok: true };
@@ -719,7 +777,9 @@ export default async function commerce(app, opts) {
     if (o.buyer_id !== uid) return bad(reply, 403, "buyer-only");
     if (!["paid", "preparing", "on_the_way", "delivered"].includes(o.status)) return bad(reply, 409, "bad-status");
     const reason = String(req.body?.reason ?? "").trim().slice(0, 600); if (reason.length < 5) return bad(reply, 400, "bad-reason");
-    await pool.query("UPDATE market_orders SET status='disputed', dispute_status='open', dispute_reason=$2, updated_at=now() WHERE id=$1", [o.id, reason]);
+    // الانتقال مشروط بالحالة: إلغاء أو اكتمال سبق في اللحظة نفسها لا يُكتب فوقه «متنازَع عليه» فيحرّر الحسم المبلغ للبائع بعد استرداده
+    const r = await pool.query("UPDATE market_orders SET status='disputed', dispute_status='open', dispute_reason=$2, updated_at=now() WHERE id=$1 AND status IN ('paid','preparing','on_the_way','delivered') RETURNING id", [o.id, reason]);
+    if (!r.rowCount) return bad(reply, 409, "bad-status");
     await notify(o.seller_id, { kind: "market_dispute", title: "نزاع على طلب", body: `${o.title}: ${reason.slice(0, 100)}`, data: { orderId: o.id } });
     globalThis.naslifeNotifyAdmins?.({ kind: "market_dispute", title: "نزاع جديد في السوق", body: `${o.title} (${sar(o.total)}): ${reason.slice(0, 100)}`, data: { orderId: o.id } }).catch?.(() => {});
     return { ok: true, status: "disputed" };
@@ -732,21 +792,27 @@ export default async function commerce(app, opts) {
     if (o.status !== "disputed") return bad(reply, 409, "bad-status");
     const resolution = String(req.body?.resolution ?? ""); const note = String(req.body?.note ?? "").slice(0, 600) || null;
     const total = Number(o.total), commission = Number(o.commission ?? 0);
-    if (resolution === "refund") await refund(o, { status: "refunded", note });
-    else if (resolution === "release") {
-      await tx(async (c) => {
-        await c.query("UPDATE market_orders SET status='completed', completed_at=now(), dispute_status='resolved', dispute_note=$2, updated_at=now() WHERE id=$1", [o.id, note]);
-        if (total - commission > 0) await ledger(c, o.seller_id, "market_sale", total - commission, { peerId: o.buyer_id, ref: o.id, note: o.title });
-        if (commission > 0) await ledger(c, PLATFORM, "commission", commission, { peerId: o.seller_id, ref: o.id, note: o.title });
-      });
-    } else if (resolution === "split") {
-      const half = Math.floor(total / 2);
-      await tx(async (c) => {
-        await c.query("UPDATE market_orders SET status='completed', completed_at=now(), dispute_status='resolved', dispute_note=$2, updated_at=now() WHERE id=$1", [o.id, note]);
-        if (half > 0) await ledger(c, o.buyer_id, "refund", half, { peerId: o.seller_id, ref: o.id, note: o.title });
-        if (total - half > 0) await ledger(c, o.seller_id, "market_sale", total - half, { peerId: o.buyer_id, ref: o.id, note: o.title });
-      });
-    } else return bad(reply, 400, "bad-resolution");
+    if (!["refund", "release", "split"].includes(resolution)) return bad(reply, 400, "bad-resolution");
+    // الحسم مرة واحدة: كل تحديث مشروط بأن الطلب ما زال متنازَعاً عليه، وإلا 409 بلا أي قيد (حسمان متوازيان)
+    const resolveSql = "UPDATE market_orders SET status='completed', completed_at=now(), dispute_status='resolved', dispute_note=$2, updated_at=now() WHERE id=$1 AND status='disputed' RETURNING id";
+    const badStatus = () => Object.assign(new Error("bad-status"), { code: "bad-status" });
+    try {
+      if (resolution === "refund") await refund(o, { status: "refunded", note });
+      else if (resolution === "release") {
+        await tx(async (c) => {
+          if (!(await c.query(resolveSql, [o.id, note])).rowCount) throw badStatus();
+          if (total - commission > 0) await ledger(c, o.seller_id, "market_sale", total - commission, { peerId: o.buyer_id, ref: o.id, note: o.title });
+          if (commission > 0) await ledger(c, PLATFORM, "commission", commission, { peerId: o.seller_id, ref: o.id, note: o.title });
+        });
+      } else {
+        const half = Math.floor(total / 2);
+        await tx(async (c) => {
+          if (!(await c.query(resolveSql, [o.id, note])).rowCount) throw badStatus();
+          if (half > 0) await ledger(c, o.buyer_id, "refund", half, { peerId: o.seller_id, ref: o.id, note: o.title });
+          if (total - half > 0) await ledger(c, o.seller_id, "market_sale", total - half, { peerId: o.buyer_id, ref: o.id, note: o.title });
+        });
+      }
+    } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
     const msg = { refund: "أُعيد المبلغ كاملاً للمشتري", release: "حُرِّر المبلغ للبائع", split: "قُسم المبلغ بين الطرفين" }[resolution];
     await notify([o.buyer_id, o.seller_id], { kind: "market_dispute", title: "حُسم النزاع", body: `${o.title}: ${msg}${note ? " · " + note : ""}`, data: { orderId: o.id } });
     return { ok: true, resolution };

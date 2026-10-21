@@ -3,8 +3,11 @@ import Fastify from 'fastify';
 import pg from 'pg';
 process.env.WALLET_TEST_TOPUP = '1';
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
-await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false)");
-await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara') ON CONFLICT DO NOTHING");
+await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
+await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara'),('SA0000003','khalid') ON CONFLICT DO NOTHING");
+// الدوائر المبذورة التي نطلب منها تعود بلا مالك قبل التسجيل حتى يعيد البذر أصنافها ومخزونها (البذر لا يلمس الدوائر المملوكة)
+const OWNED = ['biz-ikea', 'biz-vox', 'biz-hilton', 'biz-budget'];
+try { await pool.query("UPDATE biz SET owner_id=NULL WHERE id = ANY($1::text[]) OR id='biz-starbucks'", [OWNED]); } catch { /* أول تشغيل */ }
 const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
 app.register((await import('../commerce.js')).default, { pool, auth });
@@ -27,11 +30,21 @@ await call('GET', '/biz?q=سينما', { user: null, expect: 200 }).then(l => co
 const ikea = await call('GET', '/biz/biz-ikea', { user: null, expect: 200 });
 console.log('   ikea items:', ikea.items.map(i => i.title + ' ' + i.price).join(' | '));
 await call('GET', '/biz/nope', { user: null, expect: 404 });
-// المحفظة: شحن تجريبي 3000 ر.س
+// الطلب المدفوع يحتاج دائرة لها مالك (خالد، غير المشتريَين) وإلا 409 no-owner؛ البذر اكتمل لأن GET /biz ينتظره
+await pool.query("UPDATE biz SET owner_id='SA0000003' WHERE id = ANY($1::text[])", [OWNED]);
+// المحفظة: شحن تجريبي 3000 ر.س (نوعه test_topup كي لا يختلط بشحن البطاقة)
 await call('POST', '/wallet/topup', { body: { amount: 500000 }, expect: 200 });
 await call('POST', '/wallet/topup', { body: { amount: 500000 }, expect: 200 });
 await call('POST', '/wallet/topup', { body: { amount: 500000 }, expect: 200 });
 await call('POST', '/wallet/topup', { body: { amount: 500000 }, expect: 200 });
+const w0 = await call('GET', '/wallet', { expect: 200 });
+if (w0.recent[0]?.kind !== 'test_topup' || w0.maxTopup !== 10000000) { fails++; console.log('FAIL test top-up kind/maxTopup', JSON.stringify({ kind: w0.recent[0]?.kind, maxTopup: w0.maxTopup })); } else console.log('OK   test top-up recorded as test_topup; wallet exposes maxTopup');
+// دائرة مبذورة بلا مالك: صنف مدفوع يُرفض بـ409 no-owner ولا يُخصم شيء
+const sbux = await call('GET', '/biz/biz-starbucks', { user: null, expect: 200 });
+const sbItem = sbux.items.find((i) => i.price > 0);
+const noOwner = await call('POST', '/biz/biz-starbucks/orders', { body: { itemId: sbItem.id, qty: 1 }, expect: 409 });
+const w0b = await call('GET', '/wallet', { expect: 200 });
+if (noOwner.error !== 'no-owner' || w0b.balance !== w0.balance) { fails++; console.log('FAIL ownerless circle order', JSON.stringify(noOwner), w0.balance, w0b.balance); } else console.log('OK   ownerless circle rejects a priced order with no-owner and no debit');
 // منتج
 await call('POST', '/biz/biz-ikea/orders', { body: { itemId: 'ikea-billy', qty: 2 }, user: null, expect: 401 });
 const o1 = await call('POST', '/biz/biz-ikea/orders', { body: { itemId: 'ikea-billy', qty: 2 }, expect: 200 });
@@ -89,5 +102,7 @@ console.log('   balance before cancel', w1.balance, 'after', w2.balance, '(diff 
 const ikea3 = await call('GET', '/biz/biz-ikea', { expect: 200 });
 console.log('   stock billy restored:', ikea3.items[0].stock);
 await call('POST', '/biz/biz-ikea/checkin', { body: { code: o2.code }, expect: 403 });
+// نعيد الدوائر المبذورة بلا مالك كما كانت حتى لا تتأثر حزم أخرى تعتمد على ذلك
+await pool.query("UPDATE biz SET owner_id=NULL WHERE id = ANY($1::text[])", [OWNED]);
 console.log(fails ? `\n${fails} FAILED` : '\nALL OK');
 await app.close(); await pool.end();
