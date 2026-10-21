@@ -33,6 +33,22 @@
 
 العمود القديم `verified` صار **مرآة** لـ `verification.status === 'approved'`: الاعتماد يجعله `true` والرفض أو السحب `false`. المفتاح القديم `POST /biz/:id/verify {verified}` ما زال يعمل ويكتب الحالة (`approved` عند التشغيل، `none` عند الإطفاء مع `reviewedBy/At`).
 
+### المرآة محفوظة في القاعدة: المشغّل `biz_verified_mirror` والترحيل
+
+المرآة لا تعتمد على كل كاتب (لوحة الإدارة في `admin.js` تقلب `verified` وحده عبر `POST /adminapi/biz/:id {verified}`)، بل على مشغّل `BEFORE INSERT OR UPDATE` على `biz` ينشئه `business.js` عند كل إقلاع في استعلام مستقل بعد كتلة المخطط (`CREATE OR REPLACE FUNCTION` ثم `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`؛ تعثّره يُسجَّل تحذيراً `biz_verified_mirror: …` ولا يعطّل إضافة الدوائر، ومساراتها تكتب العمودين معاً على كل حال):
+
+| ما تغيّر في الصف | ما يفعله المشغّل |
+|---|---|
+| `verification` (أي مسار يكتب الحالة: الإرسال، الاعتماد، الرفض، المفتاح القديم) | `verified = (status = 'approved')`، و`verified_at` يُضبط عند الاعتماد (إن كان فارغاً) ويُمسح عند غيره |
+| `verified` وحده إلى `true` (لوحة الإدارة، أو أي `UPDATE biz SET verified=true`) | `status = 'approved'`، `reviewedAt = now()`، `reason = null`، `verified_at = COALESCE(verified_at, now())` |
+| `verified` وحده إلى `false` | `status = 'none'`، `reviewedAt = now()`، `reason = null`، `verified_at = NULL` (كالمفتاح القديم: سحب بلا سبب رفض) |
+| إدراج صف بحالة في `verification` | الحالة هي المصدر (التسجيل يدرج `{status: none}`) |
+| تعديل لا يمسّ العمودين | لا شيء، إلا إن كان الصف متناقضاً أصلاً فيُشفى بالقاعدة نفسها |
+
+فلا تخرج دائرة `verified:true / canSell:false / verificationStatus:'none'` من أي مسار، ولوحة الإدارة الحالية تفتح البيع وتغلقه مثل مسار القرار الجديد (الفارق: لا إشعار للمالك ولا `reviewedBy`؛ القرار يُسجَّل في `admin_audit` بفعل `biz.update`). الأفضل أن تستدعي اللوحة مسار القرار الجديد ليصل الإشعار، لكن ذلك ليس شرطاً للاتساق.
+
+**الترحيل عند النشر (قرار هذه الحزمة):** الدوائر التي وثّقها المدير بالمفتاح القديم قبل الحزمة (`verified=true` بلا `verification.status`) **تبقى معتمدة وتبيع** ولا تُغلق فجأة: جملة آمنة التكرار في كتلة المخطط `UPDATE biz SET verification = verification || '{"status":"approved"}', verified_at = COALESCE(verified_at, updated_at, created_at) WHERE verified AND NOT (verification ? 'status')` (تطابق صفراً من الصفوف بعد أول إقلاع). الحجة: توثيق المدير اليدوي هو الإجراء المعتمد الآن أصلاً، فالدائرة التي قبلها المدير لا تخسر ما كان مفتوحاً لها. إن أراد المالك إلزام هذه الدوائر برفع وثيقة، يسحب الاعتماد من اللوحة (المفتاح أو «رفض» بسبب) أو دفعة واحدة: `UPDATE biz SET verified=false WHERE verification->>'status'='approved' AND verification->>'docUrl' IS NULL` (المشغّل يحوّلها إلى `none` ويغلق البيع حتى الاعتماد من جديد).
+
 ## الفئات
 
 `CATEGORIES` في `business.js` (مصدَّرة وعلى `globalThis.naslifeBizCategories`) صارت 16: القديمة `brand, cinema, hotel, car_rental, hospital, airport, cafe, restaurant, company, university` والجديدة `shop` (متجر)، `services` (خدمات وورش)، `salon` (صالون وتجميل)، `clinic` (عيادة)، `entertainment` (ترفيه)، `other` (أخرى). الأسماء العربية في `CATEGORY_AR` ونوع الصنف الافتراضي في `ITEM_KIND_OF`: `shop/services → product`، `salon/clinic → clinic` (مواعيد)، `entertainment → showtime`، `other → info`. `GET /biz?category=` والإنشاء القديم `POST /biz` يقبلان الجديدة.
@@ -152,6 +168,7 @@
 | `POST /biz/:id/here` / `DELETE /biz/:id/here` | طاقم الدائرة المتنقلة | `{ here }` / `{ ok }` |
 | `GET /biz/onboard/status` | عام | `{ ok, categories, trgm, lookup }` |
 | `POST /biz/:id/verify {verified}` (قديم) | مدير النظام | `{ ok }` ويكتب الحالة |
+| `POST /adminapi/biz/:id {verified}` (`admin.js`، لوحة الإدارة) | مدير النظام | `{ ok }`؛ المشغّل `biz_verified_mirror` يكتب الحالة و`verified_at` |
 
 ## ما تتشاركه الإضافات على `globalThis`
 
@@ -163,12 +180,12 @@
 NASLIFE_TEST_DB=naslife_test_reg server/test/run.sh harness_biz_onboard.mjs
 ```
 
-تغطي: وحدات الجوال والفئات والأوزان، كل رمز خطأ في التسجيل، المسار السعيد الثابت والمتنقل، فحص التكرار (قريب نعم، 10 كم لا)، المستويات الأربعة والنسبة والخطوة التالية خطوة خطوة، أخطاء إرسال التوثيق وإخفاء بيانات الكيان، قائمة الإدارة وتجاوز رابط الاستعلام والرفض والاعتماد والإشعارات والسجل وإعادة الإرسال، بوابة البيع قبل الاعتماد وبعده وبعد السحب، المفتاح القديم، دبوس «هنا اليوم» (أخطاؤه، أثره على `GET /biz` و`GET /biz/:id` والصف، انتهاؤه ومسحه)، تغطية النطاق، خطّاف «أبحث عن»، الفئات الجديدة وأنواع أصنافها، وحد الـ20.
+تغطي: وحدات الجوال والفئات والأوزان، كل رمز خطأ في التسجيل، المسار السعيد الثابت والمتنقل، فحص التكرار (قريب نعم، 10 كم لا)، المستويات الأربعة والنسبة والخطوة التالية خطوة خطوة، أخطاء إرسال التوثيق وإخفاء بيانات الكيان، قائمة الإدارة وتجاوز رابط الاستعلام والرفض والاعتماد والإشعارات والسجل وإعادة الإرسال، بوابة البيع قبل الاعتماد وبعده وبعد السحب، المفتاح القديم، مفتاح لوحة الإدارة `POST /adminapi/biz/:id {verified}` (تُسجَّل `admin.js` في الحزمة: الإطفاء يغلق الطلبات المدفوعة والتشغيل يفتحها والمخرجات متسقة والسجل `biz.update`)، المشغّل من الجهتين وثبات التعديلات غير المتعلقة، الترحيل عند الإقلاع (صف قديم `verified` بلا حالة يُعاد تشغيل `business.js` عليه فيُعتمد ويبيع، والمرفوضة وغير الموثّقة لا تُمسّ، والتكرار آمن)، دبوس «هنا اليوم» (أخطاؤه، أثره على `GET /biz` و`GET /biz/:id` والصف، انتهاؤه ومسحه)، تغطية النطاق، خطّاف «أبحث عن»، الفئات الجديدة وأنواع أصنافها، وحد الـ20.
 
 حزم أثّرت فيها بوابة البيع فعُدّلت بسطر اعتماد قبل الطلبات المدفوعة: `harness.mjs`، `harness_offers.mjs`، `harness_chat_cards.mjs`، `harness_notify.mjs`.
 
 ## ملاحظات ومؤجّلات
 
-- `PATCH /adminapi/biz/:id {verified}` في `admin.js` ما زال يقلب العمود `verified` وحده دون `verification.status` (الملف خارج هذه الحزمة)؛ ينبغي توجيهه إلى مسار القرار الجديد.
+- `POST /adminapi/biz/:id {verified}` في `admin.js` ما زال يقلب العمود `verified` وحده (الملف خارج هذه الحزمة)، والمشغّل `biz_verified_mirror` يكمل الحالة و`verified_at` فيبقى الاتساق وبوابة البيع صحيحين؛ ما ينقصه فقط إشعار المالك (`biz_verified` / `biz_verification_rejected`) وسبب الرفض، فالأفضل أن تستدعي اللوحة `POST /adminapi/biz/:id/verification/approve|reject` (حزمة الإدارة).
 - توثيق الجوال (`phone_verified`) مؤجّل كما في الملف الشخصي.
 - «وثقة» للتحقق الآلي من السجل التجاري لاحقاً: يكفي أن يستدعي مسار الاعتماد نفسه.

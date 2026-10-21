@@ -132,6 +132,35 @@ export default async function business(app, opts) {
     ALTER TABLE biz ADD COLUMN IF NOT EXISTS here JSONB;
     ALTER TABLE biz ADD COLUMN IF NOT EXISTS registered_at TIMESTAMPTZ;
   `);
+  // استعلام مستقل حتى لا يُعطّل تعثّره (صلاحية إنشاء الدوال مثلاً) إضافة الدوائر كلها؛ المسارات هنا تكتب العمودين معاً على كل حال
+  await pool.query(`
+    -- المرآة بين verified وverification.status تُحفظ في القاعدة نفسها (مشغّل) لا في كل كاتب: لوحة الإدارة (admin.js:
+    -- POST /adminapi/biz/:id {verified}) تقلب العمود القديم وحده، فمن غيّر الحالة تبعه verified، ومن قلب verified وحده تبعته الحالة
+    -- (التشغيل = approved مع verified_at، الإطفاء = none بلا سبب) حتى لا تخرج دائرة verified:true وcanSell:false أبداً
+    CREATE OR REPLACE FUNCTION biz_verified_mirror() RETURNS trigger AS $fn$
+    DECLARE st TEXT;
+    BEGIN
+      NEW.verification := COALESCE(NEW.verification, '{}'::jsonb);
+      st := NEW.verification->>'status';
+      IF (TG_OP = 'UPDATE' AND NEW.verification IS DISTINCT FROM OLD.verification) OR (TG_OP = 'INSERT' AND NEW.verification ? 'status') THEN
+        NEW.verified := (st = 'approved');
+        NEW.verified_at := CASE WHEN NEW.verified THEN COALESCE(NEW.verified_at, now()) ELSE NULL END;
+      ELSIF NEW.verified AND st IS DISTINCT FROM 'approved' THEN
+        NEW.verification := NEW.verification || jsonb_build_object('status', 'approved', 'reviewedAt', now(), 'reason', NULL);
+        NEW.verified_at := COALESCE(NEW.verified_at, now());
+      ELSIF NOT NEW.verified AND st = 'approved' THEN
+        NEW.verification := NEW.verification || jsonb_build_object('status', 'none', 'reviewedAt', now(), 'reason', NULL);
+        NEW.verified_at := NULL;
+      END IF;
+      RETURN NEW;
+    END $fn$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS biz_verified_mirror ON biz;
+    CREATE TRIGGER biz_verified_mirror BEFORE INSERT OR UPDATE ON biz FOR EACH ROW EXECUTE FUNCTION biz_verified_mirror();
+    -- ترحيل آمن التكرار (يطابق صفراً من الصفوف بعد أول مرة): الدوائر التي وثّقها المدير بالمفتاح القديم قبل هذه الحزمة تبقى معتمدة
+    -- وتبيع بدل أن تُغلق فجأة عند النشر؛ المدير يسحب الاعتماد من اللوحة إن أراد طلب الوثيقة
+    UPDATE biz SET verification = verification || '{"status":"approved"}'::jsonb, verified_at = COALESCE(verified_at, updated_at, created_at)
+      WHERE verified AND NOT (verification ? 'status');
+  `).catch((e) => { try { app.log.warn(`biz_verified_mirror: ${e.message}`); } catch { /* ignore */ } });
 
   // ---- بذر البيانات الأولية: استعلامان مجمّعان فقط ولا يوقفان الإقلاع. الدوائر التي صار لها مالك لا تُلمس
   // (حتى لا تُمحى تعديلات أصحابها عند إعادة التشغيل).

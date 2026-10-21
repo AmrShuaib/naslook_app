@@ -5,6 +5,9 @@
 // دبوس «هنا اليوم» وأثره على GET /biz والصف، تغطية نطاق الخدمة بـ lat/lng، خطّاف «أبحث عن» للدوائر المتنقلة، والفئات الجديدة.
 import Fastify from 'fastify';
 import pg from 'pg';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { normalizePhone, CR_LOOKUP_URL, FREELANCE_LOOKUP_URL, WEIGHTS } from '../biz_onboard.js';
 import { CATEGORIES, CATEGORY_AR } from '../business.js';
 import { KINDS, ACT } from '../row.js';
@@ -35,6 +38,9 @@ const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
 app.register((await import('../commerce.js')).default, { pool, auth });
 app.register((await import('../business.js')).default, { pool, auth });
+// لوحة الإدارة الحية (POST /adminapi/biz/:id {verified}) تُسجَّل كما على الخادم لفحص اتساقها مع حالة التوثيق؛ مجلد تشغيل مؤقت لرمز الإعداد
+const opsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reg-ops-'));
+app.register((await import('../admin.js')).default, { pool, auth, webappDir: opsDir, opsDir });
 app.register((await import('../offers.js')).default, { pool, auth });
 app.register((await import('../biz_onboard.js')).default, { pool, auth });
 app.register((await import('../row.js')).default, { pool, auth });
@@ -236,6 +242,65 @@ await call('POST', `/biz/${F.id}/verify`, { body: { verified: true }, user: ADMI
 dbV = (await pool.query('SELECT verified, verification FROM biz WHERE id=$1', [F.id])).rows[0];
 check(dbV.verified === true && dbV.verification.status === 'approved' && dbV.verification.reviewedBy === ADMIN, 'legacy toggle on writes verification.status=approved');
 await call('POST', `/biz/${F.id}/orders`, { body: { itemId: items[0].id, qty: 1 }, user: KHALID, expect: 200 });
+// لوحة الإدارة (admin.js: POST /adminapi/biz/:id {verified}) تقلب العمود verified وحده؛ المشغّل biz_verified_mirror في القاعدة يُبقي
+// verification.status وverified_at متسقين معه فيغلق البيع ويفتحه كالمفتاح القديم تماماً
+await call('POST', `/adminapi/biz/${F.id}`, { body: { verified: false }, user: KHALID, expect: 403 });
+await call('POST', `/adminapi/biz/${F.id}`, { body: { verified: false }, user: ADMIN, expect: 200 });
+dbV = (await pool.query('SELECT verified, verified_at, verification FROM biz WHERE id=$1', [F.id])).rows[0];
+check(dbV.verified === false && dbV.verified_at === null && dbV.verification.status === 'none', 'admin panel toggle off → status none and verified_at cleared by the trigger', JSON.stringify(dbV));
+check((await call('POST', `/biz/${F.id}/orders`, { body: { itemId: items[0].id, qty: 1 }, user: KHALID, expect: 403 })).error === 'not-verified', 'admin panel toggle off closes paid orders');
+let pubV = await call('GET', `/biz/${F.id}`, { user: null, expect: 200 });
+check(pubV.verified === false && pubV.canSell === false && pubV.verificationStatus === 'none' && pubV.tier === 'complete', 'bizOut consistent (verified/canSell/verificationStatus) after the panel toggle off', JSON.stringify([pubV.verified, pubV.canSell, pubV.verificationStatus, pubV.tier]));
+await call('POST', `/adminapi/biz/${F.id}`, { body: { verified: true }, user: ADMIN, expect: 200 });
+dbV = (await pool.query('SELECT verified, verified_at, verification FROM biz WHERE id=$1', [F.id])).rows[0];
+check(dbV.verified === true && dbV.verified_at !== null && dbV.verification.status === 'approved' && dbV.verification.reason === null, 'admin panel toggle on → status approved with verified_at', JSON.stringify(dbV));
+o = await call('POST', `/biz/${F.id}/orders`, { body: { itemId: items[0].id, qty: 1 }, user: KHALID, expect: 200 });
+check(o.total > 0 && o.total <= 5000 && o.code, 'admin panel toggle on opens paid orders (the 10% offer still applies)', String(o.total));
+pubV = await call('GET', `/biz/${F.id}`, { user: null, expect: 200 });
+check(pubV.verified === true && pubV.canSell === true && pubV.verificationStatus === 'approved' && pubV.tier === 'active', 'bizOut consistent after the panel toggle on', JSON.stringify([pubV.verified, pubV.canSell, pubV.verificationStatus, pubV.tier]));
+c = await call('GET', `/biz/${F.id}/completeness`, { expect: 200 });
+check(c.canSell === true && c.verification.status === 'approved' && c.percent === 100, 'completeness reads the approval written by the trigger');
+check((await pool.query("SELECT 1 FROM admin_audit WHERE action='biz.update' AND target=$1", [F.id])).rowCount >= 2, 'panel toggles are audited by admin.js (biz.update)');
+// المشغّل من الجهتين: تغيير الحالة وحده يتبعه verified، وقلب verified وحده تتبعه الحالة، وتعديل لا يمسّهما لا يغيّر شيئاً
+await pool.query(`UPDATE biz SET verification = verification || '{"status":"rejected","reason":"وثيقة غير واضحة"}'::jsonb WHERE id=$1`, [F.id]);
+dbV = (await pool.query('SELECT verified, verified_at, verification FROM biz WHERE id=$1', [F.id])).rows[0];
+check(dbV.verified === false && dbV.verified_at === null && dbV.verification.status === 'rejected', 'status written alone → verified mirrors it', JSON.stringify(dbV));
+await pool.query('UPDATE biz SET verified=true WHERE id=$1', [F.id]);
+dbV = (await pool.query('SELECT verified, verified_at, verification FROM biz WHERE id=$1', [F.id])).rows[0];
+check(dbV.verified === true && dbV.verified_at !== null && dbV.verification.status === 'approved' && dbV.verification.reason === null, 'verified written alone → status approved, reason cleared', JSON.stringify(dbV));
+await pool.query('UPDATE biz SET description=description WHERE id=$1', [F.id]);
+const dbV2 = (await pool.query('SELECT verified, verified_at, verification FROM biz WHERE id=$1', [F.id])).rows[0];
+check(dbV2.verified === true && String(dbV2.verified_at) === String(dbV.verified_at) && dbV2.verification.reviewedAt === dbV.verification.reviewedAt, 'an unrelated update leaves the mirror untouched');
+
+// ---- الترحيل عند الإقلاع: دائرة وثّقها المدير بالمفتاح القديم قبل هذه الحزمة (verified=true بلا حالة) تبقى معتمدة وتبيع؛ غيرها لا يُمسّ
+const legacy = await call('POST', '/biz', { body: { name: 'Legacy Shop', nameAr: 'متجر قديم', category: 'shop', lat: O.lat, lng: O.lng }, user: NORA, expect: 200 });
+const legacyItem = await call('POST', `/biz/${legacy.id}/items`, { body: { title: 'سلعة', price: 2000, stock: 10 }, user: NORA, expect: 200 });
+await pool.query('ALTER TABLE biz DISABLE TRIGGER biz_verified_mirror');
+await pool.query(`UPDATE biz SET verified=true, verified_at=NULL, verification='{}'::jsonb WHERE id=$1`, [legacy.id]);
+await pool.query('ALTER TABLE biz ENABLE TRIGGER biz_verified_mirror');
+await pool.query(`INSERT INTO biz(id,name,name_ar,category,lat,lng,owner_id,verification) VALUES('reg-legacy-rej','Rejected','مرفوضة','shop',$1,$2,$3,'{"status":"rejected","reason":"قديم"}'::jsonb)`, [O.lat, O.lng, NORA]);
+let dbL = (await pool.query('SELECT verified, verified_at, verification FROM biz WHERE id=$1', [legacy.id])).rows[0];
+check(dbL.verified === true && dbL.verified_at === null && !('status' in dbL.verification), 'legacy state reproduced in the table: verified without a status');
+// القائمة لا تكتب في الصف (تفاصيل الدائرة تزيد views فيشفيها المشغّل)، فتُظهر التناقض كما كان قبل الترحيل
+let pubL = (await call('GET', '/biz?category=shop', { user: null, expect: 200 })).find((b) => b.id === legacy.id);
+check(pubL && pubL.verified === true && pubL.canSell === false && pubL.verificationStatus === 'none', 'legacy row reads verified:true / canSell:false / status none (the inconsistency the backfill removes)', JSON.stringify(pubL && [pubL.verified, pubL.canSell, pubL.verificationStatus]));
+check((await call('POST', `/biz/${legacy.id}/orders`, { body: { itemId: legacyItem.id, qty: 1 }, user: KHALID, expect: 403 })).error === 'not-verified', 'before the backfill the legacy circle cannot sell');
+// إقلاع ثانٍ لـ business.js يشغّل كتلة المخطط ومعها الترحيل (كما يحدث عند النشر)؛ مشاركات globalThis تُعاد للتطبيق الأول بعده
+const saved = Object.fromEntries(['naslifeBizCategories', 'naslifeBizCreate', 'naslifeBizLoadFull', 'naslifeBizOut', 'naslifeBizHelpers', 'naslifeBizRole'].map((k) => [k, globalThis[k]]));
+const boot = Fastify(); boot.register((await import('../business.js')).default, { pool, auth }); await boot.ready(); await boot.close();
+Object.assign(globalThis, saved);
+dbL = (await pool.query('SELECT verified, verified_at, verification FROM biz WHERE id=$1', [legacy.id])).rows[0];
+check(dbL.verified === true && dbL.verification.status === 'approved' && dbL.verified_at !== null, 'boot backfill approves circles verified before the package', JSON.stringify(dbL));
+pubL = await call('GET', `/biz/${legacy.id}`, { user: null, expect: 200 });
+check(pubL.verified === true && pubL.canSell === true && pubL.verificationStatus === 'approved', 'legacy circle is consistent and can sell after the backfill');
+check((await call('POST', `/biz/${legacy.id}/orders`, { body: { itemId: legacyItem.id, qty: 1 }, user: KHALID, expect: 200 })).total === 2000, 'paid order on the legacy circle works after the backfill');
+const dbM = (await pool.query('SELECT verified, verification FROM biz WHERE id=$1', [M.id])).rows[0];
+check(dbM.verified === false && dbM.verification.status === 'none', 'never-verified circles are untouched by the backfill');
+const dbR = (await pool.query("SELECT verified, verification FROM biz WHERE id='reg-legacy-rej'")).rows[0];
+check(dbR.verified === false && dbR.verification.status === 'rejected' && dbR.verification.reason === 'قديم', 'rejected circles keep their status and reason');
+const boot2 = Fastify(); boot2.register((await import('../business.js')).default, { pool, auth }); await boot2.ready(); await boot2.close();
+Object.assign(globalThis, saved);
+check(String((await pool.query('SELECT verified_at FROM biz WHERE id=$1', [legacy.id])).rows[0].verified_at) === String(dbL.verified_at), 'the backfill is idempotent across boots');
 
 // ---- دبوس «هنا اليوم»: للمتنقلة فقط، يحرّك موقعها في GET /biz ويظهر في الصف ثم يزول
 e = await call('POST', `/biz/${F.id}/here`, { body: { lat: FAR.lat, lng: FAR.lng, hours: 3 }, expect: 409 }); check(e.error === 'not-mobile', 'fixed circle cannot pin here');
