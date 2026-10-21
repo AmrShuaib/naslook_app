@@ -30,8 +30,9 @@ await call('GET', '/biz?q=سينما', { user: null, expect: 200 }).then(l => co
 const ikea = await call('GET', '/biz/biz-ikea', { user: null, expect: 200 });
 console.log('   ikea items:', ikea.items.map(i => i.title + ' ' + i.price).join(' | '));
 await call('GET', '/biz/nope', { user: null, expect: 404 });
-// الطلب المدفوع يحتاج دائرة لها مالك (خالد، غير المشتريَين) وإلا 409 no-owner؛ البذر اكتمل لأن GET /biz ينتظره
-await pool.query("UPDATE biz SET owner_id='SA0000003' WHERE id = ANY($1::text[])", [OWNED]);
+// الطلب المدفوع يحتاج دائرة لها مالك (خالد، غير المشتريَين) وإلا 409 no-owner؛ البذر اكتمل لأن GET /biz ينتظره.
+// ومنذ بوابة البيع (21 أكتوبر 2026) يحتاج كياناً معتمداً أيضاً وإلا 403 not-verified (حزمة harness_biz_onboard.mjs تختبر البوابة نفسها)
+await pool.query("UPDATE biz SET owner_id='SA0000003', verified=true, verification='{\"status\":\"approved\"}' WHERE id = ANY($1::text[])", [OWNED]);
 // المحفظة: شحن تجريبي 3000 ر.س (نوعه test_topup كي لا يختلط بشحن البطاقة)
 await call('POST', '/wallet/topup', { body: { amount: 500000 }, expect: 200 });
 await call('POST', '/wallet/topup', { body: { amount: 500000 }, expect: 200 });

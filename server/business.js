@@ -10,7 +10,11 @@ import { SEED } from "./business_seed.js";
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const ID_RE = /^[A-Z]{2}\d{7}$/;
-const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital", "airport", "cafe", "restaurant", "company", "university"]);
+// الفئات الست الأخيرة أُضيفت مع تسجيل الدوائر (21 أكتوبر 2026): متجر، خدمات وورش، صالون وتجميل، عيادة، ترفيه، أخرى
+export const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital", "airport", "cafe", "restaurant", "company", "university", "shop", "services", "salon", "clinic", "entertainment", "other"]);
+export const CATEGORY_AR = { brand: "براند", cinema: "سينما", hotel: "فندق", car_rental: "تأجير سيارات", hospital: "مستشفى", airport: "مطار", cafe: "مقهى", restaurant: "مطعم", company: "شركة", university: "جامعة", shop: "متجر", services: "خدمات وورش", salon: "صالون وتجميل", clinic: "عيادة", entertainment: "ترفيه", other: "أخرى" };
+// نوع الصنف الافتراضي في كتالوج كل فئة (ما ليس هنا فمنتج)
+export const ITEM_KIND_OF = { cinema: "showtime", hotel: "room", car_rental: "car", hospital: "clinic", airport: "info", salon: "clinic", clinic: "clinic", entertainment: "showtime", other: "info" };
 // clinic: عيادة بمواعيد (كالعرض السينمائي لكن مجاناً غالباً)، info: خدمة أو قسم تعريفي لا يُطلب
 const KINDS = new Set(["product", "showtime", "room", "car", "clinic", "info"]);
 const POST_KINDS = new Set(["news", "offer"]);
@@ -115,7 +119,48 @@ export default async function business(app, opts) {
     ALTER TABLE biz ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE biz_reviews ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE biz_posts ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
+    -- تسجيل الدوائر الموثّقة (biz_onboard.js، 21 أكتوبر 2026): الحضور ثابت/متنقل ونطاق الخدمة، الكيان ووثيقته، حالة التوثيق
+    -- (verified مرآة لـ verification.status='approved')، دبوس «هنا اليوم» المؤقت، ودور المسجِّل
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS presence TEXT NOT NULL DEFAULT 'fixed';
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS service_area JSONB;
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS entity_kind TEXT;
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS entity_number TEXT;
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS verification JSONB NOT NULL DEFAULT '{}';
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS owner_role TEXT;
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS here JSONB;
+    ALTER TABLE biz ADD COLUMN IF NOT EXISTS registered_at TIMESTAMPTZ;
   `);
+  // استعلام مستقل حتى لا يُعطّل تعثّره (صلاحية إنشاء الدوال مثلاً) إضافة الدوائر كلها؛ المسارات هنا تكتب العمودين معاً على كل حال
+  await pool.query(`
+    -- المرآة بين verified وverification.status تُحفظ في القاعدة نفسها (مشغّل) لا في كل كاتب: لوحة الإدارة (admin.js:
+    -- POST /adminapi/biz/:id {verified}) تقلب العمود القديم وحده، فمن غيّر الحالة تبعه verified، ومن قلب verified وحده تبعته الحالة
+    -- (التشغيل = approved مع verified_at، الإطفاء = none بلا سبب) حتى لا تخرج دائرة verified:true وcanSell:false أبداً
+    CREATE OR REPLACE FUNCTION biz_verified_mirror() RETURNS trigger AS $fn$
+    DECLARE st TEXT;
+    BEGIN
+      NEW.verification := COALESCE(NEW.verification, '{}'::jsonb);
+      st := NEW.verification->>'status';
+      IF (TG_OP = 'UPDATE' AND NEW.verification IS DISTINCT FROM OLD.verification) OR (TG_OP = 'INSERT' AND NEW.verification ? 'status') THEN
+        NEW.verified := (st = 'approved');
+        NEW.verified_at := CASE WHEN NEW.verified THEN COALESCE(NEW.verified_at, now()) ELSE NULL END;
+      ELSIF NEW.verified AND st IS DISTINCT FROM 'approved' THEN
+        NEW.verification := NEW.verification || jsonb_build_object('status', 'approved', 'reviewedAt', now(), 'reason', NULL);
+        NEW.verified_at := COALESCE(NEW.verified_at, now());
+      ELSIF NOT NEW.verified AND st = 'approved' THEN
+        NEW.verification := NEW.verification || jsonb_build_object('status', 'none', 'reviewedAt', now(), 'reason', NULL);
+        NEW.verified_at := NULL;
+      END IF;
+      RETURN NEW;
+    END $fn$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS biz_verified_mirror ON biz;
+    CREATE TRIGGER biz_verified_mirror BEFORE INSERT OR UPDATE ON biz FOR EACH ROW EXECUTE FUNCTION biz_verified_mirror();
+    -- ترحيل آمن التكرار (يطابق صفراً من الصفوف بعد أول مرة): الدوائر التي وثّقها المدير بالمفتاح القديم قبل هذه الحزمة تبقى معتمدة
+    -- وتبيع بدل أن تُغلق فجأة عند النشر؛ المدير يسحب الاعتماد من اللوحة إن أراد طلب الوثيقة
+    UPDATE biz SET verification = verification || '{"status":"approved"}'::jsonb, verified_at = COALESCE(verified_at, updated_at, created_at)
+      WHERE verified AND NOT (verification ? 'status');
+  `).catch((e) => { try { app.log.warn(`biz_verified_mirror: ${e.message}`); } catch { /* ignore */ } });
 
   // ---- بذر البيانات الأولية: استعلامان مجمّعان فقط ولا يوقفان الإقلاع. الدوائر التي صار لها مالك لا تُلمس
   // (حتى لا تُمحى تعديلات أصحابها عند إعادة التشغيل).
@@ -294,15 +339,46 @@ export default async function business(app, opts) {
     return r.rows[0].n;
   }
 
-  // ---- المخرجات
-  const bizOut = (b, extra = {}) => ({
-    id: b.id, name: b.name, nameAr: b.name_ar, category: b.category, sector: b.sector, description: b.description, lat: b.lat, lng: b.lng, address: b.address,
-    hours: b.hours, phone: b.phone, website: b.website, color: b.color, highlights: b.highlights ?? [], verified: b.verified, official: b.official, active: b.active !== false,
-    logoUrl: b.logo_url ?? null, coverUrl: b.cover_url ?? null, ownerId: b.owner_id ?? null, views: Number(b.views ?? 0),
-    followers: Number(b.followers ?? 0), rating: b.rating == null ? null : Number(b.rating), ratingCount: Number(b.rating_count ?? 0), minPrice: b.min_price == null ? null : Number(b.min_price),
-    itemsCount: Number(b.items_count ?? 0), following: b.following === true, myRole: b.my_role ?? null, createdAt: b.created_at,
-    openNow: isOpenNow(b.hours), distanceKm: roundKm(b.distance_km), ...extra,
-  });
+  // ---- التوثيق والحضور والمستوى (تسجيل الدوائر): verification JSONB {status, docUrl, submittedAt, submittedBy, reviewedBy, reviewedAt, reason}
+  const VER_STATUSES = new Set(["none", "pending", "approved", "rejected"]);
+  const verOf = (b) => (b?.verification && typeof b.verification === "object" ? b.verification : {});
+  const verStatus = (b) => { const s = verOf(b).status; return VER_STATUSES.has(s) ? s : "none"; };
+  // دبوس «هنا اليوم» للدائرة المتنقلة: قائم ما دام until في المستقبل
+  const hereOf = (b, now = Date.now()) => {
+    const h = b?.here; if (!h || typeof h !== "object") return null;
+    const until = new Date(h.until ?? 0).getTime(), lat = Number(h.lat), lng = Number(h.lng);
+    return until > now && Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng, until: new Date(until).toISOString() } : null;
+  };
+  const clampRadius = (v) => Math.min(50, Math.max(2, Number(v) || 15));
+  // مركز نطاق الخدمة هو lat/lng الدائرة نفسها (مصدر واحد لا يتقادم)، وJSONB يحمل نصف القطر والأحياء
+  const serviceAreaOf = (b) => {
+    if (b?.presence !== "mobile") return null;
+    const a = b.service_area && typeof b.service_area === "object" ? b.service_area : {};
+    return { lat: Number(b.lat), lng: Number(b.lng), radiusKm: clampRadius(a.radiusKm), districts: Array.isArray(a.districts) ? a.districts.map((d) => String(d)).slice(0, 10) : [] };
+  };
+  // المستويات التراكمية: منشورة ← مكتملة (ساعات أو نطاق خدمة، وصف ≥20 حرفاً، 3 صور، 3 أصناف) ← موثّقة (اعتماد الكيان) ← نشطة (عرض ومنشور خلال 30 يوماً)
+  const hoursOk = (b) => String(b?.hours ?? "").trim().length > 0 || (b?.presence === "mobile" && b?.service_area != null);
+  const isComplete = (b) => hoursOk(b) && String(b?.description ?? "").trim().length >= 20 && Number(b?.photos_count ?? 0) >= 3 && Number(b?.items_count ?? 0) >= 3;
+  const tierOf = (b) => {
+    const complete = isComplete(b), approved = verStatus(b) === "approved";
+    if (complete && approved && b.offer30d === true && b.post30d === true) return "active";
+    return complete && approved ? "verified" : complete ? "complete" : "published";
+  };
+
+  // ---- المخرجات: الموقع الظاهر هو دبوس «هنا اليوم» إن قام وإلا موقع الدائرة؛ نوع الكيان لطاقم الإدارة فقط ورقمه ووثيقته لا يخرجان هنا أبداً
+  const bizOut = (b, extra = {}) => {
+    const here = hereOf(b), vs = verStatus(b), role = extra.myRole ?? b.my_role ?? null;
+    return {
+      id: b.id, name: b.name, nameAr: b.name_ar, category: b.category, sector: b.sector, description: b.description, lat: here ? here.lat : b.lat, lng: here ? here.lng : b.lng, address: b.address,
+      hours: b.hours, phone: b.phone, website: b.website, color: b.color, highlights: b.highlights ?? [], verified: b.verified, official: b.official, active: b.active !== false,
+      logoUrl: b.logo_url ?? null, coverUrl: b.cover_url ?? null, ownerId: b.owner_id ?? null, views: Number(b.views ?? 0),
+      followers: Number(b.followers ?? 0), rating: b.rating == null ? null : Number(b.rating), ratingCount: Number(b.rating_count ?? 0), minPrice: b.min_price == null ? null : Number(b.min_price),
+      itemsCount: Number(b.items_count ?? 0), following: b.following === true, myRole: b.my_role ?? null, createdAt: b.created_at,
+      openNow: isOpenNow(b.hours), distanceKm: roundKm(b.distance_km),
+      presence: b.presence === "mobile" ? "mobile" : "fixed", serviceArea: serviceAreaOf(b), here, verificationStatus: vs, canSell: vs === "approved", tier: tierOf(b),
+      entityKind: canManage(role) ? (b.entity_kind ?? null) : null, phoneVerified: b.phone_verified === true, ...extra,
+    };
+  };
   async function itemOut(it, now = new Date()) {
     const base = { id: it.id, bizId: it.biz_id, kind: it.kind, title: it.title, description: it.description, price: Number(it.price), unit: it.unit, stock: it.stock, meta: it.meta ?? {}, imageUrl: it.image_url, active: it.active, sort: it.sort };
     if (it.kind === "showtime" || it.kind === "clinic") {
@@ -329,8 +405,17 @@ export default async function business(app, opts) {
   }
   const ORDER_JOIN = "SELECT o.*, i.title AS item_title, b.name AS biz_name, b.name_ar AS biz_name_ar, b.category FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id";
 
+  // ---- الموقع الفعلي في SQL: دبوس «هنا اليوم» القائم وإلا موقع الدائرة؛ وتغطية نطاق خدمة الدائرة المتنقلة لنقطة ما
+  const HERE_ON = "(b.here IS NOT NULL AND jsonb_typeof(b.here->'until')='string' AND (b.here->>'until')::timestamptz > now())";
+  const EFF_LAT = `CASE WHEN ${HERE_ON} THEN COALESCE((b.here->>'lat')::float8, b.lat) ELSE b.lat END`;
+  const EFF_LNG = `CASE WHEN ${HERE_ON} THEN COALESCE((b.here->>'lng')::float8, b.lng) ELSE b.lng END`;
+  const MOBILE_COVERS = (latP, lngP) => `(b.presence='mobile' AND ${DIST(latP, lngP, "b.lat", "b.lng")} <= COALESCE((b.service_area->>'radiusKm')::float8, 15))`;
   const LIST_SQL = `
     SELECT b.*, (SELECT count(*) FROM biz_follows f WHERE f.biz_id=b.id) AS followers,
+      ${EFF_LAT} AS eff_lat, ${EFF_LNG} AS eff_lng,
+      (SELECT count(*) FROM (SELECT b.logo_url AS u UNION SELECT b.cover_url UNION SELECT i.image_url FROM biz_items i WHERE i.biz_id=b.id UNION SELECT p.image_url FROM biz_posts p WHERE p.biz_id=b.id AND NOT p.hidden) ph WHERE ph.u IS NOT NULL AND ph.u <> '') AS photos_count,
+      EXISTS (SELECT 1 FROM biz_posts p WHERE p.biz_id=b.id AND p.active AND NOT p.hidden AND p.created_at > now() - interval '30 days') AS post30d,
+      __OFFER30D__ AS offer30d,
       (SELECT round(avg(rating)::numeric, 1) FROM biz_reviews r WHERE r.biz_id=b.id AND NOT r.hidden) AS rating,
       (SELECT count(*) FROM biz_reviews r WHERE r.biz_id=b.id AND NOT r.hidden) AS rating_count,
       (SELECT min(price) FROM biz_items i WHERE i.biz_id=b.id AND i.active) AS min_price,
@@ -338,6 +423,18 @@ export default async function business(app, opts) {
       ($1::text IS NOT NULL AND EXISTS (SELECT 1 FROM biz_follows f WHERE f.biz_id=b.id AND f.user_id=$1)) AS following,
       CASE WHEN $1::text IS NOT NULL AND b.owner_id=$1 THEN 'owner' ELSE (SELECT role FROM biz_staff s WHERE s.biz_id=b.id AND s.user_id=$1) END AS my_role
     FROM biz b WHERE true`;
+  // جدول العروض ملك offers.js المسجّلة بعدنا؛ إن غاب (تجهيز اختبار جزئي) فلا عرض حديث ولا يسقط الاستعلام
+  let offersTable = false;
+  const offersExists = async () => { if (offersTable) return true; try { offersTable = (await pool.query("SELECT to_regclass('biz_offers') IS NOT NULL AS ok")).rows[0]?.ok === true; } catch { offersTable = false; } return offersTable; };
+  const listSql = async () => LIST_SQL.replace("__OFFER30D__", (await offersExists()) ? "EXISTS (SELECT 1 FROM biz_offers o WHERE o.biz_id=b.id AND o.active AND o.created_at > now() - interval '30 days')" : "false");
+  /// صف الدائرة بكل الأعمدة المحسوبة (العدّادات والمستوى) كما تراه القوائم؛ null إن لم توجد
+  const loadFull = async (id, uid = null) => (SLUG_RE.test(id ?? "") ? (await pool.query(`${await listSql()} AND b.id=$2`, [uid, id])).rows[0] ?? null : null);
+  // لإضافة التسجيل (biz_onboard.js) وغيرها: الفئات، الإنشاء الموحّد، التحميل، المخرجات، والمساعدات
+  globalThis.naslifeBizCategories = CATEGORIES;
+  globalThis.naslifeBizCreate = async (uid, body, extra = {}) => { const id = await createBiz(uid, body, extra); return { id, row: await loadFull(id, uid) }; };
+  globalThis.naslifeBizLoadFull = loadFull;
+  globalThis.naslifeBizOut = bizOut;
+  globalThis.naslifeBizHelpers = { verStatus, verOf, hereOf, tierOf, isComplete, hoursOk, serviceAreaOf, canManage, canOperate, canOwn, roleFor, isAdmin, isSuspended, CATEGORY_AR };
 
   // ---- القائمة (عامة) مع تصفية بالفئة والحدود الجغرافية والبحث
   app.get("/biz", async (req) => {
@@ -354,9 +451,10 @@ export default async function business(app, opts) {
     const minRating = Math.min(5, Math.max(0, Number(req.query?.minRating) || 0));
     const openOnly = req.query?.open === "1";
     const order = { near: "distance_km ASC NULLS LAST, x.followers DESC", rating: "x.rating DESC NULLS LAST, x.rating_count DESC, x.followers DESC", popular: "x.followers DESC, x.views DESC, x.rating DESC NULLS LAST", new: "x.created_at DESC", default: "x.category, x.sort, x.name" }[sort];
-    const r = await pool.query(`SELECT x.*, ${DIST("$9", "$10", "x.lat", "x.lng")} AS distance_km FROM (${LIST_SQL} AND b.active
+    // داخل الحدود بالموقع الفعلي (دبوس «هنا اليوم» إن قام)، أو دائرة متنقلة يغطي نطاقها موقع المستخدم ولو خارج الحدود
+    const r = await pool.query(`SELECT x.*, ${DIST("$9", "$10", "x.eff_lat", "x.eff_lng")} AS distance_km FROM (${await listSql()} AND b.active
       AND ($2::text IS NULL OR b.category=$2)
-      AND ($3::float8 IS NULL OR (b.lat BETWEEN $4 AND $6 AND b.lng BETWEEN $3 AND $5))
+      AND ($3::float8 IS NULL OR (${EFF_LAT} BETWEEN $4 AND $6 AND ${EFF_LNG} BETWEEN $3 AND $5) OR ${MOBILE_COVERS("$9", "$10")})
       AND ($7::text = '' OR ${NORM("b.name")} LIKE $7 OR ${NORM("b.name_ar")} LIKE $7 OR ${NORM("b.sector")} LIKE $7 OR ${NORM("b.address")} LIKE $7
         OR EXISTS (SELECT 1 FROM biz_items i WHERE i.biz_id=b.id AND i.active AND ${NORM("i.title")} LIKE $7))
       AND ($8::bool = false OR EXISTS (SELECT 1 FROM biz_follows f WHERE f.biz_id=b.id AND f.user_id=$1))) x
@@ -372,7 +470,7 @@ export default async function business(app, opts) {
   app.get("/biz/mine", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const admin = await isAdmin(uid);
-    const r = await pool.query(`${LIST_SQL} AND (b.owner_id=$1 OR EXISTS (SELECT 1 FROM biz_staff s WHERE s.biz_id=b.id AND s.user_id=$1) OR $2::bool) ORDER BY b.updated_at DESC LIMIT 200`, [uid, admin]);
+    const r = await pool.query(`${await listSql()} AND (b.owner_id=$1 OR EXISTS (SELECT 1 FROM biz_staff s WHERE s.biz_id=b.id AND s.user_id=$1) OR $2::bool) ORDER BY b.updated_at DESC LIMIT 200`, [uid, admin]);
     const claims = (await pool.query("SELECT c.*, b.name, b.name_ar FROM biz_claims c JOIN biz b ON b.id=c.biz_id WHERE c.user_id=$1 ORDER BY c.created_at DESC", [uid])).rows
       .map((c) => ({ bizId: c.biz_id, name: c.name_ar || c.name, status: c.status, note: c.note, createdAt: c.created_at }));
     return { circles: r.rows.map((b) => bizOut(b, { myRole: admin && b.owner_id !== uid && !b.my_role ? "admin" : b.my_role })), claims, admin };
@@ -409,23 +507,41 @@ export default async function business(app, opts) {
     for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
     return out;
   }
-  app.post("/biz", async (req, reply) => {
-    const uid = await auth(req); if (!uid) return unauthorized(reply);
-    if (await isSuspended(uid)) return bad(reply, 403, "suspended");
-    const f = bizFieldsFrom(req.body ?? {});
-    if (!f.name && !f.name_ar) return bad(reply, 400, "bad-name");
-    if (rejectBanned(reply, f.name, f.name_ar, f.sector, f.description, f.address, f.hours, JSON.parse(f.highlights ?? "[]"))) return;
+  // الأعمدة الإضافية التي يجوز لإضافة التسجيل ضبطها عند الإنشاء (ما عداها يُهمل)
+  const CREATE_EXTRA = new Set(["presence", "service_area", "owner_role", "registered_at", "verification", "phone_verified", "active"]);
+  /// الإنشاء الموحّد (POST /biz وPOST /biz/register): التحقق، الكلمات المحظورة، حد 20 دائرة للمستخدم، توليد المعرّف. يرمي fail(code).
+  async function createBiz(uid, body, extra = {}) {
+    if (await isSuspended(uid)) throw fail("suspended");
+    const f = bizFieldsFrom(body ?? {});
+    if (!f.name && !f.name_ar) throw fail("bad-name");
+    let w = null;
+    try { w = globalThis.naslifeCheckText?.(...[f.name, f.name_ar, f.sector, f.description, f.address, f.hours, ...JSON.parse(f.highlights ?? "[]")].filter((t) => typeof t === "string")) ?? null; } catch { w = null; }
+    if (w) throw fail("banned-words", { word: w });
     if (!f.name) f.name = f.name_ar;
-    if (!Number.isFinite(f.lat) || !Number.isFinite(f.lng) || Math.abs(f.lat) > 90 || Math.abs(f.lng) > 180) return bad(reply, 400, "bad-location");
+    if (!Number.isFinite(f.lat) || !Number.isFinite(f.lng) || Math.abs(f.lat) > 90 || Math.abs(f.lng) > 180) throw fail("bad-location");
     const mineCount = (await pool.query("SELECT count(*)::int AS n FROM biz WHERE owner_id=$1", [uid])).rows[0].n;
-    if (mineCount >= 20) return bad(reply, 409, "too-many");
+    if (mineCount >= 20) throw fail("too-many");
     const slug = f.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30) || "biz";
     const id = `biz-${slug}-${crypto.randomBytes(2).toString("hex")}`;
-    await pool.query(`INSERT INTO biz(id,name,name_ar,category,sector,description,lat,lng,address,hours,phone,website,color,highlights,owner_id,logo_url,cover_url,sort)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,1000)`,
-      [id, f.name, f.name_ar, f.category, f.sector, f.description, f.lat, f.lng, f.address, f.hours, f.phone, f.website, f.color, f.highlights, uid, f.logo_url ?? null, f.cover_url ?? null]);
-    const r = await pool.query(`${LIST_SQL} AND b.id=$2`, [uid, id]);
-    return bizOut(r.rows[0]);
+    const cols = { id, ...f, logo_url: f.logo_url ?? null, cover_url: f.cover_url ?? null, owner_id: uid, sort: 1000 };
+    for (const [k, v] of Object.entries(extra ?? {})) if (CREATE_EXTRA.has(k) && v !== undefined) cols[k] = v;
+    const keys = Object.keys(cols);
+    await pool.query(`INSERT INTO biz(${keys.join(",")}) VALUES(${keys.map((_, i) => `$${i + 1}`).join(",")})`, keys.map((k) => cols[k]));
+    return id;
+  }
+  const createError = (reply, e) => {
+    if (e.code === "suspended") return bad(reply, 403, "suspended");
+    if (e.code === "banned-words") return bad(reply, 400, "banned-words", { word: e.word });
+    if (e.code === "bad-name" || e.code === "bad-location") return bad(reply, 400, e.code);
+    if (e.code === "too-many") return bad(reply, 409, "too-many");
+    return null;
+  };
+  app.post("/biz", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    let id;
+    try { id = await createBiz(uid, req.body ?? {}); }
+    catch (e) { if (createError(reply, e)) return; throw e; }
+    return bizOut(await loadFull(id, uid));
   });
 
   // ---- تعديل ملف الدائرة (مالك/مدير)
@@ -443,7 +559,7 @@ export default async function business(app, opts) {
       const sets = keys.map((k, i) => `${k}=$${i + 2}`).join(", ");
       await pool.query(`UPDATE biz SET ${sets}, updated_at=now() WHERE id=$1`, [g.b.id, ...keys.map((k) => f[k])]);
     }
-    const r = await pool.query(`${LIST_SQL} AND b.id=$2`, [g.uid, g.b.id]);
+    const r = await pool.query(`${await listSql()} AND b.id=$2`, [g.uid, g.b.id]);
     return bizOut(r.rows[0]);
   });
 
@@ -484,7 +600,11 @@ export default async function business(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
     if (!SLUG_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    await pool.query("UPDATE biz SET verified=$2, updated_at=now() WHERE id=$1", [req.params.id, req.body?.verified !== false]);
+    // المفتاح القديم يبقى: verified مرآة لحالة التوثيق، فالتشغيل = اعتماد والإطفاء = لا توثيق (بلا سبب رفض)
+    const on = req.body?.verified !== false;
+    await pool.query(`UPDATE biz SET verified=$2, verified_at=CASE WHEN $2::bool THEN now() ELSE NULL END,
+      verification=COALESCE(verification,'{}'::jsonb) || jsonb_build_object('status', $3::text, 'reviewedBy', $4::text, 'reviewedAt', now()), updated_at=now() WHERE id=$1`,
+      [req.params.id, on, on ? "approved" : "none", uid]);
     return { ok: true };
   });
 
@@ -493,7 +613,7 @@ export default async function business(app, opts) {
     await seeding;
     const uid = await optionalAuth(req);
     if (!SLUG_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const r = await pool.query(`${LIST_SQL} AND b.id=$2`, [uid, req.params.id]);
+    const r = await pool.query(`${await listSql()} AND b.id=$2`, [uid, req.params.id]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
     const b = r.rows[0];
     const role = uid ? (b.my_role ?? (await roleFor(uid, b))) : null;
@@ -561,7 +681,7 @@ export default async function business(app, opts) {
   function itemFieldsFrom(body, { partial = false, category = "brand" } = {}) {
     const out = {};
     const has = (k) => body[k] !== undefined;
-    if (!partial) out.kind = KINDS.has(body.kind) ? body.kind : ({ cinema: "showtime", hotel: "room", car_rental: "car", hospital: "clinic", airport: "info" }[category] ?? "product");
+    if (!partial) out.kind = KINDS.has(body.kind) ? body.kind : (ITEM_KIND_OF[category] ?? "product");
     if (!partial || has("title")) out.title = str(body.title, 100);
     if (!partial || has("description")) out.description = str(body.description, 500);
     if (!partial || has("price")) out.price = Math.max(0, Math.round(Number(body.price) || 0));
@@ -766,6 +886,8 @@ export default async function business(app, opts) {
         if (total > 0) {
           // دائرة بلا مالك لا تستقبل مالاً: الخصم من المشتري بلا قيد مقابل يُضيع المبلغ؛ الأصناف المجانية تبقى قابلة للطلب
           if (!b.owner_id) throw fail("no-owner");
+          // البيع مغلق حتى يُعتمد السجل التجاري أو وثيقة العمل الحر (قرار المالك، 21 أكتوبر 2026)؛ الأصناف المجانية تبقى قابلة للطلب
+          if (verStatus(b) !== "approved") throw fail("not-verified");
           await ledger(c, uid, "biz", -total, { ref: id, note: label, points: Math.floor(total / 1000), peerId: b.owner_id ?? null });
           // يُقيَّد المبلغ فوراً لمحفظة صاحب النشاط (كالتذاكر)، ويُخصم منه عند الاسترداد
           if (b.owner_id && b.owner_id !== uid) await ledger(c, b.owner_id, "biz_sale", total, { peerId: uid, ref: id, note: label, allowNegative: true });
@@ -777,6 +899,7 @@ export default async function business(app, opts) {
     } catch (err) {
       if (err.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds");
       if (err.code === "no-owner") return bad(reply, 409, "no-owner");
+      if (err.code === "not-verified") return bad(reply, 403, "not-verified");
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       if (["sold-out", "unavailable"].includes(err.code)) return bad(reply, 409, err.code, { left: err.left ?? 0 });
       if (["bad-slot", "bad-date", "bad-range", "in-past", "too-many", "not-orderable"].includes(err.code)) return bad(reply, 400, err.code);

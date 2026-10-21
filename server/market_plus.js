@@ -220,7 +220,10 @@ export default async function marketPlus(app, opts) {
     // أخبر بائعي التصنيف القريبين (حتى ٣٠ كم إن عُرف الموقع)
     const lat = b.lat == null ? null : Number(b.lat), lng = b.lng == null ? null : Number(b.lng);
     const sellers = (await pool.query(`SELECT DISTINCT seller_id FROM market_listings WHERE status='active' AND category=$1 AND seller_id<>$2 ${lat != null ? `AND lat IS NOT NULL AND ${distSql("$3", "$4")} <= 30` : ""} LIMIT 50`, lat != null ? [category, uid, lat, lng] : [category, uid])).rows.map((x) => x.seller_id);
-    if (sellers.length) await notify(sellers, { kind: "market_wanted", title: "مشترٍ يبحث عن شيء تقدّمه", body: `${title}${b.budgetMax ? " · حتى " + sar(money(b.budgetMax)) : ""}`, data: { wantedId: id } });
+    // وأصحاب الدوائر المتنقلة التي يغطي نطاق خدمتها موقع الطلب (biz_onboard.js)؛ بلا تكرار ولا إشعار لصاحب الطلب نفسه
+    let owners = []; try { owners = lat != null ? (await globalThis.naslifeBizOwnersNear?.(lat, lng)) ?? [] : []; } catch { owners = []; }
+    const targets = [...new Set([...sellers, ...owners])].filter((x) => x && x !== uid);
+    if (targets.length) await notify(targets, { kind: "market_wanted", title: "مشترٍ يبحث عن شيء تقدّمه", body: `${title}${b.budgetMax ? " · حتى " + sar(money(b.budgetMax)) : ""}`, data: { wantedId: id } });
     return wantedOut((await pool.query("SELECT * FROM market_wanted WHERE id=$1", [id])).rows[0], uid);
   });
   app.get("/market/wanted/:id", async (req, reply) => {
