@@ -3,7 +3,9 @@
 // الأحدث أولاً)، المسار /adminapi/backups (401 بلا مستخدم، 403 لغير المدير، 200)، ثم السكربت الحقيقي في مجلد مؤقت: نسخة كاملة
 // (dump + sha256 + لقطة وسائط + سطر سجل)، تمرين استعادة في قاعدة مؤقتة يطابق عدد المستخدمين الحي ويحذفها، التدوير (نسخة
 // عمرها 20 يوماً تُحذف وKEEP_MEDIA يقلّم اللقطات)، الفشل (قاعدة غير موجودة → خروج غير صفري وok:false مع نص الخطأ وبقاء drill)،
-// ملف البيئة (MEDIA_DIR فارغ يتخطى الوسائط)، وتمرين بلا نسخة يفشل برسالة.
+// ملف البيئة (MEDIA_DIR فارغ يتخطى الوسائط)، وتمرين بلا نسخة يفشل برسالة. ثم حارس التمرين (DRILL_DB = القاعدة الحية في وضعي url
+// وpgenv عبر systemctl وهمي → فشل بلا dropdb والقاعدة الحية باقية)، تمرين ناجح في وضع pgenv، كنس بقايا .part، وخارج الخادم بأدوات
+// وهمية (rclone يرفع db/ وconfig/ ولقطة واحدة؛ rsync عبر ssh بـ -H؛ فشل rclone → الرمز 2).
 import Fastify from 'fastify';
 import pg from 'pg';
 import fs from 'node:fs';
@@ -28,6 +30,9 @@ const readStatus = () => JSON.parse(fs.readFileSync(statusPath, 'utf8'));
 const baseStatus = (over = {}) => ({ version: 1, startedAt: iso(1), finishedAt: iso(1), ok: true, error: null, durationSec: 12, db: { file: backupDir + '/db/naslife-x.dump', bytes: 1234, sha256: 'ab' }, media: { source: '/opt/naslife/media', dir: null, files: 7, bytes: 99 }, config: { files: ['auth-key'] }, offsite: { kind: 'none', ok: false, error: null }, kept: { dumps: 3, mediaSnapshots: 2 }, drill: null, ...over });
 const dumpsIn = () => (fs.existsSync(path.join(backupDir, 'db')) ? fs.readdirSync(path.join(backupDir, 'db')).filter((n) => n.endsWith('.dump')) : []);
 const snapsIn = () => (fs.existsSync(path.join(backupDir, 'media')) ? fs.readdirSync(path.join(backupDir, 'media')).filter((n) => n !== 'latest') : []);
+const partsIn = () => (fs.existsSync(path.join(backupDir, 'db')) ? fs.readdirSync(path.join(backupDir, 'db')).filter((n) => n.endsWith('.part')) : []);
+const logLines = () => (fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').trim().split('\n') : []);
+const pgCount = async (name) => Number((await pool.query('SELECT count(*)::int AS n FROM pg_database WHERE datname=$1', [name])).rows[0].n);
 
 // ---- الوحدة الخالصة
 check(STALE_HOURS === 30 && DRILL_STALE_DAYS === 10 && MAX_DUMPS === 20, 'thresholds');
@@ -118,14 +123,46 @@ check(fs.readFileSync(logPath, 'utf8').trim().split('\n').length === 2, 'drill a
 r = await call('GET', '/adminapi/backups', { expect: 200 });
 check(r.drill?.ok === true && r.drillStale === false && r.drill.ageDays === 0 && r.stale === false, 'route shows the drill');
 
+// ---- حارس التمرين: DRILL_DB = القاعدة الحية → خروج غير صفري بلا أي dropdb، والقاعدة الحية بجدولها باقية. تُجرَّب على قاعدة مستقلة
+// لا يتصل بها أحد (الحالة التي كان dropdb ينجح فيها) في وضع url وفي وضع pgenv (systemctl وهمي يعرض PG*، حيث كان dropdb يتصل بقاعدة
+// postgres ويحذف القاعدة الحية فعلاً)
+const guardDb = `${DB}_guard`;
+const guardClient = () => new pg.Client({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: guardDb });
+await pool.query(`DROP DATABASE IF EXISTS ${guardDb}`); await pool.query(`CREATE DATABASE ${guardDb}`);
+{ const c = guardClient(); await c.connect(); await c.query('CREATE TABLE users (id TEXT PRIMARY KEY)'); await c.query("INSERT INTO users VALUES ('SA1')"); await c.end(); }
+const guardAlive = async () => { try { const c = guardClient(); await c.connect(); const n = Number((await c.query('SELECT count(*)::int AS n FROM users')).rows[0].n); await c.end(); return n === 1; } catch { return false; } };
+const binSysctl = path.join(tmp, 'bin_systemctl'); fs.mkdirSync(binSysctl, { recursive: true });
+const fakeSystemctl = (db) => fs.writeFileSync(path.join(binSysctl, 'systemctl'), `#!/bin/sh\necho "PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres PGPASSWORD=pg PGDATABASE=${db}"\n`, { mode: 0o755 });
+const envPgenv = { ...env, PATH: binSysctl + ':' + env.PATH }; delete envPgenv.DATABASE_URL;
+p = run(['--drill'], { DRILL_DB: guardDb, DATABASE_URL: `postgres://postgres:pg@127.0.0.1:5432/${guardDb}` });
+st = readStatus();
+check(p.status !== 0 && st.drill.ok === false && /drill-guard failed .*DRILL_DB equals the live database/.test(st.drill.error) && !/dropdb/.test(st.drill.error), 'guard (url): DRILL_DB = live DB fails before any dropdb', st.drill.error);
+check(await guardAlive(), 'guard (url): the live database and its users table still exist');
+fakeSystemctl(guardDb);
+p = spawnSync('bash', [script, '--drill'], { env: { ...envPgenv, DRILL_DB: guardDb }, encoding: 'utf8' });
+st = readStatus();
+check(p.status !== 0 && st.drill.ok === false && /drill-guard failed .*DRILL_DB equals the live database \(/.test(st.drill.error) && !/dropdb/.test(st.drill.error), 'guard (pgenv via fake systemctl): fails before any dropdb', st.drill.error);
+check(await guardAlive(), 'guard (pgenv): the live database survives although nothing is connected to it');
+p = run(['--drill'], { DRILL_DB: 'postgres' }); st = readStatus();
+check(p.status !== 0 && st.drill.ok === false && /may not be a system database/.test(st.drill.error) && (await pgCount('postgres')) === 1, 'guard: a system database name is refused');
+// تمرين ناجح في وضع pgenv (createdb/dropdb عبر --maintenance-db على القاعدة الحية في هذا الوضع أيضاً)
+fakeSystemctl(DB);
+p = spawnSync('bash', [script, '--drill'], { env: { ...envPgenv, DRILL_DB: `${DB}_drill` }, encoding: 'utf8' });
+st = readStatus();
+check(p.status === 0 && st.drill.ok === true && st.drill.rows.users === live && st.drill.liveUsers === live, 'drill succeeds in pgenv mode (PG* from systemctl)', (p.stderr || '').slice(0, 300));
+check((await pgCount(`${DB}_drill`)) === 0 && (await guardAlive()), 'pgenv drill database dropped, guard database untouched');
+await pool.query(`DROP DATABASE IF EXISTS ${guardDb}`);
+
 // ---- التدوير: نسخة عمرها 20 يوماً تُحذف، وKEEP_MEDIA=1 يُبقي أحدث لقطة فقط
 const oldDump = path.join(backupDir, 'db', 'naslife-20200101-0000.dump');
 fs.writeFileSync(oldDump, 'old'); fs.writeFileSync(oldDump + '.sha256', 'x');
 const old = new Date(Date.now() - 20 * 86400000); fs.utimesSync(oldDump, old, old);
 fs.writeFileSync(path.join(mediaDir, 'c.txt'), 'c');
+const stalePart = path.join(backupDir, 'db', 'naslife-20200102-0000.dump.part'); fs.writeFileSync(stalePart, 'partial');
 p = run([], { KEEP_MEDIA: '1' });
 st = readStatus(); dumps = dumpsIn();
 check(p.status === 0 && !fs.existsSync(oldDump) && !fs.existsSync(oldDump + '.sha256') && dumps.length === 2 && st.kept.dumps === 2, 'dump older than KEEP_DAYS removed, kept.dumps right', `${dumps.length}/${st.kept.dumps}`);
+check(!fs.existsSync(stalePart) && partsIn().length === 0 && fs.readFileSync(logPath, 'utf8').includes('removed partial naslife-20200102-0000.dump.part'), 'leftover .part from an interrupted run is swept by rotation');
 const snaps = snapsIn();
 check(st.kept.mediaSnapshots === 1 && snaps.length === 1 && snaps[0] === path.basename(st.media.dir) && st.media.files === 3 && fs.existsSync(path.join(backupDir, 'media', 'latest', 'c.txt')), 'media snapshots pruned to KEEP_MEDIA, latest points at the newest', snaps.join(','));
 check(st.drill?.ok === true && st.drill.rows.users === live, 'drill preserved across normal runs');
@@ -135,7 +172,7 @@ check(fs.readFileSync(logPath, 'utf8').includes('rotated naslife-20200101-0000.d
 p = run([], { DATABASE_URL: `postgres://postgres:pg@127.0.0.1:5432/${DB}_nope` });
 st = readStatus();
 check(p.status !== 0 && st.ok === false && typeof st.error === 'string' && /does not exist/.test(st.error) && st.error.startsWith('pg_dump failed'), 'wrong database → non-zero exit and ok:false with the error text', st.error);
-check(st.drill?.ok === true && st.db.file === null && dumpsIn().length === 2, 'failed run keeps the drill and leaves no partial dump');
+check(st.drill?.ok === true && st.db.file === null && dumpsIn().length === 2 && partsIn().length === 0, 'failed run keeps the drill and leaves no partial dump (.part removed)', partsIn().join(','));
 r = await call('GET', '/adminapi/backups', { expect: 200 });
 check(r.installed && r.stale === true && r.status.error === st.error && r.dumps.length === 2, 'route: failed run is stale with the error');
 // الموضع نفسه في وضع التمرين: قاعدة غير موجودة → drill.ok=false بنص الخطأ، وبقية الحالة كما هي
@@ -146,11 +183,35 @@ check(p.status !== 0 && st.drill.ok === false && /does not exist|failed/.test(st
 // ---- ملف البيئة: MEDIA_DIR فارغ صراحةً يتخطى الوسائط، والبيئة تغلب الملف
 fs.writeFileSync(path.join(tmp, 'backup.env'), '# تجربة\nexport MEDIA_DIR=\nKEEP_DAYS="30"\nBACKUP_LOG=' + path.join(tmp, 'other.log') + '\nBACKUP_STATUS=' + path.join(tmp, 'ignored.json') + '\n');
 const envFromFile = { ...env, BACKUP_ENV: path.join(tmp, 'backup.env') }; delete envFromFile.MEDIA_DIR; delete envFromFile.BACKUP_LOG;
+const logBefore = logLines().length;
 p = spawnSync('bash', [script], { env: envFromFile, encoding: 'utf8' });
 st = readStatus();
 check(p.status === 0 && st.ok === true && st.media.source === null && st.media.files === 0, 'env file: empty MEDIA_DIR skips media', (p.stderr || '').slice(0, 200));
-check(fs.existsSync(path.join(tmp, 'other.log')) && fs.readFileSync(logPath, 'utf8').trim().split('\n').length === 5, 'BACKUP_LOG from the file applies when the environment leaves it unset');
+check(fs.existsSync(path.join(tmp, 'other.log')) && logLines().length === logBefore, 'BACKUP_LOG from the file applies when the environment leaves it unset');
 check(!fs.existsSync(path.join(tmp, 'ignored.json')) && st.media.files === 0, 'an explicit environment variable wins over the file (BACKUP_STATUS)');
+
+// ---- خارج الخادم بأدوات وهمية (rclone وrsync غائبان في الحاوية): rclone يرفع db/ وconfig/ ولقطة الوسائط الأخيرة فقط لا كل اللقطات
+// (لا يعرف الروابط الصلبة)، وrsync عبر ssh يمرّر -H لحفظها، وفشل rclone يُبلَّغ بالرمز 2 مع بقاء النسخة المحلية سليمة
+const binRclone = path.join(tmp, 'bin_rclone'), rcloneLog = path.join(tmp, 'rclone.log'); fs.mkdirSync(binRclone, { recursive: true });
+fs.writeFileSync(path.join(binRclone, 'rclone'), ['#!/bin/sh', 'printf \'%s\\n\' "$*" >> ' + JSON.stringify(rcloneLog), 'if [ -n "$FAKE_RCLONE_FAIL" ]; then echo "fake: bucket not found" >&2; exit 1; fi', ''].join('\n'), { mode: 0o755 });
+p = run([], { BACKUP_RCLONE_REMOTE: 'b2:naslife-backups/', PATH: binRclone + ':' + env.PATH });
+st = readStatus();
+const rcCalls = fs.existsSync(rcloneLog) ? fs.readFileSync(rcloneLog, 'utf8').trim().split('\n') : [];
+check(p.status === 0 && st.ok === true && st.offsite.kind === 'rclone' && st.offsite.ok === true && st.offsite.error === null && st.media.files === 3, 'rclone offsite reported ok', JSON.stringify(st.offsite) + ' ' + (p.stderr || '').slice(0, 200));
+check(rcCalls.length === 3 && rcCalls[0] === `sync ${backupDir}/db b2:naslife-backups/db --exclude *.part -q` && rcCalls[1] === `sync ${backupDir}/config b2:naslife-backups/config --exclude *.part -q` && rcCalls[2] === `sync ${st.media.dir} b2:naslife-backups/media --exclude *.part -q`, 'rclone syncs db/, config/ and one media tree (the newest snapshot), never all snapshots', rcCalls.join(' | '));
+fs.rmSync(rcloneLog, { force: true });
+p = run([], { BACKUP_RCLONE_REMOTE: 'b2:naslife-backups', PATH: binRclone + ':' + env.PATH, FAKE_RCLONE_FAIL: '1' });
+st = readStatus();
+check(p.status === 2 && st.ok === true && st.offsite.kind === 'rclone' && st.offsite.ok === false && /^rclone \(b2:naslife-backups\/db\): fake: bucket not found/.test(st.offsite.error) && dumpsIn().length >= 1, 'rclone failure → exit 2, local backup ok, first error reported', st.offsite.error);
+const binRsync = path.join(tmp, 'bin_rsync'), rsyncLog = path.join(tmp, 'rsync.log'); fs.mkdirSync(binRsync, { recursive: true });
+fs.writeFileSync(path.join(binRsync, 'rsync'), ['#!/bin/bash', 'printf \'%s\\n\' "$*" >> ' + JSON.stringify(rsyncLog), 'for a in "$@"; do if [ "$a" = -e ]; then exit 0; fi; done', 'src="${@: -2:1}"; dst="${@: -1}"', 'cp -a "${src}." "$dst"', ''].join('\n'), { mode: 0o755 });
+p = run([], { BACKUP_SSH_TARGET: 'u1@box.example:naslife-backups', BACKUP_SSH_OPTS: '-p 23', PATH: binRsync + ':' + env.PATH });
+st = readStatus();
+const rsCalls = fs.existsSync(rsyncLog) ? fs.readFileSync(rsyncLog, 'utf8').trim().split('\n') : [];
+const rsOff = rsCalls.find((c) => c.includes(' -e ')) || '';
+check(p.status === 0 && st.ok === true && st.offsite.kind === 'ssh' && st.offsite.ok === true && st.media.files === 3 && fs.existsSync(path.join(st.media.dir, 'sub', 'b.mp4')), 'ssh offsite reported ok (fake rsync also took the media snapshot)', JSON.stringify(st.offsite) + ' ' + (p.stderr || '').slice(0, 200));
+check(rsOff === `-azH --delete --exclude .lock --exclude *.part -e ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 23 ${backupDir}/ u1@box.example:naslife-backups/`, 'rsync over ssh passes -H so hard-linked snapshots stay hard links offsite', rsOff);
+check(rsCalls.some((c) => /^-a --delete --link-dest=\S+ \S+ \S+$/.test(c)), 'media snapshot used --link-dest to the previous snapshot', rsCalls.join(' | '));
 
 // ---- تمرين بلا أي نسخة
 fs.rmSync(path.join(backupDir, 'db'), { recursive: true, force: true });

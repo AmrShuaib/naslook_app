@@ -13,6 +13,7 @@
 #   DATABASE_URL رابط القاعدة (وإلا: بيئة وحدة naslife في systemd، ثم /opt/naslife/.env، ثم sudo -u postgres على أول قاعدة naslife%)
 #   NO_SUDO=1   يمنع احتياط sudo -u postgres
 #   BACKUP_RCLONE_REMOTE=b2:naslife-backups  أو  BACKUP_SSH_TARGET=user@host:/path [+ BACKUP_SSH_OPTS="-p 23"]  (نسخة خارج الخادم)
+#       rclone: يرفع db/ وconfig/ كما هما وشجرة وسائط واحدة (أحدث لقطة) إلى media/؛ ssh: مرآة كاملة للمجلد مع حفظ الروابط الصلبة (-H)
 # الخروج: 0 نجاح، 1 فشل (الحالة تُكتب بـ ok:false والخطأ)، 2 النسخة المحلية سليمة لكن المزامنة خارج الخادم فشلت.
 set -Eeuo pipefail
 
@@ -72,6 +73,8 @@ S_CONFIG_FILES=""
 S_OFF_KIND=none; S_OFF_OK=false; S_OFF_ERROR=""
 S_KEPT_DUMPS=0; S_KEPT_MEDIA=0
 D_AT=""; D_OK=false; D_ERROR=""; D_TABLES=""; D_ROWS=""; D_LIVE_USERS=""
+# يصبح 1 بعد أن يجتاز اسم قاعدة التمرين الحارس؛ قبل ذلك لا يُستدعى dropdb أبداً (ولا من مسار الفشل)
+DRILL_SAFE=0
 
 # ---- كتابة JSON ذرياً (tmp ثم mv) عبر node أو python3؛ القيم تمر بالبيئة فلا تكسرها علامات الاقتباس.
 # في الوضع العادي يُحفظ مفتاح drill من الملف السابق؛ في وضع التمرين لا يُبدَّل إلا مفتاح drill.
@@ -145,11 +148,14 @@ on_fail() {
   msg="$STEP failed (exit $rc): $(err_text)"; msg="${msg%: }"
   if [[ "$MODE" == drill ]]; then
     D_OK=false; D_ERROR="$msg"; D_AT="${D_AT:-$(now_iso)}"
-    drill_cleanup || true
+    # لا حذف لقاعدة التمرين إلا إن اجتاز اسمها الحارس؛ فشل الحارس نفسه (DRILL_DB = القاعدة الحية) كان يصل هنا ويحذف القاعدة الحية
+    if [[ "$DRILL_SAFE" == 1 ]]; then drill_cleanup || true; fi
     write_status drill || true
     log "DRILL FAILED: $msg"
   else
     S_OK=false; S_ERROR="$msg"
+    # نسخة ناقصة من pg_dump فشل في منتصفه لا تُترك على القرص (التدوير لا يراها)
+    if [[ -n "${DUMP:-}" ]]; then rm -f "$DUMP.part"; fi
     write_status normal || true
     log "FAILED: $msg"
   fi
@@ -198,22 +204,28 @@ conn_for() { if [[ "$DB_MODE" == url ]]; then url_with_db "$DB_CONN" "$1"; else 
 sql() { pgx psql "$1" -Atq -v ON_ERROR_STOP=1 -c "$2" 2>"$ERRF"; }
 
 # ---- تمرين الاستعادة
+# حذف قاعدة التمرين: يرفض بنفسه اسماً فارغاً أو اسم القاعدة الحية، ويتصل عبر القاعدة الحية (--maintenance-db في كل الأوضاع)
+# فيرفض Postgres بدوره حذف القاعدة المفتوحة لو تسلّل الاسم بطريقة ما (خط دفاع ثانٍ)
 drill_cleanup() {
   if [[ -z "${DB_MODE:-}" ]]; then return 0; fi
-  if [[ "$DB_MODE" == url ]]; then pgx dropdb --if-exists --maintenance-db="$DB_CONN" "$DRILL_DB" 2>>"$ERRF"; else pgx dropdb --if-exists "$DRILL_DB" 2>>"$ERRF"; fi
+  if [[ -z "$DRILL_DB" || "$DRILL_DB" == "$DB_NAME" ]]; then echo "refusing to drop '$DRILL_DB': it is the live database" >> "$ERRF"; return 1; fi
+  pgx dropdb --if-exists --maintenance-db="$DB_CONN" "$DRILL_DB" 2>>"$ERRF"
 }
 run_drill() {
   D_AT=$(now_iso)
   detect_db
   STEP="drill-guard"
+  if [[ -z "$DRILL_DB" ]]; then echo "DRILL_DB is empty" > "$ERRF"; false; fi
   if [[ "$DRILL_DB" == "$DB_NAME" ]]; then echo "DRILL_DB equals the live database ($DB_NAME)" > "$ERRF"; false; fi
+  case "$DRILL_DB" in postgres|template0|template1) echo "DRILL_DB may not be a system database ($DRILL_DB)" > "$ERRF"; false ;; esac
+  DRILL_SAFE=1
   STEP="find-dump"
   local dump; dump=$(ls -1t "$BACKUP_DIR"/db/naslife-*.dump 2>/dev/null | head -1 || true)
   if [[ -z "$dump" ]]; then echo "no dump found in $BACKUP_DIR/db" > "$ERRF"; false; fi
   if [[ -f "$dump.sha256" ]]; then STEP="verify-sha256"; (cd "$(dirname "$dump")" && sha256sum -c --quiet "$(basename "$dump").sha256") 2>"$ERRF"; fi
   STEP="drill-createdb"
   drill_cleanup
-  if [[ "$DB_MODE" == url ]]; then pgx createdb --maintenance-db="$DB_CONN" "$DRILL_DB" 2>"$ERRF"; else pgx createdb "$DRILL_DB" 2>"$ERRF"; fi
+  pgx createdb --maintenance-db="$DB_CONN" "$DRILL_DB" 2>"$ERRF"
   local dconn; dconn=$(conn_for "$DRILL_DB")
   STEP="pg_restore"
   pgx pg_restore --no-owner --no-privileges -d "$dconn" < "$dump" 2>"$ERRF"
@@ -307,6 +319,8 @@ fi
 # ---- 5) التدوير: نسخ القاعدة الأقدم من KEEP_DAYS، وأحدث KEEP_MEDIA لقطة/مجموعة إعداد فقط
 STEP="rotate"
 while IFS= read -r old; do if [[ -n "$old" ]]; then rm -f "$old" "$old.sha256"; note "rotated $(basename "$old")"; fi; done < <(find "$BACKUP_DIR/db" -maxdepth 1 -name 'naslife-*.dump' -mmin +"$(( KEEP_DAYS * 1440 ))" 2>/dev/null)
+# بقايا .part من تشغيل سابق فشل في منتصفه (القفل يضمن ألا يكون لتشغيل جارٍ، ونسخة هذا التشغيل سُمّيت قبل الوصول هنا): لا قيمة لها
+while IFS= read -r old; do if [[ -n "$old" ]]; then rm -f "$old"; note "removed partial $(basename "$old")"; fi; done < <(find "$BACKUP_DIR/db" -maxdepth 1 -name 'naslife-*.dump.part' 2>/dev/null)
 prune_dirs() { # $1 المجلد الأب: يحذف كل المجلدات الفرعية ما عدا أحدث KEEP_MEDIA (الأسماء طوابع زمنية فترتيبها زمني)
   local parent="$1" d
   while IFS= read -r d; do if [[ -n "$d" && -d "$parent/$d" && ! -L "$parent/$d" ]]; then rm -rf "${parent:?}/$d"; fi; done < <(find "$parent" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r | tail -n +"$(( KEEP_MEDIA + 1 ))")
@@ -320,13 +334,20 @@ STEP="offsite"
 if [[ -n "${BACKUP_RCLONE_REMOTE:-}" ]]; then
   S_OFF_KIND=rclone
   if command -v rclone >/dev/null 2>&1; then
-    if rclone sync "$BACKUP_DIR" "$BACKUP_RCLONE_REMOTE" --exclude .lock --exclude '*.part' --links -q 2>"$ERRF"; then S_OFF_OK=true; else S_OFF_ERROR="rclone: $(err_text)"; fi
+    # rclone لا يعرف الروابط الصلبة: مزامنة كل اللقطات ترفع الوسائط كاملة كل ليلة وتخزّنها KEEP_MEDIA مرة.
+    # لذا تُرفع نسخ القاعدة والإعداد كما هي، وشجرة وسائط واحدة فقط (لقطة هذه الليلة = latest) إلى media/ فلا يُنقل إلا ما تغيّر.
+    REMOTE="${BACKUP_RCLONE_REMOTE%/}"
+    rclone_sync() { if rclone sync "$1" "$2" --exclude '*.part' -q 2>"$ERRF"; then return 0; fi; S_OFF_ERROR="${S_OFF_ERROR:-rclone ($2): $(err_text)}"; return 1; }
+    S_OFF_OK=true
+    rclone_sync "$BACKUP_DIR/db" "$REMOTE/db" || S_OFF_OK=false
+    if [[ -d "$BACKUP_DIR/config" ]]; then rclone_sync "$BACKUP_DIR/config" "$REMOTE/config" || S_OFF_OK=false; fi
+    if [[ -n "$S_MEDIA_DIR" && -d "$S_MEDIA_DIR" ]]; then rclone_sync "$S_MEDIA_DIR" "$REMOTE/media" || S_OFF_OK=false; fi
   else S_OFF_ERROR="rclone is not installed"; fi
 elif [[ -n "${BACKUP_SSH_TARGET:-}" ]]; then
   S_OFF_KIND=ssh
   if command -v rsync >/dev/null 2>&1; then
-    # BACKUP_SSH_OPTS اختيارية (مثل "-p 23" لصندوق Hetzner Storage Box)
-    if rsync -az --delete --exclude .lock --exclude '*.part' -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${BACKUP_SSH_OPTS:-}" "$BACKUP_DIR/" "$BACKUP_SSH_TARGET/" 2>"$ERRF"; then S_OFF_OK=true; else S_OFF_ERROR="rsync/ssh: $(err_text)"; fi
+    # -H يعيد إنشاء الروابط الصلبة بين لقطات الوسائط على الوجهة فلا يُنقل ولا يُخزَّن إلا ما تغيّر؛ BACKUP_SSH_OPTS اختيارية (مثل "-p 23" لصندوق Hetzner)
+    if rsync -azH --delete --exclude .lock --exclude '*.part' -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${BACKUP_SSH_OPTS:-}" "$BACKUP_DIR/" "$BACKUP_SSH_TARGET/" 2>"$ERRF"; then S_OFF_OK=true; else S_OFF_ERROR="rsync/ssh: $(err_text)"; fi
   else S_OFF_ERROR="rsync is not installed"; fi
 fi
 if [[ -n "$S_OFF_ERROR" ]]; then note "offsite: $S_OFF_ERROR"; fi
