@@ -1,13 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/biz_api.dart';
@@ -21,14 +22,11 @@ import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/posts_api.dart';
 import '../../api/safety_api.dart';
-import '../../core/media/native_io.dart' show isNativeMobile;
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/location.dart';
 import '../../core/media/media.dart';
 import '../../core/media/permissions.dart';
-import '../../core/media/video_view.dart';
-import '../../core/media/voice_player.dart';
 import '../../core/media/voice_record.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
@@ -41,14 +39,23 @@ import '../../ui/reactions.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../business/business_page.dart';
-import '../jobs/job_page.dart';
 import '../business/community_page.dart';
 import '../events/events_page.dart';
+import '../jobs/job_page.dart';
 import '../market/market_page.dart';
 import '../posts/post_viewer.dart';
 import '../profile/public_profile_page.dart';
 import '../wallet/wallet_page.dart';
 import 'chat_cards.dart';
+import 'widgets/audio_bubble.dart';
+import 'widgets/bubble.dart';
+import 'widgets/composer.dart';
+import 'widgets/jump_to_latest.dart';
+import 'widgets/reaction_bar.dart';
+import 'widgets/typing_indicator.dart';
+
+export 'widgets/audio_bubble.dart' show fmtDuration;
+export 'widgets/composer.dart' show AttachAction;
 
 /// تسمية فاصل اليوم: اليوم، أمس، اسم اليوم خلال الأسبوع، وإلا اليوم والشهر (والسنة إن اختلفت).
 String dayLabel(DateTime t, {DateTime? now}) {
@@ -65,13 +72,12 @@ String dayLabel(DateTime t, {DateTime? now}) {
 /// نص الخطأ الصالح للعرض بدل ApiException(...) الخام.
 String errText(Object e) => e is ApiException ? e.message : e.toString().replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
 
-String fmtDuration(Duration d) => '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
-
 /// الحد الأقصى لتسجيل الرسالة الصوتية.
 const maxVoiceDuration = Duration(minutes: 5);
 const maxMediaBytes = 30 * 1024 * 1024;
 
-final _urlRe = RegExp(r'(https?://[^\s<>]+|www\.[^\s<>]+)', caseSensitive: false);
+/// مسافة الابتعاد عن نهاية القائمة (تقديراً بالبكسل) التي يظهر بعدها زر «إلى الأحدث».
+const jumpToLatestDistance = 600.0;
 
 String _mimeOf(String name, [String? given]) {
   if (given != null && given.isNotEmpty && given != 'application/octet-stream') return given.split(';').first.trim();
@@ -85,6 +91,8 @@ String _mimeOf(String name, [String? given]) {
 }
 
 String _kindOf(String mime) => mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file';
+
+typedef _Media = ({Uint8List bytes, String mime, String name});
 
 class ChatThreadPage extends ConsumerStatefulWidget {
   final Person peer;
@@ -119,21 +127,28 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   final _busyCards = <String>{};
   final _requestRetries = <String, int>{};
   Timer? _requestRetryTimer;
+  /// قمم الموجة الصوتية بمفتاح الرسالة (تُحسب مرة من extra.peaks حتى لا تُعاد مع كل بناء).
+  final _peaks = <String, List<double>?>{};
   /// بايتات الوسائط المحلية قبل/أثناء الرفع (للمعاينة وإعادة المحاولة).
-  final _localBytes = <String, ({Uint8List bytes, String mime, String name})>{};
+  final _localBytes = <String, _Media>{};
+  /// مفاتيح الرسائل التي تدخل بحركة (وصلت أو أُرسلت والمحادثة مفتوحة)؛ تُحذف بعد أول عرض.
+  final _animateKeys = <String>{};
   bool _loading = true;
   Object? _error;
   bool _peerTyping = false;
   bool _online = false;
   bool _visible = true;
   bool _atBottom = true;
+  bool _farFromEnd = false;
+  double _listHeight = 600;
   bool _hasMore = true;
   bool _loadingMore = false;
   bool _socketDown = false;
-  bool _hasText = false;
   int _unseen = 0;
   String? _highlightKey;
   Timer? _highlightTimer;
+  /// آخر رسالة لي قرأها الطرف الآخر (علامة «شوهدت»).
+  String? _seenKey;
   Message? _replyTo;
   // البحث داخل المحادثة
   bool _searching = false;
@@ -148,6 +163,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   Timer? _recTimer;
   StreamSubscription? _sub;
   Timer? _typingTimer, _presenceTimer;
+  // صندوق الصادر المحفوظ محلياً (آخر نسخة كُتبت حتى لا نكرر الكتابة)
+  String? _outboxSaved;
 
   String get myId => ref.read(appStateProvider).user?.id ?? '';
   /// رسالتي أم رسالة الطرف الآخر؟ (لا تعتمد على اسم حقل المرسل في النواة؛ انظر [Message.isMine])
@@ -155,21 +172,19 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   String get myName => ref.read(appStateProvider).user?.nickname ?? '';
   ApiClient get _api => ref.read(apiClientProvider);
   String get _peerId => widget.peer.id;
+  /// مفتاح ثابت لعنصر القائمة: المعرّف المحلي يبقى بعد وصول معرّف الخادم فلا تُعاد الفقاعة.
+  String _stableKey(Message m) => m.localId ?? m.id;
+
+  /// نقطة توسعة للمدمج: إجراءات إضافية في قائمة المرفقات (مثل «مشاركة موقعي الحي» عبر showLiveShareSheet).
+  List<AttachAction> get _extraAttachActions => const [];
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _positions.itemPositions.addListener(_onPositions);
-    _text.addListener(() {
-      final has = _text.text.trim().isNotEmpty;
-      if (has != _hasText) setState(() => _hasText = has);
-    });
     final draft = widget.initialText;
-    if (draft != null && draft.trim().isNotEmpty) {
-      _text.text = draft;
-      _hasText = true;
-    }
+    if (draft != null && draft.trim().isNotEmpty) _text.text = draft;
     _load();
     final s = ref.read(socketProvider);
     _sub = s?.events.listen(_onEvent);
@@ -193,6 +208,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     _rec?.dispose();
     _text.dispose();
     _searchCtl.dispose();
+    VoiceNotePlayers.disposeAll();
     super.dispose();
   }
 
@@ -216,9 +232,11 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     final ps = _positions.itemPositions.value;
     if (ps.isEmpty) return;
     var minIdx = 1 << 30, maxIdx = -1;
+    var frac = 0.0;
     for (final p in ps) {
       minIdx = math.min(minIdx, p.index);
       maxIdx = math.max(maxIdx, p.index);
+      frac += (p.itemTrailingEdge - p.itemLeadingEdge).abs();
     }
     // القائمة معكوسة: العنصر 0 هو الأحدث (الأسفل)
     final atBottom = minIdx == 0;
@@ -230,6 +248,9 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         _markRead();
       }
     }
+    // تقدير البعد عن النهاية: العناصر المخفية تحت النافذة × متوسط ارتفاع العنصر الظاهر
+    final far = minIdx * (frac / ps.length) * _listHeight > jumpToLatestDistance;
+    if (far != _farFromEnd && mounted) setState(() => _farFromEnd = far);
     if (maxIdx >= _messages.length - 6) _loadOlder();
   }
 
@@ -271,7 +292,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   // البيانات
   // ---------------------------------------------------------------------------
 
-  int _merge(Iterable<Message> incoming) {
+  /// يدمج رسائل واردة؛ [animate] للرسائل التي تصل والمحادثة مفتوحة (لا عند التحميل الأول ولا الصفحات الأقدم).
+  int _merge(Iterable<Message> incoming, {bool animate = false}) {
     var newFromPeer = 0;
     for (final m in incoming) {
       final k = m.key;
@@ -280,6 +302,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       if (old == null) {
         _byKey[k] = m;
         if (!_mine(m)) newFromPeer++;
+        if (animate) _animateKeys.add(_stableKey(m));
       } else {
         _byKey[k] = old.copyWith(
           sentAt: old.sentAt ?? m.sentAt,
@@ -305,11 +328,27 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     for (final m in l) {
       if (m.mediaKind == 'text') _parsed.putIfAbsent(m.key, () => parseChatText(m.content));
     }
+    // علامة «شوهدت»: أحدث رسالة لي قرأها الطرف الآخر
+    String? seen;
+    for (var i = l.length - 1; i >= 0; i--) {
+      final m = l[i];
+      if (m.readAt != null && m.status == MessageStatus.sent && _mine(m)) {
+        seen = m.key;
+        break;
+      }
+    }
+    _seenKey = seen;
     if (_searching) _recomputeMatches(keepIndex: true);
     _resolveCards();
+    _persistOutbox();
   }
 
   ParsedText _parsedOf(Message m) => _parsed[m.key] ??= parseChatText(m.content);
+
+  List<double>? _peaksOf(Message m) {
+    if (_peaks.containsKey(m.key)) return _peaks[m.key];
+    return _peaks[m.key] = peaksFromExtra(m.extra);
+  }
 
   /// يحلّ الإشارات غير المحلولة بعد (ومكان الموعد إن كان دائرة) دفعة واحدة عبر الخادم.
   Future<void> _resolveCards() async {
@@ -368,7 +407,10 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       setState(() {
         for (final e in meta.entries) {
           final m = _byKey[e.key];
-          if (m != null) _byKey[e.key] = m.withMeta(e.value);
+          if (m != null) {
+            _byKey[e.key] = m.withMeta(e.value);
+            _peaks.remove(e.key);
+          }
           if (e.value['reactions'] != null) _reactions[e.key] = parseReactions(e.value['reactions']);
           _noteRequest(e.key, e.value['request']);
         }
@@ -396,6 +438,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       _markRead();
       final target = widget.initialMessageId;
       if (target != null) WidgetsBinding.instance.addPostFrameCallback((_) => _revealMessage(target));
+      _restoreOutbox();
     } catch (e) {
       if (mounted) setState(() { _error = e; _loading = false; });
     }
@@ -424,7 +467,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     try {
       final list = await _api.messages(_peerId, limit: pageSize);
       if (!mounted) return;
-      final n = _merge(list);
+      final n = _merge(list, animate: true);
       setState(() {});
       if (n > 0) _onNewFromPeer(n);
     } catch (_) {}
@@ -511,7 +554,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       final fromPeer = m.senderId == _peerId || peerId == _peerId;
       final mineFromOtherDevice = _mine(m) && (peerId == _peerId || e['to']?.toString() == _peerId);
       if (fromPeer || mineFromOtherDevice) {
-        final n = _merge([m]);
+        final n = _merge([m], animate: true);
         setState(() { if (fromPeer) _peerTyping = false; });
         if (n > 0) _onNewFromPeer(n);
       }
@@ -533,6 +576,93 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       setState(() => _online = e['online'] == true);
     } else if ((ev == 'deleted' || ev == 'message-deleted') && e['id'] != null) {
       setState(() { _byKey.remove(e['id'].toString()); _rebuild(); });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // صندوق الصادر: النصوص غير المرسلة تُحفظ في SharedPreferences (naslife.outbox.<peerId>) وتُعاد محاولتها عند الفتح
+  // ---------------------------------------------------------------------------
+
+  String get _outboxKey => 'naslife.outbox.$_peerId';
+  /// لا نكتب الصندوق قبل قراءة المحفوظ منه، وإلا محت أول إعادة بناء (قائمة فارغة) ما نجا من الجلسة السابقة.
+  bool _outboxReady = false;
+
+  List<Message> _pendingTexts() => [for (final m in _messages) if (m.isPending && m.type == 'text' && !m.isMedia && m.localId != null && _mine(m)) m];
+
+  Future<void> _persistOutbox() async {
+    if (!_outboxReady) return;
+    final list = _pendingTexts();
+    final json = jsonEncode([
+      for (final m in list)
+        {
+          'localId': m.localId,
+          'content': m.content,
+          'sentAt': m.sentAt?.toIso8601String(),
+          'replyTo': m.replyTo,
+          'quote': m.quote?.toJson(),
+          'forwardedFrom': m.forwardedFrom,
+          'extra': m.extra,
+        },
+    ]);
+    if (json == _outboxSaved) return;
+    _outboxSaved = json;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      if (list.isEmpty) {
+        await sp.remove(_outboxKey);
+      } else {
+        await sp.setString(_outboxKey, json);
+      }
+    } catch (_) {
+      // لا تخزين محلي (اختبارات أو متصفح يمنعه): الرسالة تبقى في القائمة فقط
+    }
+  }
+
+  Future<void> _restoreOutbox() async {
+    var restored = const <Message>[];
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final raw = sp.getString(_outboxKey);
+      final list = raw == null || raw.isEmpty ? const [] : jsonDecode(raw);
+      if (list is! List) return;
+      restored = [
+        for (final e in list)
+          if (e is Map && (e['content'] ?? '').toString().trim().isNotEmpty)
+            Message(
+              id: '',
+              localId: (e['localId'] ?? 'local-${DateTime.now().microsecondsSinceEpoch}').toString(),
+              senderId: myId,
+              type: 'text',
+              content: e['content'].toString(),
+              sentAt: DateTime.tryParse(e['sentAt']?.toString() ?? '') ?? DateTime.now(),
+              status: MessageStatus.failed,
+              replyTo: e['replyTo']?.toString(),
+              quote: e['quote'] is Map ? MessageQuote.fromJson(asMap(e['quote'])) : null,
+              forwardedFrom: e['forwardedFrom']?.toString(),
+              extra: asMap(e['extra']),
+            ),
+      ];
+    } catch (_) {
+      // لا تخزين محلي: نكمل بلا صندوق محفوظ
+    } finally {
+      _outboxReady = true;
+    }
+    if (!mounted) return;
+    if (restored.isEmpty) {
+      _persistOutbox();
+      return;
+    }
+    setState(() {
+      for (final m in restored) {
+        _byKey.putIfAbsent(m.key, () => m);
+      }
+      _rebuild();
+    });
+    for (final m in restored) {
+      if (!mounted) return;
+      final cur = _byKey[m.key];
+      if (cur == null || !cur.isPending) continue;
+      await _send(type: 'text', content: cur.content, retry: cur, quiet: true);
     }
   }
 
@@ -566,7 +696,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   /// يوسّع الأوامر التي تحتاج شيئاً من الجهاز أو المستخدم قبل الإرسال (/me، /loc، /ticket، /order، /wish، /send، /help)،
   /// ويتحقق من حجج البقية. يرجع النص الجاهز للإرسال أو null للإلغاء.
   Future<String?> _prepareCommand(String t) async {
-    final m = RegExp(r'^/([a-zA-Z\u0600-\u06FF]+)\s*(.*)$', dotAll: true).firstMatch(t);
+    final m = RegExp(r'^/([a-zA-Z؀-ۿ]+)\s*(.*)$', dotAll: true).firstMatch(t);
     if (m == null) return t;
     final cmd = m.group(1)!.toLowerCase();
     final rest = m.group(2)!.trim();
@@ -771,35 +901,63 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     }
   }
 
+  /// يرفع ملف وسائط؛ للصوت يقرأ قمم الموجة من ردّ الخادم الخام (extra.peaks) إن أعادها.
+  Future<({String url, List<double>? peaks})> _upload(_Media media) async {
+    if (!media.mime.startsWith('audio/')) {
+      final up = await _api.uploadMedia(media.bytes, contentType: media.mime, fileName: media.name);
+      return (url: up.url, peaks: null);
+    }
+    // اسم لاتيني فقط في الترويسة (كما في uploadMedia)
+    final safeName = RegExp(r'^[A-Za-z0-9._-]{1,80}$').hasMatch(media.name) ? media.name : null;
+    Map<String, dynamic> d;
+    try {
+      d = await _api.postBytes('/chat/upload', media.bytes, contentType: media.mime, headers: {if (safeName != null) 'x-file-name': safeName}, timeout: const Duration(minutes: 3));
+    } on ApiException catch (e) {
+      if (!e.isNetwork || safeName == null) rethrow;
+      d = await _api.postBytes('/chat/upload', media.bytes, contentType: media.mime, timeout: const Duration(minutes: 3));
+    }
+    final url = (d['url'] ?? '').toString();
+    if (url.isEmpty) throw const ApiException(500, 'الخادم لم يُرجع رابط الملف');
+    final raw = d['peaks'];
+    final peaks = raw is List ? [for (final v in raw) if (v is num) v.toDouble().clamp(0.0, 1.0)] : const <double>[];
+    return (url: url, peaks: peaks.length >= 8 ? peaks : null);
+  }
+
   Future<void> _send({
     required String type,
     required String content,
-    ({Uint8List bytes, String mime, String name})? media,
+    _Media? media,
     Map<String, dynamic>? extra,
     Message? retry,
     Future<void> Function(String serverId)? onSent,
+    bool quiet = false,
   }) async {
     final quote = retry?.quote ?? (_replyTo == null ? null : MessageQuote(id: _replyTo!.key, senderId: _replyTo!.senderId, senderName: _mine(_replyTo!) ? 'أنت' : widget.peer.nickname, type: _replyTo!.mediaKind, content: _replyTo!.mediaKind == 'text' ? _replyTo!.content : ''));
     final local = retry?.copyWith(status: MessageStatus.sending) ??
         Message(id: '', localId: 'local-${DateTime.now().microsecondsSinceEpoch}', senderId: myId, type: type, content: content, sentAt: DateTime.now(),
             status: MessageStatus.sending, quote: quote, replyTo: quote?.id, extra: extra ?? const {});
     if (retry == null && media != null) _localBytes[local.key] = media;
-    if (retry == null) setState(() => _replyTo = null);
+    if (retry == null) {
+      _animateKeys.add(_stableKey(local));
+      setState(() => _replyTo = null);
+    }
     setState(() { _byKey[local.key] = local; _rebuild(); });
     _jumpToBottom();
     try {
       var body = local.content;
+      var localExtra = local.extra;
       final pending = _localBytes[local.key];
       if (body.isEmpty && pending != null) {
-        final up = await _api.uploadMedia(pending.bytes, contentType: pending.mime, fileName: pending.name);
+        final up = await _upload(pending);
         body = up.url;
         if (!mounted) return;
-        setState(() { _byKey[local.key] = local.copyWith(content: body); _rebuild(); });
+        if (up.peaks != null) localExtra = {...localExtra, 'peaks': up.peaks};
+        setState(() { _byKey[local.key] = local.copyWith(content: body, extra: localExtra); _rebuild(); });
       }
       if (body.isEmpty) throw const ApiException(0, 'لا محتوى للإرسال');
       // الخادم الأساسي يقبل النص فقط: الوسائط تُرسل كرابط مطلق ويُستنتج نوعها من امتداده
       if (local.type != 'text') body = _api.absolute(body);
-      final extra = {...local.extra, if (local.type != 'text') 'kind': local.type};
+      final extra = {...localExtra, if (local.type != 'text') 'kind': local.type};
       final m = await _api.sendMessage(_peerId, body, type: 'text', replyTo: local.replyTo, quote: local.quote, forwardedFrom: local.forwardedFrom, extra: extra);
       if (!mounted) return;
       final serverId = m.id.isNotEmpty && m.senderId != 'me' ? m.id : null;
@@ -809,6 +967,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       );
       setState(() {
         _byKey.remove(local.key);
+        _peaks.remove(local.key);
         _byKey[sent.key] = sent;
         _metaFetched.add(sent.id);
         _rebuild();
@@ -821,34 +980,22 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     } catch (e) {
       if (!mounted) return;
       setState(() { _byKey[local.key] = _byKey[local.key]!.copyWith(status: MessageStatus.failed); _rebuild(); });
-      toast(context, 'لم تُرسل الرسالة: ${errText(e)}', error: true);
+      if (!quiet) toast(context, 'لم تُرسل الرسالة: ${errText(e)}', error: true);
     }
   }
 
   void _discard(Message m) => setState(() { _byKey.remove(m.key); _localBytes.remove(m.key); _rebuild(); });
 
-  // ---- المرفقات
-  Future<void> _attach() async {
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const SizedBox(height: 8),
-            CodesMenuGrid(onPick: (r) => Navigator.pop(ctx, 'code:$r')),
-            const Divider(height: 8),
-            ListTile(leading: const Icon(Icons.photo_library_outlined, color: Joy.primary), title: const Text('صورة من المعرض'), onTap: () => Navigator.pop(ctx, 'image')),
-            ListTile(leading: const Icon(Icons.photo_camera_outlined, color: Joy.primary), title: const Text('التقاط صورة'), onTap: () => Navigator.pop(ctx, 'camera')),
-            ListTile(leading: const Icon(Icons.videocam_outlined, color: Joy.accent), title: const Text('فيديو'), onTap: () => Navigator.pop(ctx, 'video')),
-            const SizedBox(height: 8),
-          ]),
-        ),
-      ),
-    );
-    if (choice == null || !mounted) return;
-    if (choice.startsWith('code:')) return _codeMenu(choice.substring(5));
+  // ---- المرفقات (قائمتها في ChatComposer: الرموز الذكية ثم هذه الإجراءات ثم نقطة توسعة المدمج)
+  List<AttachAction> get _attachActions => [
+        AttachAction(icon: Icons.photo_library_outlined, label: 'صورة من المعرض', onTap: () => _pickAndSend('image')),
+        AttachAction(icon: Icons.photo_camera_outlined, label: 'التقاط صورة', onTap: () => _pickAndSend('camera')),
+        AttachAction(icon: Icons.videocam_outlined, label: 'فيديو', color: Joy.accent, onTap: () => _pickAndSend('video')),
+      ];
+
+  Future<void> _pickAndSend(String choice) async {
     try {
-      ({Uint8List bytes, String mime, String name}) picked;
+      _Media picked;
       if (kIsWeb && WebMedia.available) {
         // الويب: قراءة مباشرة من المتصفح (روابط blob تفشل على iOS)
         final m = await WebMedia.pick(choice);
@@ -874,6 +1021,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
 
   // ---- التسجيل الصوتي (5 دقائق كحد أقصى)
   Future<void> _startRecording() async {
+    if (_recording) return;
     try {
       final rec = _rec ??= VoiceRecordSession();
       await rec.start(); // يطلب إذن الميكروفون أولاً
@@ -897,7 +1045,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     if (!_recording) return;
     setState(() => _recording = false);
     try {
-      ({Uint8List bytes, String mime, String name})? media;
+      _Media? media;
       final rec = _rec;
       if (rec == null) return;
       if (!send) { await rec.cancel(); return; }
@@ -926,7 +1074,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       final sent = await _api.sendMessage(target.id, m.type == 'text' ? m.content : _api.absolute(m.content), type: 'text', forwardedFrom: from, extra: m.extra);
       if (sent.id.isNotEmpty && sent.senderId != 'me') {
         _api.setMessageMeta(sent.id, peerId: target.id, forwardedFrom: from, extra: m.extra.isEmpty ? null : m.extra).catchError((_) {});
-        if (target.id == _peerId && mounted) setState(() { _merge([sent.copyWith(forwardedFrom: from, extra: m.extra)]); });
+        if (target.id == _peerId && mounted) setState(() { _merge([sent.copyWith(forwardedFrom: from, extra: m.extra)], animate: true); });
       }
       ref.invalidate(chatsProvider);
       if (mounted) toast(context, 'أُعيد التوجيه إلى ${target.nickname}');
@@ -976,21 +1124,9 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
             const SizedBox(height: 8),
             // شريط التفاعلات أعلى الخيارات (كما في واتساب)
             if (m.status == MessageStatus.sent && !m.id.startsWith('local-'))
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                  for (final e in reactionEmojis)
-                    InkWell(
-                      key: Key('react-$e'),
-                      customBorder: const CircleBorder(),
-                      onTap: () => Navigator.pop(ctx, 'react:$e'),
-                      child: Container(
-                        width: 42, height: 42, alignment: Alignment.center,
-                        decoration: BoxDecoration(shape: BoxShape.circle, color: (_reactions[m.id] ?? const <Reaction>[]).any((r) => r.mine && r.emoji == e) ? Joy.primarySoft : Joy.surface2),
-                        child: Text(e, style: const TextStyle(fontSize: 22)),
-                      ),
-                    ),
-                ]),
+              ReactionBar(
+                selected: (_reactions[m.id] ?? const <Reaction>[]).where((r) => r.mine).firstOrNull?.emoji,
+                onPick: (e) => Navigator.pop(ctx, 'react:$e'),
               ),
             if (m.status == MessageStatus.sent) ListTile(leading: const Icon(Icons.reply_rounded), title: const Text('رد'), onTap: () => Navigator.pop(ctx, 'reply')),
             if (m.status == MessageStatus.sent) ListTile(leading: const Icon(Icons.forward_rounded), title: const Text('إعادة توجيه'), onTap: () => Navigator.pop(ctx, 'forward')),
@@ -1179,7 +1315,31 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             child: const Text('انقطع الاتصال المباشر ونعيد المحاولة… قد تتأخر الرسائل الواردة', style: TextStyle(color: Joy.sunText, fontSize: 12)),
           ),
-        Expanded(child: NaslifePattern(child: Stack(children: [_list(), if (_unseen > 0) _newMessagesChip()]))),
+        Expanded(
+          child: NaslifePattern(
+            child: Stack(children: [
+              LayoutBuilder(builder: (_, c) {
+                _listHeight = c.maxHeight.isFinite && c.maxHeight > 0 ? c.maxHeight : _listHeight;
+                return _list();
+              }),
+              PositionedDirectional(
+                bottom: 12,
+                end: 14,
+                child: JumpToLatest(
+                  visible: !_loading && (_farFromEnd || _unseen > 0),
+                  count: _unseen,
+                  onTap: () { setState(() => _unseen = 0); _jumpToBottom(); _markRead(); },
+                ),
+              ),
+            ]),
+          ),
+        ),
+        // «يكتب…» كفقاعة واردة بثلاث نقاط أسفل القائمة
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          alignment: Alignment.topCenter,
+          child: _peerTyping ? Padding(padding: const EdgeInsets.fromLTRB(14, 0, 14, 8), child: TypingIndicator(peer: widget.peer)) : const SizedBox(width: double.infinity),
+        ),
         _composer(),
       ]),
     );
@@ -1205,25 +1365,32 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         final prev = idx > 0 ? _messages[idx - 1] : null;
         final next = idx < _messages.length - 1 ? _messages[idx + 1] : null;
         final showDate = prev == null || !_sameDay(prev.sentAt, m.sentAt);
-        return _Bubble(
+        final stable = _stableKey(m);
+        return ChatBubble(
           m,
+          key: ValueKey(stable),
           mine: _mine(m),
-          peerName: widget.peer.nickname,
+          peer: widget.peer,
           dateLabel: showDate && m.sentAt != null ? dayLabel(m.sentAt!) : null,
           joinedAbove: prev != null && !showDate && prev.senderId == m.senderId && _close(prev.sentAt, m.sentAt),
           joinedBelow: next != null && _sameDay(m.sentAt, next.sentAt) && next.senderId == m.senderId && _close(m.sentAt, next.sentAt),
           highlighted: _highlightKey == m.key,
+          animateIn: _animateKeys.contains(stable),
+          onEntered: () => _animateKeys.remove(stable),
+          seen: _seenKey == m.key,
           searchQuery: q,
           localBytes: _localBytes[m.key]?.bytes,
           mediaUrl: m.content.isEmpty ? null : _api.media(m.content),
           onLongPress: () => _actions(m),
           onDoubleTap: () => _doubleTap(m),
+          onSwipeReply: m.status == MessageStatus.sent ? () => setState(() => _replyTo = m) : null,
           onReactionTap: (e) => _react(m, e),
           reactions: _reactions[m.id] ?? const <Reaction>[],
           heartTrigger: _bursts[m.id] ?? 0,
           onRetry: () => _send(type: m.type, content: m.content, retry: m),
           onQuoteTap: m.quote == null ? null : () { if (!_jumpToKey(m.quote!.id)) _revealMessage(m.quote!.id); },
           parsed: m.mediaKind == 'text' ? _parsedOf(m) : null,
+          peaks: m.mediaKind == 'audio' ? _peaksOf(m) : null,
           cards: _cards,
           resolvedRefs: _cards.keys.toSet(),
           request: _requests[m.id],
@@ -1234,92 +1401,30 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     );
   }
 
-  Widget _newMessagesChip() => Positioned(
-        bottom: 10, left: 0, right: 0,
-        child: Center(
-          child: Material(
-            color: Joy.primary, shape: const StadiumBorder(), elevation: 3,
-            child: InkWell(
-              customBorder: const StadiumBorder(),
-              onTap: () { setState(() => _unseen = 0); _jumpToBottom(); _markRead(); },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.arrow_downward_rounded, size: 16, color: Joy.primaryOn),
-                  const SizedBox(width: 6),
-                  Text(_unseen == 1 ? 'رسالة جديدة' : '$_unseen رسائل جديدة', style: const TextStyle(color: Joy.primaryOn, fontWeight: FontWeight.w600, fontSize: 13)),
-                ]),
-              ),
-            ),
-          ),
+  Widget _composer() => ChatComposer(
+        controller: _text,
+        onSend: _sendText,
+        onChanged: (v) { if (v.isNotEmpty) ref.read(socketProvider)?.typing(_peerId); },
+        attachActions: _attachActions,
+        extraAttachActions: _extraAttachActions,
+        onCode: _codeMenu,
+        codeSuggestions: CodeSuggestions(
+          controller: _text,
+          people: _people(),
+          onInsert: _replaceRange,
+          onAction: (a) => _codeMenu(a == 'guide' ? 'guide' : a),
         ),
+        // فتحة شرائح الردود المقترحة (SuggestionChips) يمرّرها المدمج هنا
+        above: null,
+        replyName: _replyTo == null ? null : (_mine(_replyTo!) ? 'أنت' : widget.peer.nickname),
+        replyText: _replyTo?.preview,
+        onCancelReply: () => setState(() => _replyTo = null),
+        recording: _recording,
+        recElapsed: _recElapsed,
+        maxRecord: maxVoiceDuration,
+        onStartRecording: _startRecording,
+        onStopRecording: ({required bool send}) => _stopRecording(send: send),
       );
-
-  Widget _composer() {
-    final border = OutlineInputBorder(borderRadius: BorderRadius.circular(23), borderSide: BorderSide.none);
-    return SafeArea(
-      top: false,
-      child: Container(
-        decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          if (!_recording)
-            CodeSuggestions(
-              controller: _text,
-              people: _people(),
-              onInsert: _replaceRange,
-              onAction: (a) => _codeMenu(a == 'guide' ? 'guide' : a),
-            ),
-          if (_replyTo != null)
-            Container(
-              padding: const EdgeInsets.fromLTRB(14, 8, 8, 0),
-              child: Row(children: [
-                Expanded(child: _QuoteBox(name: _mine(_replyTo!) ? 'أنت' : widget.peer.nickname, text: _replyTo!.preview, compact: true)),
-                IconButton(icon: const Icon(Icons.close_rounded), tooltip: 'إلغاء الرد', onPressed: () => setState(() => _replyTo = null)),
-              ]),
-            ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
-            child: _recording ? _recordingRow() : Row(children: [
-              IconButton(tooltip: 'إرفاق', onPressed: _attach, icon: const Icon(Icons.add_circle_outline_rounded, color: Joy.textMuted, size: 28)),
-              Expanded(
-                child: TextField(
-                  controller: _text,
-                  style: const TextStyle(fontSize: 16),
-                  minLines: 1, maxLines: 4,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _sendText(),
-                  onChanged: (v) { if (v.isNotEmpty) ref.read(socketProvider)?.typing(_peerId); },
-                  decoration: InputDecoration(hintText: 'اكتب رسالة…', border: border, enabledBorder: border, focusedBorder: border, filled: true, fillColor: Joy.surface2, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Material(
-                color: Joy.primary, shape: const CircleBorder(),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: _hasText ? _sendText : _startRecording,
-                  child: SizedBox(width: 46, height: 46, child: Icon(_hasText ? Icons.send_rounded : Icons.mic_rounded, color: Joy.primaryOn, size: _hasText ? 20 : 24)),
-                ),
-              ),
-            ]),
-          ),
-        ]),
-      ),
-    );
-  }
-
-  Widget _recordingRow() => Row(children: [
-        IconButton(tooltip: 'إلغاء التسجيل', onPressed: () => _stopRecording(send: false), icon: const Icon(Icons.delete_outline_rounded, color: Joy.danger, size: 26)),
-        Container(width: 10, height: 10, decoration: const BoxDecoration(color: Joy.danger, shape: BoxShape.circle)),
-        const SizedBox(width: 8),
-        Text('${fmtDuration(_recElapsed)} / ${fmtDuration(maxVoiceDuration)}', textDirection: TextDirection.ltr, style: const TextStyle(fontWeight: FontWeight.w600)),
-        const SizedBox(width: 8),
-        const Expanded(child: Text('جارٍ التسجيل… اضغط إرسال عند الانتهاء', style: TextStyle(color: Joy.textMuted, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis)),
-        Material(
-          color: Joy.primary, shape: const CircleBorder(),
-          child: InkWell(customBorder: const CircleBorder(), onTap: () => _stopRecording(send: true), child: const SizedBox(width: 46, height: 46, child: Icon(Icons.send_rounded, color: Joy.primaryOn, size: 20))),
-        ),
-      ]);
 
   /// الأشخاص المعروفون للإكمال بعد @: الطرف الآخر وجهات الاتصال والمحادثات.
   List<Person> _people() {
@@ -1363,368 +1468,6 @@ class _PeoplePickerState extends State<_PeoplePicker> {
             ),
           ]),
         ),
-      ),
-    );
-  }
-}
-
-/// صندوق الاقتباس داخل الفقاعة أو فوق حقل الكتابة.
-class _QuoteBox extends StatelessWidget {
-  final String name, text;
-  final bool compact, onDark;
-  final VoidCallback? onTap;
-  const _QuoteBox({required this.name, required this.text, this.compact = false, this.onDark = false, this.onTap});
-  @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-          margin: compact ? EdgeInsets.zero : const EdgeInsets.only(bottom: 6),
-          decoration: BoxDecoration(
-            color: onDark ? Colors.black.withValues(alpha: .06) : Joy.primarySoft.withValues(alpha: .6),
-            borderRadius: BorderRadius.circular(10),
-            border: const BorderDirectional(start: BorderSide(color: Joy.primary, width: 3)),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            Text(name, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Joy.primary)),
-            Text(text, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, color: Joy.textMuted)),
-          ]),
-        ),
-      );
-}
-
-/// فقاعة رسالة: نص أو وسائط، اقتباس، إعادة توجيه، حالة الإرسال، روابط، ضغط مطوّل.
-class _Bubble extends StatefulWidget {
-  final Message m;
-  final bool mine;
-  final String peerName;
-  final String? dateLabel;
-  final bool joinedAbove, joinedBelow, highlighted;
-  final String searchQuery;
-  final Uint8List? localBytes;
-  final String? mediaUrl;
-  final VoidCallback onLongPress;
-  final VoidCallback onRetry;
-  final VoidCallback? onQuoteTap, onDoubleTap;
-  final ValueChanged<String>? onReactionTap;
-  final List<Reaction> reactions;
-  final int heartTrigger;
-  /// رموز الاختصار في النص وبطاقاتها المحلولة وطلبها المسجّل
-  final ParsedText? parsed;
-  final Map<String, ChatCard?> cards;
-  final Set<String> resolvedRefs;
-  final ChatRequest? request;
-  final bool busy;
-  final CodeAction? onCode;
-  const _Bubble(this.m, {required this.mine, required this.peerName, this.dateLabel, this.joinedAbove = false, this.joinedBelow = false, this.highlighted = false,
-      this.searchQuery = '', this.localBytes, this.mediaUrl, required this.onLongPress, required this.onRetry, this.onQuoteTap, this.onDoubleTap, this.onReactionTap, this.reactions = const [], this.heartTrigger = 0,
-      this.parsed, this.cards = const {}, this.resolvedRefs = const {}, this.request, this.busy = false, this.onCode});
-  @override
-  State<_Bubble> createState() => _BubbleState();
-}
-
-class _BubbleState extends State<_Bubble> {
-  final _recognizers = <TapGestureRecognizer>[];
-
-  @override
-  void dispose() {
-    for (final r in _recognizers) {
-      r.dispose();
-    }
-    super.dispose();
-  }
-
-  /// النص مع الروابط، وأجزاء الرموز (إشارات) مميّزة وقابلة للنقر.
-  List<InlineSpan> _rich(String text, TextStyle style) {
-    for (final r in _recognizers) {
-      r.dispose();
-    }
-    _recognizers.clear();
-    final refs = widget.parsed?.refs ?? const <ChatCode>[];
-    if (refs.isEmpty) return _richPlain(text, style);
-    final spans = <InlineSpan>[];
-    var last = 0;
-    for (final c in refs) {
-      if (c.start < last) continue;
-      if (c.start > last) spans.addAll(_richPlain(text.substring(last, c.start), style));
-      final rec = TapGestureRecognizer()..onTap = () => widget.onCode?.call(c, 'open');
-      _recognizers.add(rec);
-      spans.add(TextSpan(text: text.substring(c.start, c.end), style: style.copyWith(color: widget.mine ? Joy.bubbleOutText : Joy.primary, fontWeight: FontWeight.w700), recognizer: rec));
-      last = c.end;
-    }
-    if (last < text.length) spans.addAll(_richPlain(text.substring(last), style));
-    return spans;
-  }
-
-  List<InlineSpan> _richPlain(String text, TextStyle style) {
-    final q = widget.searchQuery.toLowerCase();
-    final hl = style.copyWith(backgroundColor: Joy.sun.withValues(alpha: .55));
-    List<InlineSpan> plain(String s) {
-      if (q.isEmpty) return [TextSpan(text: s)];
-      final out = <InlineSpan>[];
-      var i = 0;
-      final lower = s.toLowerCase();
-      while (true) {
-        final j = lower.indexOf(q, i);
-        if (j < 0) { out.add(TextSpan(text: s.substring(i))); break; }
-        if (j > i) out.add(TextSpan(text: s.substring(i, j)));
-        out.add(TextSpan(text: s.substring(j, j + q.length), style: hl));
-        i = j + q.length;
-      }
-      return out;
-    }
-    final spans = <InlineSpan>[];
-    var last = 0;
-    for (final match in _urlRe.allMatches(text)) {
-      if (match.start > last) spans.addAll(plain(text.substring(last, match.start)));
-      final raw = match.group(0)!;
-      final url = raw.startsWith('www.') ? 'https://$raw' : raw;
-      final rec = TapGestureRecognizer()..onTap = () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-      _recognizers.add(rec);
-      spans.add(TextSpan(text: raw, style: style.copyWith(decoration: TextDecoration.underline, color: widget.mine ? Joy.bubbleOutText : Joy.primary, fontWeight: FontWeight.w600), recognizer: rec));
-      last = match.end;
-    }
-    if (last < text.length) spans.addAll(plain(text.substring(last)));
-    return spans;
-  }
-
-  Widget _media(Message m) {
-    final url = widget.mediaUrl;
-    switch (m.mediaKind) {
-      case 'image':
-        final img = widget.localBytes != null
-            ? Image.memory(widget.localBytes!, fit: BoxFit.cover)
-            : url == null
-                ? const SizedBox(width: 200, height: 120)
-                : Image.network(thumbUrl(url), fit: BoxFit.cover, loadingBuilder: (_, child, p) => p == null ? child : const SizedBox(width: 200, height: 160, child: Center(child: CircularProgressIndicator(strokeWidth: 2))), errorBuilder: (_, __, ___) => const SizedBox(width: 200, height: 120, child: Icon(Icons.broken_image_outlined, color: Joy.textMuted)));
-        return GestureDetector(
-          onTap: url == null ? null : () => _viewImage(context, url, widget.localBytes),
-          child: ClipRRect(borderRadius: BorderRadius.circular(12), child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320), child: img)),
-        );
-      case 'audio':
-        return _AudioBubble(url: url, durationMs: m.durationMs, mine: widget.mine, pending: m.isPending);
-      case 'video':
-        // يُشغَّل داخل التطبيق بملء الشاشة بدل فتحه خارجه
-        return InkWell(
-          key: const Key('chat-video'),
-          onTap: url == null ? null : () => isNativeMobile ? openVideoFullScreen(context, url) : launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-          child: Container(width: 220, height: 130, decoration: BoxDecoration(color: Colors.black.withValues(alpha: .08), borderRadius: BorderRadius.circular(12)), child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.play_circle_fill_rounded, size: 44, color: Joy.primary), SizedBox(height: 4), Text('فيديو · اضغط للتشغيل', style: TextStyle(fontSize: 12, color: Joy.textMuted))])),
-        );
-      default:
-        return InkWell(
-          onTap: url == null ? null : () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.attach_file_rounded, size: 18, color: Joy.textMuted), const SizedBox(width: 6), Text(m.content.split('/').last, style: const TextStyle(decoration: TextDecoration.underline))]),
-        );
-    }
-  }
-
-  void _viewImage(BuildContext context, String url, Uint8List? bytes) => showDialog<void>(
-        context: context,
-        builder: (ctx) => Dialog.fullscreen(
-          backgroundColor: Colors.black,
-          child: Stack(children: [
-            Center(child: InteractiveViewer(maxScale: 5, child: bytes != null ? Image.memory(bytes) : Image.network(url))),
-            Positioned(top: 8, left: 8, child: SafeArea(child: IconButton(icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28), onPressed: () => Navigator.pop(ctx)))),
-            Positioned(top: 8, right: 8, child: SafeArea(child: IconButton(tooltip: 'فتح خارج التطبيق', icon: const Icon(Icons.open_in_new_rounded, color: Colors.white), onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)))),
-          ]),
-        ),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    final m = widget.m;
-    final mine = widget.mine;
-    // حجم رسائل واتساب الافتراضي (16 نقطة تقريباً)
-    final style = TextStyle(fontSize: 16, height: 1.5, color: mine ? Joy.bubbleOutText : Joy.text);
-    final failed = m.status == MessageStatus.failed;
-    final tail = Radius.circular(widget.joinedBelow ? 6 : 4);
-    const joined = Radius.circular(6);
-    const full = Radius.circular(14);
-    IconData? tick;
-    Color tickColor = Joy.textMuted;
-    if (mine) {
-      switch (m.status) {
-        case MessageStatus.sending:
-          tick = Icons.schedule_rounded;
-        case MessageStatus.failed:
-          tick = Icons.error_outline_rounded;
-          tickColor = Joy.danger;
-        case MessageStatus.sent:
-          tick = m.deliveredAt != null || m.readAt != null ? Icons.done_all_rounded : Icons.done_rounded;
-          if (m.readAt != null) tickColor = Joy.primary;
-      }
-    }
-    final baseColor = mine ? Joy.bubbleOut : Joy.surface2;
-    return Column(children: [
-      if (widget.dateLabel != null)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(999)), child: Text(widget.dateLabel!, style: const TextStyle(fontSize: 11, color: Joy.textMuted))),
-        ),
-      Align(
-        alignment: mine ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-          child: DoubleTapDetector(
-            onDoubleTap: widget.onDoubleTap,
-            child: GestureDetector(
-            onLongPress: widget.onLongPress,
-            onTap: failed ? widget.onRetry : null,
-            child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            Stack(alignment: Alignment.center, children: [
-            AnimatedOpacity(
-              duration: const Duration(milliseconds: 200),
-              opacity: m.status == MessageStatus.sending ? 0.7 : 1,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 400),
-                margin: EdgeInsets.only(top: widget.joinedAbove ? 1.5 : 4, bottom: widget.joinedBelow ? 1.5 : 4),
-                padding: EdgeInsets.fromLTRB(m.mediaKind == 'image' ? 6 : 14, m.mediaKind == 'image' ? 6 : 9, m.mediaKind == 'image' ? 6 : 14, 7),
-                decoration: BoxDecoration(
-                  color: widget.highlighted ? Joy.sun.withValues(alpha: .7) : baseColor,
-                  border: failed ? Border.all(color: Joy.danger) : null,
-                  borderRadius: BorderRadiusDirectional.only(
-                    topStart: !mine && widget.joinedAbove ? joined : full,
-                    topEnd: mine && widget.joinedAbove ? joined : full,
-                    bottomStart: mine ? full : tail,
-                    bottomEnd: mine ? tail : full,
-                  ),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                  if (m.forwardedFrom != null)
-                    Padding(padding: const EdgeInsets.only(bottom: 4), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.forward_rounded, size: 14, color: Joy.textMuted), const SizedBox(width: 4), Text('معاد توجيهها من ${m.forwardedFrom}', style: const TextStyle(fontSize: 11, color: Joy.textMuted, fontStyle: FontStyle.italic))])),
-                  if (m.quote != null) _QuoteBox(name: m.quote!.senderName.isNotEmpty ? m.quote!.senderName : widget.peerName, text: m.quote!.preview, onDark: mine, onTap: widget.onQuoteTap),
-                  if (m.mediaKind == 'text' && !(widget.parsed?.commandOnly ?? false)) Text.rich(TextSpan(style: style, children: _rich(m.content, style))) else if (m.mediaKind != 'text') _media(m),
-                  for (final c in widget.parsed?.all ?? const <ChatCode>[])
-                    ChatCodeCard(
-                      code: c,
-                      card: c.ref == null ? null : widget.cards[c.ref!],
-                      resolved: c.ref == null || widget.resolvedRefs.contains(c.ref!),
-                      request: widget.request,
-                      mine: mine,
-                      peerName: widget.peerName,
-                      busy: widget.busy,
-                      onAction: (code, a) => widget.onCode?.call(code, a),
-                    ),
-                  const SizedBox(height: 2),
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    if (failed)
-                      const Text('لم تُرسل · اضغط لإعادة المحاولة', style: TextStyle(fontSize: 10.5, color: Joy.danger, fontWeight: FontWeight.w600))
-                    else if (m.status == MessageStatus.sending && m.isMedia)
-                      const Text('جارٍ الرفع…', style: TextStyle(fontSize: 10.5, color: Joy.textMuted))
-                    else
-                      Text(clockOf(m.sentAt), style: const TextStyle(fontSize: 10.5, color: Joy.textMuted)),
-                    if (tick != null) ...[const SizedBox(width: 3), Icon(tick, size: 14, color: tickColor)],
-                  ]),
-                ]),
-              ),
-            ),
-            HeartBurst(trigger: widget.heartTrigger, size: 64),
-            ]),
-            if (widget.reactions.isNotEmpty)
-              Padding(padding: const EdgeInsets.fromLTRB(6, 0, 6, 4), child: ReactionChips(reactions: widget.reactions, onTap: widget.onReactionTap, compact: true)),
-            ]),
-            ),
-          ),
-        ),
-      ),
-    ]);
-  }
-}
-
-/// مشغّل رسالة صوتية: تشغيل/إيقاف، شريط تقدّم، والمدة. يعمل عبر [VoicePlayer] (عنصر <audio> أصلي على الويب).
-class _AudioBubble extends StatefulWidget {
-  final String? url;
-  final int? durationMs;
-  final bool mine, pending;
-  const _AudioBubble({required this.url, this.durationMs, required this.mine, this.pending = false});
-  @override
-  State<_AudioBubble> createState() => _AudioBubbleState();
-}
-
-class _AudioBubbleState extends State<_AudioBubble> {
-  VoicePlayer? _player;
-  StreamSubscription<VoiceState>? _sub;
-  Object? _err;
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    _player?.dispose();
-    super.dispose();
-  }
-
-  void _toggle() {
-    final url = widget.url;
-    if (url == null) return;
-    if (_err != null) {
-      // فشل التشغيل داخل الصفحة: نفتح الملف خارجياً (ضمن حدث اللمس حتى لا يُحجب)
-      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-      return;
-    }
-    var p = _player;
-    if (p == null) {
-      p = VoicePlayer()..setSource(url: url);
-      // اشتراك يدوي بدل StreamBuilder: التغيير الأول (بدء التشغيل) يصدر قبل أن يشترك StreamBuilder فيضيع
-      _sub = p.changes.listen((s) {
-        if (s.error != null) _fail(s.error!);
-        if (mounted) setState(() {});
-      });
-      setState(() => _player = p);
-    }
-    if (p.state.playing) {
-      p.pause();
-    } else {
-      // play() قبل أي await: iOS لا يقبل بدء التشغيل إلا داخل حدث المستخدم
-      p.play().catchError(_fail);
-    }
-  }
-
-  void _fail(Object e) {
-    if (!mounted || _err != null) return;
-    setState(() => _err = e);
-    toast(context, 'تعذر تشغيل التسجيل على هذا الجهاز، اضغط عليه مجدداً لفتحه خارجياً', error: true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = widget.mine ? Joy.bubbleOutText : Joy.text;
-    final total = widget.durationMs != null ? Duration(milliseconds: widget.durationMs!) : null;
-    final p = _player;
-    return SizedBox(
-      width: 220,
-      child: Builder(
-        builder: (_) {
-          final s = p?.state ?? const VoiceState();
-          final dur = s.duration ?? total ?? Duration.zero;
-          final frac = dur.inMilliseconds == 0 ? 0.0 : (s.position.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0);
-          return Row(children: [
-            Material(
-              color: Joy.surface,
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: widget.pending || widget.url == null ? null : _toggle,
-                child: SizedBox(
-                  width: 40, height: 40,
-                  child: (s.loading && !s.playing && _err == null) || widget.pending
-                      ? const Padding(padding: EdgeInsets.all(11), child: CircularProgressIndicator(strokeWidth: 2))
-                      : Icon(_err != null ? Icons.error_outline_rounded : s.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Joy.primary, size: 26),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                SliderTheme(
-                  data: SliderThemeData(trackHeight: 3, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5), overlayShape: SliderComponentShape.noOverlay, activeTrackColor: Joy.primary, inactiveTrackColor: color.withValues(alpha: .2), thumbColor: Joy.primary),
-                  child: Slider(value: frac, onChanged: p == null ? null : (v) => p.seek(Duration(milliseconds: (v * dur.inMilliseconds).round()))),
-                ),
-                Padding(padding: const EdgeInsetsDirectional.only(start: 4), child: Text('${fmtDuration(s.position)} / ${fmtDuration(dur)}', textDirection: TextDirection.ltr, style: TextStyle(fontSize: 11, color: color.withValues(alpha: .75)))),
-              ]),
-            ),
-          ]);
-        },
       ),
     );
   }
