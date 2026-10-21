@@ -74,7 +74,7 @@ class WalletPage extends ConsumerWidget {
                 _action(Icons.confirmation_number_outlined, 'تذاكري', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()))),
                 _action(Icons.receipt_long_outlined, 'حجوزاتي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
                 _action(Icons.local_offer_outlined, 'عروضي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyOffersPage()))),
-                if (wallet.testTopup && !ios) _action(Icons.add_rounded, 'شحن', () => _topup(context, ref), key: const Key('wallet-test-topup')),
+                if (wallet.testTopup && !ios) _action(Icons.add_rounded, 'شحن', () => _topup(context, ref, wallet), key: const Key('wallet-test-topup')),
                 if (!ios && ref.watch(payConfigProvider).valueOrNull?.enabled == true) _action(Icons.credit_card_rounded, 'بالبطاقة', () => _cardTopup(context, ref, ref.read(payConfigProvider).requireValue), key: const Key('wallet-card-topup')),
               ]),
               const SizedBox(height: 18),
@@ -176,36 +176,40 @@ class WalletPage extends ConsumerWidget {
       if (context.mounted) toast(context, _err(e), error: true);
     }
   }
-  Future<void> _topup(BuildContext context, WidgetRef ref) async {
-    final v = await askText(context, title: 'شحن تجريبي', hint: 'المبلغ بالريال (حتى ${money(maxTopupHalalas)})', confirm: 'شحن', maxLines: 1, keyboardType: const TextInputType.numberWithOptions(decimal: true));
+  /// الشحن التجريبي: سقفه maxTopup يأتي مع /wallet (يضبطه المدير) لا ثابتاً في التطبيق
+  Future<void> _topup(BuildContext context, WidgetRef ref, Wallet wallet) async {
+    final max = wallet.maxTopup;
+    final v = await askText(context, title: 'شحن تجريبي', hint: 'المبلغ بالريال (حتى ${money(max)})', confirm: 'شحن', maxLines: 1, keyboardType: const TextInputType.numberWithOptions(decimal: true));
     if (v == null) return;
     final halalas = parseSar(v);
     if (halalas <= 0) {
       if (context.mounted) toast(context, 'اكتب مبلغاً صحيحاً بالريال، مثل 500', error: true);
       return;
     }
-    if (halalas > maxTopupHalalas) {
-      if (context.mounted) toast(context, 'أقصى شحن في المرة الواحدة ${money(maxTopupHalalas)}؛ كرّر الشحن إن احتجت أكثر', error: true);
+    if (halalas > max) {
+      if (context.mounted) toast(context, 'أقصى شحن في المرة الواحدة ${money(max)}؛ كرّر الشحن إن احتجت أكثر', error: true);
       return;
     }
     try {
       await ref.read(apiClientProvider).walletTopup(halalas);
       ref.invalidate(walletProvider);
     } catch (e) {
-      if (context.mounted) toast(context, _err(e), error: true);
+      if (context.mounted) toast(context, _err(e, max: max), error: true);
     }
   }
 }
 
-String _err(Object e) {
+String _err(Object e, {int max = maxTopupHalalas}) {
   final s = e.toString();
   if (s.contains('insufficient-funds')) return 'الرصيد غير كافٍ';
+  // الخادم يرفض الشحن التجريبي ومفاتيح ميسر الحية مضبوطة (قبل topup-disabled لأنه يحتويه)
+  if (s.contains('topup-disabled-live')) return 'الشحن التجريبي متوقف لأن الدفع الحقيقي مفعّل';
   if (s.contains('topup-disabled')) return 'الشحن غير مفعّل';
   if (s.contains('payments-disabled')) return 'الدفع بالبطاقة غير مفعّل حالياً';
   if (s.contains('payments-inactive')) return 'الدفع بالبطاقة غير متاح مؤقتاً لحين تفعيل حساب البوابة؛ حاول لاحقاً';
   if (s.contains('provider-unreachable') || s.contains('provider-error')) return 'تعذر الوصول إلى بوابة الدفع الآن؛ حاول بعد قليل';
   if (s.contains('not-found')) return 'المستلم غير موجود';
-  if (s.contains('bad-amount')) return 'المبلغ غير مقبول: يجب أن يكون أكبر من صفر وحتى ${money(maxTopupHalalas)}';
+  if (s.contains('bad-amount')) return 'المبلغ غير مقبول: يجب أن يكون أكبر من صفر وحتى ${money(max)}';
   if (s.contains('bad-recipient')) return 'حدّد مستلماً صحيحاً غير نفسك';
   return s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
 }
@@ -230,7 +234,7 @@ class TxRow extends StatelessWidget {
           Text('${t.positive ? '+' : '−'}${money(t.amount.abs())}', style: TextStyle(fontWeight: FontWeight.w700, color: t.positive ? Joy.success : Joy.text)),
         ]),
       );
-  IconData _icon(String k) => switch (k) { 'ticket' || 'ticket_sale' => Icons.confirmation_number_outlined, 'market' || 'market_sale' => Icons.shopping_bag_outlined, 'topup' || 'credit' => Icons.add_rounded, 'refund' || 'biz_refund' || 'biz_refund_out' => Icons.replay_rounded, 'biz' || 'biz_sale' => Icons.storefront_outlined, _ => Icons.swap_horiz_rounded };
+  IconData _icon(String k) => switch (k) { 'ticket' || 'ticket_sale' => Icons.confirmation_number_outlined, 'market' || 'market_sale' => Icons.shopping_bag_outlined, 'topup' || 'test_topup' || 'credit' => Icons.add_rounded, 'refund' || 'biz_refund' || 'biz_refund_out' => Icons.replay_rounded, 'biz' || 'biz_sale' => Icons.storefront_outlined, _ => Icons.swap_horiz_rounded };
 }
 
 class StatementPage extends ConsumerWidget {

@@ -109,7 +109,8 @@ n = await latest('SA0000003', 'claim_decided'); check(n?.data?.approved === true
 await call('POST', '/biz/biz-vox/transfer', { body: { userId: 'SA0000002' }, user: 'SA0000003', expect: 200 });
 n = await latest('SA0000002', 'biz_owner'); check(n?.data?.bizId === 'biz-vox', 'ownership transfer → new owner');
 
-// ---- المحفظة والسوق
+// ---- المحفظة والسوق (التحويل بين المستخدمين مطفأ افتراضياً بقرار تنظيمي؛ المدير يفعّله هنا لاختبار الإشعار)
+await call('POST', '/adminapi/settings', { body: { transfersEnabled: true }, expect: 200 });
 await call('POST', '/wallet/transfer', { body: { to: 'SA0000003', amount: 2550, note: 'هدية' }, user: 'SA0000002', expect: 200 });
 n = await latest('SA0000003', 'transfer_in'); check(/25\.50 ر\.س/.test(n?.body ?? '') && /هدية/.test(n?.body ?? '') && n?.data?.from === 'SA0000002', 'transfer → recipient');
 await wait(300); check(received.some((r) => r.path === '/push/khalid' && r.payload?.title === 'وصلك تحويل'), 'push to khalid');
@@ -172,5 +173,6 @@ const t = await call('POST', '/notify/test', { expect: 200 }); check(t.pushed ==
 const t2 = await call('POST', '/notify/test', { user: 'SA0000002', expect: 200 }); check(t2.pushed === 0 && t2.push === true && t2.subscriptions === 0, 'test without subscription', JSON.stringify(t2));
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL NOTIFY TESTS PASSED');
+try { await pool.query("DELETE FROM platform_settings WHERE key='transfersEnabled'"); } catch { /* ignore */ }
 await app.close(); pushSrv.close(); await pool.end();
 process.exit(fails ? 1 : 0);

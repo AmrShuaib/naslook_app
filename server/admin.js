@@ -146,10 +146,12 @@ export default async function admin(app, opts) {
   await ensureSetupCode();
 
   // ---- الإعدادات الحية: تُطبَّق على العملية نفسها (الشحن التجريبي وسقفه) وتُقرأ من الإضافات الأخرى
-  const DEFAULT_SETTINGS = { testTopup: process.env.WALLET_TEST_TOPUP === "1", maxTopup: 10000000, announcement: "", maintenance: false, supportHandle: "", bannedWords: "", reportThreshold: 3,
+  // maxTopup: سقف الشحن التجريبي في المرة؛ minTopup/maxCardTopup: حدّا الشحن بالبطاقة عبر ميسر بالهللة (100 ريال أدنى بقرار تنظيمي، 5,000 ريال أقصى)
+  const DEFAULT_SETTINGS = { testTopup: process.env.WALLET_TEST_TOPUP === "1", maxTopup: 10000000, minTopup: 10000, maxCardTopup: 500000, announcement: "", maintenance: false, supportHandle: "", bannedWords: "", reportThreshold: 3,
     marketCommissionPct: 0, spotlightPricePerDay: 2000, spotlightMaxDays: 30, spotlightMaxActive: 12, marketReviewNewAccounts: false, marketBlockContacts: true,
-    // مفاتيح المال: التحويل بين المستخدمين والدفع داخل المحادثة يعملان كما هما الآن حتى يقرر المالك (يُطفآن دائماً في عميل iOS)
-    transfersEnabled: true, chatPaymentsEnabled: true, supportEmail: "", bannedWordsDefault: true,
+    // مفاتيح المال: التحويل بين المستخدمين والدفع داخل المحادثة مطفآن افتراضياً (محفظة مغلقة بلا تحويل = خارج «إصدار النقود الإلكترونية» عند ساما)
+    // حتى يتوفر مسار مرخّص؛ المدير يفعّلهما صراحة من اللوحة، ويُطفآن دائماً في عميل iOS
+    transfersEnabled: false, chatPaymentsEnabled: false, supportEmail: "", bannedWordsDefault: true,
     // تأكيد البريد قبل الدخول (auth_alias.js): لا جلسة قبل إدخال الرمز؛ يعمل فقط حين تكون خدمة البريد مضبوطة
     requireEmailVerification: true,
     // التوظيف (jobs.js): التفعيل، حد العروض النشطة للباقة المجانية، حد البطاقات الأسبوعي للمستخدم، أدنى درجة مطابقة، موافقة الإدارة قبل النشر
@@ -160,6 +162,8 @@ export default async function admin(app, opts) {
     const rows = (await pool.query("SELECT key, value FROM platform_settings")).rows;
     const s = { ...DEFAULT_SETTINGS };
     for (const r of rows) s[r.key] = r.value;
+    // مفتاحا المال قيمتان منطقيتان صارمتان حتى تقرأهما الإضافات الأخرى (commerce.js وchat_cards.js) بلا لبس
+    s.transfersEnabled = s.transfersEnabled === true; s.chatPaymentsEnabled = s.chatPaymentsEnabled === true;
     process.env.WALLET_TEST_TOPUP = s.testTopup ? "1" : "0";
     globalThis.naslifeSettings = s;
     return s;
@@ -171,8 +175,9 @@ export default async function admin(app, opts) {
   }
   app.get("/settings/public", async () => {
     const s = globalThis.naslifeSettings ?? DEFAULT_SETTINGS;
+    // مفتاحا المال يُقرآن «=== true»: أي قيمة ناقصة أو غير منطقية تعني مطفأ (الافتراضي التنظيمي)
     return { announcement: s.announcement ?? "", maintenance: s.maintenance === true, supportHandle: s.supportHandle ?? "", supportEmail: s.supportEmail ?? "", testTopup: s.testTopup === true,
-      transfersEnabled: s.transfersEnabled !== false, chatPaymentsEnabled: s.chatPaymentsEnabled !== false, requireEmailVerification: s.requireEmailVerification !== false, jobsEnabled: s.jobsEnabled !== false };
+      transfersEnabled: s.transfersEnabled === true, chatPaymentsEnabled: s.chatPaymentsEnabled === true, requireEmailVerification: s.requireEmailVerification !== false, jobsEnabled: s.jobsEnabled !== false };
   });
 
   const audit = async (adminId, action, target, details = {}) => { try { await pool.query("INSERT INTO admin_audit(id,admin_id,action,target,details) VALUES($1,$2,$3,$4,$5)", [crypto.randomUUID(), adminId, action, target, JSON.stringify(details)]); } catch { /* ignore */ } };
@@ -630,8 +635,11 @@ export default async function admin(app, opts) {
       FROM generate_series((now() + interval '3 hours')::date - ${days - 1}, (now() + interval '3 hours')::date, '1 day') AS d ORDER BY d`)).rows;
     const recent = (await pool.query("SELECT * FROM wallet_tx ORDER BY created_at DESC LIMIT 50")).rows.map(txOut);
     const top = (await pool.query("SELECT user_id, balance FROM wallet_accounts ORDER BY balance DESC LIMIT 10")).rows;
+    // المال التجريبي (الشحن التجريبي يُقيَّد بنوع test_topup) منذ البداية: ليميّزه المالك عن المال الحقيقي قبل الإطلاق
+    const testTopups = (await pool.query("SELECT count(*)::int AS count, COALESCE(SUM(amount),0)::bigint AS amount FROM wallet_tx WHERE kind='test_topup'")).rows[0];
     return {
       totals: { accounts: totals.accounts, balance: Number(totals.balance), points: Number(totals.points) },
+      testTopups: { count: testTopups.count, amount: Number(testTopups.amount) },
       byKind: byKind.map((k) => ({ kind: k.kind, count: k.count, amount: Number(k.amount) })),
       daily: daily.map((d) => ({ day: new Date(d.day).toISOString().slice(0, 10), topups: Number(d.topups), purchases: Number(d.purchases), refunds: Number(d.refunds) })),
       recent: await Promise.all(recent.map(async (t) => ({ ...t, user: await person(t.userId) }))),
@@ -707,14 +715,26 @@ export default async function admin(app, opts) {
   app.post("/adminapi/settings", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;
     const b = req.body ?? {}; const patch = {};
+    // الشحن التجريبي لا يُفعَّل ومفاتيح ميسر الحية مضبوطة: مال تجريبي لا يختلط بمال حقيقي (لا يُحفظ شيء من الطلب)
+    if (b.testTopup === true && globalThis.naslifePayMode?.() === "live") return bad(reply, 409, "test-topup-live");
     if (b.testTopup !== undefined) patch.testTopup = b.testTopup === true;
     if (b.maxTopup !== undefined) patch.maxTopup = Math.max(100, Math.min(1000000000, Math.round(Number(b.maxTopup) || 0)));
+    // حدّا الشحن بالبطاقة بالهللة: الأدنى من 1,000 (10 ريال) والأقصى حتى 100,000,000، ولا يُقبل أدنى أعلى من الأقصى
+    if (b.minTopup !== undefined || b.maxCardTopup !== undefined) {
+      const cur = globalThis.naslifeSettings ?? DEFAULT_SETTINGS;
+      const min = b.minTopup === undefined ? Number(cur.minTopup) || DEFAULT_SETTINGS.minTopup : Math.max(1000, Math.min(100000000, Math.round(Number(b.minTopup) || 0)));
+      const max = b.maxCardTopup === undefined ? Number(cur.maxCardTopup) || DEFAULT_SETTINGS.maxCardTopup : Math.max(1000, Math.min(100000000, Math.round(Number(b.maxCardTopup) || 0)));
+      if (min > max) return bad(reply, 400, "bad-topup-limits", { min, max });
+      if (b.minTopup !== undefined) patch.minTopup = min;
+      if (b.maxCardTopup !== undefined) patch.maxCardTopup = max;
+    }
     if (b.announcement !== undefined) patch.announcement = str(b.announcement, 300);
     if (b.maintenance !== undefined) patch.maintenance = b.maintenance === true;
     if (b.supportHandle !== undefined) patch.supportHandle = str(b.supportHandle, 40);
     if (b.supportEmail !== undefined) { const e = str(b.supportEmail, 120); if (e && !SUPPORT_EMAIL_RE.test(e)) return bad(reply, 400, "bad-email"); patch.supportEmail = e; }
-    if (b.transfersEnabled !== undefined) patch.transfersEnabled = b.transfersEnabled !== false;
-    if (b.chatPaymentsEnabled !== undefined) patch.chatPaymentsEnabled = b.chatPaymentsEnabled !== false;
+    // مفتاحا المال: لا يُفعَّلان إلا بـ true صريحة
+    if (b.transfersEnabled !== undefined) patch.transfersEnabled = b.transfersEnabled === true;
+    if (b.chatPaymentsEnabled !== undefined) patch.chatPaymentsEnabled = b.chatPaymentsEnabled === true;
     if (b.bannedWordsDefault !== undefined) patch.bannedWordsDefault = b.bannedWordsDefault !== false;
     if (b.requireEmailVerification !== undefined) patch.requireEmailVerification = b.requireEmailVerification !== false;
     if (b.bannedWords !== undefined) patch.bannedWords = str(b.bannedWords, 5000);

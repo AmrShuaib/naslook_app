@@ -233,7 +233,9 @@ class EventDetailPage extends ConsumerWidget {
       await ref.read(apiClientProvider).cancelEvent(e.id);
       ref.invalidate(eventProvider(e.id)); ref.invalidate(eventsProvider); ref.invalidate(myEventsProvider); ref.invalidate(walletProvider);
     } catch (err) {
-      if (context.mounted) toast(context, err.toString(), error: true);
+      // الإلغاء يردّ ثمن التذاكر من محفظة المضيف؛ الخادم يرفضه برصيد لا يكفي
+      final s = err.toString();
+      if (context.mounted) toast(context, s.contains('insufficient-funds') ? 'رصيد محفظتك لا يكفي لاسترداد التذاكر للمشترين؛ اشحن المحفظة ثم أعد المحاولة' : s, error: true);
     }
   }
 }

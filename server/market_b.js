@@ -254,8 +254,10 @@ async function setup(app, opts) {
     const source = panel.publishableKey && panel.secretKey ? "panel" : env.publishableKey && env.secretKey ? "env" : null;
     const k = source === "panel" ? panel : source === "env" ? env : { publishableKey: "", secretKey: "", webhookSecret: "" };
     const enabled = !!source;
-    const max = Number(settings().maxTopup) || Number(process.env.PAY_MAX) || 500000;
-    return { enabled, source, mode: enabled ? keyMode(k.secretKey) ?? keyMode(k.publishableKey) : null, provider: "moyasar", publishableKey: k.publishableKey, secretKey: k.secretKey, min: Number(process.env.PAY_MIN) || 1000, max, methods: (process.env.PAY_METHODS ?? "creditcard,stcpay").split(",").map((s) => s.trim()).filter(Boolean), webhookSecret: k.webhookSecret, envPresent: !!(env.publishableKey && env.secretKey) };
+    // حدّا الشحن بالبطاقة من إعدادات الإدارة (minTopup/maxCardTopup بالهللة، لا maxTopup سقف الشحن التجريبي)، ثم البيئة، ثم 100 و5,000 ريال
+    const min = Number(settings().minTopup) || Number(process.env.PAY_MIN) || 10000;
+    const max = Number(settings().maxCardTopup) || Number(process.env.PAY_MAX) || 500000;
+    return { enabled, source, mode: enabled ? keyMode(k.secretKey) ?? keyMode(k.publishableKey) : null, provider: "moyasar", publishableKey: k.publishableKey, secretKey: k.secretKey, min, max, methods: (process.env.PAY_METHODS ?? "creditcard,stcpay").split(",").map((s) => s.trim()).filter(Boolean), webhookSecret: k.webhookSecret, envPresent: !!(env.publishableKey && env.secretKey) };
   };
   const hint = (k) => (k ? `${k.slice(0, k.indexOf("_", 3) + 1)}…${k.slice(-4)}` : "");
   const adminConfigOut = (req) => {

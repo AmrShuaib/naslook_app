@@ -504,15 +504,17 @@ class AdminBiz {
 
 class AdminFinance {
   final int accounts, balance, points;
+  /// المال التجريبي في النظام (حركات test_topup منذ البداية): عدد الحركات ومجموعها بالهللة
+  final int testTopupsCount, testTopupsAmount;
   final List<({String kind, int count, int amount})> byKind;
   final List<({DateTime day, int topups, int purchases, int refunds})> daily;
   final List<({WalletTx tx, Person user})> recent;
   final List<({Person user, int balance})> topBalances;
-  const AdminFinance({this.accounts = 0, this.balance = 0, this.points = 0, this.byKind = const [], this.daily = const [], this.recent = const [], this.topBalances = const []});
+  const AdminFinance({this.accounts = 0, this.balance = 0, this.points = 0, this.testTopupsCount = 0, this.testTopupsAmount = 0, this.byKind = const [], this.daily = const [], this.recent = const [], this.topBalances = const []});
   factory AdminFinance.fromJson(Map m) {
-    final t = _m(m['totals']);
+    final t = _m(m['totals']), tt = _m(m['testTopups']);
     return AdminFinance(
-      accounts: _i(t['accounts']), balance: _i(t['balance']), points: _i(t['points']),
+      accounts: _i(t['accounts']), balance: _i(t['balance']), points: _i(t['points']), testTopupsCount: _i(tt['count']), testTopupsAmount: _i(tt['amount']),
       byKind: [for (final k in asList(m['byKind'])) (kind: k['kind']?.toString() ?? '', count: _i(k['count']), amount: _i(k['amount']))],
       daily: [for (final d in asList(m['daily'])) (day: DateTime.tryParse(d['day']?.toString() ?? '') ?? DateTime.now(), topups: _i(d['topups']), purchases: _i(d['purchases']), refunds: _i(d['refunds']))],
       recent: [for (final r in asList(m['recent'])) (tx: WalletTx.fromJson(r), user: Person.fromJson(_m(r['user'])))],
@@ -535,10 +537,12 @@ class AdminContent {
 
 class AdminSettings {
   final bool testTopup, maintenance, setupCodePresent;
-  final int maxTopup;
+  /// سقف الشحن التجريبي في المرة، وحدّا الشحن بالبطاقة عبر ميسر (بالهللة؛ الافتراضي 100 و5,000 ريال)
+  final int maxTopup, minTopup, maxCardTopup;
   final String announcement, supportHandle, supportEmail, bannedWords;
   final int reportThreshold;
-  // التحويل بين المستخدمين والدفع داخل المحادثة (يُطفآن دائماً في iOS)، والقائمة الافتراضية للكلمات المحظورة
+  // التحويل بين المستخدمين والدفع داخل المحادثة: مطفآن افتراضياً بقرار تنظيمي ولا يُعدّان مفعّلين إلا بـ true صريحة (ومطفآن دائماً في iOS)،
+  // والقائمة الافتراضية للكلمات المحظورة
   final bool transfersEnabled, chatPaymentsEnabled, bannedWordsDefault;
   /// تأكيد البريد قبل الدخول (لا جلسة قبل الرمز)
   final bool requireEmailVerification;
@@ -550,13 +554,14 @@ class AdminSettings {
   final bool jobsEnabled, jobsRequireApproval;
   final int jobsFreeActive, jobsWeeklyCap;
   final double jobsMinScore;
-  const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
-      this.transfersEnabled = true, this.chatPaymentsEnabled = true, this.bannedWordsDefault = true, this.requireEmailVerification = true,
+  const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.minTopup = 10000, this.maxCardTopup = 500000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
+      this.transfersEnabled = false, this.chatPaymentsEnabled = false, this.bannedWordsDefault = true, this.requireEmailVerification = true,
       this.marketCommissionPct = 0, this.spotlightPricePerDay = 2000, this.spotlightMaxDays = 30, this.spotlightMaxActive = 12, this.marketReviewNewAccounts = false, this.marketBlockContacts = true,
       this.jobsEnabled = true, this.jobsRequireApproval = false, this.jobsFreeActive = 3, this.jobsWeeklyCap = 5, this.jobsMinScore = .45});
   factory AdminSettings.fromJson(Map m) => AdminSettings(testTopup: m['testTopup'] == true, maintenance: m['maintenance'] == true, setupCodePresent: m['setupCodePresent'] == true, maxTopup: _i(m['maxTopup']), announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '',
+      minTopup: m['minTopup'] == null ? 10000 : _i(m['minTopup']), maxCardTopup: m['maxCardTopup'] == null ? 500000 : _i(m['maxCardTopup']),
       bannedWords: m['bannedWords']?.toString() ?? '', reportThreshold: m['reportThreshold'] == null ? 3 : _i(m['reportThreshold']),
-      supportEmail: m['supportEmail']?.toString() ?? '', transfersEnabled: m['transfersEnabled'] != false, chatPaymentsEnabled: m['chatPaymentsEnabled'] != false, bannedWordsDefault: m['bannedWordsDefault'] != false, requireEmailVerification: m['requireEmailVerification'] != false,
+      supportEmail: m['supportEmail']?.toString() ?? '', transfersEnabled: m['transfersEnabled'] == true, chatPaymentsEnabled: m['chatPaymentsEnabled'] == true, bannedWordsDefault: m['bannedWordsDefault'] != false, requireEmailVerification: m['requireEmailVerification'] != false,
       marketCommissionPct: (m['marketCommissionPct'] as num?)?.toDouble() ?? 0, spotlightPricePerDay: m['spotlightPricePerDay'] == null ? 2000 : _i(m['spotlightPricePerDay']), spotlightMaxDays: m['spotlightMaxDays'] == null ? 30 : _i(m['spotlightMaxDays']), spotlightMaxActive: m['spotlightMaxActive'] == null ? 12 : _i(m['spotlightMaxActive']),
       marketReviewNewAccounts: m['marketReviewNewAccounts'] == true, marketBlockContacts: m['marketBlockContacts'] != false,
       jobsEnabled: m['jobsEnabled'] != false, jobsRequireApproval: m['jobsRequireApproval'] == true, jobsFreeActive: m['jobsFreeActive'] == null ? 3 : _i(m['jobsFreeActive']), jobsWeeklyCap: m['jobsWeeklyCap'] == null ? 5 : _i(m['jobsWeeklyCap']),
