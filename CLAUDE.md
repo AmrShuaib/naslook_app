@@ -16,7 +16,7 @@
 - فرع التطوير: `claude/intelligent-hypatia-owb3fk` (الخادم يسحبه؛ اسم الفرع مكتوب في `/opt/naslife/ops/branch` على الخادم). لا تدفع إلى فرع آخر.
 - فرع `webapp-build`: ملفات الويب المبنية فقط.
 - **النشر التلقائي** (`server/autodeploy.sh` عبر مؤقّت systemd كل دقيقتين): يسحب فرع الكود، ينسخ `server/*.js`، يضيف الأسطر **الجديدة** من `server/register.txt`، يعيد التشغيل، يفحص الصحة، ويتراجع عند الفشل. ويسحب `webapp-build` عند تغيّرها. لذلك: دفع الكود يكفي لنشر الخادم، وإضافة جديدة تحتاج سطر تسجيل في `register.txt`.
-- **نشر الويب**: `flutter build web --release --pwa-strategy=none -o build/web` ثم `tools/publish_bundle.sh "رسالة"`. تحقق: `curl -sS https://naslife.app/main.dart.js | md5sum` يطابق `build/web/main.dart.js`.
+- **نشر الويب**: `flutter build web --release --pwa-strategy=none -o build/web` ثم `tools/publish_bundle.sh "رسالة"`. تحقق: `curl -sS https://naslife.app/main.dart.js | md5sum` يطابق `build/web/main.dart.js`. السكربت يكتب `build.json` (بصمة الحزمة) بجانب التطبيق، و`lib/core/update/app_update.dart` يقارنها كل عشر دقائق وعند العودة إلى التطبيق ويعرض شريط «نسخة جديدة · تحديث الآن» (`lib/ui/update_banner.dart`) حتى يصل الإصلاح للتبويب المفتوح بلا انتظار.
 - `.github/workflows/deploy.yml` و`ios.yml` موجودان، لكن **مهام GitHub Actions لا تبدأ أصلاً منذ 16 سبتمبر 2026** (تفشل خلال ثوانٍ بلا سجلات، غالباً حصة الدقائق أو الفوترة في حساب GitHub). لذلك نشر الويب محلياً بالسكربت إلزامي، وبناء iOS عبر Codemagic (`codemagic.yaml`: بناء بلا توقيع الآن، وTestFlight بعد حساب أبل).
 - Flutter SDK في الجلسة: `<scratchpad>/flutter/bin` (يضيع مع الحاوية؛ إن غاب نزّل `flutter_linux_3.47.3-stable.tar.xz` وفكّه هناك).
 - الخادم `91.108.111.246` خلف Caddy. **لا يوجد SSH من الجلسة**؛ أي أمر على الخادم يشغّله المالك.

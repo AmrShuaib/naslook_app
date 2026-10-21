@@ -39,6 +39,8 @@ import '../api/account_api.dart';
 import '../pages/notifications/notifications_page.dart';
 import '../pages/search/search_page.dart';
 import '../pages/chat/chats_page.dart';
+import '../core/update/app_update.dart';
+import '../ui/update_banner.dart';
 
 export '../core/require_account.dart' show guestWantsLoginProvider, guestBrowseProvider;
 
@@ -57,10 +59,12 @@ class MainApp extends ConsumerWidget {
       // تكبير كل النصوص درجتين ونصف (25%) فوق إعداد حجم الخط في نظام المستخدم
       builder: (context, child) {
         final mq = MediaQuery.of(context);
+        // مراقبة نشر نسخة ويب جديدة بينما التطبيق مفتوح (شريط «تحديث الآن» فوق كل الشاشات)
+        AppUpdate.start();
         return MediaQuery(
           // سقف للتكبير: على iOS يضاعف حجم الخط في النظام (Dynamic Type) فيتجاوز 3 أضعاف ويكسر الواجهة
           data: mq.copyWith(textScaler: TextScaler.linear((mq.textScaler.scale(1.0) * 1.25).clamp(1.0, 1.6))),
-          child: child ?? const SizedBox.shrink(),
+          child: Column(children: [const UpdateBanner(), Expanded(child: child ?? const SizedBox.shrink())]),
         );
       },
       home: const AuthGate(),
@@ -116,7 +120,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   StreamSubscription<Map<String, dynamic>>? _socketSub;
   late final MessageBell _bell = MessageBell(ref.read);
   // iOS يعلّق المقبس في الخلفية؛ عند العودة نعيد الاتصال فوراً بدل انتظار مهلة إعادة المحاولة
-  late final AppLifecycleListener _life = AppLifecycleListener(onResume: () => ref.read(socketProvider)?.reconnectNow(force: true));
+  late final AppLifecycleListener _life = AppLifecycleListener(onResume: () { ref.read(socketProvider)?.reconnectNow(force: true); AppUpdate.check(); });
 
   @override
   void initState() {
