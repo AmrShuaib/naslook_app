@@ -1,5 +1,6 @@
 // الموقع المباشر والردود المقترحة (server/chat_live.js): دورة بدء/دفع/قراءة/إيقاف، صلاحية الطرفين فقط، أخطاء التحقق، جلسة واحدة
-// نشطة لكل زوج، الانقضاء والكنس، والاقتراحات: قواعد بلا مفتاح، نموذج وهمي يعيد مصفوفة JSON أو كلاماً فارغاً، وحدّ المعدّل.
+// نشطة لكل زوج، الانقضاء والكنس، مسح الموقع بعد الانتهاء (الرد والصف)، معرّفات مشوّهة تمرّ على الشكل العام، والاقتراحات: قواعد
+// بلا مفتاح، نموذج وهمي يعيد مصفوفة JSON أو كلاماً فارغاً، وحدّ المعدّل.
 import Fastify from 'fastify';
 import pg from 'pg';
 import { rulesFor, parseSuggestions, LIVE_MINUTES, SUGGEST_PER_MIN, SUGGEST_MAX_CHARS } from '../chat_live.js';
@@ -7,7 +8,9 @@ process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0';
 let fails = 0;
 const check = (c, l, extra = '') => { if (!c) fails++; console.log((c ? 'OK  ' : 'FAIL') + ' ' + l + (extra ? ' ' + extra : '')); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const UUID_RE = /^[0-9a-f-]{36}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const posOf = async (id) => (await pool.query('SELECT lat, lng, accuracy, updated_at FROM chat_live WHERE id=$1', [id])).rows[0];
+const wiped = (r) => !!r && r.lat === null && r.lng === null && r.accuracy === null && r.updated_at === null;
 
 // ---- القواعد والتحليل وحدهما
 {
@@ -101,13 +104,22 @@ const np = await call('PUT', `/chat/live/${s1.id}`, { body: { lat: 21, lng: 39 }
 check(np.error === 'not-sharer', 'the peer cannot push a position');
 await call('DELETE', `/chat/live/${s1.id}`, { user: 'SA0000002', expect: 403 });
 await call('GET', '/chat/live/00000000-0000-4000-8000-000000000000', { expect: 404 });
-await call('GET', '/chat/live/not-a-uuid', { expect: 404 });
+await call('GET', '/chat/live/B1B1B1B1-0000-4000-8000-000000000001', { expect: 404 });
+// معرّفات تمرّ على الشكل العام (36 حرفاً من [0-9a-f-]) لكنها ليست UUID: 404 لا 500 من Postgres (22P02)
+for (const bad of ['not-a-uuid', '-'.repeat(36), '0'.repeat(36), s1.id.replace('-', '') + '-', s1.id.slice(0, 35) + 'g']) {
+  const g404 = await call('GET', `/chat/live/${bad}`, { expect: 404 });
+  check(g404.error === 'not-found', `malformed id ${bad.slice(0, 12)}… → not-found (no 500)`);
+  await call('PUT', `/chat/live/${bad}`, { body: { lat: 21, lng: 39 }, expect: 404 });
+  await call('DELETE', `/chat/live/${bad}`, { expect: 404 });
+}
 
 // ---- جلسة واحدة نشطة لكل زوج
 const s2 = await call('POST', '/chat/live', { body: { peerId: 'SA0000002', minutes: 15 }, expect: 200 });
 check(s2.id !== s1.id && s2.active === true, 'a new session for the same pair starts');
 g = await call('GET', `/chat/live/${s1.id}`, { user: 'SA0000002', expect: 200 });
 check(g.active === false, 'the previous session for the pair is stopped');
+check(g.lat === null && g.lng === null && g.accuracy === null && g.at === null, 'the stopped session no longer returns its last position', JSON.stringify(g));
+check(wiped(await posOf(s1.id)), 'starting a new session wiped the previous row\'s coordinates in the table');
 const s3 = await call('POST', '/chat/live', { body: { peerId: 'SA0000001', minutes: 15 }, user: 'SA0000002', expect: 200 });
 g = await call('GET', `/chat/live/${s2.id}`, { expect: 200 });
 check(g.active === true && s3.active === true, 'the reverse direction is a different pair and does not stop it');
@@ -117,30 +129,46 @@ check(n === 1, 'exactly one open row per pair in the table', String(n));
 // ---- الإيقاف
 const en = await call('PUT', `/chat/live/${s1.id}`, { body: { lat: 21, lng: 39 }, expect: 409 });
 check(en.error === 'ended', 'pushing to a stopped session → 409 ended');
+await call('PUT', `/chat/live/${s2.id}`, { body: { lat: 21.5, lng: 39.2, accuracy: 8 }, expect: 200 });
+g = await call('GET', `/chat/live/${s2.id}`, { user: 'SA0000002', expect: 200 }); check(g.lat === 21.5 && g.active === true, 'position visible while active');
 await call('DELETE', `/chat/live/${s2.id}`, { expect: 200 });
 g = await call('GET', `/chat/live/${s2.id}`, { user: 'SA0000002', expect: 200 });
-check(g.active === false && g.id === s2.id, 'after DELETE the peer reads active:false (the row stays readable)');
+check(g.active === false && g.id === s2.id, 'after DELETE the peer reads active:false (the row stays readable, without a position)');
+check(g.lat === null && g.lng === null && g.accuracy === null && g.at === null, 'after DELETE the last position is gone from the response', JSON.stringify(g));
+check(wiped(await posOf(s2.id)), 'DELETE wiped the coordinates from the table');
 await call('DELETE', `/chat/live/${s2.id}`, { expect: 200 });
 const stoppedAt = (await pool.query('SELECT stopped_at FROM chat_live WHERE id=$1', [s2.id])).rows[0].stopped_at;
 check(stoppedAt && Date.now() - new Date(stoppedAt).getTime() < 5000, 'DELETE is idempotent and keeps the first stopped_at');
+// صف منتهٍ ما زال يحمل موقعاً (نسخة سابقة): الكنس يمسحه ولا يغيّر stopped_at
+await pool.query('UPDATE chat_live SET lat=21.1, lng=39.1, accuracy=5, updated_at=now() WHERE id=$1', [s2.id]);
+check((await globalThis.naslifeChatLive.sweep()) >= 1 && wiped(await posOf(s2.id)), 'sweep wipes coordinates left on an already-stopped row');
+check(new Date((await pool.query('SELECT stopped_at FROM chat_live WHERE id=$1', [s2.id])).rows[0].stopped_at).getTime() === new Date(stoppedAt).getTime(), 'the wipe keeps the original stopped_at');
 
 // ---- الانقضاء والكنس
 const s4 = await call('POST', '/chat/live', { body: { peerId: 'SA0000003', minutes: 480 }, expect: 200 });
 check(Date.parse(s4.until) - Date.now() > 479 * 60000, '480 minutes accepted');
+await call('PUT', `/chat/live/${s4.id}`, { body: { lat: 21.6, lng: 39.3 }, expect: 200 });
 await pool.query("UPDATE chat_live SET until = now() - interval '1 second' WHERE id=$1", [s4.id]);
+check(!wiped(await posOf(s4.id)), 'expired but not yet swept: the row still holds the position');
 g = await call('GET', `/chat/live/${s4.id}`, { user: 'SA0000003', expect: 200 });
 check(g.active === false, 'past until → active:false even before the sweep');
+check(g.lat === null && g.lng === null && g.at === null, 'past until → no position in the response even before the sweep', JSON.stringify(g));
+check(wiped(await posOf(s4.id)), 'reading an expired session wipes its coordinates right away');
 await call('PUT', `/chat/live/${s4.id}`, { body: { lat: 21, lng: 39 }, expect: 409 });
-let row = (await pool.query('SELECT stopped_at FROM chat_live WHERE id=$1', [s4.id])).rows[0];
-const swept = row.stopped_at ? 0 : await globalThis.naslifeChatLive.sweep();
-row = (await pool.query('SELECT stopped_at, until FROM chat_live WHERE id=$1', [s4.id])).rows[0];
-check(row.stopped_at && new Date(row.stopped_at).getTime() === new Date(row.until).getTime(), 'sweep closes expired rows at their until', `swept=${swept}`);
+let row = (await pool.query('SELECT stopped_at, until FROM chat_live WHERE id=$1', [s4.id])).rows[0];
+check(row.stopped_at && new Date(row.stopped_at).getTime() === new Date(row.until).getTime(), 'the expired row is closed at its until');
 const s5 = await call('POST', '/chat/live', { body: { peerId: 'SA0000003', minutes: 15 }, expect: 200 });
+await call('PUT', `/chat/live/${s5.id}`, { body: { lat: 21.7, lng: 39.4, accuracy: 3 }, expect: 200 });
 await pool.query("UPDATE chat_live SET until = now() - interval '1 second' WHERE id=$1", [s5.id]);
 await sleep(600);
-row = (await pool.query('SELECT stopped_at FROM chat_live WHERE id=$1', [s5.id])).rows[0];
-check(!!row.stopped_at, 'the periodic sweep (sweepMs) closes expired rows on its own');
+row = (await pool.query('SELECT stopped_at, until FROM chat_live WHERE id=$1', [s5.id])).rows[0];
+check(!!row.stopped_at && new Date(row.stopped_at).getTime() === new Date(row.until).getTime(), 'the periodic sweep (sweepMs) closes expired rows at their until on its own');
+check(wiped(await posOf(s5.id)), 'the periodic sweep wiped the expired row\'s coordinates');
+g = await call('GET', `/chat/live/${s5.id}`, { user: 'SA0000003', expect: 200 });
+check(g.active === false && g.lat === null && g.lng === null, 'the peer reads the swept session as ended without a position');
 check((await globalThis.naslifeChatLive.sweep()) === 0, 'nothing left to sweep');
+const open = (await pool.query('SELECT count(*)::int AS n FROM chat_live WHERE stopped_at IS NOT NULL AND (lat IS NOT NULL OR lng IS NOT NULL OR accuracy IS NOT NULL OR updated_at IS NOT NULL)')).rows[0].n;
+check(open === 0, 'no ended row keeps a position', String(open));
 
 // ---- الاقتراحات: قواعد بلا مفتاح
 let sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: [{ mine: false, text: 'السلام عليكم' }] }, expect: 200 });

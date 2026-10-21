@@ -2,6 +2,7 @@
 // الموقع المباشر: المُشارِك ينشئ جلسة (POST /chat/live) بمدة 15 أو 60 أو 480 دقيقة ثم يرسل رسالة عادية نصها "/live <id>"
 // ويدفع موقعه كل 10 ثوانٍ (PUT)؛ الطرف الآخر يقرأ آخر موقع (GET) كل 10 ثوانٍ ما دامت البطاقة ظاهرة. لا يرى الجلسة إلا طرفاها،
 // وتتوقف تلقائياً عند انقضاء المدة أو بإيقاف صاحبها (DELETE)؛ جلسة واحدة نشطة لكل زوج (من → إلى): بدء جديدة يوقف السابقة.
+// الموقع لا يبقى بعد الانتهاء: الإيقاف والكنس يمسحان الإحداثيات من الصف، وGET لا يعيد موقعاً لجلسة غير نشطة.
 // الردود المقترحة: POST /chat/suggest يعيد ثلاث جمل عربية قصيرة عبر مفتاح Anthropic المخزَّن في صندوق البريد
 // (globalThis.naslifeAskClaude من inbox.js) أو قواعد محلية حين لا مفتاح أو عند أي خطأ؛ لا تُرسل معرّفات ولا أسماء إلى النموذج.
 // التسجيل في register.txt:
@@ -9,7 +10,8 @@
 import crypto from "node:crypto";
 
 const ID_RE = /^[A-Z]{2}\d{7}$/;
-const UUID_RE = /^[0-9a-f-]{36}$/i;
+// صيغة UUID صارمة (8-4-4-4-12): غيرها 404 قبل الوصول إلى Postgres (وإلا 22P02 → 500)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const LIVE_MINUTES = [15, 60, 480];
 /// أقل فاصل بين دفعتي موقع من المُشارِك (مللي ثانية)
 export const PUSH_MIN_MS = 5000;
@@ -85,14 +87,34 @@ async function setup(app, opts) {
 
   // ---- الموقع المباشر
   const isActive = (r) => r.stopped_at == null && new Date(r.until).getTime() > Date.now();
-  const out = (r) => ({
-    id: r.id, from: r.from_id, to: r.to_id, lat: r.lat == null ? null : Number(r.lat), lng: r.lng == null ? null : Number(r.lng),
-    accuracy: r.accuracy == null ? null : Number(r.accuracy), at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
-    until: new Date(r.until).toISOString(), active: isActive(r),
-  });
-  const rowOf = async (id) => UUID_RE.test(String(id ?? "")) ? (await pool.query("SELECT * FROM chat_live WHERE id=$1", [id])).rows[0] ?? null : null;
-  // كنس الجلسات المنتهية: يُثبّت stopped_at حتى لا يبقى صف «نشط» بلا نهاية في الفهرس الجزئي
-  const sweep = async () => { try { return (await pool.query("UPDATE chat_live SET stopped_at = until WHERE stopped_at IS NULL AND until <= now()")).rowCount; } catch { return 0; } };
+  // الموقع يُرى ما دامت الجلسة نشطة فقط: بعد المدة أو الإيقاف يعود null ولو بقي في الصف لحظة قبل المسح
+  const out = (r) => {
+    const active = isActive(r);
+    return {
+      id: r.id, from: r.from_id, to: r.to_id,
+      lat: active && r.lat != null ? Number(r.lat) : null, lng: active && r.lng != null ? Number(r.lng) : null,
+      accuracy: active && r.accuracy != null ? Number(r.accuracy) : null, at: active && r.updated_at ? new Date(r.updated_at).toISOString() : null,
+      until: new Date(r.until).toISOString(), active,
+    };
+  };
+  const rowOf = async (id) => {
+    if (!UUID_RE.test(String(id ?? ""))) return null;
+    try { return (await pool.query("SELECT * FROM chat_live WHERE id=$1", [id])).rows[0] ?? null; } catch (e) { if (e?.code === "22P02") return null; throw e; }
+  };
+  const hasPosition = (r) => r.lat != null || r.lng != null || r.accuracy != null || r.updated_at != null;
+  // إنهاء جلسة: يثبّت stopped_at (إن لم يكن: الآن، أو until للمنقضية) ويمسح الإحداثيات ووقتها حتى لا يبقى أثر للموقع بعد الموافقة
+  const WIPE = "lat=NULL, lng=NULL, accuracy=NULL, updated_at=NULL";
+  const end = (id, expired = false) => pool.query(`UPDATE chat_live SET stopped_at=COALESCE(stopped_at, ${expired ? "until" : "now()"}), ${WIPE} WHERE id=$1`, [id]);
+  // كنس المنتهية: يُثبّت stopped_at = until للمنقضية (فلا يبقى صف «نشط» بلا نهاية في الفهرس الجزئي) ويمسح الإحداثيات من كل صف
+  // منتهٍ ما زال يحملها (ومنها ما تركته نسخة سابقة كانت تُبقيها)؛ يعيد عدد الصفوف المعدّلة
+  const sweep = async () => {
+    try {
+      return (await pool.query(`UPDATE chat_live SET stopped_at=COALESCE(stopped_at, until), ${WIPE}
+        WHERE (stopped_at IS NULL AND until <= now())
+           OR (stopped_at IS NOT NULL AND (lat IS NOT NULL OR lng IS NOT NULL OR accuracy IS NOT NULL OR updated_at IS NOT NULL))`)).rowCount;
+    } catch { return 0; }
+  };
+  await sweep(); // عند الإقلاع: صفوف منتهية بمواقع من قبل هذه النسخة
   const sweepMs = opts.sweepMs ?? SWEEP_MS;
   const timer = setInterval(sweep, sweepMs); timer.unref?.();
   app.addHook("onClose", async () => clearInterval(timer));
@@ -109,8 +131,8 @@ async function setup(app, opts) {
     const minutes = Math.round(Number(b.minutes));
     if (!LIVE_MINUTES.includes(minutes)) return bad(reply, 400, "bad-minutes", { allowed: LIVE_MINUTES });
     if (await blocked(uid, peer)) return bad(reply, 403, "blocked");
-    // جلسة واحدة نشطة لكل زوج: الجديدة توقف السابقة
-    await pool.query("UPDATE chat_live SET stopped_at=now() WHERE from_id=$1 AND to_id=$2 AND stopped_at IS NULL", [uid, peer]);
+    // جلسة واحدة نشطة لكل زوج: الجديدة توقف السابقة وتمسح موقعها
+    await pool.query(`UPDATE chat_live SET stopped_at=now(), ${WIPE} WHERE from_id=$1 AND to_id=$2 AND stopped_at IS NULL`, [uid, peer]);
     const id = crypto.randomUUID();
     const r = await pool.query("INSERT INTO chat_live(id, from_id, to_id, until) VALUES($1,$2,$3, now() + ($4::int * interval '1 minute')) RETURNING *", [id, uid, peer, minutes]);
     return out(r.rows[0]);
@@ -136,6 +158,8 @@ async function setup(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const r = await rowOf(req.params.id);
     if (!r || (r.from_id !== uid && r.to_id !== uid)) return bad(reply, 404, "not-found");
+    // انقضت المدة ولم يمرّ الكنس بعد: نمسح الموقع عند أول قراءة (الرد لا يحمله على أي حال)
+    if (!isActive(r) && hasPosition(r)) await end(r.id, r.stopped_at == null);
     return out(r);
   });
 
@@ -144,7 +168,8 @@ async function setup(app, opts) {
     const r = await rowOf(req.params.id);
     if (!r || (r.from_id !== uid && r.to_id !== uid)) return bad(reply, 404, "not-found");
     if (r.from_id !== uid) return bad(reply, 403, "not-sharer");
-    if (r.stopped_at == null) await pool.query("UPDATE chat_live SET stopped_at=now() WHERE id=$1", [r.id]);
+    // idempotent: يحتفظ بأول stopped_at ويمسح الموقع
+    if (r.stopped_at == null || hasPosition(r)) await end(r.id);
     return { ok: true };
   });
 

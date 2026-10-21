@@ -14,7 +14,9 @@ chat_live(id UUID PK, from_id TEXT, to_id TEXT, lat DOUBLE PRECISION, lng DOUBLE
 فهرس جزئي chat_live_pair(from_id, to_id) WHERE stopped_at IS NULL
 ```
 
-«نشطة» = `stopped_at IS NULL AND until > now()`. كنس كل خمس دقائق (`SWEEP_MS`، وقابل للضبط بـ `opts.sweepMs`) يثبّت `stopped_at = until` للمنقضية؛ ومتاح يدوياً عبر `globalThis.naslifeChatLive.sweep()`.
+«نشطة» = `stopped_at IS NULL AND until > now()`. كنس كل خمس دقائق (`SWEEP_MS`، وقابل للضبط بـ `opts.sweepMs`) يثبّت `stopped_at = until` للمنقضية **ويمسح الإحداثيات** (`lat/lng/accuracy/updated_at = NULL`) من كل صف منتهٍ ما زال يحملها؛ يعمل مرة عند الإقلاع (يمسح ما تركته نسخة سابقة) ومتاح يدوياً عبر `globalThis.naslifeChatLive.sweep()`. الصف نفسه يبقى (المعرّف، الطرفان، `until`، `stopped_at`) حتى تعرض البطاقة «انتهت المشاركة» للطرفين، لكن بلا موقع.
+
+المعرّف يُقبل بصيغة UUID صارمة (`8-4-4-4-12` ست عشرية) قبل الوصول إلى Postgres؛ غيرها 404 `not-found` (لا 500 من خطأ 22P02)، وخطأ 22P02 إن وقع يُعامل كـ 404 أيضاً.
 
 ### المسارات (كلها تحتاج جلسة؛ 401 بدونها)
 
@@ -22,14 +24,15 @@ chat_live(id UUID PK, from_id TEXT, to_id TEXT, lat DOUBLE PRECISION, lng DOUBLE
 |---|---|---|---|
 | `POST /chat/live {peerId, minutes: 15\|60\|480}` | المُشارِك | يوقف أي جلسة نشطة سابقة للزوج نفسه (من → إلى) ثم ينشئ جديدة؛ يعيد `{id, from, to, lat:null, lng:null, accuracy:null, at:null, until, active:true}` | `bad-peer`، `self`، `bad-minutes` (مع `allowed`)، 403 `blocked` (عبر `globalThis.naslifeIsBlocked`) |
 | `PUT /chat/live/:id {lat, lng, accuracy?}` | المُشارِك فقط | يحدّث آخر موقع ووقته؛ مرة كل 5 ثوانٍ على الأكثر | 404 لغير الطرفين، 403 `not-sharer` للطرف الآخر، 409 `ended` بعد الانتهاء أو الإيقاف، 400 `bad-position` (\|lat\| ≤ 90، \|lng\| ≤ 180) أو `bad-accuracy` (0..5000)، 429 `too-fast` مع `retryInMs` |
-| `GET /chat/live/:id` | الطرفان فقط | `{id, from, to, lat, lng, accuracy, at, until, active}`؛ `active:false` بعد المدة أو الإيقاف والصف يبقى مقروءاً | 404 لغير الطرفين أو معرّف غير موجود |
-| `DELETE /chat/live/:id` | المُشارِك | يوقف (idempotent؛ يحتفظ بأول `stopped_at`) | 404 / 403 كما أعلاه |
+| `GET /chat/live/:id` | الطرفان فقط | `{id, from, to, lat, lng, accuracy, at, until, active}`؛ `active:false` بعد المدة أو الإيقاف والصف يبقى مقروءاً **بلا موقع** (`lat/lng/accuracy/at = null`)؛ قراءة جلسة منقضية لم يكنسها المؤقّت بعد تمسح موقعها فوراً | 404 لغير الطرفين أو معرّف غير موجود أو مشوّه |
+| `DELETE /chat/live/:id` | المُشارِك | يوقف ويمسح الموقع من الصف (idempotent؛ يحتفظ بأول `stopped_at`) | 404 / 403 كما أعلاه |
 | `GET /chat/live/status` | عام | المدد المسموحة، أقل فاصل دفع، وهل محرّك الذكاء متاح | — |
 | `POST /chat/suggest {peerId, messages:[{mine, text}]}` | أي مستخدم | ثلاث جمل عربية قصيرة: `{suggestions:[3], source:"ai"\|"rules"}` | 400 `bad-peer`، 429 `rate-limit` (20 في الدقيقة لكل مستخدم، في الذاكرة) |
 
 ### قواعد الخصوصية
 
 - لا يرى الجلسة إلا طرفاها؛ أي معرّف آخر يحصل على 404 (لا يُكشف وجودها).
+- **الموقع يُرى ما دامت الجلسة نشطة فقط** (وعد الورقة «ثم يتوقف تلقائياً»): بعد المدة أو الإيقاف لا يعيد الخادم آخر موقع، والإيقاف (DELETE أو بدء جلسة جديدة للزوج نفسه) والكنس يمسحان الإحداثيات ووقتها من الصف فلا يبقى في القاعدة أثر لمكان أحد بعد انتهاء موافقته. البطاقة بدورها لا ترسم الخريطة إلا لجلسة نشطة.
 - الموقع يُدفع من جهاز المُشارِك فقط وهو يملك الإيقاف وحده؛ الطرف الآخر يقرأ فقط.
 - التوقف التلقائي عند `until` (15 دقيقة، ساعة، أو 8 ساعات) ولو أُغلق التطبيق؛ الكنس يغلق الصفوف ويبقى الحقل `active` محسوباً من `until` قبله.
 - جلسة واحدة نشطة لكل زوج: بدء جديدة يوقف السابقة (الاتجاه المعاكس زوج مختلف).
@@ -46,16 +49,16 @@ chat_live(id UUID PK, from_id TEXT, to_id TEXT, lat DOUBLE PRECISION, lng DOUBLE
 
 ### الرمز والبطاقة
 
-- `lib/core/chat/codes.dart`: نوع جديد `CodeKind.live` يحلّله `parseCommand` من `/live <uuid>` فقط (غير ذلك نص عادي)؛ المعرّف في `code.liveId` ولا يُعدّ إشارة فلا يُطلب من `/chat/cards`. `liveCode(id)` يبني النص.
+- `lib/core/chat/codes.dart`: نوع جديد `CodeKind.live` يحلّله `parseCommand` من `/live <uuid>` فقط بصيغة UUID صارمة (`8-4-4-4-12`، مثل الخادم؛ غير ذلك نص عادي فلا تُرسم بطاقة لمعرّف مشوّه)؛ المعرّف في `code.liveId` ولا يُعدّ إشارة فلا يُطلب من `/chat/cards`. `liveCode(id)` يبني النص.
 - `lib/api/chat_live_api.dart`: `LiveSession`، `ReplySuggestions`، وامتداد `ChatLiveApi` على `ApiClient`: `liveStart`، `livePush`، `liveGet`، `liveStop`، `suggestReplies`.
-- `lib/pages/chat/chat_cards.dart`: `LiveLocationCard` (المفتاح `card-live-<id>`) داخل `ChatCodeCard` للنوع `live`: خريطة مصغّرة `flutter_map` ببلاطات الخادم نفسها (`/tiles/{z}/{x}/{y}.png`) ونقطة نابضة على آخر موقع، «يتحرك الآن · آخر تحديث قبل N ث» (يتحدّث كل ثانية)، شارة «حتى HH:MM»، زر «الاتجاهات» (خرائط جوجل عبر `openExternalUrl` التي تحترم `LegalLinks.openOverride`)، ولصاحبها «إيقاف المشاركة». تقرأ `GET /chat/live/:id` كل 10 ثوانٍ ما دامت معروضة والجلسة نشطة، ثم «انتهت المشاركة» وتكفّ عن القراءة (أيضاً عند 404/403).
+- `lib/pages/chat/chat_cards.dart`: `LiveLocationCard` (المفتاح `card-live-<id>`) داخل `ChatCodeCard` للنوع `live`: خريطة مصغّرة `flutter_map` ببلاطات الخادم نفسها (`/tiles/{z}/{x}/{y}.png`) ونقطة نابضة على آخر موقع، «يتحرك الآن · آخر تحديث قبل N ث» (يتحدّث كل ثانية)، شارة «حتى HH:MM»، زر «الاتجاهات» (خرائط جوجل عبر `openExternalUrl` التي تحترم `LegalLinks.openOverride`)، ولصاحبها «إيقاف المشاركة». تقرأ `GET /chat/live/:id` كل 10 ثوانٍ ما دامت معروضة والجلسة نشطة، ثم «انتهت المشاركة» **بلا خريطة** (آخر موقع لا يبقى معروضاً) وتكفّ عن القراءة. أي رفض من الخادم (404/403/400…) ينهيها فوراً؛ تعثّر الخادم (5xx/429) أو ردّ غير مفهوم يُعاد ثلاث مرات متتالية ثم تعرض «تعذّر تحميل الموقع» وتكفّ (انقطاع الشبكة وحده يُعاد بعده الطلب كل 10 ثوانٍ). الإيقاف من البطاقة يحرس `mounted` بعد ردّ الخادم فلا يلمس متحكّمات أُتلفت إن غادر المستخدم المحادثة أثناء الطلب.
 - **اتجاهات الموعد**: بطاقة `/meet` تعرض «الاتجاهات» (`card-meet-directions`) حين تُعرف الإحداثيات من حمولة الرمز (`lat/lng`) أو من الدائرة المحلولة (`GET /biz/:id` → `lat/lng`، مع ذاكرة مؤقتة)؛ بلا موقع لا زر.
 
 ### ورقة المشاركة والمتحكّم (`lib/pages/chat/live_share.dart`)
 
-`showLiveShareSheet(context, ref, peerId)` (حارس الزائر `requireAccount`): رقائق 15 دقيقة / ساعة / 8 ساعات (`live-min-<m>`)، ملاحظة الخصوصية «سيرى الطرف الآخر موقعك لمدة … ثم يتوقف تلقائياً» (`live-privacy-note`)، زر «ابدأ المشاركة» (`live-start`) يطلب `DeviceLocation.current()` أولاً (رفض → سطر خطأ `live-error` وزر «افتح الإعدادات» عند الرفض الدائم)، ثم `LiveShareController.of(peerId).start(api, minutes, loc)`: `POST /chat/live` → `sendMessage(peerId, "/live <id>")` → دفعة أولى → مؤقّت كل 10 ثوانٍ يقرأ موقع الجهاز ويدفعه. المتحكّم واحد لكل طرف (singleton) فلا تتكرر المؤقّتات عند الخروج من المحادثة والعودة؛ `stop()` يلغي المؤقّت ويرسل DELETE؛ 409/404 من الخادم توقفه وحدها؛ `LiveShareController.stopSession(api, id)` تستعملها البطاقة من أي شاشة؛ `resetForTests()`. عند جلسة نشطة تعرض الورقة «تشارك موقعك الآن حتى HH:MM» وزر «إيقاف المشاركة» (`live-stop`).
+`showLiveShareSheet(context, ref, peerId)` (حارس الزائر `requireAccount`): رقائق 15 دقيقة / ساعة / 8 ساعات (`live-min-<m>`)، ملاحظة الخصوصية «سيرى الطرف الآخر موقعك لمدة … ثم يتوقف تلقائياً» (`live-privacy-note`)، زر «ابدأ المشاركة» (`live-start`) يطلب `DeviceLocation.current()` أولاً (رفض → سطر خطأ `live-error` وزر «افتح الإعدادات» عند الرفض الدائم)، ثم `LiveShareController.of(peerId).start(api, minutes, loc)`: `POST /chat/live` → `sendMessage(peerId, "/live <id>")` → دفعة أولى → مؤقّت كل 10 ثوانٍ يقرأ موقع الجهاز ويدفعه. المتحكّم واحد لكل طرف (singleton) فلا تتكرر المؤقّتات عند الخروج من المحادثة والعودة. لا يصير «نشطاً» إلا بعد وصول رسالة `/live`: إن فشل إرسالها (شبكة، رفض النواة) يُرسل DELETE فوراً ويُعاد الخطأ فتعرضه الورقة (سطر `live-error` يظهر في الحالتين) وتبقى مفتوحة للمحاولة. `stop()` يلغي المؤقّت ويرسل DELETE؛ 409/404 من الخادم توقفه وحدها، وكذلك 401/403 (خروج من الحساب أو فقدان الصلاحية) بلا DELETE فلا يبقى يقرأ GPS ويدفع حتى `until`. `LiveShareController.stopSession(api, id)` تستعملها البطاقة من أي شاشة؛ `LiveShareController.stopAll()` يوقف كل المشاركات مع كل الأطراف؛ `resetForTests()`. عند جلسة نشطة تعرض الورقة «تشارك موقعك الآن حتى HH:MM» وزر «إيقاف المشاركة» (`live-stop`).
 
-**ما يربطه الدامج**: بند «موقعي المباشر» في قائمة «+» بصفحة المحادثة يستدعي `showLiveShareSheet(context, ref, widget.peer.id)`.
+**ما يربطه الدامج**: بند «موقعي المباشر» في قائمة «+» بصفحة المحادثة يستدعي `showLiveShareSheet(context, ref, widget.peer.id)`؛ وعند تسجيل الخروج `await LiveShareController.stopAll()` **قبل** مسح رمز الجلسة (حتى يُغلق الخادم الجلسات أيضاً؛ بعده تُغلق عند `until` على أي حال).
 
 ### الردود المقترحة (`lib/pages/chat/widgets/suggestion_chips.dart`)
 
@@ -69,9 +72,9 @@ chat_live(id UUID PK, from_id TEXT, to_id TEXT, lat DOUBLE PRECISION, lng DOUBLE
 
 ## الخادم الوهمي
 
-`tools/dev/mockapi.mjs` كتلة `chat live + suggest (stream B)`: جلسة من sara نشطة ساعة بموقع يتحرك وحده قرب الكورنيش ورسالة `/live …` في محادثتها، ومسارات البدء/الدفع/القراءة/الإيقاف في الذاكرة، واقتراحات بقواعد مبسّطة.
+`tools/dev/mockapi.mjs` كتلة `chat live + suggest (stream B)`: جلسة من sara نشطة ساعة بموقع يتحرك وحده قرب الكورنيش ورسالة `/live …` في محادثتها، ومسارات البدء/الدفع/القراءة/الإيقاف في الذاكرة (كالخادم: بلا موقع بعد الانتهاء، ومعرّف UUID صارم)، واقتراحات بقواعد مبسّطة.
 
 ## الاختبارات
 
-- الخادم: `NASLIFE_TEST_DB=naslife_test_chatlive server/test/run.sh harness_chat_live.mjs` (112 فحصاً): القواعد والتحليل وحدهما، الدورة كاملة، الطرفان فقط، أخطاء التحقق، جلسة واحدة لكل زوج، الانقضاء والكنس (اليدوي والدوري)، الاقتراحات بلا مفتاح، بنموذج وهمي (مصفوفة، قصيرة تُكمَّل، كلام فارغ، استثناء، قصّ الطويل)، لا معرّفات في الطلب، وحدّ المعدّل لكل مستخدم.
-- التطبيق: `flutter test test/chat_live_test.dart`: تحليل `/live`، بطاقة المستقبِل (خريطة، عدّ تنازلي، اتجاهات عبر `LegalLinks.openOverride`، قراءة كل 10 ثوانٍ والتوقف بعد `active:false`)، بطاقة المُشارِك وإيقافها، ورقة المشاركة (الرقائق والملاحظة، إنشاء الجلسة، إرسال `/live`، الدفع كل 10 ثوانٍ بـ `DeviceLocation.override`، الإيقاف)، رفض الموقع، رقائق الاقتراح (المهلة، الإدراج، الإخفاء حين آخر رسالة لي، الأدوار في الطلب)، «رد خاص»، واتجاهات الموعد.
+- الخادم: `NASLIFE_TEST_DB=naslife_test_chatlive server/test/run.sh harness_chat_live.mjs` (149 فحصاً): القواعد والتحليل وحدهما، الدورة كاملة، الطرفان فقط، أخطاء التحقق، معرّفات مشوّهة تمرّ على الشكل العام (36 حرفاً من `[0-9a-f-]`) → 404 لا 500، جلسة واحدة لكل زوج، مسح الموقع (في الرد والصف) بعد DELETE وبعد بدء جلسة جديدة للزوج وبعد الانقضاء (عند القراءة وبالكنس اليدوي والدوري) ومن صف منتهٍ تركته نسخة سابقة، الاقتراحات بلا مفتاح، بنموذج وهمي (مصفوفة، قصيرة تُكمَّل، كلام فارغ، استثناء، قصّ الطويل)، لا معرّفات في الطلب، وحدّ المعدّل.
+- التطبيق: `flutter test test/chat_live_test.dart`: تحليل `/live` (ورفض المعرّفات المشوّهة)، بطاقة المستقبِل (خريطة، عدّ تنازلي، اتجاهات عبر `LegalLinks.openOverride`، قراءة كل 10 ثوانٍ والتوقف بعد `active:false` بلا خريطة)، كفّ القراءة بعد ثلاث إخفاقات 500 وفوراً عند 400، بطاقة المُشارِك وإيقافها، الخروج من المحادثة أثناء الإيقاف بلا استثناء، ورقة المشاركة (الرقائق والملاحظة، إنشاء الجلسة، إرسال `/live`، الدفع كل 10 ثوانٍ بـ `DeviceLocation.override`، الإيقاف)، التراجع عن الجلسة حين تفشل رسالة `/live`، توقف الدفع وقراءة GPS عند 401، `stopAll`، رفض الموقع، رقائق الاقتراح (المهلة، الإدراج، الإخفاء حين آخر رسالة لي، الأدوار في الطلب)، «رد خاص»، واتجاهات الموعد.

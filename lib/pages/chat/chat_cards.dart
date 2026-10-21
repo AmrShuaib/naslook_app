@@ -952,7 +952,8 @@ class _MeetDirectionsState extends ConsumerState<_MeetDirections> {
 
 /// بطاقة «/live &lt;id&gt;»: خريطة مصغّرة (بلاطات الخادم نفسها) بنقطة نابضة على آخر موقع، «يتحرك الآن · آخر تحديث قبل N ث»،
 /// عدّ تنازلي «حتى HH:MM»، زر «الاتجاهات»، ولصاحبها «إيقاف المشاركة». تقرأ GET /chat/live/:id كل عشر ثوانٍ ما دامت
-/// معروضة والجلسة نشطة، ثم تعرض «انتهت المشاركة».
+/// معروضة والجلسة نشطة، ثم تعرض «انتهت المشاركة» بلا خريطة (آخر موقع لا يبقى معروضاً بعد الانتهاء). تكفّ عن القراءة عند أي
+/// رفض (404/403/400…) وبعد ثلاث محاولات متتالية فاشلة (5xx/429 أو ردّ غير مفهوم) تعرض «تعذّر تحميل الموقع».
 class LiveLocationCard extends ConsumerStatefulWidget {
   final String id;
   final bool mine;
@@ -966,7 +967,10 @@ class LiveLocationCard extends ConsumerStatefulWidget {
 
 class _LiveLocationCardState extends ConsumerState<LiveLocationCard> with SingleTickerProviderStateMixin {
   LiveSession? _s;
-  bool _loaded = false, _gone = false, _stopping = false;
+  bool _loaded = false, _gone = false, _failed = false, _stopping = false;
+  /// إخفاقات متتالية غير الشبكة (5xx/429/ردّ غير مفهوم)؛ عند [_maxFails] نكفّ عن القراءة
+  int _fails = 0;
+  static const _maxFails = 3;
   Timer? _poll, _clock;
   final _map = MapController();
   bool _mapReady = false;
@@ -994,14 +998,20 @@ class _LiveLocationCardState extends ConsumerState<LiveLocationCard> with Single
     try {
       final s = await ref.read(apiClientProvider).liveGet(widget.id);
       if (!mounted) return;
+      _fails = 0;
       final moved = s.hasPosition && (s.lat != _s?.lat || s.lng != _s?.lng);
       setState(() { _s = s; _loaded = true; });
-      if (moved && _mapReady) _map.move(LatLng(s.lat!, s.lng!), 15);
+      if (moved && _mapReady && _active) _map.move(LatLng(s.lat!, s.lng!), 15);
       if (_active) { if (!_pulse.isAnimating) _pulse.repeat(); } else { _pulse.stop(); _stopPolling(); }
-    } on ApiException catch (e) {
+    } catch (e) {
       if (!mounted) return;
-      if (e.statusCode == 404 || e.statusCode == 403) { setState(() { _gone = true; _loaded = true; }); _pulse.stop(); _stopPolling(); }
-    } catch (_) { /* شبكة: المحاولة التالية بعد عشر ثوانٍ */ }
+      if (e is ApiException && e.isNetwork) return; // بلا شبكة: القراءة التالية بعد عشر ثوانٍ
+      // رفض نهائي (404/403/400…) = لا جلسة؛ تعثّر الخادم (5xx/429) أو ردّ غير مفهوم: ثلاث محاولات متتالية ثم نكفّ عن القراءة
+      final rejected = e is ApiException && e.statusCode < 500 && e.statusCode != 429;
+      if (!rejected && ++_fails < _maxFails) return;
+      setState(() { _gone = true; _loaded = true; _failed = !rejected; });
+      _pulse.stop(); _stopPolling();
+    }
   }
 
   void _stopPolling() { _poll?.cancel(); _poll = null; _clock?.cancel(); _clock = null; }
@@ -1011,9 +1021,11 @@ class _LiveLocationCardState extends ConsumerState<LiveLocationCard> with Single
     setState(() => _stopping = true);
     try {
       await LiveShareController.stopSession(ref.read(apiClientProvider), s.id);
-      if (mounted) setState(() { _s = s.copyWith(active: false); _stopping = false; });
+      if (!mounted) return; // غادر المحادثة قبل ردّ الخادم: المتحكّمات أُتلفت في dispose
+      setState(() { _s = s.copyWith(active: false); _stopping = false; });
       _pulse.stop(); _stopPolling();
-    } catch (e) {
+    } on Exception {
+      // فشل الطلب فقط (شبكة/خادم)؛ أخطاء البرمجة لا تُبتلع
       if (mounted) { setState(() => _stopping = false); toast(context, 'تعذّر الإيقاف الآن', error: true); }
     }
   }
@@ -1032,7 +1044,7 @@ class _LiveLocationCardState extends ConsumerState<LiveLocationCard> with Single
     final base = ref.read(apiClientProvider).baseUrl;
     final title = widget.mine ? 'موقعي المباشر' : 'موقع ${widget.peerName} المباشر';
     final status = _gone
-        ? 'انتهت المشاركة'
+        ? (_failed ? 'تعذّر تحميل الموقع' : 'انتهت المشاركة')
         : s == null
             ? (_loaded ? 'انتهت المشاركة' : 'جارٍ التحميل…')
             : !active
@@ -1046,26 +1058,24 @@ class _LiveLocationCardState extends ConsumerState<LiveLocationCard> with Single
       constraints: const BoxConstraints(minWidth: 220, maxWidth: 300),
       decoration: BoxDecoration(color: Joy.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: Joy.line)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        if (s != null && s.hasPosition)
+        // الخريطة ما دامت الجلسة نشطة فقط: بعد الانتهاء لا يُعرض آخر موقع (والخادم لا يعيده أصلاً)
+        if (s != null && active && s.hasPosition)
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
             child: SizedBox(
               width: 260, height: 130,
-              child: Stack(children: [
-                FlutterMap(
-                  mapController: _map,
-                  options: MapOptions(
-                    initialCenter: LatLng(s.lat!, s.lng!), initialZoom: 15,
-                    interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
-                    onMapReady: () => _mapReady = true,
-                  ),
-                  children: [
-                    TileLayer(urlTemplate: '$base/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
-                    MarkerLayer(markers: [Marker(point: LatLng(s.lat!, s.lng!), width: 44, height: 44, child: _PulseDot(pulse: _pulse, active: active))]),
-                  ],
+              child: FlutterMap(
+                mapController: _map,
+                options: MapOptions(
+                  initialCenter: LatLng(s.lat!, s.lng!), initialZoom: 15,
+                  interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
+                  onMapReady: () => _mapReady = true,
                 ),
-                if (!active) Positioned.fill(child: IgnorePointer(child: Container(color: Colors.white.withValues(alpha: .45)))),
-              ]),
+                children: [
+                  TileLayer(urlTemplate: '$base/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
+                  MarkerLayer(markers: [Marker(point: LatLng(s.lat!, s.lng!), width: 44, height: 44, child: _PulseDot(pulse: _pulse))]),
+                ],
+              ),
             ),
           )
         else
@@ -1073,7 +1083,7 @@ class _LiveLocationCardState extends ConsumerState<LiveLocationCard> with Single
             width: 260, height: 70, alignment: Alignment.center,
             decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(10)),
             child: _gone || (s != null && !active) || (_loaded && s == null)
-                ? const Icon(Icons.location_off_outlined, color: Joy.textMuted)
+                ? Icon(_failed ? Icons.cloud_off_outlined : Icons.location_off_outlined, color: Joy.textMuted)
                 : const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
           ),
         const SizedBox(height: 8),
@@ -1120,19 +1130,18 @@ class _LiveLocationCardState extends ConsumerState<LiveLocationCard> with Single
   }
 }
 
-/// نقطة نابضة على آخر موقع: قرص ثابت وهالة تتمدّد وتتلاشى ما دامت الجلسة نشطة.
+/// نقطة نابضة على آخر موقع: قرص ثابت وهالة تتمدّد وتتلاشى (تُرسم ما دامت الجلسة نشطة فقط).
 class _PulseDot extends StatelessWidget {
   final Animation<double> pulse;
-  final bool active;
-  const _PulseDot({required this.pulse, required this.active});
+  const _PulseDot({required this.pulse});
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
         animation: pulse,
         builder: (_, __) {
-          final t = active ? pulse.value : 0.0;
+          final t = pulse.value;
           return Stack(alignment: Alignment.center, children: [
-            if (active) Container(width: 14 + 30 * t, height: 14 + 30 * t, decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.primary.withValues(alpha: (1 - t) * .35))),
-            Container(width: 16, height: 16, decoration: BoxDecoration(shape: BoxShape.circle, color: active ? Joy.primary : Joy.textMuted, border: Border.all(color: Colors.white, width: 3), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)])),
+            Container(width: 14 + 30 * t, height: 14 + 30 * t, decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.primary.withValues(alpha: (1 - t) * .35))),
+            Container(width: 16, height: 16, decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.primary, border: Border.all(color: Colors.white, width: 3), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)])),
           ]);
         },
       );

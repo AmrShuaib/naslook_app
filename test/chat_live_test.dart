@@ -1,6 +1,8 @@
 // ميزات المحادثة بنكهة ناس لايف (server/chat_live.js): بطاقة الموقع المباشر (خريطة، عدّ تنازلي، اتجاهات، قراءة كل عشر ثوانٍ
 // والتوقف بعد الانتهاء)، ورقة المشاركة (تنشئ الجلسة وترسل "/live <id>" وتدفع الموقع)، الردود المقترحة فوق الحقل،
-// «رد خاص» من عارض اللحظات، وزر «الاتجاهات» في بطاقة الموعد.
+// «رد خاص» من عارض اللحظات، وزر «الاتجاهات» في بطاقة الموعد. ومع إصلاحات المراجعة: لا خريطة بعد الانتهاء، كفّ القراءة بعد
+// إخفاقات الخادم، حارس dispose عند الإيقاف، التراجع عن الجلسة إن فشلت رسالة /live، وتوقف الدفع عند 401 وعبر stopAll.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -45,6 +47,14 @@ class _FakeServer {
   /// حالة GET /chat/live/:id كما يراها العميل؛ null = لا جلسة.
   Map<String, dynamic>? live;
   int liveGets = 0;
+  /// رمز خطأ يعيده GET /chat/live/:id بدل الجلسة (500 خادم متعثر، 400 معرّف مرفوض…).
+  int? liveGetError;
+  /// رمز خطأ يعيده PUT /chat/live/:id (401 بعد الخروج من الحساب).
+  int? pushError;
+  /// POST /messages يفشل بـ 500 (لاختبار التراجع عن الجلسة).
+  bool failSend = false;
+  /// DELETE /chat/live/:id ينتظر اكتماله قبل الرد (لمحاكاة الخروج من المحادثة أثناء الإيقاف).
+  Completer<void>? holdDelete;
   int counter = 0;
   List<String> suggestions = const ['كم السعر؟', 'فيه خصم؟', 'تمام، أبغى واحد'];
 
@@ -58,6 +68,7 @@ class _FakeServer {
     if (req.method == 'GET' && path == '/messages/SA0000002') return _json(messages);
     if (req.method == 'GET' && path.startsWith('/messages/')) return _json([]);
     if (req.method == 'POST' && path == '/messages') {
+      if (failSend) return _json({'error': 'send-failed'}, 500);
       final b = bodies[key]!.last;
       final m = {'id': 'srv-${++counter}', 'sender_id': 'SA0000001', 'type': 'text', 'content': b['content'], 'sent_at': DateTime.now().toUtc().toIso8601String()};
       messages.add(m);
@@ -74,11 +85,16 @@ class _FakeServer {
     if (lm != null) {
       if (req.method == 'GET') {
         liveGets++;
+        if (liveGetError != null) return _json({'error': 'boom'}, liveGetError!);
         final l = live;
         if (l == null || l['id'] != lm.group(1)) return _json({'error': 'not-found'}, 404);
         return _json(l);
       }
-      if (req.method == 'DELETE' && live != null) live!['active'] = false;
+      if (req.method == 'PUT' && pushError != null) return _json({'error': 'auth'}, pushError!);
+      if (req.method == 'DELETE') {
+        if (holdDelete != null) await holdDelete!.future;
+        if (live != null) live!['active'] = false;
+      }
       return _json({'ok': true});
     }
     if (req.method == 'POST' && path == '/chat/live') {
@@ -133,6 +149,22 @@ Future<void> _settle(WidgetTester tester, [int n = 4]) async {
 
 String _status(WidgetTester tester) => tester.widget<Text>(find.byKey(const Key('card-live-status'))).data ?? '';
 
+/// شاشة بزر يفتح ورقة المشاركة مع sara.
+Widget _sheetHost() => Scaffold(body: Consumer(builder: (context, ref, _) => Center(child: FilledButton(key: const Key('open'), onPressed: () => showLiveShareSheet(context, ref, 'SA0000002'), child: const Text('شارك')))));
+
+/// يفتح الورقة ويضغط «ابدأ المشاركة».
+Future<void> _openAndStart(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('open')));
+  await _settle(tester);
+  await tester.tap(find.byKey(const Key('live-start')));
+  await _settle(tester);
+}
+
+Map<String, dynamic> _liveJson({required String from, required String to}) => {
+      'id': _live, 'from': from, 'to': to, 'lat': 21.5, 'lng': 39.2, 'accuracy': null, 'at': DateTime.now().toUtc().toIso8601String(),
+      'until': DateTime.now().add(const Duration(hours: 1)).toUtc().toIso8601String(), 'active': true,
+    };
+
 void main() {
   group('/live code', () {
     test('parses only a uuid, keeps the id in liveId; other text is not a command', () {
@@ -143,6 +175,11 @@ void main() {
       expect(c?.kind.needsRequest, isFalse);
       expect(parseCommand('/live'), isNull);
       expect(parseCommand('/live abc'), isNull);
+      // 36 حرفاً من [0-9a-f-] لكن ليست UUID: نص عادي لا بطاقة (الخادم يرفضها أيضاً)
+      expect(parseCommand('/live ${'-' * 36}'), isNull);
+      expect(parseCommand('/live ${'0' * 36}'), isNull);
+      expect(parseCommand('/live ${_live.replaceFirst('-', '')}-'), isNull);
+      expect(parseCommand('/live ${_live.toUpperCase()}')?.liveId, _live, reason: 'الأحرف الكبيرة مقبولة وتُخزَّن صغيرة');
       expect(parseChatText('/live $_live').commandOnly, isTrue);
       expect(parseChatText('/live $_live').refKeys, isEmpty, reason: 'المعرّف ليس إشارة تُطلب من /chat/cards');
       expect(liveCode(_live), '/live $_live');
@@ -178,9 +215,61 @@ void main() {
     expect(_status(tester), 'انتهت المشاركة');
     expect(find.byKey(const Key('card-live-directions')), findsNothing);
     expect(find.byKey(const Key('card-live-until')), findsNothing);
+    expect(find.byType(FlutterMap), findsNothing, reason: 'آخر موقع لا يبقى معروضاً بعد الانتهاء ولو أعاده الخادم');
     await tester.pump(const Duration(seconds: 10));
     await tester.pump();
     expect(srv.liveGets, 3, reason: 'لا قراءة بعد الانتهاء');
+  });
+
+  testWidgets('live card: a failing server (500) is retried twice more then the card gives up and stops polling', (tester) async {
+    final srv = _FakeServer()
+      ..messages.add(_msg('m1', 'SA0000002', '/live $_live', const Duration(minutes: 1)))
+      ..liveGetError = 500;
+    await _pump(tester, srv, const ChatThreadPage(peer: Person(id: 'SA0000002', nickname: 'sara')));
+    expect(srv.liveGets, 1);
+    expect(_status(tester), 'جارٍ التحميل…');
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pump();
+    expect(srv.liveGets, 2);
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pump();
+    expect(srv.liveGets, 3);
+    expect(_status(tester), 'تعذّر تحميل الموقع');
+    expect(find.byType(FlutterMap), findsNothing);
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pump();
+    expect(srv.liveGets, 3, reason: 'لا قراءة بعد ثلاث إخفاقات متتالية');
+  });
+
+  testWidgets('live card: a 4xx other than 404/403 (e.g. a refused id) ends the card at once without retries', (tester) async {
+    final srv = _FakeServer()
+      ..messages.add(_msg('m1', 'SA0000002', '/live $_live', const Duration(minutes: 1)))
+      ..liveGetError = 400;
+    await _pump(tester, srv, const ChatThreadPage(peer: Person(id: 'SA0000002', nickname: 'sara')));
+    expect(srv.liveGets, 1);
+    expect(_status(tester), 'انتهت المشاركة');
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pump();
+    expect(srv.liveGets, 1, reason: 'رفض نهائي: لا إعادة');
+  });
+
+  testWidgets('live card: leaving the thread while «إيقاف المشاركة» is in flight touches no disposed controller', (tester) async {
+    final hold = Completer<void>();
+    final srv = _FakeServer()
+      ..messages.add(_msg('m1', 'SA0000001', '/live $_live', const Duration(minutes: 1)))
+      ..live = _liveJson(from: 'SA0000001', to: 'SA0000002')
+      ..holdDelete = hold;
+    addTearDown(LiveShareController.resetForTests);
+    await _pump(tester, srv, const ChatThreadPage(peer: Person(id: 'SA0000002', nickname: 'sara')));
+    await tester.tap(find.byKey(const Key('card-live-stop')));
+    await tester.pump();
+    expect(srv.calls, contains('DELETE /chat/live/$_live'));
+    // خرج من المحادثة قبل ردّ الخادم: البطاقة أُتلفت ومعها AnimationController
+    await tester.pumpWidget(const SizedBox());
+    hold.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('live card for the sharer: «إيقاف المشاركة» deletes the session and ends the card', (tester) async {
@@ -233,6 +322,63 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
     await _settle(tester, 2);
     expect(srv.bodies['PUT /chat/live/$_newLive']!.length, 2, reason: 'لا دفع بعد الإيقاف');
+  });
+
+  testWidgets('share sheet: when sending /live fails the session is closed again and the error is shown', (tester) async {
+    DeviceLocation.override = () async => const LatLng(21.5, 39.2);
+    addTearDown(() { DeviceLocation.override = null; LiveShareController.resetForTests(); });
+    final srv = _FakeServer()..failSend = true;
+    await _pump(tester, srv, _sheetHost());
+    await _openAndStart(tester);
+    expect(srv.calls, contains('POST /chat/live'));
+    expect(srv.calls, contains('DELETE /chat/live/$_newLive'), reason: 'التراجع: الجلسة تُغلق فور فشل الرسالة');
+    expect(srv.bodies['PUT /chat/live/$_newLive'], isNull, reason: 'لا دفع بلا رسالة');
+    expect(LiveShareController.activeFor('SA0000002'), isNull);
+    expect(find.byKey(const Key('live-error')), findsOneWidget);
+    expect(find.byKey(const Key('live-start')), findsOneWidget, reason: 'الورقة تبقى مفتوحة للمحاولة مجدداً');
+    expect(find.byKey(const Key('live-active-note')), findsNothing);
+    await tester.pump(const Duration(seconds: 10));
+    await _settle(tester, 2);
+    expect(srv.bodies['PUT /chat/live/$_newLive'], isNull, reason: 'لا مؤقّت يعمل');
+  });
+
+  testWidgets('controller: 401 on a push (signed out) stops pushing and reading GPS without a DELETE', (tester) async {
+    var locCalls = 0;
+    DeviceLocation.override = () async { locCalls++; return const LatLng(21.5, 39.2); };
+    addTearDown(() { DeviceLocation.override = null; LiveShareController.resetForTests(); });
+    final srv = _FakeServer();
+    await _pump(tester, srv, _sheetHost());
+    await _openAndStart(tester);
+    expect(LiveShareController.activeFor('SA0000002'), isNotNull);
+    expect(srv.bodies['PUT /chat/live/$_newLive']!.length, 1);
+    final locBefore = locCalls;
+    srv.pushError = 401;
+    await tester.pump(const Duration(seconds: 10));
+    await _settle(tester, 2);
+    expect(srv.bodies['PUT /chat/live/$_newLive']!.length, 2, reason: 'الدفعة التي رُفضت بـ 401');
+    expect(locCalls, locBefore + 1);
+    expect(LiveShareController.activeFor('SA0000002'), isNull, reason: '401 يوقف المتحكّم');
+    expect(srv.calls.where((c) => c == 'DELETE /chat/live/$_newLive'), isEmpty, reason: 'بلا جلسة صالحة لا يُرسل DELETE');
+    await tester.pump(const Duration(seconds: 10));
+    await _settle(tester, 2);
+    expect(srv.bodies['PUT /chat/live/$_newLive']!.length, 2, reason: 'لا دفع بعد 401');
+    expect(locCalls, locBefore + 1, reason: 'لا قراءة GPS بعد التوقف');
+  });
+
+  testWidgets('controller: stopAll (sign-out hook) sends DELETE for the open sharing and cancels its timer', (tester) async {
+    DeviceLocation.override = () async => const LatLng(21.5, 39.2);
+    addTearDown(() { DeviceLocation.override = null; LiveShareController.resetForTests(); });
+    final srv = _FakeServer();
+    await _pump(tester, srv, _sheetHost());
+    await _openAndStart(tester);
+    expect(LiveShareController.activeFor('SA0000002'), isNotNull);
+    await LiveShareController.stopAll();
+    await _settle(tester, 2);
+    expect(srv.calls, contains('DELETE /chat/live/$_newLive'));
+    expect(LiveShareController.activeFor('SA0000002'), isNull);
+    await tester.pump(const Duration(seconds: 10));
+    await _settle(tester, 2);
+    expect(srv.bodies['PUT /chat/live/$_newLive']!.length, 1, reason: 'لا دفع بعد stopAll');
   });
 
   testWidgets('share sheet: no location → error line, nothing created', (tester) async {

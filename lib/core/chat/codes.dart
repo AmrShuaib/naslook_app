@@ -68,6 +68,8 @@ const codeCommands = ['pay', 'send', 'split', 'meet', 'invite', 'where', 'loc', 
 
 final _slug = RegExp(r'^[a-z0-9][a-z0-9-]{1,63}$');
 final _uuid = RegExp(r'^[0-9a-f-]{36}$', caseSensitive: false);
+// معرّف جلسة الموقع المباشر: UUID صارم (8-4-4-4-12) كما يقبله الخادم؛ غيره نص عادي فلا تُرسم بطاقة تقرأ معرّفاً مشوّهاً
+final _liveId = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', caseSensitive: false);
 final _code = RegExp(r'^[A-Z0-9][A-Z0-9-]{4,40}$', caseSensitive: false);
 final _nick = RegExp(r'^[\p{L}\p{N}_.\-]{2,40}$', unicode: true);
 // إشارة: @ أو # غير مسبوقة بحرف لاتيني أو رقم أو رمز (فلا تُلتقط عناوين البريد ولا أجزاء الروابط)، ويجوز أن يسبقها حرف عربي
@@ -179,7 +181,7 @@ ChatCode? parseCommand(String text) {
       return ChatCode(CodeKind.loc, line.trimRight(), lat: lat, lng: lng, note: words.skip(1).join(' '), start: offset, end: end);
     case 'live':
       // يرسله التطبيق وحده بعد إنشاء الجلسة (ورقة «موقعي المباشر»)؛ المعرّف في note حتى لا يُطلب من /chat/cards كإشارة
-      if (words.isEmpty || !_uuid.hasMatch(words.first)) return null;
+      if (words.isEmpty || !_liveId.hasMatch(words.first)) return null;
       return ChatCode(CodeKind.live, line.trimRight(), note: words.first.toLowerCase(), start: offset, end: end);
     default:
       return null;

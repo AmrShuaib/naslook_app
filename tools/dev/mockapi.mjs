@@ -1051,9 +1051,10 @@ http.createServer((req, res) => {
       L.sessions[id] = { id, from: 'SA0000002', to: me.id, lat: 21.5433, lng: 39.1728, accuracy: 15, at: new Date().toISOString(), until: new Date(Date.now() + 3600000).toISOString(), stopped: false, drift: true };
       routes['GET /messages/SA0000002'].push({ id: 'm-live', sender_id: 'SA0000002', type: 'text', content: '/live ' + id, sent_at: ago(2), delivered_at: now, read_at: null });
     }
-    const outL = (s) => { if (s.drift && !s.stopped) { s.lat += (Math.random() - .5) * .0006; s.lng += (Math.random() - .5) * .0006; s.at = new Date().toISOString(); } return { id: s.id, from: s.from, to: s.to, lat: s.lat, lng: s.lng, accuracy: s.accuracy, at: s.at, until: s.until, active: !s.stopped && new Date(s.until) > new Date() }; };
+    // كالخادم: الموقع يُرى ما دامت الجلسة نشطة فقط
+    const outL = (s) => { const active = !s.stopped && new Date(s.until) > new Date(); if (s.drift && active) { s.lat += (Math.random() - .5) * .0006; s.lng += (Math.random() - .5) * .0006; s.at = new Date().toISOString(); } return { id: s.id, from: s.from, to: s.to, lat: active ? s.lat : null, lng: active ? s.lng : null, accuracy: active ? s.accuracy : null, at: active ? s.at : null, until: s.until, active }; };
     if (key === 'POST /chat/live') return lb((b) => { if (![15, 60, 480].includes(Number(b.minutes))) return lj(400, { error: 'bad-minutes', allowed: [15, 60, 480] }); for (const s of Object.values(L.sessions)) if (s.from === me.id && s.to === b.peerId) s.stopped = true; const id = 'b1b1b1b1-0000-4000-8000-' + String(Date.now()).slice(-12).padStart(12, '0'); L.sessions[id] = { id, from: me.id, to: b.peerId, lat: null, lng: null, accuracy: null, at: null, until: new Date(Date.now() + Number(b.minutes) * 60000).toISOString(), stopped: false, drift: false }; lj(200, outL(L.sessions[id])); });
-    const lm = url.pathname.match(/^\/chat\/live\/([0-9a-f-]{36})$/);
+    const lm = url.pathname.match(/^\/chat\/live\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
     if (lm) {
       const s = L.sessions[lm[1]];
       if (!s) return lj(404, { error: 'not-found' });

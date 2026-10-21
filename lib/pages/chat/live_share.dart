@@ -43,6 +43,12 @@ class LiveShareController extends ChangeNotifier {
     }
     await api.liveStop(id);
   }
+  /// يوقف كل المشاركات مع كل الأطراف: يستدعيه الدامج عند تسجيل الخروج (قبل مسح رمز الجلسة حتى يُغلق الخادم الجلسات أيضاً؛
+  /// بعده تبقى مفتوحة حتى `until` لكن الدفع وقراءة GPS يتوقفان هنا على أي حال).
+  static Future<void> stopAll({bool notifyServer = true}) async {
+    final open = _byPeer.values.where((c) => c.id != null).toList();
+    await Future.wait(open.map((c) => c.stop(notifyServer: notifyServer)));
+  }
   /// للاختبارات: يلغي كل المؤقّتات وينسى المتحكّمات.
   static void resetForTests() { for (final c in _byPeer.values) { c._timer?.cancel(); } _byPeer.clear(); }
 
@@ -55,15 +61,21 @@ class LiveShareController extends ChangeNotifier {
 
   bool get active => id != null && until != null && until!.isAfter(DateTime.now());
 
-  /// ينشئ الجلسة، يرسل رسالة `/live <id>`، يدفع الموقع الأول، ويبدأ المؤقّت.
+  /// ينشئ الجلسة، يرسل رسالة `/live <id>`، يدفع الموقع الأول، ويبدأ المؤقّت. لا يصير المتحكّم «نشطاً» إلا بعد وصول الرسالة:
+  /// إن فشل إرسالها تُغلق الجلسة فوراً (DELETE) ويُعاد الخطأ، فلا تبقى جلسة مفتوحة على الخادم بلا بطاقة عند الطرف الآخر.
   Future<LiveSession> start(ApiClient api, int minutes, LatLng first) async {
-    _timer?.cancel();
+    if (id != null) await stop();
     _api = api;
     final s = await api.liveStart(peerId, minutes);
+    try {
+      await api.sendMessage(peerId, liveCode(s.id));
+    } catch (_) {
+      try { await api.liveStop(s.id); } catch (_) { /* الخادم يغلقها عند until على أي حال */ }
+      rethrow;
+    }
     id = s.id; until = s.until;
-    await api.sendMessage(peerId, liveCode(s.id));
     await _push(first);
-    _timer = Timer.periodic(pushEvery, (_) => _tick());
+    if (active) _timer = Timer.periodic(pushEvery, (_) => _tick());
     notifyListeners();
     return s;
   }
@@ -85,8 +97,8 @@ class LiveShareController extends ChangeNotifier {
       await api.livePush(sid, p.latitude, p.longitude);
       pushes++;
     } on ApiException catch (e) {
-      // 409 انتهت أو أُوقفت من جهاز آخر، 404 حُذفت: نكفّ عن الدفع
-      if (e.statusCode == 409 || e.statusCode == 404) await stop(notifyServer: false);
+      // 409 انتهت أو أُوقفت من جهاز آخر، 404 حُذفت، 401/403 خرج من الحساب أو فُقدت الصلاحية: نكفّ عن الدفع وعن قراءة GPS
+      if (e.statusCode == 409 || e.statusCode == 404 || e.isUnauthorized) await stop(notifyServer: false);
     } catch (_) { /* شبكة: نحاول في الدفعة التالية */ }
   }
 
@@ -159,6 +171,14 @@ class _LiveShareSheetState extends State<_LiveShareSheet> {
   @override
   Widget build(BuildContext context) {
     final active = _ctl.active;
+    // سطر الخطأ يظهر في الحالتين (نشطة أو لا) حتى لا يضيع إن تغيّرت الحالة أثناء المحاولة
+    final errorLine = _error == null
+        ? null
+        : Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            const SizedBox(height: 10),
+            Text(_error!, key: const Key('live-error'), style: const TextStyle(color: Joy.danger, fontSize: 12.5)),
+            if (_deniedForever) TextButton.icon(onPressed: () => DeviceLocation.openSettings(), icon: const Icon(Icons.settings_outlined, size: 18), label: const Text('افتح الإعدادات')),
+          ]);
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.fromLTRB(20, 0, 20, 16 + MediaQuery.of(context).viewInsets.bottom),
@@ -181,6 +201,7 @@ class _LiveShareSheetState extends State<_LiveShareSheet> {
             ),
             const SizedBox(height: 12),
             SizedBox(width: double.infinity, child: OutlinedButton.icon(key: const Key('live-stop'), onPressed: () async { await _ctl.stop(); if (context.mounted) Navigator.pop(context); }, icon: const Icon(Icons.stop_circle_outlined, color: Joy.danger), label: const Text('إيقاف المشاركة', style: TextStyle(color: Joy.danger)))),
+            if (errorLine != null) errorLine,
           ] else ...[
             const Text('يظهر موقعك على خريطة صغيرة داخل المحادثة ويتحدّث كل عشر ثوانٍ ما دام التطبيق مفتوحاً.', style: TextStyle(color: Joy.textMuted, fontSize: 13, height: 1.5)),
             const SizedBox(height: 12),
@@ -198,11 +219,7 @@ class _LiveShareSheetState extends State<_LiveShareSheet> {
                 Expanded(child: Text('سيرى الطرف الآخر موقعك لمدة ${liveDurationLabel(_minutes)} ثم يتوقف تلقائياً. لا يراه غيره، ويمكنك إيقافه في أي وقت من البطاقة.', key: const Key('live-privacy-note'), style: const TextStyle(fontSize: 12.5, height: 1.5, color: Joy.text))),
               ]),
             ),
-            if (_error != null) ...[
-              const SizedBox(height: 10),
-              Text(_error!, key: const Key('live-error'), style: const TextStyle(color: Joy.danger, fontSize: 12.5)),
-              if (_deniedForever) TextButton.icon(onPressed: () => DeviceLocation.openSettings(), icon: const Icon(Icons.settings_outlined, size: 18), label: const Text('افتح الإعدادات')),
-            ],
+            if (errorLine != null) errorLine,
             const SizedBox(height: 14),
             SizedBox(
               width: double.infinity,
