@@ -9,7 +9,7 @@ const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', 
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
 await pool.query("INSERT INTO users(id,nickname,avatar_url) VALUES('SA0000001','amr','/files/amr.jpg'),('SA0000002','sara',NULL),('SA0000003','khalid',NULL) ON CONFLICT (id) DO UPDATE SET nickname=EXCLUDED.nickname");
 await pool.query("CREATE TABLE IF NOT EXISTS user_blocks (user_id TEXT NOT NULL, blocked_id TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY (user_id, blocked_id))");
-for (const sql of ['DELETE FROM user_blocks', 'DROP TABLE IF EXISTS chat_requests', 'DELETE FROM wallet_tx', 'DELETE FROM wallet_accounts', 'DELETE FROM app_notifications', 'DELETE FROM tickets', 'DELETE FROM ticket_tiers', 'DELETE FROM events', 'DELETE FROM market_listings', 'DELETE FROM map_posts', "DELETE FROM biz_orders", "DELETE FROM biz_community_posts WHERE biz_id='biz-brew92'"]) { try { await pool.query(sql); } catch { /* أول تشغيل */ } }
+for (const sql of ['DELETE FROM user_blocks', 'DROP TABLE IF EXISTS chat_requests', 'DELETE FROM wallet_tx', 'DELETE FROM wallet_accounts', 'DELETE FROM app_notifications', 'DELETE FROM tickets', 'DELETE FROM ticket_tiers', 'DELETE FROM events', 'DELETE FROM market_listings', 'DELETE FROM map_posts', "DELETE FROM biz_orders", "DELETE FROM biz_community_posts WHERE biz_id='biz-brew92'", "UPDATE biz SET owner_id=NULL WHERE id='biz-brew92'"]) { try { await pool.query(sql); } catch { /* أول تشغيل */ } }
 const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
 app.register((await import('../notify.js')).default, { pool, auth, pollMs: 3600000, opsDir: dir + 'ops' });
@@ -74,7 +74,9 @@ c = await cards([`#mk/${mk.id}`, `#post/${post.id}`]);
 check(c[`#mk/${mk.id}`]?.type === 'listing' && c[`#mk/${mk.id}`].title === 'آيفون 13' && c[`#mk/${mk.id}`].price === 180000 && c[`#mk/${mk.id}`].seller?.nickname === 'sara', '#mk/id → listing card', JSON.stringify(c[`#mk/${mk.id}`]));
 check(c[`#post/${post.id}`]?.type === 'post' && c[`#post/${post.id}`].title === 'الجوازات مزدحمة الآن' && /sara/.test(c[`#post/${post.id}`].subtitle), '#post/id → map post card', JSON.stringify(c[`#post/${post.id}`]));
 
-// طلب من دائرة
+// طلب من دائرة: الطلب المدفوع يحتاج دائرة لها مالك (409 no-owner وإلا)، فتُمنح برو 92 مالكاً غير المشتري بعد اكتمال البذر
+await call('GET', '/biz/biz-brew92', { user: 'SA0000002', expect: 200 });
+await pool.query("UPDATE biz SET owner_id='SA0000002' WHERE id='biz-brew92'");
 const ord = await call('POST', '/biz/biz-brew92/orders', { body: { itemId: 'brew92-v60', qty: 1 }, user: 'SA0000001', expect: 200 });
 c = await cards([`#o/${ord.code}`], 'SA0000002');
 check(c[`#o/${ord.code}`]?.type === 'order' && c[`#o/${ord.code}`].bizId === 'biz-brew92' && c[`#o/${ord.code}`].owner?.nickname === 'amr' && c[`#o/${ord.code}`].status === 'confirmed', '#o/code → order card', JSON.stringify(c[`#o/${ord.code}`]));
