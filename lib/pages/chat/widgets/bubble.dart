@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../api/chat_cards_api.dart';
+import '../../../api/chat_preview_api.dart';
 import '../../../api/client.dart' show mediaUrl, thumbUrl;
 import '../../../api/models.dart';
 import '../../../core/app_theme.dart';
@@ -11,6 +12,7 @@ import '../../../core/chat/codes.dart';
 import '../../../core/media/native_io.dart' show isNativeMobile;
 import '../../../core/media/video_view.dart';
 import '../../../ui/profile_avatar.dart';
+import 'link_preview_card.dart';
 import '../../../ui/reactions.dart';
 import '../../../ui/widgets.dart';
 import '../chat_cards.dart';
@@ -314,6 +316,8 @@ class _ChatBubbleState extends State<ChatBubble> {
         ),
       if (m.quote != null) QuoteBox(name: m.quote!.senderName.isNotEmpty ? m.quote!.senderName : widget.peer.nickname, text: m.quote!.preview, onDark: mine, onTap: widget.onQuoteTap),
       if (m.mediaKind == 'text' && !(widget.parsed?.commandOnly ?? false)) Text.rich(TextSpan(style: style, children: _rich(m.content, style))) else if (m.mediaKind != 'text') _media(m),
+      // أول رابط في النص يأخذ بطاقة معاينة (يجلبها الخادم ويخزّنها؛ تختفي إن تعذّرت)
+      if (m.mediaKind == 'text' && !hasCards && firstLinkIn(m.content) != null) Padding(padding: const EdgeInsets.only(top: 6), child: LinkPreviewCard(firstLinkIn(m.content)!, mine: mine)),
       for (final c in widget.parsed?.all ?? const <ChatCode>[])
         ChatCodeCard(
           code: c,

@@ -26,7 +26,7 @@ class Joy {
   /// الفقاعة الصادرة: صبغة فاتحة من لون العلامة (كما الأخضر الفاتح في واتساب)
   static const bubbleOut = Color(0xFFDCF3EF);
   static const bubbleOutText = Color(0xFF0F2D30);
-  /// فقاعات المحادثة (docs/chat-ui.md): الواردة بيضاء بإطار رفيع، والصادرة تدرّج رأسي من لون العلامة إلى فيروزي أغمق
+  /// فقاعات المحادثة (docs/chat.md): الواردة بيضاء بإطار رفيع، والصادرة تدرّج رأسي من لون العلامة إلى فيروزي أغمق
   static const bubbleIn = Color(0xFFFFFFFF);
   static const bubbleInBorder = Color(0xFFE2E6EA);
   static const bubbleOutGradientStart = Color(0xFF0A6E78);

@@ -47,11 +47,13 @@ import '../posts/post_viewer.dart';
 import '../profile/public_profile_page.dart';
 import '../wallet/wallet_page.dart';
 import 'chat_cards.dart';
+import 'live_share.dart';
 import 'widgets/audio_bubble.dart';
 import 'widgets/bubble.dart';
 import 'widgets/composer.dart';
 import 'widgets/jump_to_latest.dart';
 import 'widgets/reaction_bar.dart';
+import 'widgets/suggestion_chips.dart';
 import 'widgets/typing_indicator.dart';
 
 export 'widgets/audio_bubble.dart' show fmtDuration;
@@ -188,7 +190,9 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   }
 
   /// نقطة توسعة للمدمج: إجراءات إضافية في قائمة المرفقات (مثل «مشاركة موقعي الحي» عبر showLiveShareSheet).
-  List<AttachAction> get _extraAttachActions => const [];
+  List<AttachAction> get _extraAttachActions => [
+        AttachAction(key: const Key('attach-live'), icon: Icons.my_location_rounded, label: 'موقعي الحي', onTap: () => showLiveShareSheet(context, ref, _peerId)),
+      ];
 
   @override
   void initState() {
@@ -1467,8 +1471,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           onInsert: _replaceRange,
           onAction: (a) => _codeMenu(a == 'guide' ? 'guide' : a),
         ),
-        // فتحة شرائح الردود المقترحة (SuggestionChips) يمرّرها المدمج هنا
-        above: null,
+        // ردود مقترحة (ثلاث رقائق عربية) تظهر بعد رسالة من الطرف الآخر؛ اختيار رقاقة يضعها في الحقل
+        above: SuggestionChips(peerId: _peerId, messages: _messages, onPick: _insertText),
         replyName: _replyTo == null ? null : (_mine(_replyTo!) ? 'أنت' : widget.peer.nickname),
         replyText: _replyTo?.preview,
         onCancelReply: () => setState(() => _replyTo = null),
