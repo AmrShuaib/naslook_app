@@ -64,8 +64,8 @@ class MapPage extends ConsumerStatefulWidget {
 const double kRowFollowZoom = 15.5;
 
 /// حضور دائرة على الخريطة (حزمة تسجيل الدوائر الموثّقة): متنقلة بمنطقة خدمة (`presence: mobile` + `serviceArea`)،
-/// أو دبّوس مؤقت «هنا اليوم» (`here` حتى `until`). يُقرأ من JSON الخام لـ `/biz` هنا لا من نموذج [Biz] الذي تملكه
-/// حزمة التسجيل، حتى لا تتعارض الحزمتان؛ عند إضافة الحقول إلى [Biz] يُقرأ الحضور منه مباشرة ويُحذف هذا النموذج.
+/// أو دبّوس مؤقت «هنا اليوم» (`here` حتى `until`). يُشتق من نموذج [Biz] ([BizPresence.fromBiz])؛ [fromJson] يبقى
+/// للاختبارات ولقراءة صف خام عند الحاجة.
 class BizPresence {
   final String id;
   final bool mobile;
@@ -74,6 +74,15 @@ class BizPresence {
   const BizPresence({required this.id, this.mobile = false, this.area, this.here});
 
   static double? _d(Object? v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '');
+
+  /// من نموذج الدائرة: null حين لا حضور خاصاً (ثابتة بلا دبّوس مؤقت) فلا تُحفظ.
+  static BizPresence? fromBiz(Biz b) {
+    final sa = b.serviceArea, h = b.here;
+    final area = sa != null && sa.radiusKm > 0 ? (lat: sa.lat, lng: sa.lng, radiusKm: sa.radiusKm) : null;
+    final here = h != null ? (lat: h.lat, lng: h.lng, until: h.until) : null;
+    if (!b.isMobile && here == null) return null;
+    return BizPresence(id: b.id, mobile: b.isMobile, area: area, here: here);
+  }
 
   /// null حين لا حضور خاصاً (دائرة ثابتة بلا دبّوس مؤقت) فلا تُحفظ.
   static BizPresence? fromJson(Map m) {
@@ -104,26 +113,20 @@ class MapCircles {
   const MapCircles({this.circles = const [], this.presence = const {}});
   static const empty = MapCircles();
 
-  /// يحلّل صفوف `/biz` الخام مرة واحدة إلى القائمة والحضور معاً.
-  factory MapCircles.fromRows(List rows) {
-    final circles = <Biz>[];
+  /// القائمة والحضور معاً من نموذج الدائرة نفسه، فلا يصل أحدهما قبل الآخر.
+  factory MapCircles.fromBiz(List<Biz> list) {
     final presence = <String, BizPresence>{};
-    for (final r in rows) {
-      if (r is! Map) continue;
-      circles.add(Biz.fromJson(r));
-      final p = BizPresence.fromJson(r);
+    for (final b in list) {
+      final p = BizPresence.fromBiz(b);
       if (p != null) presence[p.id] = p;
     }
-    return MapCircles(circles: circles, presence: presence);
+    return MapCircles(circles: list, presence: presence);
   }
 }
 
-/// الدوائر ضمن حدود الخريطة الحالية: طلب `/biz` واحد لكل تغيير في الحدود تُشتق منه قائمة [Biz] والحضور معاً، فلا
-/// يصل أحدهما قبل الآخر (قائمة جديدة مع حضور قديم كانت تضع دبّوساً عند مركز المتنقلة لإطار قبل أن يحلّ القرص محلّه).
-/// الخريطة لا تقرأ `mapBizProvider` (في `biz_providers.dart`) الآن، فمن يدمج حزمة التسجيل يجعله مشتقاً من هذا المزوّد
-/// حتى يعود `invalidateBizAll` يحدّث الخريطة فور تعديل الدائرة من لوحتها.
-final mapCirclesProvider = FutureProvider<MapCircles>((ref) async =>
-    MapCircles.fromRows(await ref.watch(apiClientProvider).getList('/biz', query: {'bbox': ref.watch(bboxProvider).query})));
+/// الدوائر ضمن حدود الخريطة الحالية مشتقة من [mapBizProvider] (طلب `/biz` واحد لكل تغيير في الحدود) فتصل القائمة
+/// والحضور معاً، و`invalidateBizAll` من لوحة الدائرة يحدّث الخريطة فوراً.
+final mapCirclesProvider = FutureProvider<MapCircles>((ref) async => MapCircles.fromBiz(await ref.watch(mapBizProvider.future)));
 
 /// نص تلميح الدبّوس المؤقت: «هنا اليوم حتى 18:30» بالتوقيت المحلي.
 String hereUntilLabel(DateTime until) {
@@ -644,7 +647,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     ref.invalidate(mapPostsProvider);
     ref.invalidate(mapMarketProvider);
     ref.invalidate(hiringBizProvider);
-    ref.invalidate(mapCirclesProvider);
+    ref.invalidate(mapBizProvider);
     if (widget.home) ref.invalidate(rowProvider);
   }
 

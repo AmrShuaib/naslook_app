@@ -170,9 +170,9 @@ class _BizCard extends ConsumerWidget {
 /// اسم فئة الدائرة: من [BizCategory] إن عرفتها، وإلا أسماء فئات التسجيل الجديدة (متجر، خدمات، صالون، عيادة، ترفيه، أخرى).
 /// مكرّرة هنا مؤقتاً حتى تُضاف الفئات إلى biz_models.dart مع حزمة التسجيل؛ عندها يكفي `BizCategory.of(key).label`.
 String adminBizCategoryLabel(String key) {
+  // التعداد يعرف كل الفئات بما فيها الجديدة؛ المفتاح المجهول يُعرض كما هو بدل الوقوع على «براند»
   final c = BizCategory.of(key);
-  if (c.key == key) return c.label;
-  return const {'shop': 'متجر', 'services': 'خدمات وورش', 'salon': 'صالون وتجميل', 'clinic': 'عيادة', 'entertainment': 'ترفيه', 'other': 'أخرى'}[key] ?? key;
+  return c.key == key ? c.label : key;
 }
 
 /// فتح رابط خارجي من الإدارة (الاستعلام الرسمي): البديل الاختباري نفسه الذي تستخدمه صفحات الخصوصية والدعم.

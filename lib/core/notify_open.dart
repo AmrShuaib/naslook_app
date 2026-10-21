@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/notify_api.dart';
 import '../pages/admin/admin_shell.dart';
+import '../state/admin_providers.dart';
 import '../pages/business/business_page.dart';
 import '../pages/business/community_page.dart';
 import '../pages/business/my_bookings_page.dart';
@@ -32,6 +33,8 @@ Future<bool> openNotification(BuildContext context, WidgetRef ref, AppNotificati
       ref.invalidate(notificationsProvider);
     }).catchError((_) {});
   }
+  // طلب توثيق جديد: يُفتح قسم الدوائر على طابور التوثيق مباشرة
+  if (n.kind == 'biz_verification') ref.read(adminBizSegmentProvider.notifier).state = 'verifications';
   final page = notificationTarget(n);
   if (page == null || !context.mounted) return false;
   await Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
@@ -87,6 +90,9 @@ Widget? notificationTarget(AppNotification n) {
     case 'wallet_credit':
       return const WalletPage();
     case 'biz_claim':
+      return const AdminShell(standalone: false, initialSection: 3);
+    // طلب توثيق جديد: قسم الدوائر في الإدارة على طابور التوثيق (المقطع يُضبط عند الفتح في openNotification)
+    case 'biz_verification':
       return const AdminShell(standalone: false, initialSection: 3);
     case 'report_new':
       return const AdminShell(standalone: false, initialSection: 2);
