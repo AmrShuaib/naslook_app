@@ -1,17 +1,20 @@
 // البطاقات الذكية لرموز الاختصار في المحادثة: عرض بطاقة لكل رمز (شخص، دائرة، صنف، فعالية، عرض، منشور، مساحة، تذكرة، حجز،
 // طلب مبلغ، إرسال، تقسيم، موعد، موقع، دعوة)، والإكمال التلقائي فوق حقل الكتابة، وقائمة «+»، ومنتقيات التذاكر والحجوزات
-// والأمنيات، ودليل الرموز داخل التطبيق.
+// والأمنيات، ودليل الرموز داخل التطبيق. وبطاقة «الموقع المباشر» (/live) بخريطة مصغّرة تتحدّث كل عشر ثوانٍ.
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/biz_api.dart';
 import '../../api/biz_models.dart';
 import '../../api/chat_cards_api.dart';
+import '../../api/chat_live_api.dart';
 import '../../api/client.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
@@ -19,9 +22,11 @@ import '../../api/models.dart';
 import '../../api/wishlist_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
+import '../../core/share/legal_links.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../ui/widgets.dart';
+import 'live_share.dart';
 
 /// إجراء على بطاقة يُنفَّذ في صفحة المحادثة (open, chat, pay, accept, decline, cancel, counter, share-loc, directions, join, copy).
 typedef CodeAction = void Function(ChatCode code, String action);
@@ -101,6 +106,7 @@ class ChatCodeCard extends StatelessWidget {
       CodeKind.where => _whereCard(context),
       CodeKind.loc => _locCard(context),
       CodeKind.invite => _inviteCard(context),
+      CodeKind.live => LiveLocationCard(key: Key('card-live-${code.liveId}'), id: code.liveId, mine: mine, peerName: peerName),
       _ => const SizedBox.shrink(),
     };
   }
@@ -311,6 +317,8 @@ class ChatCodeCard extends StatelessWidget {
       ),
       _actions([
         if (card != null) _button('المكان', 'place', icon: Icons.place_outlined, primary: false),
+        // «الاتجاهات» حين يُعرف موقع المكان: من حمولة الرمز أو من الدائرة (GET /biz/:id)
+        _MeetDirections(code: code, card: card, busy: busy),
         if (s == 'pending' && !mine) _button('اقترح غيره', 'counter', primary: false, key: const Key('card-counter')),
         if (s == 'pending' && !mine) _button('أوافق', 'accept', icon: Icons.check_rounded, key: const Key('card-accept')),
         if (s == 'pending' && mine && request != null) _button('إلغاء', 'cancel', primary: false, key: const Key('card-cancel')),
@@ -873,5 +881,269 @@ class _Bullet extends StatelessWidget {
       );
 }
 
+/// يفتح رابطاً خارج التطبيق عبر الوسيلة نفسها في بقية التطبيق (LegalLinks.openOverride يلتقطه في الاختبارات).
+Future<void> openExternalUrl(Uri u) async {
+  final o = LegalLinks.openOverride;
+  if (o != null) return o(u);
+  await launchUrl(u, mode: LaunchMode.externalApplication);
+}
+
+Uri directionsUrl(double lat, double lng) => Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng');
+
 /// يفتح خرائط جوجل للاتجاهات إلى نقطة.
-Future<void> openDirections(double lat, double lng) => launchUrl(Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng'), mode: LaunchMode.externalApplication);
+Future<void> openDirections(double lat, double lng) => openExternalUrl(directionsUrl(lat, lng));
+
+// -----------------------------------------------------------------------------
+// زر الاتجاهات في بطاقة الموعد
+// -----------------------------------------------------------------------------
+
+/// «الاتجاهات» لبطاقة الموعد: الإحداثيات من حمولة الرمز إن وُجدت، وإلا من الدائرة المحلولة (GET /biz/:id)؛ يختفي حين لا موقع.
+class _MeetDirections extends ConsumerStatefulWidget {
+  final ChatCode code;
+  final ChatCard? card;
+  final bool busy;
+  const _MeetDirections({required this.code, this.card, this.busy = false});
+  @override
+  ConsumerState<_MeetDirections> createState() => _MeetDirectionsState();
+}
+
+class _MeetDirectionsState extends ConsumerState<_MeetDirections> {
+  static final _cache = <String, LatLng?>{};
+  LatLng? _point;
+
+  @override
+  void initState() { super.initState(); _resolve(); }
+  @override
+  void didUpdateWidget(_MeetDirections old) { super.didUpdateWidget(old); if (old.card?.id != widget.card?.id) _resolve(); }
+
+  Future<void> _resolve() async {
+    final c = widget.code;
+    if (c.lat != null && c.lng != null) { setState(() => _point = LatLng(c.lat!, c.lng!)); return; }
+    final card = widget.card;
+    if (card == null || card.type != 'biz') { if (_point != null) setState(() => _point = null); return; }
+    final id = card.bizId ?? card.id;
+    if (_cache.containsKey(id)) { setState(() => _point = _cache[id]); return; }
+    try {
+      final b = await ref.read(apiClientProvider).businessCircle(id);
+      final p = b.lat.abs() > 0.0001 || b.lng.abs() > 0.0001 ? LatLng(b.lat, b.lng) : null;
+      _cache[id] = p;
+      if (mounted) setState(() => _point = p);
+    } catch (_) {
+      // بلا موقع للدائرة: لا زر
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = _point;
+    if (p == null) return const SizedBox.shrink();
+    return OutlinedButton(
+      key: const Key('card-meet-directions'),
+      style: ButtonStyle(minimumSize: WidgetStateProperty.all(const Size(0, 36)), padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 14)), visualDensity: VisualDensity.compact),
+      onPressed: widget.busy ? null : () => openDirections(p.latitude, p.longitude),
+      child: const Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.directions_rounded, size: 16), SizedBox(width: 5), Text('الاتجاهات')]),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// بطاقة الموقع المباشر
+// -----------------------------------------------------------------------------
+
+/// بطاقة «/live &lt;id&gt;»: خريطة مصغّرة (بلاطات الخادم نفسها) بنقطة نابضة على آخر موقع، «يتحرك الآن · آخر تحديث قبل N ث»،
+/// عدّ تنازلي «حتى HH:MM»، زر «الاتجاهات»، ولصاحبها «إيقاف المشاركة». تقرأ GET /chat/live/:id كل عشر ثوانٍ ما دامت
+/// معروضة والجلسة نشطة، ثم تعرض «انتهت المشاركة» بلا خريطة (آخر موقع لا يبقى معروضاً بعد الانتهاء). تكفّ عن القراءة عند أي
+/// رفض (404/403/400…) وبعد ثلاث محاولات متتالية فاشلة (5xx/429 أو ردّ غير مفهوم) تعرض «تعذّر تحميل الموقع».
+class LiveLocationCard extends ConsumerStatefulWidget {
+  final String id;
+  final bool mine;
+  final String peerName;
+  /// فاصل القراءة (ثابت؛ الاختبارات تحرّك الزمن الوهمي).
+  static const pollEvery = Duration(seconds: 10);
+  const LiveLocationCard({super.key, required this.id, required this.mine, required this.peerName});
+  @override
+  ConsumerState<LiveLocationCard> createState() => _LiveLocationCardState();
+}
+
+class _LiveLocationCardState extends ConsumerState<LiveLocationCard> with SingleTickerProviderStateMixin {
+  LiveSession? _s;
+  bool _loaded = false, _gone = false, _failed = false, _stopping = false;
+  /// إخفاقات متتالية غير الشبكة (5xx/429/ردّ غير مفهوم)؛ عند [_maxFails] نكفّ عن القراءة
+  int _fails = 0;
+  static const _maxFails = 3;
+  Timer? _poll, _clock;
+  final _map = MapController();
+  bool _mapReady = false;
+  late final AnimationController _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400));
+
+  bool get _active => _s?.active == true && !(_s?.expired ?? true);
+
+  @override
+  void initState() {
+    super.initState();
+    _fetch();
+    _poll = Timer.periodic(LiveLocationCard.pollEvery, (_) => _fetch());
+    // «قبل N ث» يتحدّث كل ثانية ما دامت الجلسة نشطة
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted && _active && _s?.at != null) setState(() {}); });
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel(); _clock?.cancel(); _pulse.dispose(); _map.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetch() async {
+    if (!mounted || _gone || (_loaded && !_active)) { _stopPolling(); return; }
+    try {
+      final s = await ref.read(apiClientProvider).liveGet(widget.id);
+      if (!mounted) return;
+      _fails = 0;
+      final moved = s.hasPosition && (s.lat != _s?.lat || s.lng != _s?.lng);
+      setState(() { _s = s; _loaded = true; });
+      if (moved && _mapReady && _active) _map.move(LatLng(s.lat!, s.lng!), 15);
+      if (_active) { if (!_pulse.isAnimating) _pulse.repeat(); } else { _pulse.stop(); _stopPolling(); }
+    } catch (e) {
+      if (!mounted) return;
+      if (e is ApiException && e.isNetwork) return; // بلا شبكة: القراءة التالية بعد عشر ثوانٍ
+      // رفض نهائي (404/403/400…) = لا جلسة؛ تعثّر الخادم (5xx/429) أو ردّ غير مفهوم: ثلاث محاولات متتالية ثم نكفّ عن القراءة
+      final rejected = e is ApiException && e.statusCode < 500 && e.statusCode != 429;
+      if (!rejected && ++_fails < _maxFails) return;
+      setState(() { _gone = true; _loaded = true; _failed = !rejected; });
+      _pulse.stop(); _stopPolling();
+    }
+  }
+
+  void _stopPolling() { _poll?.cancel(); _poll = null; _clock?.cancel(); _clock = null; }
+
+  Future<void> _stop() async {
+    final s = _s; if (s == null) return;
+    setState(() => _stopping = true);
+    try {
+      await LiveShareController.stopSession(ref.read(apiClientProvider), s.id);
+      if (!mounted) return; // غادر المحادثة قبل ردّ الخادم: المتحكّمات أُتلفت في dispose
+      setState(() { _s = s.copyWith(active: false); _stopping = false; });
+      _pulse.stop(); _stopPolling();
+    } on Exception {
+      // فشل الطلب فقط (شبكة/خادم)؛ أخطاء البرمجة لا تُبتلع
+      if (mounted) { setState(() => _stopping = false); toast(context, 'تعذّر الإيقاف الآن', error: true); }
+    }
+  }
+
+  String _ago(DateTime at) {
+    final d = DateTime.now().difference(at);
+    if (d.inSeconds < 60) return 'قبل ${math.max(0, d.inSeconds)} ث';
+    if (d.inMinutes < 60) return 'قبل ${d.inMinutes} د';
+    return 'قبل ${d.inHours} س';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = _s;
+    final active = _active;
+    final base = ref.read(apiClientProvider).baseUrl;
+    final title = widget.mine ? 'موقعي المباشر' : 'موقع ${widget.peerName} المباشر';
+    final status = _gone
+        ? (_failed ? 'تعذّر تحميل الموقع' : 'انتهت المشاركة')
+        : s == null
+            ? (_loaded ? 'انتهت المشاركة' : 'جارٍ التحميل…')
+            : !active
+                ? 'انتهت المشاركة'
+                : s.at == null
+                    ? 'بانتظار أول موقع…'
+                    : 'يتحرك الآن · آخر تحديث ${_ago(s.at!)}';
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.all(10),
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 300),
+      decoration: BoxDecoration(color: Joy.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: Joy.line)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        // الخريطة ما دامت الجلسة نشطة فقط: بعد الانتهاء لا يُعرض آخر موقع (والخادم لا يعيده أصلاً)
+        if (s != null && active && s.hasPosition)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: SizedBox(
+              width: 260, height: 130,
+              child: FlutterMap(
+                mapController: _map,
+                options: MapOptions(
+                  initialCenter: LatLng(s.lat!, s.lng!), initialZoom: 15,
+                  interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
+                  onMapReady: () => _mapReady = true,
+                ),
+                children: [
+                  TileLayer(urlTemplate: '$base/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
+                  MarkerLayer(markers: [Marker(point: LatLng(s.lat!, s.lng!), width: 44, height: 44, child: _PulseDot(pulse: _pulse))]),
+                ],
+              ),
+            ),
+          )
+        else
+          Container(
+            width: 260, height: 70, alignment: Alignment.center,
+            decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(10)),
+            child: _gone || (s != null && !active) || (_loaded && s == null)
+                ? Icon(_failed ? Icons.cloud_off_outlined : Icons.location_off_outlined, color: Joy.textMuted)
+                : const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+          ),
+        const SizedBox(height: 8),
+        Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          Container(
+            width: 40, height: 40, alignment: Alignment.center,
+            decoration: BoxDecoration(color: (active ? Joy.success : Joy.textMuted).withValues(alpha: .12), borderRadius: BorderRadius.circular(12)),
+            child: Icon(active ? Icons.share_location_rounded : Icons.location_off_outlined, color: active ? Joy.success : Joy.textMuted, size: 22),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5, color: Joy.text)),
+              Text(status, key: const Key('card-live-status'), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: active ? Joy.success : Joy.textMuted, fontSize: 12.5, fontWeight: active ? FontWeight.w600 : FontWeight.w400)),
+            ]),
+          ),
+          if (s != null && active) ...[
+            const SizedBox(width: 8),
+            _Chip('حتى ${clockOf(s.until)}', key: const Key('card-live-until'), icon: Icons.timer_outlined),
+          ],
+        ]),
+        if (s != null && (active || widget.mine))
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Wrap(spacing: 8, runSpacing: 6, alignment: WrapAlignment.end, children: [
+              if (widget.mine && active)
+                OutlinedButton.icon(
+                  key: const Key('card-live-stop'),
+                  style: ButtonStyle(minimumSize: WidgetStateProperty.all(const Size(0, 36)), padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 14)), visualDensity: VisualDensity.compact, foregroundColor: WidgetStateProperty.all(Joy.danger)),
+                  onPressed: _stopping ? null : _stop,
+                  icon: const Icon(Icons.stop_circle_outlined, size: 16), label: const Text('إيقاف المشاركة'),
+                ),
+              if (active && s.hasPosition)
+                FilledButton.icon(
+                  key: const Key('card-live-directions'),
+                  style: ButtonStyle(minimumSize: WidgetStateProperty.all(const Size(0, 36)), padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 14)), visualDensity: VisualDensity.compact),
+                  onPressed: () => openDirections(s.lat!, s.lng!),
+                  icon: const Icon(Icons.directions_rounded, size: 16), label: const Text('الاتجاهات'),
+                ),
+            ]),
+          ),
+      ]),
+    );
+  }
+}
+
+/// نقطة نابضة على آخر موقع: قرص ثابت وهالة تتمدّد وتتلاشى (تُرسم ما دامت الجلسة نشطة فقط).
+class _PulseDot extends StatelessWidget {
+  final Animation<double> pulse;
+  const _PulseDot({required this.pulse});
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: pulse,
+        builder: (_, __) {
+          final t = pulse.value;
+          return Stack(alignment: Alignment.center, children: [
+            Container(width: 14 + 30 * t, height: 14 + 30 * t, decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.primary.withValues(alpha: (1 - t) * .35))),
+            Container(width: 16, height: 16, decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.primary, border: Border.all(color: Colors.white, width: 3), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)])),
+          ]);
+        },
+      );
+}
+
