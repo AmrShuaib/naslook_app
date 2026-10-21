@@ -994,6 +994,70 @@ http.createServer((req, res) => {
   if (url.pathname === '/row' || url.pathname === '/row/status') { if (rowRoute(req, res, url, key)) return; } // ---- الصف
   if (url.pathname === '/live/wait' || url.pathname === '/live/status') { if (liveRoute(req, res, url, key)) return; } // ---- القناة الحية
   if (url.pathname.startsWith('/hotel/') || url.pathname.startsWith('/adminapi/hotels') || /^\/biz\/[^/]+\/hotel(\/|$)/.test(url.pathname)) { if (hotelRoute(req, res, url, key)) return; } // ---- حجز الفنادق
+  // ---- circle registration (app): تحاكي server/biz_onboard.js من جهة صاحب النشاط (فحص التكرار، التسجيل، الاكتمال، التوثيق، «هنا اليوم»).
+  // الحالة على globalThis لأن الكتلة داخل معالج الطلب؛ الدائرة المسجّلة تُدفع إلى SEED وOWNED فتظهر في /biz و/biz/mine، وGET /biz/:id لها يعود بحقول التسجيل.
+  {
+    const reg = (globalThis.__regState ??= { extra: {}, n: 0 });
+    const rjson = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+    const rbody = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => cb(JSON.parse(raw || '{}'))); return true; };
+    const hereOf = (x) => x.here && new Date(x.here.until) > new Date() ? { lat: x.here.lat, lng: x.here.lng, until: x.here.until } : null;
+    const regOut = (b, x) => ({ ...bizOut(b), ownerId: 'SA0000001', myRole: 'owner', active: true, views: 0, logoUrl: b.logoUrl ?? null, coverUrl: null, items: [], reviews: [], myOrders: [], posts: [], presence: x.presence, serviceArea: x.serviceArea, here: hereOf(x), verificationStatus: x.verification.status, canSell: x.verification.status === 'approved', tier: completenessOf(b, x).tier, entityKind: x.entityKind ?? null, phoneVerified: false, verified: x.verification.status === 'approved' });
+    const completenessOf = (b, x) => {
+      const checks = { logo: !!b.logoUrl, location: Number.isFinite(b.lat), phone: !!b.phone, hours: x.presence === 'mobile' ? !!x.serviceArea : !!b.hours, description: (b.description || '').length >= 20, photos: { have: b.logoUrl ? 1 : 0, need: 3 }, catalog: { have: b.items.length, need: 3 }, entity: { status: x.verification.status }, phoneVerified: false, offer30d: false, post30d: false };
+      const w = [['logo', 10], ['location', 10], ['phone', 10], ['hours', 10], ['description', 10]].reduce((s, [k, v]) => s + (checks[k] ? v : 0), 0) + (checks.photos.have >= 3 ? 15 : 0) + (checks.catalog.have >= 3 ? 15 : 0) + (checks.entity.status === 'approved' ? 20 : 0);
+      const complete = checks.hours && checks.description && checks.photos.have >= 3 && checks.catalog.have >= 3;
+      const tier = complete && checks.entity.status === 'approved' ? 'verified' : complete ? 'complete' : 'published';
+      const steps = [['hours', x.presence === 'mobile' ? 'أضف ملاحظة التوفر' : 'أضف ساعات العمل', 'متى يجدك العملاء؟', 1, 'profile'], ['description', 'اكتب وصفاً لنشاطك', 'عشرون حرفاً على الأقل', 2, 'profile'], ['photos', 'أضف 3 صور', 'الغلاف وصور المنتجات تُحسب', 3, 'posts'], ['catalog', 'أضف 3 عناصر إلى الكتالوج', 'منتجات أو خدمات أو مواعيد', 5, 'catalog'], ['entity', 'وثّق دائرتك', 'سجل تجاري أو وثيقة عمل حر', 3, 'verify']];
+      const unmet = steps.find(([k]) => k === 'photos' ? checks.photos.have < 3 : k === 'catalog' ? checks.catalog.have < 3 : k === 'entity' ? checks.entity.status !== 'approved' : !checks[k]);
+      return { tier, percent: w, canSell: checks.entity.status === 'approved', checks, next: unmet ? { key: unmet[0], title: unmet[1], hint: unmet[2], minutes: unmet[3], tab: unmet[4] } : null, verification: { status: x.verification.status, entityKind: x.entityKind ?? null, reason: x.verification.reason ?? null, submittedAt: x.verification.submittedAt ?? null, reviewedAt: x.verification.reviewedAt ?? null } };
+    };
+    const normPhone = (p) => { let s = String(p || '').replace(/[\s\-()]/g, ''); if (s.startsWith('+')) s = s.slice(1); if (s.startsWith('00')) s = s.slice(2); if (s.startsWith('966')) s = s.slice(3); if (s.startsWith('0')) s = s.slice(1); return /^5\d{8}$/.test(s) ? '+966' + s : null; };
+    const REG_CATS = ['brand', 'cinema', 'hotel', 'car_rental', 'hospital', 'airport', 'cafe', 'restaurant', 'company', 'university', 'shop', 'services', 'salon', 'clinic', 'entertainment', 'other'];
+    if (key === 'GET /biz/register/check') {
+      // Number(null) يساوي 0 فيُحسب البعد من (0,0)؛ الغياب يعني «بلا فلتر مسافة»
+      const q = (url.searchParams.get('name') || '').trim().toLowerCase(); const lat = url.searchParams.get('lat') == null ? NaN : Number(url.searchParams.get('lat')), lng = url.searchParams.get('lng') == null ? NaN : Number(url.searchParams.get('lng'));
+      const list = q.length < 2 ? [] : SEED.filter((b) => (b.nameAr || '').toLowerCase().includes(q) || (b.name || '').toLowerCase().includes(q)).map((b) => ({ id: b.id, name: b.name, nameAr: b.nameAr, category: b.category, distanceKm: Number.isFinite(lat) && Number.isFinite(lng) ? Math.round(distKm(lat, lng, b.lat, b.lng) * 10) / 10 : null, ownerId: OWNED.has(b.id) ? 'SA0000001' : null, logoUrl: b.logoUrl ?? null })).filter((d) => d.distanceKm == null || d.distanceKm <= 3).slice(0, 5);
+      return rjson(200, { duplicates: list });
+    }
+    if (key === 'POST /biz/register') return rbody((b) => {
+      if (!REG_CATS.includes(b.category)) return rjson(400, { error: 'bad-category' });
+      const nameAr = String(b.nameAr || '').trim(); if (nameAr.length < 2 || nameAr.length > 60) return rjson(400, { error: 'bad-name' });
+      if (!b.logoUrl || !/^(\/|https?:)/.test(String(b.logoUrl))) return rjson(400, { error: 'logo-required' });
+      if (!['fixed', 'mobile'].includes(b.presence)) return rjson(400, { error: 'bad-presence' });
+      if (!Number.isFinite(Number(b.lat)) || !Number.isFinite(Number(b.lng))) return rjson(400, { error: 'bad-location' });
+      const radius = b.presence === 'mobile' ? Number(b.radiusKm ?? 15) : null; if (b.presence === 'mobile' && !(radius >= 2 && radius <= 50)) return rjson(400, { error: 'bad-radius' });
+      const phone = normPhone(b.phone); if (!phone) return rjson(400, { error: 'bad-phone' });
+      if (!['owner', 'manager'].includes(b.role)) return rjson(400, { error: 'bad-role' });
+      if (SEED.filter((x) => OWNED.has(x.id)).length >= 20) return rjson(409, { error: 'too-many' });
+      const id = 'biz-reg-' + (++reg.n);
+      const nb = { id, name: String(b.name || nameAr), nameAr, category: b.category, sector: '', description: '', lat: Number(b.lat), lng: Number(b.lng), address: '', hours: '', phone, website: null, color: '#0A6E78', highlights: [], logoUrl: String(b.logoUrl), items: [] };
+      SEED.push(nb); OWNED.add(id);
+      const x = reg.extra[id] = { presence: b.presence, serviceArea: b.presence === 'mobile' ? { lat: nb.lat, lng: nb.lng, radiusKm: radius, districts: Array.isArray(b.districts) ? b.districts.slice(0, 10).map(String) : [] } : null, here: null, verification: { status: 'none' }, entityKind: null, role: b.role, registeredAt: new Date().toISOString() };
+      return rjson(200, { biz: regOut(nb, x), completeness: completenessOf(nb, x) });
+    });
+    let rm = url.pathname.match(/^\/biz\/([a-z0-9-]+)\/(completeness|verification|here)$/);
+    if (rm) {
+      const b = SEED.find((z) => z.id === rm[1]); if (!b) return rjson(404, { error: 'not-found' });
+      const x = reg.extra[rm[1]] ??= { presence: 'fixed', serviceArea: null, here: null, verification: { status: b.verified ? 'approved' : 'none' }, entityKind: null, role: 'owner', registeredAt: null };
+      if (rm[2] === 'completeness' && req.method === 'GET') return rjson(200, completenessOf(b, x));
+      if (rm[2] === 'verification' && req.method === 'POST') return rbody((v) => {
+        if (x.verification.status === 'approved') return rjson(409, { error: 'already-approved' });
+        if (!['cr', 'freelance'].includes(v.entityKind)) return rjson(400, { error: 'bad-entity-kind' });
+        if (!(v.entityKind === 'cr' ? /^\d{10}$/ : /^[A-Za-z0-9]{8,20}$/).test(String(v.entityNumber || ''))) return rjson(400, { error: 'bad-entity-number' });
+        if (!v.docUrl) return rjson(400, { error: 'doc-required' });
+        x.entityKind = v.entityKind; x.verification = { status: 'pending', docUrl: v.docUrl, submittedAt: new Date().toISOString(), submittedBy: 'SA0000001' };
+        return rjson(200, { status: 'pending', verification: { status: 'pending', entityKind: x.entityKind, submittedAt: x.verification.submittedAt } });
+      });
+      if (rm[2] === 'here' && req.method === 'POST') return rbody((h) => {
+        const hours = Number(h.hours); if (!Number.isFinite(Number(h.lat)) || !Number.isFinite(Number(h.lng))) return rjson(400, { error: 'bad-location' }); if (!(hours >= 1 && hours <= 12)) return rjson(400, { error: 'bad-hours' });
+        x.here = { lat: Number(h.lat), lng: Number(h.lng), until: new Date(Date.now() + hours * 3600000).toISOString(), setAt: new Date().toISOString() };
+        return rjson(200, { here: hereOf(x) });
+      });
+      if (rm[2] === 'here' && req.method === 'DELETE') { x.here = null; return rjson(200, { ok: true }); }
+    }
+    rm = url.pathname.match(/^\/biz\/(biz-reg-\d+)$/);
+    if (rm && req.method === 'GET' && reg.extra[rm[1]]) { const b = SEED.find((z) => z.id === rm[1]); if (b) return rjson(200, regOut(b, reg.extra[rm[1]])); }
+  }
   // ---- jobs (public+admin) start
   if (/^\/(jobs\/hiring|jobs(\/[0-9a-f-]{36})?(\/apply)?|biz\/[^/]+\/jobs|adminapi\/jobs(\/.*)?)$/.test(url.pathname) && jobsPublicRoute(req, res, url, key)) return;
   // ---- jobs (public+admin) end

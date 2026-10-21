@@ -94,6 +94,8 @@ String bizErrText(Object e) {
   if (s.contains('already-owned')) return 'لهذه الدائرة مالك بالفعل';
   // الطلب على دائرة بلا مالك لا يُدفع (لا محفظة تستلم المبلغ)
   if (s.contains('no-owner')) return 'هذه الدائرة لم يستلمها صاحبها بعد فلا يمكن الدفع لها الآن';
+  // البيع والحجز مقفلان حتى توثيق السجل التجاري أو وثيقة العمل الحر
+  if (s.contains('not-verified')) return 'هذه الدائرة لم تُوثَّق بعد فلا يمكن الطلب منها الآن';
   if (e is ApiException && e.body?['error'] == 'offer-unavailable') return offerUnavailableText(e.body?['reason']?.toString());
   if (e is ApiException) return e.message;
   return s;
@@ -618,6 +620,10 @@ class _Header extends StatelessWidget {
                   const SizedBox(height: 6),
                   Wrap(spacing: 6, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
                     Container(padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4), decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(999)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(biz.category.icon, size: 14, color: Joy.primary), const SizedBox(width: 4), Text(biz.sector.isNotEmpty ? biz.sector : biz.category.label, style: const TextStyle(color: Joy.primary, fontSize: 12, fontWeight: FontWeight.w600))])),
+                    // شارات التسجيل الموثّق: موثّق، متنقل بنطاق، وهنا اليوم (دبوس مؤقت)
+                    if (biz.verified) _Badge(key: const Key('badge-verified'), icon: Icons.verified_rounded, text: 'موثّق', color: Joy.success),
+                    if (biz.isMobile) _Badge(key: const Key('badge-mobile'), icon: Icons.directions_car_filled_rounded, text: 'متنقل · ${biz.serviceArea?.label ?? 'يخدم ضمن نطاق'}', color: Joy.accent),
+                    if (biz.hereActive) _Badge(key: const Key('badge-here'), icon: Icons.location_on_rounded, text: biz.here!.label, color: Joy.primary),
                     Stars(rating: biz.rating, count: biz.ratingCount),
                     Text('${biz.followers} عضو', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
                   ]),
@@ -626,6 +632,19 @@ class _Header extends StatelessWidget {
             ]),
           ),
         ]),
+      );
+}
+
+class _Badge extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final Color color;
+  const _Badge({super.key, required this.icon, required this.text, required this.color});
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(color: color.withValues(alpha: .12), borderRadius: BorderRadius.circular(999)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 14, color: color), const SizedBox(width: 4), Text(text, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600))]),
       );
 }
 
@@ -682,7 +701,12 @@ class _InfoCard extends StatelessWidget {
   Widget build(BuildContext context) => JoyCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (biz.description.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(biz.description, style: const TextStyle(height: 1.6))),
-          if (biz.address.isNotEmpty) _row(Icons.place_outlined, biz.address, trailing: TextButton(onPressed: onMap, child: const Text('على الخريطة'))),
+          // المتنقلة بلا عنوان ثابت: نطاق الخدمة والأحياء بدل سطر العنوان
+          if (biz.isMobile)
+            KeyedSubtree(key: const Key('info-service-area'), child: _row(Icons.radar_rounded, '${biz.serviceArea?.label ?? 'يخدم ضمن نطاق'}${(biz.serviceArea?.districts.isNotEmpty ?? false) ? ' · ${biz.serviceArea!.districts.join('، ')}' : ''}', trailing: TextButton(onPressed: onMap, child: const Text('على الخريطة'))))
+          else if (biz.address.isNotEmpty)
+            _row(Icons.place_outlined, biz.address, trailing: TextButton(onPressed: onMap, child: const Text('على الخريطة'))),
+          if (biz.hereActive) KeyedSubtree(key: const Key('info-here'), child: _row(Icons.location_on_rounded, biz.here!.label)),
           if (biz.hours.isNotEmpty) _row(Icons.schedule_outlined, biz.hours),
           if (biz.phone != null && biz.phone!.isNotEmpty) _row(Icons.call_outlined, biz.phone!, onTap: () => launchUrl(Uri(scheme: 'tel', path: biz.phone))),
           if (biz.website != null && biz.website!.isNotEmpty) _row(Icons.language_rounded, biz.website!.replaceFirst(RegExp(r'^https?://(www\.)?'), ''), onTap: () => launchUrl(Uri.parse(biz.website!), mode: LaunchMode.externalApplication)),
