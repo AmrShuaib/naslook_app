@@ -78,7 +78,8 @@ check(c[`#post/${post.id}`]?.type === 'post' && c[`#post/${post.id}`].title === 
 
 // طلب من دائرة: الطلب المدفوع يحتاج دائرة لها مالك (409 no-owner وإلا)، فتُمنح برو 92 مالكاً غير المشتري بعد اكتمال البذر
 await call('GET', '/biz/biz-brew92', { user: 'SA0000002', expect: 200 });
-await pool.query("UPDATE biz SET owner_id='SA0000002' WHERE id='biz-brew92'");
+// بوابة البيع (21 أكتوبر 2026): الطلب المدفوع يحتاج كياناً معتمداً أيضاً
+await pool.query("UPDATE biz SET owner_id='SA0000002', verified=true, verification='{\"status\":\"approved\"}' WHERE id='biz-brew92'");
 const ord = await call('POST', '/biz/biz-brew92/orders', { body: { itemId: 'brew92-v60', qty: 1 }, user: 'SA0000001', expect: 200 });
 c = await cards([`#o/${ord.code}`], 'SA0000002');
 check(c[`#o/${ord.code}`]?.type === 'order' && c[`#o/${ord.code}`].bizId === 'biz-brew92' && c[`#o/${ord.code}`].owner?.nickname === 'amr' && c[`#o/${ord.code}`].status === 'confirmed', '#o/code → order card', JSON.stringify(c[`#o/${ord.code}`]));

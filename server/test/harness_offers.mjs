@@ -32,6 +32,8 @@ const h = (n) => new Date(Date.now() + n * 3600000).toISOString();
 // ---- الدائرة والمنتجات والمحافظ
 const biz = await call('POST', '/biz', { body: { name: 'Reef Cafe', nameAr: 'مقهى ريف', category: 'cafe', sector: 'قهوة مختصة', lat: 21.5433, lng: 39.1728, address: 'الروضة' }, expect: 200 });
 await pool.query("UPDATE biz SET id='off-reef' WHERE id=$1", [biz.id]); const B = 'off-reef';
+// بوابة البيع (21 أكتوبر 2026): الطلبات المدفوعة أدناه تحتاج كياناً معتمداً
+await pool.query("UPDATE biz SET verified=true, verification='{\"status\":\"approved\"}' WHERE id='off-reef'");
 const cortado = await call('POST', `/biz/${B}/items`, { body: { title: 'كورتادو', price: 1400, stock: 100 }, expect: 200 });
 const latte = await call('POST', `/biz/${B}/items`, { body: { title: 'لاتيه', price: 1600, stock: 100 }, expect: 200 });
 for (const u of [SARA, KHALID, NORA]) for (let i = 0; i < 2; i++) await call('POST', '/wallet/topup', { body: { amount: 500000 }, user: u, expect: 200 });

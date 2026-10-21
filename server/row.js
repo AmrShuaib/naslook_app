@@ -3,15 +3,17 @@
 // قراءة فقط من جداول الإضافات الأخرى وبلا جداول خاصة: كل مصدر مغلّف بـ try/catch، فجدول غائب أو عمود مفقود يعني أن نوعه لا يساهم
 // بشيء ولا يُسقط الطلب. الدرجة = المسافة بالكيلومتر ناقص دفعات (ينتهي خلال 3 ساعات، نُشر خلال 30 دقيقة، فعالية تبدأ خلال 6 ساعات)،
 // ثم توزيع حتى لا تتوالى أكثر من ثلاث بطاقات من نوع واحد، وبحد 12 لكل نوع. المسار عام: الضيف مسموح كما في /offers/near.
+// النوع السادس «circle» (21 أكتوبر 2026): دائرة متنقلة ثبّتت دبوس «هنا اليوم» (biz.here من biz_onboard.js) تظهر عند موقع الدبوس ما دام قائماً.
 // التسجيل في register.txt:
 //   await app.register((await import("./row.js")).default, { pool, auth });
+import { CATEGORY_AR } from "./business.js";
 
-export const KINDS = ["moment", "offer", "event", "job", "listing"];
-// فعل البطاقة الوحيد لكل نوع: يفتح رحلة الشاشة القائمة (المشاهد، عروض الدائرة، الفعالية، الوظيفة، الإعلان)
-export const ACT = { moment: "شاهد", offer: "استخدم", event: "تذكرة", job: "قدّم", listing: "اطلب" };
+export const KINDS = ["moment", "offer", "event", "job", "listing", "circle"];
+// فعل البطاقة الوحيد لكل نوع: يفتح رحلة الشاشة القائمة (المشاهد، عروض الدائرة، الفعالية، الوظيفة، الإعلان، صفحة الدائرة)
+export const ACT = { moment: "شاهد", offer: "استخدم", event: "تذكرة", job: "قدّم", listing: "اطلب", circle: "زيارة" };
 // عنوان احتياطي للحظة بلا تعليق: «صورة من الروضة» أو «فيديو من amr»
 const MEDIA_AR = { image: "صورة", video: "فيديو", audio: "تسجيل صوتي", text: "لحظة" };
-const TABLES = { moment: "map_posts", offer: "biz_offers", event: "events", job: "jobs", listing: "market_listings" };
+const TABLES = { moment: "map_posts", offer: "biz_offers", event: "events", job: "jobs", listing: "market_listings", circle: "biz" };
 const TYPE_AR = { full: "دوام كامل", part: "دوام جزئي", remote: "عن بُعد", intern: "تدريب", shift: "ورديات", freelance: "عمل حر" };
 export const CAND = 60, MAX_PER_KIND = 12, MAX_RUN = 3, LIMIT_DEFAULT = 30, LIMIT_MAX = 50, RADIUS_DEFAULT = 15, RADIUS_MAX = 100;
 const MIN = 60000, H = 3600000, DAY = 86400000, TZ = "Asia/Riyadh";
@@ -35,6 +37,8 @@ const clock = (t) => {
   return `${p.hour}${p.minute === "00" ? "" : ":" + p.minute} ${p.dayPeriod === "AM" ? "ص" : "م"}`;
 };
 const daysText = (n) => (n === 1 ? "يوم" : n === 2 ? "يومين" : n <= 10 ? `${n} أيام` : `${n} يوماً`);
+// ساعة بصيغة HH:MM بتوقيت الرياض (لدبوس «هنا اليوم حتى 17:30»)
+export const hhmm = (t) => { const d = ms(t); return Number.isFinite(d) ? new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(d) : ""; };
 // موعد الفعالية: «اليوم 5 م» / «غداً 5 م» / «الجمعة 5 م» / «12/10 5 م»
 export const whenText = (t, now = Date.now()) => {
   const d = ms(t); if (!Number.isFinite(d)) return "";
@@ -201,6 +205,19 @@ export default async function row(app, opts = {}) {
         kind: "listing", id: l.id, refId: l.id, title: cut(l.title, 80), subtitle: cut(`${sar(l.price)} · ${l.place_name || l.city || who.nickname}`, 60),
         who: who.nickname, logoUrl: who.avatarUrl, imageUrl: first(l.images) ?? l.image_url ?? null,
         ...place(ctx, l, l.km), at: iso(l.bumped_at ?? l.created_at), endsAt: null, act: ACT.listing, payload: {},
+      }),
+    },
+    circle: {
+      // الدائرة المتنقلة التي ثبّتت دبوس «هنا اليوم»: تُعرض عند موقع الدبوس ما دام until في المستقبل (business.js يملك العمود here)
+      rows: (ctx) => q("circle", `SELECT c.*, ${KM("c")} AS km FROM (
+          SELECT b.id, b.name, b.name_ar, b.category, b.logo_url, (b.here->>'lat')::float8 AS lat, (b.here->>'lng')::float8 AS lng, b.here->>'until' AS until, b.here->>'setAt' AS set_at
+          FROM biz b WHERE b.active AND NOT b.hidden AND b.here IS NOT NULL AND jsonb_typeof(b.here->'until')='string' AND (b.here->>'until')::timestamptz > now()) c
+        WHERE c.lat IS NOT NULL AND c.lng IS NOT NULL AND ${WITHIN("c")} ORDER BY km ASC NULLS LAST, c.set_at DESC NULLS LAST LIMIT ${CAND}`, ctx.geo),
+      userId: () => null,
+      item: (c, ctx) => ({
+        kind: "circle", id: c.id, refId: c.id, title: cut(bizName(c), 80), subtitle: cut(`هنا اليوم حتى ${hhmm(c.until)} · ${CATEGORY_AR[c.category] ?? c.category ?? ""}`, 60),
+        who: bizName(c), logoUrl: c.logo_url ?? null, imageUrl: c.logo_url ?? null,
+        ...place(ctx, c, c.km), at: iso(c.set_at) ?? iso(ctx.now), endsAt: iso(c.until), act: ACT.circle, cta: ACT.circle, payload: { here: true, until: iso(c.until) },
       }),
     },
   };

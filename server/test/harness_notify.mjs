@@ -45,7 +45,8 @@ app.register((await import('../commerce.js')).default, { pool, auth });
 app.register((await import('../business.js')).default, { pool, auth });
 app.register((await import('../admin.js')).default, { pool, auth, webappDir: dir + 'webapp', opsDir: dir + 'ops' });
 await app.ready(); await new Promise((r) => setTimeout(r, 900));
-await pool.query("UPDATE biz SET owner_id='SA0000001' WHERE id='biz-ikea'");
+// بوابة البيع (21 أكتوبر 2026): الطلب المدفوع يحتاج كياناً معتمداً أيضاً
+await pool.query("UPDATE biz SET owner_id='SA0000001', verified=true, verification='{\"status\":\"approved\"}' WHERE id='biz-ikea'");
 await pool.query("INSERT INTO biz_staff(biz_id,user_id,role) VALUES('biz-ikea','SA0000003','staff')");
 for (const [u, bal] of [['SA0000002', 20000000], ['SA0000003', 5000000]]) await pool.query('INSERT INTO wallet_accounts(user_id,balance) VALUES($1,$2) ON CONFLICT (user_id) DO UPDATE SET balance=$2', [u, bal]);
 
