@@ -9,6 +9,8 @@ enum CodeKind {
   mention, item, event, listing, post, space, spacePost, ticket, order,
   // أفعال (تُسجَّل عبر POST /chat/requests أو تُعرض كما هي)
   pay, send, split, meet, invite, where, loc, me,
+  // موقع مباشر (/live <معرّف الجلسة>): البطاقة تقرأ الموقع من server/chat_live.js كل عشر ثوانٍ
+  live,
 }
 
 extension CodeKindX on CodeKind {
@@ -39,6 +41,8 @@ class ChatCode {
 
   /// نصيب الشخص الواحد في التقسيم (تقريب لأعلى).
   int get share => kind == CodeKind.split ? (amount / n).ceil() : amount;
+  /// معرّف جلسة الموقع المباشر (`/live <uuid>`)؛ فارغ لغير هذا الرمز.
+  String get liveId => kind == CodeKind.live ? note : '';
   @override
   String toString() => 'ChatCode(${kind.name} $raw)';
 }
@@ -60,7 +64,7 @@ class ParsedText {
 }
 
 const maxRefs = 4;
-const codeCommands = ['pay', 'send', 'split', 'meet', 'invite', 'where', 'loc', 'me', 'ticket', 'order', 'wish', 'help'];
+const codeCommands = ['pay', 'send', 'split', 'meet', 'invite', 'where', 'loc', 'me', 'live', 'ticket', 'order', 'wish', 'help'];
 
 final _slug = RegExp(r'^[a-z0-9][a-z0-9-]{1,63}$');
 final _uuid = RegExp(r'^[0-9a-f-]{36}$', caseSensitive: false);
@@ -173,6 +177,10 @@ ChatCode? parseCommand(String text) {
       final lat = double.tryParse(p[0]), lng = double.tryParse(p[1]);
       if (lat == null || lng == null || lat.abs() > 90 || lng.abs() > 180) return null;
       return ChatCode(CodeKind.loc, line.trimRight(), lat: lat, lng: lng, note: words.skip(1).join(' '), start: offset, end: end);
+    case 'live':
+      // يرسله التطبيق وحده بعد إنشاء الجلسة (ورقة «موقعي المباشر»)؛ المعرّف في note حتى لا يُطلب من /chat/cards كإشارة
+      if (words.isEmpty || !_uuid.hasMatch(words.first)) return null;
+      return ChatCode(CodeKind.live, line.trimRight(), note: words.first.toLowerCase(), start: offset, end: end);
     default:
       return null;
   }
@@ -212,6 +220,8 @@ String jobCode(String id) => '#job/$id';
 String postCode(String id) => '#post/$id';
 String spaceCode(String bizId, [String? postId]) => postId == null ? '#space/${shortBiz(bizId)}' : '#space/${shortBiz(bizId)}/$postId';
 String ticketCode(String code) => '#t/$code';
+/// رمز جلسة موقع مباشر (يُرسل رسالة عادية بعد POST /chat/live).
+String liveCode(String id) => '/live $id';
 String orderCode(String code) => '#o/$code';
 
 /// بند في كتالوج الرموز (للإكمال التلقائي وقائمة «+» والدليل).

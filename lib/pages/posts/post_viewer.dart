@@ -401,6 +401,13 @@ class PostView extends ConsumerWidget {
                   unawaited(ref.read(apiClientProvider).trackContact(p.id));
                   Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user)));
                 }),
+                const SizedBox(width: 6),
+                // «رد خاص»: يفتح المحادثة والحقل مملوء برمز اللحظة (#post/…) فتظهر بطاقتها داخل الرسالة؛ أيقونة فقط لأن الصف ضيّق على الجوال
+                _action(Icons.reply_rounded, '', () {
+                  if (!requireAccount(context)) return;
+                  unawaited(ref.read(apiClientProvider).trackContact(p.id));
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user, initialText: '#post/${p.id} ')));
+                }, key: const Key('post-reply-private'), tooltip: 'رد خاص'),
                 const SizedBox(width: 2),
                 WishButton(kind: 'post', refId: p.id, dark: true, compact: true),
               ],
@@ -417,16 +424,24 @@ class PostView extends ConsumerWidget {
 
   Widget _pill(String t, Color bg, Color fg) => Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)), child: Text(t, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w700)));
 
-  Widget _action(IconData icon, String label, VoidCallback? onTap, {Color color = Colors.white}) => Material(
-        color: Colors.black45,
+  /// زر دائري في صف الأسفل؛ بلا [label] يكون أيقونة فقط (مع [tooltip] لتسميته).
+  Widget _action(IconData icon, String label, VoidCallback? onTap, {Color color = Colors.white, Key? key, String? tooltip}) {
+    final pill = Material(
+      key: key,
+      color: Colors.black45,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(999),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(999),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 20, color: color), const SizedBox(width: 6), Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13))]),
-          ),
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: label.isEmpty ? 10 : 12, vertical: 8),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 20, color: color),
+            if (label.isNotEmpty) ...[const SizedBox(width: 6), Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13))],
+          ]),
         ),
-      );
+      ),
+    );
+    return tooltip == null ? pill : Tooltip(message: tooltip, child: pill);
+  }
 }
