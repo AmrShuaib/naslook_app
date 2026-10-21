@@ -134,3 +134,6 @@ void invalidateAdmin(WidgetRef ref) {
   ref.invalidate(adminModerationProvider);
   ref.invalidate(adminJobsProvider);
 }
+
+/// حالة النسخ الاحتياطي في «نظرة عامة» الإدارة (تُعاد قراءتها كلما فُتحت الصفحة).
+final adminBackupsProvider = FutureProvider.autoDispose<BackupsInfo>((ref) => ref.watch(apiClientProvider).adminBackups());

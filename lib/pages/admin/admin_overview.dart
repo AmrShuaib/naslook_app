@@ -43,6 +43,9 @@ class AdminOverviewPage extends ConsumerWidget {
             kvRow('جدول الحظر', o.server['blocksTable']?.toString() ?? 'غير موجود'),
             kvRow('الجداول', (o.server['tables'] as List?)?.join('، ') ?? ''),
           ])),
+          const SizedBox(height: 8),
+          const SectionTitle('النسخ الاحتياطي'),
+          const _BackupCard(),
         ]),
       ),
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -70,6 +73,65 @@ class _UsersBars extends StatelessWidget {
           ]))),
       ]),
     );
+  }
+}
+
+/// بطاقة النسخ الاحتياطي: تُترجم /adminapi/backups إلى ثلاث حالات (لم يُثبَّت، سليم وحديث، قديم أو فاشل بنص الخطأ)،
+/// سطراً لتمرين الاستعادة الأسبوعي، وتلميحاً كهرمانياً حين لا توجد نسخة خارج الخادم.
+class _BackupCard extends ConsumerWidget {
+  const _BackupCard();
+  static String _hours(double? h) => h == null ? '—' : h < 1 ? 'قبل أقل من ساعة' : 'قبل ${h.round()} ساعة';
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final b = ref.watch(adminBackupsProvider);
+    return JoyCard(key: const Key('backup-card'), child: b.when(
+      loading: () => const Text('جارٍ قراءة حالة النسخ…', style: TextStyle(color: Joy.textMuted, fontSize: 13)),
+      error: (e, _) => Text('تعذر قراءة حالة النسخ: ${e.toString().replaceFirst(RegExp(r'^ApiException\(\d+\): '), '')}', key: const Key('backup-state'), style: const TextStyle(color: Joy.danger, fontSize: 13)),
+      data: (i) {
+        final String state;
+        final Color color;
+        if (!i.installed) {
+          state = 'لم يُثبَّت بعد. شغّل server/install-backup.sh على الخادم مرة واحدة (docs/ops-backup.md)';
+          color = Joy.warning;
+        } else if (i.ok && !i.stale) {
+          state = 'آخر نسخة ${_hours(i.ageHours)} · قاعدة البيانات ${i.dbSizeText} · الوسائط ${i.mediaFiles} ملفاً · خارج الخادم: ${i.offsite ? 'نعم' : 'لا'}';
+          color = Joy.text;
+        } else if (!i.ok) {
+          state = 'فشلت آخر نسخة (${_hours(i.ageHours)}): ${i.error ?? 'خطأ غير معروف'}';
+          color = Joy.danger;
+        } else {
+          state = 'آخر نسخة ناجحة قديمة (${_hours(i.ageHours)}) والمفترض كل ليلة؛ افحص systemctl list-timers وسجل backup.log على الخادم';
+          color = Joy.danger;
+        }
+        final String drill;
+        final Color drillColor;
+        if (i.drillOk == null) {
+          drill = 'لم يُجرَ تمرين استعادة بعد';
+          drillColor = Joy.warning;
+        } else if (i.drillOk == true) {
+          drill = 'آخر تمرين استعادة: ناجح قبل ${i.drillAgeDays ?? 0} يوماً';
+          drillColor = i.drillStale ? Joy.warning : Joy.textMuted;
+        } else {
+          drill = 'آخر تمرين استعادة: فشل قبل ${i.drillAgeDays ?? 0} يوماً${i.drillError != null ? ' · ${i.drillError}' : ''}';
+          drillColor = Joy.danger;
+        }
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(state, key: const Key('backup-state'), style: TextStyle(color: color, fontSize: 13.5, height: 1.5)),
+          if (i.installed) ...[
+            const SizedBox(height: 6),
+            Text(drill, key: const Key('backup-drill'), style: TextStyle(color: drillColor, fontSize: 12.5, height: 1.4)),
+            if (i.dumpsKept > 0) kvRow('نسخ القاعدة المحفوظة على الخادم', '${i.dumpsKept}'),
+            if (!i.offsite)
+              Container(
+                margin: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(color: Joy.sunSoft, borderRadius: BorderRadius.circular(10)),
+                child: Text(i.offsiteError != null ? 'فشل النسخ خارج الخادم: ${i.offsiteError}' : 'لا نسخة خارج الخادم: اضبط BACKUP_RCLONE_REMOTE أو BACKUP_SSH_TARGET', key: const Key('backup-offsite-hint'), style: const TextStyle(color: Joy.sunText, fontSize: 12.5, height: 1.4)),
+              ),
+          ],
+        ]);
+      },
+    ));
   }
 }
 

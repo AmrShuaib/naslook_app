@@ -32,3 +32,4 @@ await app.register((await import("./profile_ext.js")).default, { pool, auth });
 await app.register((await import("./row.js")).default, { pool, auth });
 await app.register((await import("./live.js")).default, { pool, auth });
 await app.register((await import("./hotels.js")).default, { pool, auth });
+await app.register((await import("./backups.js")).default, { pool, auth });

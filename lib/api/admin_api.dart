@@ -817,8 +817,36 @@ extension AdminApi on ApiClient {
   Future<AdminMailDomainInfo> adminMailDomainVerify() async => AdminMailDomainInfo.fromJson(await post('/adminapi/mail/domain/verify', const {}));
   Future<void> adminMailDomainRemove() => delete('/adminapi/mail/domain');
   Future<AdminMailLog> adminMailLog({int limit = 50}) async => AdminMailLog.fromJson(await get('/adminapi/mail/log', query: {'limit': '$limit'}));
+  // ---- النسخ الاحتياطي (server/backups.js)
+  Future<BackupsInfo> adminBackups() async => BackupsInfo.fromJson(await get('/adminapi/backups'));
 }
 
 // يُبقي الاستيراد مستخدماً للأنواع المشتركة في الواجهة
 typedef AdminBizRef = Biz;
 List<String> adminStrings(dynamic v) => _strs(v);
+
+/// حالة النسخ الاحتياطي الليلي على الخادم (`GET /adminapi/backups`: server/backups.js يقرأ last.json الذي يكتبه server/backup.sh).
+class BackupsInfo {
+  /// [installed] كُتب ملف الحالة أصلاً (ثُبّت السكربت)؛ [ok] آخر تشغيل نجح؛ [stale] لا نسخة ناجحة خلال 30 ساعة؛
+  /// [offsite] آخر مزامنة خارج الخادم نجحت؛ [drillStale] لا تمرين استعادة خلال 10 أيام.
+  final bool installed, ok, stale, offsite, drillStale;
+  /// null = لم يُجرَ تمرين بعد.
+  final bool? drillOk;
+  final double? ageHours;
+  final int dbBytes, mediaFiles, dumpsKept;
+  final int? drillAgeDays;
+  final DateTime? lastAt;
+  final String? error, offsiteError, drillError;
+  const BackupsInfo({this.installed = false, this.ok = false, this.ageHours, this.stale = true, this.offsite = false, this.dbBytes = 0, this.mediaFiles = 0, this.dumpsKept = 0, this.drillOk, this.drillAgeDays, this.drillStale = true, this.lastAt, this.error, this.offsiteError, this.drillError});
+  factory BackupsInfo.fromJson(Map m) {
+    final s = _m(m['status']), db = _m(s['db']), media = _m(s['media']), kept = _m(s['kept']);
+    final d = m['drill'] is Map ? _m(m['drill']) : null;
+    return BackupsInfo(
+      installed: m['installed'] == true, ok: s['ok'] == true, ageHours: (m['ageHours'] as num?)?.toDouble(), stale: m['stale'] == true, offsite: m['offsite'] == true,
+      dbBytes: _i(db['bytes']), mediaFiles: _i(media['files']), dumpsKept: _i(kept['dumps']), drillOk: d == null ? null : d['ok'] == true, drillAgeDays: (d?['ageDays'] as num?)?.round(), drillStale: m['drillStale'] == true,
+      lastAt: _t(s['finishedAt']), error: (m['error'] ?? s['error'])?.toString(), offsiteError: m['offsiteError']?.toString(), drillError: d?['error']?.toString(),
+    );
+  }
+  /// حجم آخر نسخة من القاعدة بالميغابايت.
+  String get dbSizeText => '${(dbBytes / 1048576).toStringAsFixed(1)} م.ب';
+}
