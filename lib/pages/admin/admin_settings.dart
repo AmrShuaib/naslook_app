@@ -23,7 +23,7 @@ class AdminSettingsPage extends ConsumerStatefulWidget {
 }
 
 class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
-  final maxTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), supportEmail = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
+  final maxTopup = TextEditingController(), minTopup = TextEditingController(), maxCardTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), supportEmail = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
   final commission = TextEditingController(), spotPrice = TextEditingController(), spotMaxDays = TextEditingController(), spotMaxActive = TextEditingController();
   final jobsFree = TextEditingController(), jobsCap = TextEditingController();
   bool? testTopup, maintenance, reviewNew, blockContacts, transfers, chatPayments, bannedDefault, requireVerify, jobsEnabled, jobsApproval;
@@ -34,6 +34,8 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     if (loaded) return;
     loaded = true;
     maxTopup.text = (s.maxTopup / 100).toStringAsFixed(0);
+    minTopup.text = (s.minTopup / 100).toStringAsFixed(0);
+    maxCardTopup.text = (s.maxCardTopup / 100).toStringAsFixed(0);
     announcement.text = s.announcement;
     support.text = s.supportHandle;
     supportEmail.text = s.supportEmail;
@@ -70,13 +72,26 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
         _load(s);
         return ListView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 32), children: [
           const SectionTitle('المحفظة'),
-          JoyCard(child: Column(children: [
-            SwitchListTile(contentPadding: EdgeInsets.zero, value: testTopup ?? s.testTopup, onChanged: (v) => setState(() => testTopup = v), title: const Text('الشحن التجريبي'), subtitle: const Text('يسمح لأي مستخدم بشحن محفظته بلا دفع حقيقي. عطّله قبل الإطلاق.')),
-            TextField(controller: maxTopup, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أقصى شحن في المرة الواحدة (ريال)')),
-            // التحويل بين المستخدمين والدفع في المحادثة قد يُعدّان إصدار نقود إلكترونية؛ مفتاحان لإطفائهما (مطفآن دائماً في iOS)
+          JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // سطر حالة مفاتيح المال كما ستُحفظ: يراه المالك قبل الإطلاق بنظرة واحدة
+            Text(
+              'التحويل: ${(transfers ?? s.transfersEnabled) ? 'مفعّل' : 'مطفأ'} · دفع المحادثة: ${(chatPayments ?? s.chatPaymentsEnabled) ? 'مفعّل' : 'مطفأ'} · الشحن التجريبي: ${(testTopup ?? s.testTopup) ? 'مفعّل' : 'مطفأ'}',
+              key: const Key('money-switches-state'),
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Joy.textMuted, height: 1.5),
+            ),
+            SwitchListTile(contentPadding: EdgeInsets.zero, value: testTopup ?? s.testTopup, onChanged: (v) => setState(() => testTopup = v), title: const Text('الشحن التجريبي'), subtitle: const Text('يسمح لأي مستخدم بشحن محفظته بلا دفع حقيقي. عطّله قبل الإطلاق؛ ولا يُفعَّل ومفاتيح ميسر الحية مضبوطة.')),
+            TextField(key: const Key('set-max-topup'), controller: maxTopup, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أقصى شحن تجريبي في المرة (ريال)')),
+            const SizedBox(height: 8),
+            // حدّا الشحن بالبطاقة عبر ميسر (مستقلان عن سقف الشحن التجريبي): 100 ريال أدنى بقرار تنظيمي
+            Row(children: [
+              Expanded(child: TextField(key: const Key('set-min-topup'), controller: minTopup, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أدنى شحن بالبطاقة (ريال)'))),
+              const SizedBox(width: 8),
+              Expanded(child: TextField(key: const Key('set-max-card-topup'), controller: maxCardTopup, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أقصى شحن بالبطاقة في المرة (ريال)'))),
+            ]),
+            // التحويل بين المستخدمين والدفع في المحادثة قد يُعدّان إصدار نقود إلكترونية؛ مطفآن افتراضياً حتى يتوفر مسار مرخّص (ومطفآن دائماً في iOS)
             SwitchListTile(key: const Key('set-require-verify'), contentPadding: EdgeInsets.zero, value: requireVerify ?? s.requireEmailVerification, onChanged: (v) => setState(() => requireVerify = v), title: const Text('تأكيد البريد قبل الدخول'), subtitle: const Text('لا يدخل أي حساب قبل إدخال الرمز المرسل إلى بريده (الجديد عند التسجيل، والقديم غير المؤكد عند دخوله). يعمل فقط حين تكون خدمة البريد مضبوطة', style: TextStyle(fontSize: 12))),
-            SwitchListTile(key: const Key('set-transfers'), contentPadding: EdgeInsets.zero, value: transfers ?? s.transfersEnabled, onChanged: (v) => setState(() => transfers = v), title: const Text('التحويل بين المستخدمين'), subtitle: const Text('إرسال رصيد من محفظة إلى أخرى. مطفأ دائماً في تطبيق iOS', style: TextStyle(fontSize: 12))),
-            SwitchListTile(key: const Key('set-chat-payments'), contentPadding: EdgeInsets.zero, value: chatPayments ?? s.chatPaymentsEnabled, onChanged: (v) => setState(() => chatPayments = v), title: const Text('الدفع داخل المحادثة'), subtitle: const Text('طلب مبلغ وتقسيم فاتورة وإرسال مال في الدردشة. مطفأ دائماً في تطبيق iOS', style: TextStyle(fontSize: 12))),
+            SwitchListTile(key: const Key('set-transfers'), contentPadding: EdgeInsets.zero, value: transfers ?? s.transfersEnabled, onChanged: (v) => setState(() => transfers = v), title: const Text('التحويل بين المستخدمين'), subtitle: const Text('إرسال رصيد من محفظة إلى أخرى. مطفأ افتراضياً بقرار تنظيمي حتى يتوفر مسار مرخّص. مطفأ دائماً في تطبيق iOS', style: TextStyle(fontSize: 12))),
+            SwitchListTile(key: const Key('set-chat-payments'), contentPadding: EdgeInsets.zero, value: chatPayments ?? s.chatPaymentsEnabled, onChanged: (v) => setState(() => chatPayments = v), title: const Text('الدفع داخل المحادثة'), subtitle: const Text('طلب مبلغ وتقسيم فاتورة وإرسال مال في الدردشة. مطفأ افتراضياً بقرار تنظيمي حتى يتوفر مسار مرخّص. مطفأ دائماً في تطبيق iOS', style: TextStyle(fontSize: 12))),
           ])),
           const SectionTitle('بوابة الدفع (ميسر)'),
           const _PayGatewayCard(),
@@ -142,7 +157,9 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             onPressed: busy ? null : () async {
               setState(() => busy = true);
               try {
-                await ref.read(apiClientProvider).adminSaveSettings({'testTopup': testTopup ?? s.testTopup, 'maxTopup': parseSar(maxTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold,
+                // الشحن التجريبي يُرسل فقط إن غيّره المدير: الخادم يرفض testTopup:true (409 test-topup-live) ومفاتيح ميسر الحية مضبوطة،
+                // فلا يُعطَّل حفظ بقية الإعدادات ما دام المفتاح على حاله
+                await ref.read(apiClientProvider).adminSaveSettings({if (testTopup != null && testTopup != s.testTopup) 'testTopup': testTopup, 'maxTopup': parseSar(maxTopup.text), 'minTopup': parseSar(minTopup.text), 'maxCardTopup': parseSar(maxCardTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold,
                   'supportEmail': supportEmail.text.trim(), 'transfersEnabled': transfers ?? s.transfersEnabled, 'chatPaymentsEnabled': chatPayments ?? s.chatPaymentsEnabled, 'bannedWordsDefault': bannedDefault ?? s.bannedWordsDefault, 'requireEmailVerification': requireVerify ?? s.requireEmailVerification,
                   'jobsEnabled': jobsEnabled ?? s.jobsEnabled, 'jobsRequireApproval': jobsApproval ?? s.jobsRequireApproval, 'jobsFreeActive': int.tryParse(jobsFree.text.trim()) ?? s.jobsFreeActive, 'jobsWeeklyCap': int.tryParse(jobsCap.text.trim()) ?? s.jobsWeeklyCap, 'jobsMinScore': _snapScore(jobsScore ?? s.jobsMinScore)});
                 loaded = false;
@@ -150,7 +167,8 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
                 ref.invalidate(publicSettingsProvider);
                 if (context.mounted) toast(context, 'حُفظت الإعدادات');
               } catch (e) {
-                if (context.mounted) toast(context, '${e is ApiException ? e.body : e}'.contains('bad-email') ? 'بريد الدعم غير صحيح' : adminErrText(e), error: true);
+                final err = '${e is ApiException ? e.body : e}';
+                if (context.mounted) toast(context, err.contains('bad-email') ? 'بريد الدعم غير صحيح' : err.contains('test-topup-live') ? 'لا يمكن تفعيل الشحن التجريبي ومفاتيح ميسر الحية مضبوطة' : err.contains('bad-topup-limits') ? 'أدنى شحن بالبطاقة يجب ألا يتجاوز أقصاه' : adminErrText(e), error: true);
               } finally {
                 if (mounted) setState(() => busy = false);
               }

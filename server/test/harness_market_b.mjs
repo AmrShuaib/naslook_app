@@ -89,6 +89,8 @@ await call('POST', '/market/seller/upgrade', { body: {}, user: SELLER, expect: 4
 const pv2 = await call('GET', '/market/seller/upgrade', { user: SELLER, expect: 200 }); check(pv2.upgraded?.bizId === up.bizId && pv2.eligible === false, 'preview reports the existing circle');
 
 // ---------- بوابة الدفع: معطّلة ----------
+// أدنى شحن بالبطاقة صار 100 ريال افتراضياً (minTopup في إعدادات الإدارة)؛ هذه الحزمة تُبقيه 10 ريال لأن مبالغها أصغر
+globalThis.naslifeSettings.minTopup = 1000;
 const cfg0 = await call('GET', '/pay/config', { user: BUYER, expect: 200 }); check(cfg0.enabled === false && cfg0.publishableKey == null, 'payments disabled without keys');
 await call('POST', '/pay/topup', { body: { amount: 5000 }, user: BUYER, expect: 503 });
 // ---------- مفاتيح من لوحة الإدارة ----------

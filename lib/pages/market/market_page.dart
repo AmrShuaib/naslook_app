@@ -389,6 +389,8 @@ String marketErrText(Object e) {
   if (s.contains('coupon-min')) return 'الكوبون يتطلب حداً أدنى للطلب';
   if (s.contains('bump-too-soon')) return 'يمكنك رفع العرض مرة كل ٢٤ ساعة';
   if (s.contains('spotlight-full')) return 'مساحة سبوت لايت ممتلئة حالياً، جرّب لاحقاً';
+  // رمز التسليم: يُقفل بعد خمس محاولات خاطئة من البائع (code-locked)؛ وإلا فالرمز خاطئ (bad-code مع {left} محاولات)
+  if (s.contains('code-locked')) return 'أُقفل رمز التسليم بعد خمس محاولات خاطئة؛ اطلب من المشتري تأكيد الاستلام من جهته';
   if (s.contains('bad-code')) return 'الرمز غير صحيح';
   if (s.contains('pending-review')) return 'العرض بانتظار مراجعة الإدارة';
   if (s.contains('blocked')) return 'أخفته الإدارة؛ تواصل مع الدعم';

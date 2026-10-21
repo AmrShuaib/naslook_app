@@ -92,6 +92,8 @@ String bizErrText(Object e) {
   if (s.contains('in-past')) return 'لا يمكن الحجز في تاريخ مضى';
   if (s.contains('not-cancellable')) return 'انتهت مهلة الإلغاء لهذا الحجز';
   if (s.contains('already-owned')) return 'لهذه الدائرة مالك بالفعل';
+  // الطلب على دائرة بلا مالك لا يُدفع (لا محفظة تستلم المبلغ)
+  if (s.contains('no-owner')) return 'هذه الدائرة لم يستلمها صاحبها بعد فلا يمكن الدفع لها الآن';
   if (e is ApiException && e.body?['error'] == 'offer-unavailable') return offerUnavailableText(e.body?['reason']?.toString());
   if (e is ApiException) return e.message;
   return s;

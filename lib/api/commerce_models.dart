@@ -30,7 +30,7 @@ int parseSar(String? text) {
   return v.isFinite && v > 0 ? (v * 100).round() : 0;
 }
 
-/// أقصى شحن تجريبي في المرة الواحدة (بالهللة) كما في الخادم.
+/// أقصى شحن تجريبي في المرة الواحدة (بالهللة) احتياطاً حين لا يرسل الخادم maxTopup مع /wallet.
 const int maxTopupHalalas = 10000000;
 
 Map<String, dynamic> _m(dynamic v) => asMap(v);
@@ -42,10 +42,13 @@ class Wallet {
   final int points;
   final int upcomingTickets;
   final bool testTopup;
+  /// سقف الشحن التجريبي في المرة (بالهللة) كما يضبطه المدير؛ الخادم يرسله مع /wallet
+  final int maxTopup;
   final List<WalletTx> recent;
-  const Wallet({required this.balance, required this.points, required this.upcomingTickets, required this.testTopup, required this.recent});
+  const Wallet({required this.balance, required this.points, required this.upcomingTickets, required this.testTopup, required this.recent, this.maxTopup = maxTopupHalalas});
   factory Wallet.fromJson(Map m) => Wallet(
         balance: _i(m['balance']), points: _i(m['points']), upcomingTickets: _i(m['upcomingTickets']), testTopup: m['testTopup'] == true,
+        maxTopup: _i(m['maxTopup']) > 0 ? _i(m['maxTopup']) : maxTopupHalalas,
         recent: asList(m['recent']).map(WalletTx.fromJson).toList(),
       );
 }
@@ -65,7 +68,7 @@ class WalletTx {
       );
   bool get positive => amount > 0;
   String get label => switch (kind) {
-        'topup' => 'شحن', 'credit' => 'إضافة رصيد', 'debit' => 'خصم', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر',
+        'topup' => 'شحن', 'test_topup' => 'شحن تجريبي', 'credit' => 'إضافة رصيد', 'debit' => 'خصم', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر',
         'ticket' => 'تذاكر', 'ticket_sale' => 'بيع تذاكر', 'market' => 'شراء من السوق', 'market_sale' => 'بيع في السوق',
         'refund' => 'استرداد', 'refund_out' => 'إعادة مبلغ', 'biz' => 'شراء أو حجز', 'biz_refund' => 'استرداد حجز', 'biz_sale' => 'مبيعات دائرتك', 'biz_refund_out' => 'استرداد لعميل', _ => kind };
 }
