@@ -118,6 +118,8 @@ class MessageQuote {
 class Message {
   final String id;
   final String senderId;
+  /// المستلم إن أعادته النواة (يُستخدم احتياطاً لتمييز رسالتي حين يغيب المرسل).
+  final String? recipientId;
   /// text | image | video | audio | file
   final String type;
   /// النص، أو رابط الوسائط لغير النص.
@@ -134,11 +136,24 @@ class Message {
   final String? forwardedFrom;
   /// بيانات إضافية (مثل durationMs للصوت، وwidth/height للصور).
   final Map<String, dynamic> extra;
-  const Message({required this.id, required this.senderId, required this.type, required this.content, this.sentAt, this.deliveredAt, this.readAt,
+  const Message({required this.id, required this.senderId, this.recipientId, required this.type, required this.content, this.sentAt, this.deliveredAt, this.readAt,
       this.status = MessageStatus.sent, this.localId, this.replyTo, this.quote, this.forwardedFrom, this.extra = const {}});
+
+  /// هل الرسالة من [myId] في محادثة ثنائية مع [peerId]؟ لا تعتمد على اسم حقل بعينه: المعرّف مباشرة، أو «me»،
+  /// أو أي مرسل ليس الطرف الآخر (في محادثة ثنائية لا ثالث لهما)، أو مستلم هو الطرف الآخر حين يغيب المرسل.
+  bool isMine({required String myId, required String peerId}) {
+    final s = senderId.trim().toUpperCase(), me = myId.trim().toUpperCase(), peer = peerId.trim().toUpperCase();
+    if (s == 'ME') return true;
+    if (s.isNotEmpty && me.isNotEmpty && s == me) return true;
+    if (s.isNotEmpty && peer.isNotEmpty && s != peer) return true;
+    if (s.isEmpty) { final r = (recipientId ?? '').trim().toUpperCase(); return r.isNotEmpty && r == peer; }
+    return false;
+  }
   factory Message.fromJson(Map m) => Message(
         id: _s(m, ['id']),
-        senderId: _s(m, ['sender_id', 'senderId', 'from']),
+        // النواة خارج المستودع وقد تسمّي المرسل sender_id أو from_id أو user_id أو author_id؛ نقرأ كل الأسماء
+        senderId: _s(m, ['sender_id', 'senderId', 'from', 'from_id', 'fromId', 'user_id', 'userId', 'author_id', 'authorId', 'sender']),
+        recipientId: _sn(m, ['recipient_id', 'recipientId', 'to', 'to_id', 'toId', 'receiver_id', 'peer_id', 'peerId']),
         type: _s(m, ['type'], 'text'),
         content: _s(m, ['content', 'text', 'url']),
         sentAt: _t(m, ['sent_at', 'sentAt', 'at', 'created_at', 'createdAt']),
@@ -176,7 +191,7 @@ class Message {
       };
   Message copyWith({String? id, DateTime? sentAt, DateTime? deliveredAt, DateTime? readAt, MessageStatus? status, String? localId, String? replyTo,
       MessageQuote? quote, String? forwardedFrom, Map<String, dynamic>? extra, String? content}) => Message(
-      id: id ?? this.id, senderId: senderId, type: type, content: content ?? this.content, sentAt: sentAt ?? this.sentAt,
+      id: id ?? this.id, senderId: senderId, recipientId: recipientId, type: type, content: content ?? this.content, sentAt: sentAt ?? this.sentAt,
       deliveredAt: deliveredAt ?? this.deliveredAt, readAt: readAt ?? this.readAt, status: status ?? this.status, localId: localId ?? this.localId,
       replyTo: replyTo ?? this.replyTo, quote: quote ?? this.quote, forwardedFrom: forwardedFrom ?? this.forwardedFrom, extra: extra ?? this.extra);
   /// دمج بيانات إضافية قادمة من /chat/meta.

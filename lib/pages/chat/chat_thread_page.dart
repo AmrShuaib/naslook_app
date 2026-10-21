@@ -150,6 +150,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   Timer? _typingTimer, _presenceTimer;
 
   String get myId => ref.read(appStateProvider).user?.id ?? '';
+  /// رسالتي أم رسالة الطرف الآخر؟ (لا تعتمد على اسم حقل المرسل في النواة؛ انظر [Message.isMine])
+  bool _mine(Message m) => m.isMine(myId: myId, peerId: _peerId);
   String get myName => ref.read(appStateProvider).user?.nickname ?? '';
   ApiClient get _api => ref.read(apiClientProvider);
   String get _peerId => widget.peer.id;
@@ -277,7 +279,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       final old = _byKey[k];
       if (old == null) {
         _byKey[k] = m;
-        if (m.senderId != myId) newFromPeer++;
+        if (!_mine(m)) newFromPeer++;
       } else {
         _byKey[k] = old.copyWith(
           sentAt: old.sentAt ?? m.sentAt,
@@ -507,7 +509,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     } else if (ev == 'message' || ev == 'new-message') {
       final m = e['message'] is Map ? Message.fromJson(asMap(e['message'])) : Message.fromJson(e);
       final fromPeer = m.senderId == _peerId || peerId == _peerId;
-      final mineFromOtherDevice = m.senderId == myId && (peerId == _peerId || e['to']?.toString() == _peerId);
+      final mineFromOtherDevice = _mine(m) && (peerId == _peerId || e['to']?.toString() == _peerId);
       if (fromPeer || mineFromOtherDevice) {
         final n = _merge([m]);
         setState(() { if (fromPeer) _peerTyping = false; });
@@ -522,7 +524,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       final at = DateTime.tryParse(e['at']?.toString() ?? '') ?? DateTime.now();
       setState(() {
         for (final m in _messages) {
-          if (m.senderId != myId || m.isPending) continue;
+          if (!_mine(m) || m.isPending) continue;
           _byKey[m.key] = ev == 'read' ? m.copyWith(readAt: at, deliveredAt: m.deliveredAt ?? at) : m.copyWith(deliveredAt: at);
         }
         _rebuild();
@@ -777,7 +779,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     Message? retry,
     Future<void> Function(String serverId)? onSent,
   }) async {
-    final quote = retry?.quote ?? (_replyTo == null ? null : MessageQuote(id: _replyTo!.key, senderId: _replyTo!.senderId, senderName: _replyTo!.senderId == myId ? 'أنت' : widget.peer.nickname, type: _replyTo!.mediaKind, content: _replyTo!.mediaKind == 'text' ? _replyTo!.content : ''));
+    final quote = retry?.quote ?? (_replyTo == null ? null : MessageQuote(id: _replyTo!.key, senderId: _replyTo!.senderId, senderName: _mine(_replyTo!) ? 'أنت' : widget.peer.nickname, type: _replyTo!.mediaKind, content: _replyTo!.mediaKind == 'text' ? _replyTo!.content : ''));
     final local = retry?.copyWith(status: MessageStatus.sending) ??
         Message(id: '', localId: 'local-${DateTime.now().microsecondsSinceEpoch}', senderId: myId, type: type, content: content, sentAt: DateTime.now(),
             status: MessageStatus.sending, quote: quote, replyTo: quote?.id, extra: extra ?? const {});
@@ -919,7 +921,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       builder: (ctx) => _PeoplePicker(people: people.values.toList(), title: 'إعادة التوجيه إلى'),
     );
     if (target == null || !mounted) return;
-    final from = m.senderId == myId ? myName : widget.peer.nickname;
+    final from = _mine(m) ? myName : widget.peer.nickname;
     try {
       final sent = await _api.sendMessage(target.id, m.type == 'text' ? m.content : _api.absolute(m.content), type: 'text', forwardedFrom: from, extra: m.extra);
       if (sent.id.isNotEmpty && sent.senderId != 'me') {
@@ -965,7 +967,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   // ---------------------------------------------------------------------------
 
   Future<void> _actions(Message m) async {
-    final mine = m.senderId == myId;
+    final mine = _mine(m);
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -1205,7 +1207,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         final showDate = prev == null || !_sameDay(prev.sentAt, m.sentAt);
         return _Bubble(
           m,
-          mine: m.senderId == myId,
+          mine: _mine(m),
           peerName: widget.peer.nickname,
           dateLabel: showDate && m.sentAt != null ? dayLabel(m.sentAt!) : null,
           joinedAbove: prev != null && !showDate && prev.senderId == m.senderId && _close(prev.sentAt, m.sentAt),
@@ -1271,7 +1273,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
             Container(
               padding: const EdgeInsets.fromLTRB(14, 8, 8, 0),
               child: Row(children: [
-                Expanded(child: _QuoteBox(name: _replyTo!.senderId == myId ? 'أنت' : widget.peer.nickname, text: _replyTo!.preview, compact: true)),
+                Expanded(child: _QuoteBox(name: _mine(_replyTo!) ? 'أنت' : widget.peer.nickname, text: _replyTo!.preview, compact: true)),
                 IconButton(icon: const Icon(Icons.close_rounded), tooltip: 'إلغاء الرد', onPressed: () => setState(() => _replyTo = null)),
               ]),
             ),

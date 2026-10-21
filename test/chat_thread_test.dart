@@ -115,6 +115,39 @@ void main() {
     });
   });
 
+  group('Message.isMine', () {
+    Message m(String from, {String? to}) => Message(id: 'x', senderId: from, recipientId: to, type: 'text', content: 't');
+    test('does not depend on the sender field: me, my id, anyone but the peer, or recipient == peer', () {
+      expect(m('SA0000001').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isTrue);
+      expect(m('sa0000001').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isTrue, reason: 'حالة الأحرف لا تهم');
+      expect(m('me').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isTrue);
+      expect(m('SA0000002').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isFalse);
+      expect(m('SA0000009').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isTrue, reason: 'في محادثة ثنائية من ليس الطرف الآخر فهو أنا');
+      expect(m('', to: 'SA0000002').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isTrue);
+      expect(m('', to: 'SA0000001').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isFalse);
+      expect(m('').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isFalse);
+    });
+    test('fromJson reads the sender under the names the core may use', () {
+      for (final k in ['sender_id', 'senderId', 'from', 'from_id', 'user_id', 'author_id']) {
+        expect(Message.fromJson({'id': '1', k: 'SA0000001', 'content': 't'}).senderId, 'SA0000001', reason: k);
+      }
+      expect(Message.fromJson({'id': '1', 'from_id': 'SA0000001', 'to_id': 'SA0000002', 'content': 't'}).recipientId, 'SA0000002');
+    });
+  });
+
+  testWidgets('bubbles keep their sides when the core names the sender from_id instead of sender_id', (tester) async {
+    final srv = _FakeServer()
+      ..messages.addAll([
+        {'id': 'm1', 'from_id': 'SA0000002', 'to_id': 'SA0000001', 'type': 'text', 'content': 'مرحبا', 'sent_at': DateTime.now().subtract(const Duration(minutes: 2)).toUtc().toIso8601String()},
+        {'id': 'm2', 'from_id': 'SA0000001', 'to_id': 'SA0000002', 'type': 'text', 'content': 'أهلاً', 'sent_at': DateTime.now().subtract(const Duration(minutes: 1)).toUtc().toIso8601String()},
+      ]);
+    await _pumpThread(tester, srv);
+    AlignmentGeometry sideOf(String text) => tester.widgetList<Align>(find.ancestor(of: find.text(text), matching: find.byType(Align)))
+        .map((a) => a.alignment).firstWhere((a) => a == AlignmentDirectional.centerEnd || a == AlignmentDirectional.centerStart);
+    expect(sideOf('أهلاً'), AlignmentDirectional.centerEnd, reason: 'رسالتي في جهة النهاية');
+    expect(sideOf('مرحبا'), AlignmentDirectional.centerStart, reason: 'رسالة الطرف الآخر في جهة البداية');
+  });
+
   testWidgets('loads messages, shows the day separator and marks them read', (tester) async {
     final srv = _FakeServer()
       ..messages.addAll([_msg('m1', 'SA0000002', 'مرحبا', const Duration(minutes: 2)), _msg('m2', 'SA0000001', 'أهلاً', const Duration(minutes: 1))]);

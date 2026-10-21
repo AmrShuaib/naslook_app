@@ -27,7 +27,7 @@ class ChatSearchHit {
   static ChatSearchHit? parse(Map<String, dynamic> m, String myId, Map<String, Person> known) {
     final id = (m['id'] ?? m['messageId'] ?? '').toString();
     if (id.isEmpty) return null;
-    final sender = (m['senderId'] ?? m['sender_id'] ?? m['from'] ?? '').toString();
+    final sender = (m['senderId'] ?? m['sender_id'] ?? m['from'] ?? m['from_id'] ?? m['user_id'] ?? m['author_id'] ?? '').toString();
     final to = (m['to'] ?? m['toId'] ?? m['recipientId'] ?? m['recipient_id'] ?? m['receiverId'] ?? '').toString();
     Person? peer;
     if (m['peer'] is Map) peer = Person.fromJson(asMap(m['peer']));
