@@ -1,7 +1,8 @@
 // اختبارات مفاتيح المال التنظيمية وحدود الشحن (server/admin.js وserver/market_b.js): الافتراضي مطفأ للتحويل بين المستخدمين
 // وللدفع داخل المحادثة (محفظة مغلقة حتى يتوفر مسار مرخّص)، والمدير يفعّلهما صراحة؛ حدّا الشحن بالبطاقة minTopup/maxCardTopup
 // (بالهللة) يُتحقق منهما ويقرأهما /pay/config و/pay/topup؛ تفعيل الشحن التجريبي مرفوض 409 ومفاتيح ميسر الحية مضبوطة؛
-// والمالية تُظهر المال التجريبي (kind=test_topup) منفصلاً عن الشحن الحقيقي.
+// والمالية تُظهر المال التجريبي (test_topup، والشحن التجريبي الأقدم بنوع topup وملاحظة «شحن» بلا مرجع) منفصلاً عن الشحن الحقيقي؛
+// وإن تعثّرت admin.js عند الإقلاع يبقى المفتاحان مطفأين على globalThis فلا يُفتح المال بغياب الإعدادات.
 import Fastify from 'fastify';
 import pg from 'pg';
 process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0'; process.env.NODE_ENV = 'test';
@@ -50,6 +51,21 @@ let e = await call('POST', '/wallet/transfer', { body: { to: U2, amount: 1000 },
 check(e.error === 'unavailable', 'fresh: wallet transfer refused (unavailable)');
 for (const k of ['pay', 'split', 'send']) { e = await call('POST', '/chat/requests', { body: money(k), user: U1, expect: 403 }); check(e.error === 'unavailable', `fresh: chat money request "${k}" refused`); }
 await call('POST', '/chat/requests', { body: { messageId: 'm-money-meet-1', peerId: U2, kind: 'meet', when: 'غداً 5م', place: 'جدة' }, user: U1, expect: 200 });
+
+// ---- إقلاع متعثر: لو فشلت admin.js قبل تحميل الإعدادات (قاعدة متوقفة) تكون قد نشرت المفتاحين مطفأين على globalThis قبل أول استعلام،
+// فيبقى commerce.js وchat_cards.js يرفضان المال بدل أن يفتحاه بغياب الإعدادات
+const liveSettings = globalThis.naslifeSettings; delete globalThis.naslifeSettings;
+const broken = Fastify(); let bootErr = null;
+broken.register((await import('../admin.js')).default, { pool: { query: async () => { throw new Error('db down'); } }, auth });
+try { await broken.ready(); } catch (err) { bootErr = err; }
+check(bootErr !== null, 'admin.js does not come up on a failing pool', String(bootErr?.message ?? '').slice(0, 60));
+check(globalThis.naslifeSettings?.transfersEnabled === false && globalThis.naslifeSettings?.chatPaymentsEnabled === false, 'money switches are published off before the first DB query', JSON.stringify(globalThis.naslifeSettings));
+e = await call('POST', '/wallet/transfer', { body: { to: U2, amount: 1000 }, user: U1, expect: 403 });
+check(e.error === 'unavailable', 'transfer refused after a failed admin boot');
+e = await call('POST', '/chat/requests', { body: money('pay', 9), user: U1, expect: 403 });
+check(e.error === 'unavailable', 'chat money refused after a failed admin boot');
+try { await broken.close(); } catch { /* لم يكتمل الإقلاع */ }
+globalThis.naslifeSettings = liveSettings;
 
 // ---- المدير يفعّل: التحويل وحده لا يكفي للمحادثة (تحتاج المفتاحين)، ثم الدفع في المحادثة
 await call('POST', '/adminapi/settings', { body: { transfersEnabled: true }, user: U1, expect: 403 });
@@ -123,6 +139,16 @@ await pool.query("INSERT INTO wallet_tx(id,user_id,kind,amount,note) VALUES(gen_
 const { f: fin1, day: d1 } = await today();
 check(fin1.testTopups.count === fin0.testTopups.count + 1 && fin1.testTopups.amount === fin0.testTopups.amount + 12345, 'test_topup rows are summed all-time', JSON.stringify(fin1.testTopups));
 check(d1.topups === d0.topups, 'daily topups count only topup/credit (test_topup excluded)', `${d0.topups} → ${d1.topups}`);
+// الشحن التجريبي الأقدم (قبل الحزمة: نوع topup بملاحظة «شحن» وبلا مرجع، كما يكتبه /wallet/topup) مال تجريبي لا شحن حقيقي؛
+// وشحن ميسر (نوع topup مع ref وملاحظة «شحن بالبطاقة») يبقى حقيقياً
+await pool.query("INSERT INTO wallet_tx(id,user_id,kind,amount,note) VALUES(gen_random_uuid(),$1,'topup',777,'شحن')", [U1]);
+const { f: fin2, day: d2 } = await today();
+check(fin2.testTopups.count === fin1.testTopups.count + 1 && fin2.testTopups.amount === fin1.testTopups.amount + 777, 'legacy test top-ups (topup/«شحن», no ref) count as test money', JSON.stringify(fin2.testTopups));
+check(d2.topups === d1.topups, 'legacy test top-ups are not real daily topups', `${d1.topups} → ${d2.topups}`);
+await pool.query("INSERT INTO wallet_tx(id,user_id,kind,amount,note,ref) VALUES(gen_random_uuid(),$1,'topup',888,'شحن بالبطاقة (mada)','pay_money_1')", [U1]);
+const { f: fin3, day: d3 } = await today();
+check(fin3.testTopups.count === fin2.testTopups.count && fin3.testTopups.amount === fin2.testTopups.amount, 'gateway top-ups (ref + «شحن بالبطاقة») are not test money', JSON.stringify(fin3.testTopups));
+check(d3.topups === d2.topups + 888, 'gateway top-ups count as real daily topups', `${d2.topups} → ${d3.topups}`);
 
 // ---- تنظيف: إعدادات هذه الحزمة لا تبقى للحزم التالية (القاعدة مشتركة)
 await pool.query("DELETE FROM platform_settings WHERE key = ANY($1)", [KEYS]);

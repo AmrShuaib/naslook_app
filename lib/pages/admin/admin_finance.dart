@@ -28,10 +28,14 @@ class AdminFinancePage extends ConsumerWidget {
         // المال التجريبي (الشحن التجريبي) منفصل عن الشحن الحقيقي: يراه المالك قبل أي مدفوعات حقيقية
         if (f.testTopupsAmount > 0) Padding(
           padding: const EdgeInsets.only(top: 10),
-          child: JoyCard(key: const Key('finance-test-money'), color: Joy.sunSoft, child: Row(children: [
+          child: JoyCard(key: const Key('finance-test-money'), color: Joy.sunSoft, child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Icon(Icons.science_outlined, color: Joy.warning, size: 20),
             const SizedBox(width: 8),
-            Expanded(child: Text('مال تجريبي في النظام: ${money(f.testTopupsAmount)} (${f.testTopupsCount} حركة)', style: const TextStyle(color: Joy.warning, fontWeight: FontWeight.w700, fontSize: 13))),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('مال تجريبي في النظام: ${money(f.testTopupsAmount)} (${f.testTopupsCount} حركة)', style: const TextStyle(color: Joy.warning, fontWeight: FontWeight.w700, fontSize: 13)),
+              // الرقم يشمل الشحن التجريبي الأقدم (كان بنوع topup قبل حزمة الأمان) حتى لا تُظن الأرصدة الحالية مالاً حقيقياً
+              const Text('كل الشحن التجريبي منذ البداية، القديم منه والجديد؛ لا يدخل في «الشحن» اليومي ولا يُسوّى كرصيد حقيقي', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.4)),
+            ])),
           ])),
         ),
         const SizedBox(height: 12),

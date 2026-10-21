@@ -1,6 +1,7 @@
 // مفاتيح المال التنظيمية وحدود الشحن (حزمة الأمان، المسار ج): إعدادات الإدارة تعرض أدنى/أقصى شحن بالبطاقة وسطر حالة المفاتيح
 // وترسلها بالهللة مع المفتاحين (مطفآن افتراضياً ولا يُعدّان مفعّلين إلا بـ true صريحة)، ورفض تفعيل الشحن التجريبي مع مفاتيح
-// ميسر الحية؛ المحفظة تأخذ سقف الشحن التجريبي من الخادم (maxTopup مع /wallet) لا من ثابت؛ والمالية تُظهر المال التجريبي.
+// ميسر الحية (المفتاح يُرسل فقط إن غيّره المدير حتى لا يعطّل حفظ بقية الإعدادات)؛ المحفظة تأخذ سقف الشحن التجريبي من الخادم
+// (maxTopup مع /wallet) لا من ثابت؛ والمالية تُظهر المال التجريبي.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -155,7 +156,35 @@ void main() {
       expect(b['maxTopup'], 200000);
       expect(b['transfersEnabled'], isTrue);
       expect(b['chatPaymentsEnabled'], isFalse);
-      expect(b['testTopup'], isTrue);
+      expect(b.containsKey('testTopup'), isFalse); // لم يُلمس فلا يُرسل (وإلا رفضه الخادم مع مفاتيح ميسر الحية)
+      expect(find.text('حُفظت الإعدادات'), findsOneWidget);
+    });
+
+    testWidgets('an untouched test top-up is not sent, so other settings still save while Moyasar live keys are set', (tester) async {
+      final srv = _Srv();
+      srv.routes['GET /adminapi/settings'] = (_, __) => _settings(testTopup: false);
+      // كما admin.js مع مفاتيح ميسر الحية: يرفض فقط حين يصله testTopup:true
+      srv.routes['POST /adminapi/settings'] = (_, b) => b?['testTopup'] == true ? http.Response(jsonEncode({'error': 'test-topup-live'}), 409, headers: {'content-type': 'application/json; charset=utf-8'}) : {..._settings(testTopup: false), ...?b};
+      await _pump(tester, srv, const Scaffold(body: AdminSettingsPage()));
+      await tester.enterText(find.byKey(const Key('set-max-topup')), '2000');
+      await _save(tester);
+      final b = srv.bodies['POST /adminapi/settings']!;
+      expect(b.containsKey('testTopup'), isFalse);
+      expect(b['maxTopup'], 200000);
+      expect(find.text('حُفظت الإعدادات'), findsOneWidget);
+      expect(find.text('لا يمكن تفعيل الشحن التجريبي ومفاتيح ميسر الحية مضبوطة'), findsNothing);
+    });
+
+    testWidgets('a test top-up that is on at the server and switched off is sent as false', (tester) async {
+      final srv = _Srv();
+      srv.routes['GET /adminapi/settings'] = (_, __) => _settings(testTopup: true);
+      srv.routes['POST /adminapi/settings'] = (_, b) => {..._settings(), ...?b};
+      await _pump(tester, srv, const Scaffold(body: AdminSettingsPage()));
+      await tester.tap(find.text('الشحن التجريبي').first);
+      await tester.pump();
+      expect(find.text('التحويل: مطفأ · دفع المحادثة: مطفأ · الشحن التجريبي: مطفأ'), findsOneWidget);
+      await _save(tester);
+      expect(srv.bodies['POST /adminapi/settings']!['testTopup'], isFalse);
       expect(find.text('حُفظت الإعدادات'), findsOneWidget);
     });
 

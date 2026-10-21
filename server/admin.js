@@ -22,6 +22,9 @@ export default async function admin(app, opts) {
   if (!pool || !auth) throw new Error("admin: pool and auth are required");
   const WEBAPP = opts.webappDir ?? process.env.NASLIFE_WEBAPP_DIR ?? "/opt/naslife/webapp";
   const OPS = opts.opsDir ?? process.env.NASLIFE_OPS_DIR ?? "/opt/naslife/ops";
+  // قبل أول استعلام: لو تعثّرت هذه الإضافة عند الإقلاع (قاعدة متوقفة أو جدول ناقص) تبقى مفاتيح المال مطفأة لدى commerce.js وchat_cards.js
+  // اللذين يقرآنها من globalThis، بدل أن يُفتح التحويل بين المستخدمين ومال المحادثة بغياب الإعدادات؛ loadSettings أدناه تستبدلها بالكامل
+  globalThis.naslifeSettings ??= { transfersEnabled: false, chatPaymentsEnabled: false };
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admins (user_id TEXT PRIMARY KEY, granted_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -628,15 +631,18 @@ export default async function admin(app, opts) {
     const days = Math.max(7, Math.min(90, Number(req.query?.days) || 14));
     const totals = (await pool.query("SELECT count(*)::int AS accounts, COALESCE(SUM(balance),0)::bigint AS balance, COALESCE(SUM(points),0)::bigint AS points FROM wallet_accounts")).rows[0];
     const byKind = (await pool.query(`SELECT kind, count(*)::int AS count, COALESCE(SUM(amount),0)::bigint AS amount FROM wallet_tx WHERE created_at >= now() - interval '${days} days' GROUP BY kind ORDER BY abs(SUM(amount)) DESC`)).rows;
+    // المال التجريبي: حركات test_topup (بعد حزمة الأمان) والشحن التجريبي الأقدم الذي قيّده /wallet/topup بنوع topup وملاحظة «شحن» وبلا مرجع
+    // (شحن ميسر يحمل ref وملاحظة «شحن بالبطاقة» فيبقى حقيقياً)؛ يُصنَّف في الاستعلام لا بإعادة كتابة السجل، ويُستبعد من الشحن اليومي الحقيقي
+    const TEST_TOPUP = (t) => `(${t}.kind='test_topup' OR (${t}.kind='topup' AND ${t}.note='شحن' AND ${t}.ref IS NULL))`;
     const daily = (await pool.query(`SELECT d::date AS day,
-        COALESCE((SELECT SUM(amount) FROM wallet_tx t WHERE t.amount > 0 AND t.kind IN ('topup','credit') AND (t.created_at + interval '3 hours')::date = d::date),0)::bigint AS topups,
+        COALESCE((SELECT SUM(amount) FROM wallet_tx t WHERE t.amount > 0 AND t.kind IN ('topup','credit') AND NOT ${TEST_TOPUP("t")} AND (t.created_at + interval '3 hours')::date = d::date),0)::bigint AS topups,
         COALESCE((SELECT SUM(-amount) FROM wallet_tx t WHERE t.amount < 0 AND t.kind IN ('biz','market','ticket') AND (t.created_at + interval '3 hours')::date = d::date),0)::bigint AS purchases,
         COALESCE((SELECT SUM(amount) FROM wallet_tx t WHERE t.kind IN ('refund','biz_refund') AND (t.created_at + interval '3 hours')::date = d::date),0)::bigint AS refunds
       FROM generate_series((now() + interval '3 hours')::date - ${days - 1}, (now() + interval '3 hours')::date, '1 day') AS d ORDER BY d`)).rows;
     const recent = (await pool.query("SELECT * FROM wallet_tx ORDER BY created_at DESC LIMIT 50")).rows.map(txOut);
     const top = (await pool.query("SELECT user_id, balance FROM wallet_accounts ORDER BY balance DESC LIMIT 10")).rows;
-    // المال التجريبي (الشحن التجريبي يُقيَّد بنوع test_topup) منذ البداية: ليميّزه المالك عن المال الحقيقي قبل الإطلاق
-    const testTopups = (await pool.query("SELECT count(*)::int AS count, COALESCE(SUM(amount),0)::bigint AS amount FROM wallet_tx WHERE kind='test_topup'")).rows[0];
+    // منذ البداية (لا منذ نشر الحزمة فقط): ليميّز المالك الأرصدة التجريبية الحالية عن المال الحقيقي قبل تسوية أي رصيد
+    const testTopups = (await pool.query(`SELECT count(*)::int AS count, COALESCE(SUM(amount),0)::bigint AS amount FROM wallet_tx w WHERE ${TEST_TOPUP("w")}`)).rows[0];
     return {
       totals: { accounts: totals.accounts, balance: Number(totals.balance), points: Number(totals.points) },
       testTopups: { count: testTopups.count, amount: Number(testTopups.amount) },
