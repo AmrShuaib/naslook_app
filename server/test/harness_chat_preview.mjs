@@ -14,6 +14,8 @@ const hits = {};
 const slowHolders = [];
 const big = '<html><head><title>Big page</title>' + '<!-- ' + 'x'.repeat(700 * 1024) + ' -->' + '<meta property="og:title" content="Beyond the cap"></head></html>';
 const PNG = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.alloc(64, 7)]);
+const BIG_IMG = Buffer.alloc(200016, 9); // أكبر من حزمة واحدة: جزؤها الأول يصل مع الترويسات فيضيع إن تدفّق المصدر قبل ربطه بالرد
+const CHUNKED_PARTS = 20, CHUNKED_PART = 256 * 1024; // 5 ميغابايت بلا content-length
 const cp1256Title = Buffer.concat([Buffer.from('<html><head><title>'), Buffer.from([0xcc, 0xcf, 0xc9]), Buffer.from('</title></head><body></body></html>')]);
 const site = http.createServer((req, res) => {
   const p = req.url.split('?')[0];
@@ -44,6 +46,10 @@ const site = http.createServer((req, res) => {
   if (p === '/img/redir') { res.writeHead(302, { location: '/img/og.jpg?x=1&y=2' }); return res.end(); }
   if (p === '/img/huge') { res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': 4 * 1024 * 1024 }); return res.end(Buffer.alloc(1024)); }
   if (p === '/img/notimage') return html('<title>not an image</title>');
+  if (p === '/img/big.png') { res.writeHead(200, { 'content-type': 'image/png', 'content-length': BIG_IMG.length }); return res.end(BIG_IMG); }
+  if (p === '/img/chunked') { res.writeHead(200, { 'content-type': 'image/jpeg' }); let n = 0; const t = setInterval(() => { if (res.destroyed) return clearInterval(t); res.write(Buffer.alloc(CHUNKED_PART, 1)); if (++n >= CHUNKED_PARTS) { clearInterval(t); res.end(); } }, 1); res.on('close', () => clearInterval(t)); return; }
+  if (p === '/big-img-page') return html('<html><head><title>BigImg</title><meta property="og:image" content="/img/big.png"></head></html>');
+  if (p === '/chunked-page') return html('<html><head><title>Chunked</title><meta property="og:image" content="/img/chunked"></head></html>');
   if (p === '/huge-page') return html('<html><head><title>Huge</title><meta property="og:image" content="/img/huge"></head></html>');
   if (p === '/notimg-page') return html('<html><head><title>NotImg</title><meta property="og:image" content="/img/notimage"></head></html>');
   if (p === '/redir-img-page') return html('<html><head><title>RedirImg</title><meta property="og:image" content="/img/redir"></head></html>');
@@ -132,6 +138,36 @@ ir = await appPriv.inject({ method: 'GET', url: `/chat/preview/image?u=${encodeU
 check(ir.statusCode === 415, 'text/html at an image url → 415', String(ir.statusCode));
 ir = await appPriv.inject({ method: 'GET', url: `/chat/preview/image?u=${encodeURIComponent(base + '/img/redir')}` });
 check(ir.statusCode === 200 && ir.rawPayload.equals(PNG), 'image behind a redirect proxied', String(ir.statusCode));
+// ---- الوكيل خلف onSend غير متزامن (النواة قد تسجّل واحداً خارج المستودع): العدّ داخل التدفّق المُرسَل فلا تضيع البايتات الأولى
+await preview(`${base}/big-img-page`);
+const appHook = Fastify();
+appHook.addHook('onSend', async (req, reply, payload) => { await new Promise((r) => setImmediate(r)); return payload; });
+appHook.register((await import('../chat_preview.js')).default, { pool, auth, allowPrivate: true, timeoutMs: 1500 });
+await appHook.ready();
+ir = await appHook.inject({ method: 'GET', url: `/chat/preview/image?u=${encodeURIComponent(base + '/img/big.png')}` });
+check(ir.statusCode === 200 && ir.headers['content-length'] === String(BIG_IMG.length) && ir.rawPayload.equals(BIG_IMG), '200 KB image fully delivered behind an async onSend hook', `${ir.statusCode} got ${ir.rawPayload.length} of ${BIG_IMG.length}`);
+ir = await appHook.inject({ method: 'GET', url: `/chat/preview/image?u=${encodeURIComponent(imgUrl)}` });
+check(ir.statusCode === 200 && ir.rawPayload.equals(PNG), 'small image fully delivered behind an async onSend hook', `${ir.statusCode} got ${ir.rawPayload.length}`);
+await appHook.close();
+// ---- صورة بلا content-length تتجاوز 3 ميغابايت: يُقطع التدفّق عند الحدّ (الرد يُدمَّر) ولا يُمرَّر الجسم كله
+await preview(`${base}/chunked-page`);
+let chunkedGot = -1, chunkedCut = false;
+try { ir = await appPriv.inject({ method: 'GET', url: `/chat/preview/image?u=${encodeURIComponent(base + '/img/chunked')}` }); chunkedGot = ir.rawPayload.length; chunkedCut = chunkedGot < CHUNKED_PARTS * CHUNKED_PART; }
+catch { chunkedCut = true; }
+check(chunkedCut, 'undeclared 5 MB image cut at the 3 MB cap', chunkedGot < 0 ? 'response destroyed' : `got ${chunkedGot}`);
+// ---- حدّ الصور 120 في الدقيقة لكل عنوان IP مُمرَّر: خلف Caddy يكون req.ip دائماً 127.0.0.1 فالمفتاح أول عنصر في x-forwarded-for
+const viaIp = (ip) => appPriv.inject({ method: 'GET', url: `/chat/preview/image?u=${encodeURIComponent(imgUrl)}`, headers: { 'x-forwarded-for': ip } });
+let imgOk = 0;
+for (let i = 0; i < 120; i++) { ir = await viaIp('203.0.113.9, 10.0.0.1'); if (ir.statusCode === 200 && ir.rawPayload.equals(PNG)) imgOk++; }
+check(imgOk === 120, '120 images allowed for one forwarded IP', String(imgOk));
+ir = await viaIp('203.0.113.9, 10.0.0.1');
+check(ir.statusCode === 429, '121st image from the same forwarded IP → 429', String(ir.statusCode));
+ir = await viaIp('203.0.113.9');
+check(ir.statusCode === 429, 'bucket keyed on the first x-forwarded-for entry (same client without the proxy chain) → 429', String(ir.statusCode));
+ir = await viaIp('198.51.100.7, 10.0.0.1');
+check(ir.statusCode === 200, 'another forwarded IP is not limited', String(ir.statusCode));
+ir = await appPriv.inject({ method: 'GET', url: `/chat/preview/image?u=${encodeURIComponent(imgUrl)}` });
+check(ir.statusCode === 200, 'no forwarded header falls back to req.ip (its own bucket)', String(ir.statusCode));
 // ذاكرة منتهية: تُجلب من جديد
 await pool.query("UPDATE chat_link_previews SET fetched_at = now() - interval '25 hours'");
 await preview(`${base}/ok`);

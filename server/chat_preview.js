@@ -9,6 +9,7 @@ import dns from "node:dns/promises";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
+import { Transform, pipeline } from "node:stream";
 
 const MAX_BYTES = 512 * 1024;
 const TIMEOUT_MS = 5000;
@@ -229,6 +230,9 @@ async function setup(app, opts) {
     return r.n > max;
   }
   const limited = (uid) => limitedBy(rate, uid, RATE_PER_MIN);
+  // خلف Caddy يصل req.ip دائماً 127.0.0.1 (النواة لا تضبط trustProxy) فالعنوان الحقيقي أول عنصر في x-forwarded-for، كما في
+  // account_delete.js وauth_alias.js؛ بدونه (اختبار أو اتصال مباشر) يُستخدم req.ip
+  const ipOf = (req) => String(req.headers["x-forwarded-for"] ?? req.ip ?? "").split(",")[0].trim() || "?";
 
   // ---- فتح تدفّق (للصور): القواعد نفسها (مضيف عام، عنوان مثبّت، مهلة، 3 تحويلات) لكن الجسم يُمرَّر كما هو بلا تخزين
   async function openStream(startUrl) {
@@ -297,7 +301,7 @@ async function setup(app, opts) {
 
   // ---- وكيل صور المعاينة: Caddy يفرض img-src 'self' فلا يحمّل المتصفح صورة من مضيف خارجي، وتُقدَّم من هنا بالقواعد نفسها
   // (مضيف عام بعنوان مثبّت، مهلة، 3 ميغابايت، image/* فقط) ولصور اكتشفتها معاينة مخزَّنة فقط (ليس وكيلاً مفتوحاً).
-  // بلا مصادقة لأن <img> لا يحمل رمز الجلسة؛ حدّ 120 في الدقيقة لكل IP. الجهاز لا يتصل بالموقع الخارجي أبداً.
+  // بلا مصادقة لأن <img> لا يحمل رمز الجلسة؛ حدّ 120 في الدقيقة لكل IP (أول x-forwarded-for خلف Caddy). الجهاز لا يتصل بالموقع الخارجي أبداً.
   await pool.query("CREATE INDEX IF NOT EXISTS chat_link_previews_image ON chat_link_previews ((data->>'image'))");
   app.get("/chat/preview/image", async (req, reply) => {
     const u = normalize(String(req.query?.u ?? "").trim());
@@ -305,7 +309,7 @@ async function setup(app, opts) {
     let known = false;
     try { known = (await pool.query("SELECT 1 FROM chat_link_previews WHERE data->>'image' = $1 LIMIT 1", [u.href])).rowCount > 0; } catch { known = false; }
     if (!known) return reply.code(404).send({ error: "not-found" });
-    if (limitedBy(imgRate, String(req.ip || "?"), IMAGE_RATE_PER_MIN)) return reply.code(429).send({ error: "rate-limited" });
+    if (limitedBy(imgRate, ipOf(req), IMAGE_RATE_PER_MIN)) return reply.code(429).send({ error: "rate-limited" });
     let r;
     try { r = await openStream(u.href); } catch { return reply.code(404).send({ error: "fetch-failed" }); }
     const ct = String(r.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
@@ -315,9 +319,12 @@ async function setup(app, opts) {
     if (len > IMAGE_MAX_BYTES) { r.res.destroy(); return reply.code(413).send({ error: "too-large" }); }
     reply.header("content-type", ct).header("cache-control", "public, max-age=86400").header("x-content-type-options", "nosniff");
     if (len) reply.header("content-length", len);
+    // العدّ داخل التدفّق المُرسَل لا بمستمع data على المصدر: المستمع يجعل المصدر يتدفّق قبل أن يربطه Fastify بالرد، ومع أي
+    // onSend غير متزامن في النواة تضيع البايتات الأولى. pipeline يُسقط المصدر عند تجاوز الحدّ أو انقطاع العميل (fastify يدمّر guard).
     let size = 0;
-    r.res.on("data", (c) => { size += c.length; if (size > IMAGE_MAX_BYTES) r.res.destroy(); });
-    return reply.send(r.res);
+    const guard = new Transform({ transform(c, _enc, cb) { size += c.length; if (size > IMAGE_MAX_BYTES) cb(new Error("too-large")); else cb(null, c); } });
+    pipeline(r.res, guard, (e) => { if (e && e.message === "too-large") logger(`chat_preview: image ${u.href} cut at ${IMAGE_MAX_BYTES} bytes`); });
+    return reply.send(guard);
   });
 
   globalThis.naslifeLinkPreview = { fetch: fetchPreview, isPrivateIp, hostAllowed, decodeEntities, parsePreview };

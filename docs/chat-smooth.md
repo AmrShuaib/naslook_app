@@ -33,7 +33,7 @@
 | المسار | من | يفعل |
 |---|---|---|
 | `GET /chat/preview?url=<encoded>` | جلسة (401 بدونها) | `{ok:true, url, title, description, image, site, finalUrl, cachedAt}` أو `{ok:false, reason}`؛ **لا 5xx أبداً** |
-| `GET /chat/preview/image?u=<encoded>` | عام (`<img>` لا يحمل الرمز) | يقدّم صورة المعاينة من أصلنا: `image/*` فقط، 3 ميغابايت، `cache-control: public, max-age=86400`؛ ولصور اكتشفتها معاينة مخزَّنة فقط (ليس وكيلاً مفتوحاً: غيرها 404)؛ 413 للضخمة، 415 لغير الصور، 120 في الدقيقة لكل IP |
+| `GET /chat/preview/image?u=<encoded>` | عام (`<img>` لا يحمل الرمز) | يقدّم صورة المعاينة من أصلنا: `image/*` فقط، 3 ميغابايت، `cache-control: public, max-age=86400`؛ ولصور اكتشفتها معاينة مخزَّنة فقط (ليس وكيلاً مفتوحاً: غيرها 404)؛ 413 للضخمة، 415 لغير الصور، 120 في الدقيقة لكل عنوان IP (أول عنصر في `x-forwarded-for` لأن النواة خلف Caddy ترى `req.ip` = 127.0.0.1 للجميع، كما في بقية الإضافات؛ وبدون الترويسة `req.ip`). الحجم يُعدّ داخل التدفّق المُرسَل نفسه (`Transform` + `pipeline`) لا بمستمع على المصدر، فلا تضيع البايتات الأولى إن سجّلت النواة خطّاف `onSend` غير متزامن، ويُقطع التدفّق عند 3 ميغابايت حتى بلا `content-length` |
 | `GET /chat/preview/status` | عام | `{ok, cached, maxBytes, timeoutMs, maxRedirects, ttlHours, ratePerMin}` |
 
 أسباب الفشل: `bad-url` (ليس http/https، فيه بيانات دخول، أطول من 2048)، `private-host`، `dns`، `timeout`، `not-html`، `too-many-redirects`، `bad-redirect`، `http-<status>`، `no-title`، `parse-failed`، `fetch-failed`، و`rate-limited` (429).
@@ -74,5 +74,5 @@
 ## الاختبارات
 
 - `NASLIFE_TEST_DB=naslife_test_chatsmooth server/test/run.sh harness_chat_peaks.mjs` (39 فحصاً: نغمة من `ffmpeg -f lavfi` بنمط عالٍ/خافت/عالٍ/صمت، 48 قيمة في 0..1 مطبَّعة، الذاكرة، الحساب عند الطلب، الرفض، الصوت التالف، الحذف).
-- `NASLIFE_TEST_DB=naslife_test_chatsmooth server/test/run.sh harness_chat_preview.mjs` (114 فحصاً: العناوين الخاصة، المضيفون، الكيانات، المصادقة، الرفض قبل الاتصال، إعادة ربط DNS بمحلّل محقون، التحليل والترميز والحجم والتحويلات والمهلة وأنواع المحتوى، الذاكرة وانتهاؤها، وكيل الصور، حدّ المعدل، الحالة).
+- `NASLIFE_TEST_DB=naslife_test_chatsmooth server/test/run.sh harness_chat_preview.mjs` (122 فحصاً: العناوين الخاصة، المضيفون، الكيانات، المصادقة، الرفض قبل الاتصال، إعادة ربط DNS بمحلّل محقون، التحليل والترميز والحجم والتحويلات والمهلة وأنواع المحتوى، الذاكرة وانتهاؤها، وكيل الصور — ومنه التسليم الكامل خلف خطّاف `onSend` غير متزامن وقطع صورة 5 ميغابايت بلا `content-length` وحدّ 120 لكل عنوان مُمرَّر — حدّ المعدل، الحالة).
 - `flutter test test/chats_list_test.dart test/link_preview_test.dart` (الصفوف، الهيكل، السحب للتحديث، قائمة الضغط المطوّل، البطاقة والإخفاء والفتح والذاكرة، `firstLinkIn`، `parsePeaks`).
