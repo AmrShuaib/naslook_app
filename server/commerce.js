@@ -191,8 +191,8 @@ export default async function commerce(app, opts) {
   globalThis.naslifeWalletTransfer = transfer;
   app.post("/wallet/transfer", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
-    // مفتاح المنصة transfersEnabled (قرار المالك التنظيمي) ولا تحويلات في عميل iOS
-    if (globalThis.naslifeSettings?.transfersEnabled === false || iosNative(req)) return bad(reply, 403, "unavailable");
+    // مفتاح المنصة transfersEnabled (قرار المالك التنظيمي): مغلق ما لم يكن true صراحة، ولا تحويلات في عميل iOS
+    if (globalThis.naslifeSettings?.transfersEnabled !== true || iosNative(req)) return bad(reply, 403, "unavailable");
     const { to } = req.body ?? {};
     try {
       await transfer({ from: uid, to, amount: req.body?.amount, note: req.body?.note });

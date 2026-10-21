@@ -11,6 +11,8 @@ await pool.query("INSERT INTO users(id,nickname,avatar_url) VALUES('SA0000001','
 await pool.query("CREATE TABLE IF NOT EXISTS user_blocks (user_id TEXT NOT NULL, blocked_id TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY (user_id, blocked_id))");
 for (const sql of ['DELETE FROM user_blocks', 'DROP TABLE IF EXISTS chat_requests', 'DELETE FROM wallet_tx', 'DELETE FROM wallet_accounts', 'DELETE FROM app_notifications', 'DELETE FROM tickets', 'DELETE FROM ticket_tiers', 'DELETE FROM events', 'DELETE FROM market_listings', 'DELETE FROM map_posts', "DELETE FROM biz_orders", "DELETE FROM biz_community_posts WHERE biz_id='biz-brew92'", "UPDATE biz SET owner_id=NULL WHERE id='biz-brew92'"]) { try { await pool.query(sql); } catch { /* أول تشغيل */ } }
 const auth = async (req) => req.headers['x-user'] || null;
+// مفاتيح المال مغلقة افتراضياً في الخادم؛ الحزمة تفعّلها صراحة لتختبر الدفع في الدردشة
+globalThis.naslifeSettings = { ...(globalThis.naslifeSettings ?? {}), transfersEnabled: true, chatPaymentsEnabled: true };
 const app = Fastify();
 app.register((await import('../notify.js')).default, { pool, auth, pollMs: 3600000, opsDir: dir + 'ops' });
 app.register((await import('../commerce.js')).default, { pool, auth });

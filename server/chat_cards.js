@@ -60,7 +60,7 @@ async function setup(app, opts) {
   // المال داخل المحادثة (طلب مبلغ، تقسيم، إرسال): مفتاح المنصة chatPaymentsEnabled، ومطفأ دائماً في عميل iOS الأصلي
   const iosNative = (req) => /^ios\//i.test(String(req.headers["x-naslife-client"] ?? ""));
   // دفع الدردشة تحويل بين مستخدمين: يتوقف إن أُطفئت التحويلات أو مدفوعات الدردشة، ودائماً في iOS
-  const moneyOff = (req) => globalThis.naslifeSettings?.chatPaymentsEnabled === false || globalThis.naslifeSettings?.transfersEnabled === false || iosNative(req);
+  const moneyOff = (req) => globalThis.naslifeSettings?.chatPaymentsEnabled !== true || globalThis.naslifeSettings?.transfersEnabled !== true || iosNative(req);
 
   // ---- الدوائر والأصناف: المعرّف كما هو أو مع البادئة biz- (يكتب المستخدم @brew92 بدل @biz-brew92)
   const bizRow = async (slug) => {

@@ -20,7 +20,7 @@ for (const sql of ['DELETE FROM wallet_tx WHERE user_id = ANY($1)', 'DELETE FROM
   try { await pool.query(sql, sql.includes('LIKE') ? ['biz-ms-%'] : [IDS]); } catch { /* أول تشغيل: الجداول تُنشأ عند التسجيل */ }
 }
 const notes = []; globalThis.naslifeNotify = async (ids, p) => { notes.push({ ids: [].concat(ids), ...p }); }; globalThis.naslifeNotifyAdmins = async () => {};
-globalThis.naslifeSettings = { maxTopup: 2000000, marketCommissionPct: 0 };
+globalThis.naslifeSettings = { maxTopup: 2000000, marketCommissionPct: 0, transfersEnabled: true, chatPaymentsEnabled: true };
 delete globalThis.naslifePayMode;
 const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
