@@ -2,7 +2,9 @@
 # بديل عن GitHub Actions الذي يرفض تشغيل المهام في هذا المستودع منذ 16 سبتمبر 2026 (المهام لا تبدأ أصلاً).
 # الإعداد مرة واحدة: سجّل في codemagic.io بحساب GitHub، أضف المستودع AmrShuaib/naslook_app، وسيقرأ هذا الملف تلقائياً.
 #
-# 1) ios-unsigned: يتحقق أن النسخة الأصلية تُترجم وتُبنى (بلا توقيع) عند كل دفع إلى فرع التطوير.
+# 1) ios-unsigned: يتحقق أن النسخة الأصلية تُترجم وتُبنى (بلا توقيع) عند كل دفع إلى فرع التطوير، ويُخرج
+#    naslife-unsigned.ipa للتثبيت على آيفون المالك بحساب أبل عادي عبر Sideloadly (docs/ios-release.md).
+#    معرّف هذه النسخة app.naslife.dev حتى لا يحجز الحساب الشخصي المعرّف app.naslife قبل تسجيل الشركة.
 # 2) ios-testflight: يوقّع ويرفع إلى TestFlight. يعمل بعد قبول حساب Apple Developer وإنشاء التطبيق في App Store Connect:
 #    - في Codemagic: Teams → Integrations → App Store Connect: أضف مفتاح API باسم naslife_asc (Issuer ID وKey ID وملف .p8).
 #    - في Codemagic: Code signing identities: اسمح له بإنشاء شهادة التوزيع وملف التعريف لـ app.naslife تلقائياً.
@@ -32,7 +34,19 @@ workflows:
         script: flutter test
       - name: Build iOS (release, unsigned)
         script: flutter build ios --release --no-codesign
+      - name: Package sideload IPA (app.naslife.dev)
+        script: |
+          set -e
+          OUT=build/ios/ipa_unsigned
+          rm -rf "$OUT" && mkdir -p "$OUT/Payload"
+          cp -R build/ios/iphoneos/Runner.app "$OUT/Payload/"
+          PLIST="$OUT/Payload/Runner.app/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier app.naslife.dev" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ناس لايف تجريبي" "$PLIST"
+          (cd "$OUT" && zip -qry naslife-unsigned.ipa Payload)
+          ls -la "$OUT"
     artifacts:
+      - build/ios/ipa_unsigned/*.ipa
       - build/ios/iphoneos/*.app
 
   ios-testflight:
