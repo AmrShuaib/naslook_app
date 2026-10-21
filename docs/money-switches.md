@@ -18,7 +18,7 @@
 
 ### إن تعثّرت `admin.js` عند الإقلاع
 
-`commerce.js` (`/wallet/transfer`) و`chat_cards.js` (مال المحادثة) يقرآن المفتاحين من `globalThis.naslifeSettings` بصيغة `=== false`، أي أن **غياب** كائن الإعدادات كان يعني «مفعّل». لذلك تنشر `admin.js` المفتاحين مطفأين على `globalThis` **قبل أول استعلام** على القاعدة (`globalThis.naslifeSettings ??= { transfersEnabled: false, chatPaymentsEnabled: false }`): لو تعثّرت الإضافة بعدها (قاعدة متوقفة أو جدول ناقص) يبقى المال مغلقاً، و`loadSettings` تستبدل الكائن كاملاً عند النجاح. ما يبقى خارج هذه الحزمة: إن لم تُسجَّل `admin.js` أصلاً (ليست في `register.txt`) يظل المساران مفتوحين؛ الإغلاق الكامل يحتاج قلب القراءتين إلى `!== true` في `commerce.js:188` و`chat_cards.js:63` (ملكهما مسار آخر) مع تزويد الحزم التي لا تسجّل `admin.js` بكائن إعدادات (`harness_chat_cards.mjs` يضبطه عند قسم المفاتيح فقط).
+القراءتان في الخادم **تُغلقان عند الغياب**: `commerce.js` (`/wallet/transfer`) و`chat_cards.js` (مال المحادثة) يقبلان المفتاحين بصيغة `!== true`، أي أن أي قيمة غير `true` الصريحة، أو غياب كائن الإعدادات كله، يعني «مطفأ». وفوق ذلك تنشر `admin.js` المفتاحين مطفأين على `globalThis` **قبل أول استعلام** على القاعدة (`globalThis.naslifeSettings ??= { transfersEnabled: false, chatPaymentsEnabled: false }`) حتى لو تعثّرت بعدها، و`loadSettings` تستبدل الكائن كاملاً عند النجاح. النتيجة: لا يُفتح المال إلا بإعداد محفوظ صريح من اللوحة، مهما كان ترتيب التسجيل أو حال الإقلاع. حزم الاختبار التي لا تسجّل `admin.js` وتحتاج التحويل (`harness_chat_cards.mjs`، `harness_money_safety.mjs`) تضبط المفتاحين `true` صراحة في أولها.
 
 ## الحدود
 
