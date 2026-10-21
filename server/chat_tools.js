@@ -1,4 +1,4 @@
-// أدوات المحادثات في Naslife: رفع الوسائط وتقديمها، وبيانات إضافية للرسائل (رد مقتبس، إعادة توجيه، مدة الصوت).
+// أدوات المحادثات في Naslife: رفع الوسائط وتقديمها، وموجة الصوت (48 قيمة مع الرفع وGET /chat/peaks)، وبيانات إضافية للرسائل (رد مقتبس، إعادة توجيه، مدة الصوت).
 // التسجيل في src/index.js قبل app.listen:
 //   await app.register((await import("./chat_tools.js")).default, { pool, auth });
 // الملفات تُحفظ في CHAT_MEDIA_DIR (الافتراضي /opt/naslife/media/chat) بأسماء عشوائية غير قابلة للتخمين،
@@ -107,6 +107,49 @@ async function setup(app, opts) {
     await fs.unlink(inFile).catch(() => {});
     return out;
   }
+  // ---- موجة الصوت: 48 قيمة RMS في 0..1 لكل رسالة صوتية حتى يرسم التطبيق شكل الموجة بدل شريط مسطّح.
+  // تُحسب بعد التحويل بفكّ الترميز إلى PCM أحادي 8 كيلوهرتز (كافٍ للشكل ورخيص)، وتُطبَّع على أعلى شريحة، وتُخزَّن بجانب الملف
+  // <name>.peaks.json (الاسم بنقطتين فلا يطابق NAME_RE ولا يُقدَّم من /chat/media). أي فشل = «بلا موجة» ولا يُفشل الرفع أبداً.
+  const PEAKS_N = 48;
+  const peaksPath = (name) => path.join(MEDIA_DIR, `${name}.peaks.json`);
+  const peaksInflight = new Map();
+  async function computePeaks(file) {
+    // -t 1800: نصف ساعة من الصوت على الأكثر (28.8 ميغابايت PCM) حتى لا يبتلع ملف طويل الذاكرة
+    const { stdout } = await execFileP("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", file, "-t", "1800", "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], { encoding: "buffer", maxBuffer: 32 * 1024 * 1024, timeout: 60000 });
+    const n = stdout.length >> 1;
+    if (!n) throw new Error("no audio samples");
+    const rms = [];
+    let max = 0;
+    for (let i = 0; i < PEAKS_N; i++) {
+      const a = Math.floor((i * n) / PEAKS_N), b = Math.max(a + 1, Math.floor(((i + 1) * n) / PEAKS_N));
+      let sum = 0, count = 0;
+      for (let j = a; j < b && j < n; j++) { const v = stdout.readInt16LE(j * 2) / 32768; sum += v * v; count++; }
+      const r = count ? Math.sqrt(sum / count) : 0;
+      rms.push(r); if (r > max) max = r;
+    }
+    return rms.map((r) => (max > 0 ? Math.round((r / max) * 1000) / 1000 : 0));
+  }
+  async function audioPeaks(name) {
+    if (!MEDIA_DIR || !ffmpeg) return null;
+    const cache = peaksPath(name);
+    try {
+      const j = JSON.parse(await fs.readFile(cache, "utf8"));
+      if (Array.isArray(j?.peaks) && j.peaks.length === PEAKS_N) return j.peaks;
+    } catch { /* تُحسب الآن */ }
+    if (peaksInflight.has(name)) return peaksInflight.get(name);
+    const job = (async () => {
+      try {
+        const peaks = await computePeaks(path.join(MEDIA_DIR, name));
+        await fs.writeFile(cache, JSON.stringify({ peaks, n: PEAKS_N, at: new Date().toISOString() })).catch(() => {});
+        return peaks;
+      } catch (e) {
+        logger(`chat_tools: peaks failed for ${name}: ${e?.message || e}`);
+        return null;
+      } finally { peaksInflight.delete(name); }
+    })();
+    peaksInflight.set(name, job);
+    return job;
+  }
   logger(MEDIA_DIR ? `chat_tools: media dir ${MEDIA_DIR}` : `chat_tools: NO writable media dir (${mediaErrors.join("; ")})`);
 
   // ---- المصغّرات: نسخة JPEG بحد 480 بكسل للصور، وإطار من الثانية الأولى للفيديو. تُولَّد عند الرفع وعند أول طلب
@@ -174,9 +217,23 @@ async function setup(app, opts) {
     if (!MEDIA_DIR || !NAME_RE.test(name)) return false;
     await fs.unlink(path.join(MEDIA_DIR, name)).catch(() => {});
     if (THUMB_DIR) await fs.unlink(thumbPath(name)).catch(() => {});
+    await fs.unlink(peaksPath(name)).catch(() => {});
     return true;
   };
-  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, thumbs: !!MEDIA_DIR && ffmpeg, maxBytes: MAX_BYTES }));
+  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, thumbs: !!MEDIA_DIR && ffmpeg, peaks: !!MEDIA_DIR && ffmpeg, maxBytes: MAX_BYTES }));
+
+  // ---- موجة الصوت لملف موجود (الرسائل الأقدم من هذه الميزة): تُحسب عند أول طلب وتُخزَّن بجانب الملف. يقبل الاسم أو الرابط كاملاً.
+  // بلا مصادقة كالملف نفسه (الأسماء عشوائية غير قابلة للتخمين)؛ 404 لاسم غير صالح أو ملف غير صوتي أو مفقود، و{peaks:null} إن تعذّر الحساب.
+  app.get("/chat/peaks", async (req, reply) => {
+    const name = String(req.query?.name ?? "").split("?")[0].split("/").pop();
+    if (!MEDIA_DIR || !NAME_RE.test(name)) return bad(reply, 404, "not-found");
+    const type = EXT_TYPE[name.split(".").pop()] || "";
+    if (!type.startsWith("audio/")) return bad(reply, 404, "not-found");
+    try { await fs.access(path.join(MEDIA_DIR, name)); } catch { return bad(reply, 404, "not-found"); }
+    const peaks = await audioPeaks(name);
+    if (peaks) reply.header("cache-control", "public, max-age=31536000, immutable");
+    return { name, peaks, n: PEAKS_N };
+  });
 
   // محلل محتوى ثنائي داخل نطاق هذه الإضافة فقط؛ نتخطى أي نوع سجّله الخادم الأساسي مسبقاً (وإلا رمى Fastify خطأ FST_ERR_CTP_ALREADY_PRESENT)
   for (const type of [...Object.keys(TYPES), "application/octet-stream"]) {
@@ -216,7 +273,9 @@ async function setup(app, opts) {
       } catch (e) { logger(`chat_tools: video normalize failed, keeping original: ${e?.message || e}`); }
     }
     if (ct.startsWith("image/") || ct.startsWith("video/")) makeThumb(name).catch(() => {});
-    return { url: `/chat/media/${name}`, type: ct, kind: kindOf(ct), size, thumbUrl: ct.startsWith("image/") || ct.startsWith("video/") ? `/chat/thumb/${name}` : null };
+    // الصوت يعود مع موجته (48 قيمة) حتى يحفظها التطبيق في extra.peaks مع الرسالة؛ null إن تعذّر الحساب
+    const peaks = ct.startsWith("audio/") ? await audioPeaks(name).catch(() => null) : undefined;
+    return { url: `/chat/media/${name}`, type: ct, kind: kindOf(ct), size, thumbUrl: ct.startsWith("image/") || ct.startsWith("video/") ? `/chat/thumb/${name}` : null, ...(peaks !== undefined ? { peaks } : {}) };
   });
 
   // ---- التقديم مع دعم Range للصوت والفيديو

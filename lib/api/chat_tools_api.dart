@@ -8,7 +8,27 @@ import '../ui/reactions.dart';
 class UploadedMedia {
   final String url, type, kind;
   final int size;
-  const UploadedMedia({required this.url, required this.type, required this.kind, required this.size});
+  /// موجة الصوت من الخادم (48 قيمة في 0..1) للرسائل الصوتية؛ null لغير الصوت أو حين تعذّر حسابها.
+  final List<double>? peaks;
+  const UploadedMedia({required this.url, required this.type, required this.kind, required this.size, this.peaks});
+
+  /// بيانات الرسالة الصوتية الإضافية الجاهزة للإرسال: المدة من المسجّل والموجة من الخادم (تُقرأ في فقاعة الصوت من extra.peaks).
+  Map<String, dynamic> audioExtra({int? durationMs}) => {
+        if (durationMs != null) 'durationMs': durationMs,
+        if (peaks != null && peaks!.isNotEmpty) 'peaks': peaks,
+      };
+}
+
+/// يحوّل قائمة الموجة من JSON إلى أرقام في 0..1؛ null إن غابت أو كانت فارغة.
+List<double>? parsePeaks(dynamic v) {
+  if (v is! List || v.isEmpty) return null;
+  final out = <double>[];
+  for (final x in v) {
+    final d = x is num ? x.toDouble() : double.tryParse(x.toString());
+    if (d == null) return null;
+    out.add(d.clamp(0.0, 1.0));
+  }
+  return out;
 }
 
 /// مسارات إضافة أدوات المحادثات (server/chat_tools.js): رفع الوسائط وبيانات الرسائل الإضافية.
@@ -26,7 +46,17 @@ extension ChatToolsApi on ApiClient {
     }
     final url = (d['url'] ?? '').toString();
     if (url.isEmpty) throw const ApiException(500, 'الخادم لم يُرجع رابط الملف');
-    return UploadedMedia(url: url, type: (d['type'] ?? contentType).toString(), kind: (d['kind'] ?? 'file').toString(), size: (d['size'] as num?)?.toInt() ?? bytes.length);
+    return UploadedMedia(url: url, type: (d['type'] ?? contentType).toString(), kind: (d['kind'] ?? 'file').toString(), size: (d['size'] as num?)?.toInt() ?? bytes.length, peaks: parsePeaks(d['peaks']));
+  }
+
+  /// موجة رسالة صوتية قديمة بلا extra.peaks: يحسبها الخادم عند أول طلب ويخزّنها بجانب الملف. يقبل اسم الملف أو رابطه.
+  /// لا ترمي: null حين يتعذّر (خادم قديم، ملف مفقود، صوت تالف) فتبقى الفقاعة على الموجة الافتراضية.
+  Future<List<double>?> audioPeaks(String nameOrUrl) async {
+    try {
+      return parsePeaks((await get('/chat/peaks', query: {'name': nameOrUrl}))['peaks']);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// [peerId] الطرف الآخر في المحادثة: يرسله التطبيق ليرفض الخادم البيانات بين طرفين بينهما حظر.

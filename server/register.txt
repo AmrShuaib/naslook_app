@@ -35,3 +35,4 @@ await app.register((await import("./hotels.js")).default, { pool, auth });
 await app.register((await import("./backups.js")).default, { pool, auth });
 await app.register((await import("./biz_onboard.js")).default, { pool, auth });
 await app.register((await import("./chat_live.js")).default, { pool, auth });
+await app.register((await import("./chat_preview.js")).default, { pool, auth });

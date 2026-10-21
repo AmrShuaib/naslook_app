@@ -1066,6 +1066,33 @@ http.createServer((req, res) => {
     if (key === 'POST /chat/suggest') return lb((b) => { const last = [...(Array.isArray(b.messages) ? b.messages : [])].reverse().find((m) => !m.mine)?.text ?? ''; const sug = /السلام/.test(last) ? ['وعليكم السلام ورحمة الله', 'هلا والله', 'أهلاً، كيف الحال؟'] : /سعر|بكم|ريال/.test(last) ? ['كم السعر؟', 'فيه خصم؟', 'تمام، أبغى واحد'] : /[؟?]/.test(last) ? ['نعم', 'لا', 'خلني أتأكد'] : ['تمام', 'أبشر', 'خلني أرجع لك']; lj(200, { suggestions: sug, source: 'rules' }); });
   }
   // ---- chat live + suggest (stream B) end
+  // ---- chat-smooth: موجة الصوت ومعاينة الروابط (تحاكي peaks في chat_tools.js وchat_preview.js). الموجة حتمية من اسم الملف،
+  // والمعاينة من اسم المضيف (مضيف فيه nopreview = لا معاينة)، وصورة المعاينة تُقدَّم من وسائط المحاكي بدل المضيف الخارجي.
+  if (url.pathname === '/chat/peaks' || url.pathname === '/chat/preview' || url.pathname === '/chat/preview/status' || url.pathname === '/chat/preview/image') {
+    const sj = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); };
+    if (key === 'GET /chat/peaks') {
+      const name = (url.searchParams.get('name') || '').split('?')[0].split('/').pop();
+      if (!/\.(m4a|weba|ogg|mp3|wav|aac)$/.test(name)) return sj(404, { error: 'not-found' });
+      let h = 7; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) & 0x7fffffff;
+      const raw = Array.from({ length: 48 }, (_, i) => { h = (h * 1103515245 + 12345) & 0x7fffffff; return 0.15 + 0.85 * Math.abs(Math.sin(i / 2.7 + (h % 7))) * (0.5 + (h % 1000) / 2000); });
+      const mx = Math.max(...raw);
+      return sj(200, { name, peaks: raw.map((p) => Math.round((p / mx) * 1000) / 1000), n: 48 });
+    }
+    if (key === 'GET /chat/preview/status') return sj(200, { ok: true, cached: 3, maxBytes: 524288, timeoutMs: 5000, maxRedirects: 3, ttlHours: 24, ratePerMin: 60 });
+    if (key === 'GET /chat/preview') {
+      const u = url.searchParams.get('url') || '';
+      let host; try { host = new URL(u).hostname; } catch { return sj(200, { ok: false, reason: 'bad-url' }); }
+      if (!/^https?:/i.test(u)) return sj(200, { ok: false, reason: 'bad-url' });
+      if (/nopreview/.test(host)) return sj(200, { ok: false, reason: 'not-html' });
+      const site = host.replace(/^www\./, '');
+      return sj(200, { ok: true, url: u, title: `صفحة على ${site}`, description: 'وصف تجريبي قصير للصفحة المرتبطة حتى تُرى البطاقة في المحاكي', image: `https://${host}/og.jpg`, site, finalUrl: u, cachedAt: now });
+    }
+    if (key === 'GET /chat/preview/image') {
+      const f = path.join(MEDIA, 'demo1.jpg');
+      if (!fs.existsSync(f)) { console.log(key, '-> 404'); res.writeHead(404); return res.end(); }
+      console.log(key, '-> 200'); res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=86400' }); return res.end(fs.readFileSync(f));
+    }
+  }
   // ---- circle registration (app): تحاكي server/biz_onboard.js من جهة صاحب النشاط (فحص التكرار، التسجيل، الاكتمال، التوثيق، «هنا اليوم»).
   // الحالة على globalThis لأن الكتلة داخل معالج الطلب؛ الدائرة المسجّلة تُدفع إلى SEED وOWNED فتظهر في /biz و/biz/mine، وGET /biz/:id لها يعود بحقول التسجيل.
   {
