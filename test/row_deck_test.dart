@@ -19,6 +19,7 @@ import 'package:naslook/api/session.dart';
 import 'package:naslook/app/app.dart';
 import 'package:naslook/core/location.dart';
 import 'package:naslook/core/nav_provider.dart';
+import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/offers_page.dart';
 import 'package:naslook/pages/events/events_page.dart';
 import 'package:naslook/pages/home/row_deck.dart';
@@ -179,6 +180,20 @@ void main() {
       final f = RowFeed.fromJson({'items': [{'kind': 'listing', 'id': 'l'}, 'junk'], 'located': true});
       expect(f.items.length, 1);
       expect(f.located, isTrue);
+    });
+
+    test('a «here today» circle and an unknown future kind both parse with sane defaults', () {
+      final c = RowItem.fromJson({'kind': 'circle', 'id': 'biz-here', 'refId': 'biz-here', 'title': 'عربة قهوة', 'payload': {'here': true, 'until': '2026-10-21T15:30:00Z'}});
+      expect(c.act, 'زيارة');
+      expect(c.kindLabel, 'هنا اليوم');
+      expect(c.pinKey, 'business:biz-here', reason: 'مفتاح طبقة الدوائر حتى يُبرز دبّوسها');
+      expect(c.hereUntil, DateTime.parse('2026-10-21T15:30:00Z'));
+      expect(RowItem.fromJson({'kind': 'circle', 'id': 'b', 'endsAt': '2026-10-21T16:00:00Z'}).hereUntil, DateTime.parse('2026-10-21T16:00:00Z'), reason: 'endsAt احتياط');
+      final x = RowItem.fromJson({'kind': 'hologram', 'id': 'h1', 'title': 'شيء جديد'});
+      expect(x.act, 'شاهد');
+      expect(x.kindLabel, 'لحظة');
+      expect(x.pinKey, 'hologram:h1');
+      expect(x.hereUntil, isNull);
     });
   });
 
@@ -352,6 +367,38 @@ void main() {
     await act();
     expect(tester.widget<ListingPage>(find.byType(ListingPage)).id, _lid);
     expect(find.text('كاميرا فوجي X-T20'), findsWidgets);
+  });
+
+  testWidgets('a «here today» circle card shows its label, «زيارة» opens the business page, and an unknown kind gets the default card', (tester) async {
+    final until = DateTime.now().add(const Duration(hours: 2)).toUtc().toIso8601String();
+    await _pump(tester, srv: _Srv()..items = [
+      {'kind': 'circle', 'id': 'biz-here', 'refId': 'biz-here', 'title': 'عربة قهوة سارة', 'subtitle': 'هنا اليوم حتى 18:30 · مقهى', 'who': '', 'logoUrl': null, 'imageUrl': null, 'lat': 21.545, 'lng': 39.175, 'distanceKm': 0.3, 'act': 'زيارة', 'payload': {'here': true, 'until': until, 'category': 'cafe'}},
+      {'kind': 'hologram', 'id': 'h1', 'title': 'نوع من المستقبل', 'subtitle': 'لا يعرفه التطبيق بعد', 'lat': 21.546, 'lng': 39.176, 'distanceKm': 0.5},
+    ]);
+    expect(_count(tester), '1 من 2 · الأقرب أولاً');
+    expect(find.text('هنا اليوم'), findsOneWidget);
+    expect(find.text('عربة قهوة سارة'), findsWidgets);
+    expect(find.descendant(of: find.byKey(const Key('row-act')), matching: find.text('زيارة')), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const Key('row-dist'))).data, '300 م');
+    // دبّوس احتياطي بمفتاح طبقة الدوائر يُبرز ويحمل شارة الساعة من الحمولة
+    expect(find.byKey(const Key('map-pin-selected')), findsOneWidget);
+    expect(find.byKey(const Key('map-here-badge')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('row-act')));
+    await _settle(tester, 3);
+    expect(tester.widget<BusinessPage>(find.byType(BusinessPage)).id, 'biz-here');
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await _settle(tester, 3);
+    // النوع غير المعروف: بطاقة افتراضية بتسمية «لحظة» وزر «شاهد» لا يفعل شيئاً، والصف لم يسقط
+    await tester.tap(find.byKey(const Key('row-next')));
+    await _afterSwitch(tester);
+    expect(_count(tester), '2 من 2 · الأقرب أولاً');
+    expect(find.text('نوع من المستقبل'), findsOneWidget);
+    expect(find.text('لحظة'), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('row-act')), matching: find.text('شاهد')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('row-act')));
+    await _settle(tester, 2);
+    expect(find.byType(MapPage), findsOneWidget);
+    expect(find.byType(BusinessPage), findsNothing);
   });
 
   testWidgets('a guest home map requests /row and nothing private, sees the deck, and the bell asks to sign in', (tester) async {

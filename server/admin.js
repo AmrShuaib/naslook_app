@@ -254,6 +254,30 @@ export default async function admin(app, opts) {
     return { ok: true };
   });
 
+  // ---- توثيق الدوائر ومستويات اكتمالها (حزمة تسجيل الدوائر الموثّقة): تُحسب عند الطلب بفحص information_schema لأن عمود
+  // biz.verification وجدول biz_offers تضيفهما إضافات قد تُحمَّل بعد هذه أو لا تُحمَّل بعد؛ بغياب العمود أصفار.
+  // المستويات تقريبية حتى يُشارَك حساب الاكتمال الدقيق من biz_onboard.js: منشورة = نشطة غير مخفية؛ مكتملة = ساعات (أو منطقة
+  // خدمة للمتنقلة) ووصف ≥ 20 حرفاً و3 عناصر نشطة؛ موثّقة = مكتملة ومعتمدة؛ نشطة = موثّقة وعرض ومنشور خلال 30 يوماً.
+  const circleTiers = async () => {
+    const zero = { pendingVerifications: 0, tiers: { published: 0, complete: 0, verified: 0, active: 0 } };
+    try {
+      const bc = await colsOf("biz");
+      if (!bc.has("verification")) return zero;
+      const hasT = async (t) => (await pool.query("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1", [t])).rowCount > 0;
+      const [offersOk, postsOk, itemsOk] = await Promise.all([hasT("biz_offers"), hasT("biz_posts"), hasT("biz_items")]);
+      const published = `b.active${bc.has("hidden") ? " AND NOT COALESCE(b.hidden, false)" : ""}`;
+      const hoursOk = bc.has("presence") && bc.has("service_area") ? "(COALESCE(b.hours,'') <> '' OR (b.presence='mobile' AND b.service_area IS NOT NULL))" : "COALESCE(b.hours,'') <> ''";
+      const complete = `${published} AND ${hoursOk} AND length(COALESCE(b.description,'')) >= 20 AND ${itemsOk ? "(SELECT count(*) FROM biz_items i WHERE i.biz_id=b.id AND i.active) >= 3" : "false"}`;
+      const verified = `${complete} AND (b.verified OR b.verification->>'status'='approved')`;
+      const active = `${verified} AND ${offersOk ? "EXISTS (SELECT 1 FROM biz_offers o WHERE o.biz_id=b.id AND o.active AND o.created_at >= now() - interval '30 days')" : "false"}
+        AND ${postsOk ? "EXISTS (SELECT 1 FROM biz_posts p WHERE p.biz_id=b.id AND p.created_at >= now() - interval '30 days')" : "false"}`;
+      const r = (await pool.query(`SELECT count(*) FILTER (WHERE b.verification->>'status'='pending')::int AS pending,
+        count(*) FILTER (WHERE ${published})::int AS published, count(*) FILTER (WHERE ${complete})::int AS complete,
+        count(*) FILTER (WHERE ${verified})::int AS verified, count(*) FILTER (WHERE ${active})::int AS active FROM biz b`)).rows[0];
+      return { pendingVerifications: r.pending, tiers: { published: r.published, complete: r.complete, verified: r.verified, active: r.active } };
+    } catch { return zero; }
+  };
+
   // ---- نظرة عامة
   app.get("/adminapi/overview", async (req, reply) => {
     const uid = await guard(req, reply); if (!uid) return;
@@ -273,6 +297,7 @@ export default async function admin(app, opts) {
         ${eventsOk ? "(SELECT count(*) FROM tickets WHERE status<>'refunded' AND created_at >= now() - interval '7 days')::int" : "0"} AS tickets,
         ${eventsOk ? "(SELECT COALESCE(SUM(paid),0) FROM tickets WHERE status<>'refunded' AND created_at >= now() - interval '7 days')::bigint" : "0"} AS tickets_rev`)).rows[0];
     const circles = bizOk ? (await pool.query("SELECT count(*) FILTER (WHERE active)::int AS active, count(*) FILTER (WHERE NOT active)::int AS inactive, count(*) FILTER (WHERE owner_id IS NOT NULL)::int AS owned, (SELECT count(*) FROM biz_claims WHERE status='pending')::int AS claims FROM biz")).rows[0] : { active: 0, inactive: 0, owned: 0, claims: 0 };
+    Object.assign(circles, bizOk ? await circleTiers() : { pendingVerifications: 0, tiers: { published: 0, complete: 0, verified: 0, active: 0 } });
     let reports = { open: 0, total: 0, available: !!reportsTable };
     if (reportsTable && RC.id) {
       const r = (await pool.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE a.report_id IS NULL)::int AS open FROM ${q(reportsTable)} r LEFT JOIN report_actions a ON a.report_id = r.${q(RC.id)}::text`)).rows[0];

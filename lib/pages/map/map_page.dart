@@ -63,6 +63,60 @@ class MapPage extends ConsumerStatefulWidget {
 /// مستوى التكبير الذي تنتقل إليه الخريطة لتتبع بطاقة «الصف».
 const double kRowFollowZoom = 15.5;
 
+/// حضور دائرة على الخريطة (حزمة تسجيل الدوائر الموثّقة): متنقلة بمنطقة خدمة (`presence: mobile` + `serviceArea`)،
+/// أو دبّوس مؤقت «هنا اليوم» (`here` حتى `until`). يُقرأ من JSON الخام لـ `/biz` هنا لا من نموذج [Biz] الذي تملكه
+/// حزمة التسجيل، حتى لا تتعارض الحزمتان؛ عند إضافة الحقول إلى [Biz] يُحذف [mapBizPresenceProvider] ويُقرأ الحضور
+/// من [mapBizProvider] مباشرة (طلب واحد بدل اثنين).
+class BizPresence {
+  final String id;
+  final bool mobile;
+  final ({double lat, double lng, double radiusKm})? area;
+  final ({double lat, double lng, DateTime until})? here;
+  const BizPresence({required this.id, this.mobile = false, this.area, this.here});
+
+  static double? _d(Object? v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '');
+
+  /// null حين لا حضور خاصاً (دائرة ثابتة بلا دبّوس مؤقت) فلا تُحفظ.
+  static BizPresence? fromJson(Map m) {
+    final id = m['id']?.toString() ?? '';
+    if (id.isEmpty) return null;
+    final mobile = m['presence']?.toString() == 'mobile';
+    ({double lat, double lng, double radiusKm})? area;
+    final sa = m['serviceArea'];
+    if (sa is Map) {
+      final lat = _d(sa['lat']), lng = _d(sa['lng']), r = _d(sa['radiusKm']);
+      if (lat != null && lng != null && r != null && r > 0) area = (lat: lat, lng: lng, radiusKm: r);
+    }
+    ({double lat, double lng, DateTime until})? here;
+    final h = m['here'];
+    if (h is Map) {
+      final lat = _d(h['lat']), lng = _d(h['lng']), until = DateTime.tryParse(h['until']?.toString() ?? '');
+      if (lat != null && lng != null && until != null) here = (lat: lat, lng: lng, until: until);
+    }
+    if (!mobile && here == null) return null;
+    return BizPresence(id: id, mobile: mobile, area: area, here: here);
+  }
+}
+
+/// حضور الدوائر ضمن حدود الخريطة الحالية (انظر [BizPresence]): طلب `/biz` نفسه يُقرأ خاماً.
+final mapBizPresenceProvider = FutureProvider<Map<String, BizPresence>>((ref) async {
+  final rows = await ref.watch(apiClientProvider).getList('/biz', query: {'bbox': ref.watch(bboxProvider).query});
+  final out = <String, BizPresence>{};
+  for (final r in rows) {
+    if (r is! Map) continue;
+    final p = BizPresence.fromJson(r);
+    if (p != null) out[p.id] = p;
+  }
+  return out;
+});
+
+/// نص تلميح الدبّوس المؤقت: «هنا اليوم حتى 18:30» بالتوقيت المحلي.
+String hereUntilLabel(DateTime until) {
+  final l = until.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return 'هنا اليوم حتى ${two(l.hour)}:${two(l.minute)}';
+}
+
 class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
   final _map = MapController();
   final _sheet = DraggableScrollableController();
@@ -89,6 +143,8 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
   RowItem? _rowSel;
   bool _rowSyncPending = false;
   double _mapHeight = 0;
+  /// نتيجة اختبار اللمس على طبقة مناطق خدمة الدوائر المتنقلة (flutter_map يملؤها قبل أن يصل onTap).
+  final _areaHit = ValueNotifier<LayerHitResult<String>?>(null);
 
   static const _sheetMin = 0.11, _sheetInitial = 0.26, _sheetMax = 0.74;
 
@@ -158,6 +214,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     _liveDebounce?.cancel();
     if (widget.home) WidgetsBinding.instance.removeObserver(this);
     _sheet.dispose();
+    _areaHit.dispose();
     super.dispose();
   }
 
@@ -167,15 +224,19 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed && widget.home && mounted) ref.invalidate(rowProvider);
   }
 
-  List<MapItem> _collect(List<RowItem> rowItems) {
+  /// يجمع عناصر الخريطة من الطبقات والصف. [hereUntil] يُملأ بنهاية الدبّوس المؤقت «هنا اليوم» لكل دبّوس دائرة يحمله
+  /// (بمفتاح العنصر)، و[areas] بمناطق خدمة الدوائر المتنقلة التي تُرسم كأقراص شفافة بلا دبّوس.
+  List<MapItem> _collect(List<RowItem> rowItems, {required Map<String, DateTime> hereUntil, required List<BizPresence> areas}) {
     final people = ref.watch(presenceProvider).value ?? const <Presence>[];
     final pins = ref.watch(pinsProvider).value ?? const <Pin>[];
     final stories = ref.watch(storiesProvider).value ?? const <Story>[];
     final businesses = ref.watch(businessesProvider).value ?? const <Business>[];
     final circles = ref.watch(mapBizProvider).value ?? const <Biz>[];
+    final presence = ref.watch(mapBizPresenceProvider).valueOrNull ?? const <String, BizPresence>{}; // طبقة اختيارية كذلك
     final posts = ref.watch(mapPostsProvider).value ?? const <MapPost>[];
     final listings = ref.watch(mapMarketProvider).value ?? const <Listing>[];
     final offers = ref.watch(mapOffersProvider).valueOrNull ?? const <MapOffer>[]; // طبقة اختيارية: خطؤها لا يُسقط الخريطة
+    final now = DateTime.now();
     final seen = <String>{};
     final out = <MapItem>[];
     void add(MapItem? i) {
@@ -217,7 +278,19 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
         if (showHiring && !hiring.contains(c.id)) continue;
         if (showBusinesses && openOnly && c.openNow != true) continue;
         if (showBusinesses && bizCats.isNotEmpty && !bizCats.contains(c.category.key)) continue;
-        add(MapItem.business(c.toBusiness()));
+        final p = presence[c.id];
+        final here = p?.here;
+        if (p != null && p.mobile && p.area != null) areas.add(p);
+        if (here != null && here.until.isAfter(now)) {
+          // «هنا اليوم»: الدبّوس عند موقع الدبّوس المؤقت لا موقع الدائرة، مع شارة ساعة
+          final b = c.toBusiness();
+          hereUntil['business:${c.id}'] = here.until;
+          add(MapItem.business(Business(id: b.id, name: b.name, category: b.category, description: b.description, lat: here.lat, lng: here.lng, verified: b.verified, followers: b.followers, kind: b.kind)));
+        } else if (p != null && p.mobile && p.area != null) {
+          continue; // المتنقلة بلا دبّوس ثابت: منطقة خدمتها فقط
+        } else {
+          add(MapItem.business(c.toBusiness()));
+        }
       }
       // متاجر النواة القديمة بلا ساعات عمل أو فئة معروفة: تظهر فقط دون فلاتر (وليس لها وظائف)
       if (showBusinesses && !showHiring && !openOnly && bizCats.isEmpty) {
@@ -229,6 +302,14 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     // عناصر «الصف» بعد الطبقات (المفتاح نفسه فلا تكرار): الفعاليات والوظائف دبابيسها من هنا فقط، والبقية احتياط حين لا
     // تشملها حدود الخريطة بعد حتى يبقى للبطاقة المختارة دبّوس دائماً
     for (final r in rowItems) {
+      if (r.kind == 'circle') {
+        // الدائرة «هنا اليوم» من الصف: دبّوس احتياطي بمفتاح طبقة الدوائر نفسه (دبّوس الطبقة يفوز إن كان ضمن الحدود)
+        if (r.lat == 0 && r.lng == 0) continue;
+        final until = r.hereUntil;
+        if (until != null && until.isAfter(now)) hereUntil.putIfAbsent('business:${r.refId}', () => until);
+        add(MapItem.business(Business(id: r.refId, name: r.title, category: r.subtitle, description: '', lat: r.lat, lng: r.lng, kind: r.payload['category']?.toString())));
+        continue;
+      }
       add(MapItem.row(r));
     }
     return out;
@@ -293,7 +374,21 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => JobPage(id: it.refId)));
       case 'listing':
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(it.refId)));
+      case 'circle':
+        openBusiness(context, it.refId);
     }
+  }
+
+  /// لمسة على منطقة خدمة دائرة متنقلة: كدبّوسها (في الرئيسية تقفز البطاقة إليها إن كانت في الصف، وإلا ورقة الدائرة).
+  void _tapArea(String bizId) {
+    if (widget.home) {
+      final rows = _rowItems;
+      final i = rows.indexWhere((r) => r.pinKey == 'business:$bizId');
+      if (i >= 0) return _selectRow(rows, i);
+    }
+    final circles = ref.read(mapBizProvider).valueOrNull ?? const <Biz>[];
+    final c = circles.where((c) => c.id == bizId).firstOrNull;
+    if (c != null) _showBusiness(c.toBusiness());
   }
 
   @override
@@ -320,7 +415,9 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     final rowItems = row?.valueOrNull?.items ?? const <RowItem>[];
     // الصف وصل قبل أن تُبنى الخريطة (مثلاً عند العودة إلى التبويب): نختار الأولى
     if (widget.home && rowItems.isNotEmpty && _rowSel == null) _syncRow(rowItems);
-    final items = _collect(rowItems);
+    final hereUntil = <String, DateTime>{};
+    final areas = <BizPresence>[];
+    final items = _collect(rowItems, hereUntil: hereUntil, areas: areas);
     final b = _bounds;
     final visible = b == null ? items : itemsInBounds(items, minLat: b.south, minLng: b.west, maxLat: b.north, maxLng: b.east);
     final panelItems = sortForPanel(visible);
@@ -336,7 +433,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
           point: LatLng(it.lat, it.lng),
           width: _markerBox(it.kind, dot) + (it.key == selectedKey ? 14 : 0),
           height: _markerBox(it.kind, dot) + (it.key == selectedKey ? 14 : 0),
-          child: _ItemMarker(item: it, dot: dot, selected: it.key == selectedKey, dimmed: selectedKey != null && it.key != selectedKey, onTap: () => _tapDot(it, items, dot)),
+          child: _ItemMarker(item: it, dot: dot, selected: it.key == selectedKey, dimmed: selectedKey != null && it.key != selectedKey, hereUntil: hereUntil[it.key], onTap: () => _tapDot(it, items, dot)),
         ),
     ];
 
@@ -368,6 +465,23 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
           children: [
             // البلاطات تُمرَّر عبر خادم Naslife نفسه (server/tiles.js) فلا تحتاج مصادر خارجية
             TileLayer(urlTemplate: '${ref.read(apiClientProvider).baseUrl}/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
+            // مناطق خدمة الدوائر المتنقلة: قرص شفاف بنصف قطرها بالأمتار بلا دبّوس؛ لمسة داخله تفتح الدائرة كدبّوسها
+            // (اختبار اللمس يفشل خارج الأقراص فيبقى سحب الخريطة كما هو، والدبابيس فوقه تفوز باللمسة)
+            if (areas.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  final hit = _areaHit.value;
+                  if (hit != null && hit.hitValues.isNotEmpty) _tapArea(hit.hitValues.first);
+                },
+                child: CircleLayer<String>(
+                  key: const Key('map-service-areas'),
+                  hitNotifier: _areaHit,
+                  circles: [
+                    for (final a in areas)
+                      CircleMarker<String>(point: LatLng(a.area!.lat, a.area!.lng), radius: a.area!.radiusKm * 1000, useRadiusInMeter: true, color: Joy.primary.withValues(alpha: .10), borderColor: Joy.primary.withValues(alpha: .38), borderStrokeWidth: 1.5, hitValue: a.id),
+                  ],
+                ),
+              ),
             MarkerLayer(markers: markers),
             // أسماء الدوائر بلا تداخل (تُعاد حساباتها مع كل حركة للكاميرا)
             MapLabelLayer(items: items, dot: dot, onTap: (it) => _tapDot(it, items, dot)),
@@ -514,6 +628,8 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     ref.invalidate(mapPostsProvider);
     ref.invalidate(mapMarketProvider);
     ref.invalidate(hiringBizProvider);
+    ref.invalidate(mapBizProvider);
+    ref.invalidate(mapBizPresenceProvider);
     if (widget.home) ref.invalidate(rowProvider);
   }
 
@@ -998,11 +1114,14 @@ class _ItemMarker extends StatelessWidget {
   final double dot;
   final VoidCallback onTap;
   final bool selected, dimmed;
-  const _ItemMarker({required this.item, required this.dot, required this.onTap, this.selected = false, this.dimmed = false});
+  /// دبّوس دائرة مؤقت «هنا اليوم»: نهايته (شارة ساعة صغيرة وتلميح بالوقت).
+  final DateTime? hereUntil;
+  const _ItemMarker({required this.item, required this.dot, required this.onTap, this.selected = false, this.dimmed = false, this.hereUntil});
 
   @override
   Widget build(BuildContext context) {
     Widget child;
+    final until = hereUntil;
     if (item.kind == MapItemKind.person) {
       final p = item.data as Presence;
       child = Container(
@@ -1018,6 +1137,26 @@ class _ItemMarker extends StatelessWidget {
         height: dot,
         decoration: BoxDecoration(shape: BoxShape.circle, color: color, border: Border.all(color: Colors.white, width: dot >= 17 ? 2 : 1.5), boxShadow: _markerShadow),
         child: dot >= 12 ? Icon(_itemIcon(item), size: dot * .55, color: on) : null,
+      );
+    }
+    if (until != null) {
+      // شارة ساعة صغيرة في زاوية الدبّوس المؤقت، والتلميح يذكر نهايته
+      child = Tooltip(
+        message: hereUntilLabel(until),
+        child: Stack(clipBehavior: Clip.none, children: [
+          child,
+          PositionedDirectional(
+            bottom: -2,
+            start: -3,
+            child: Container(
+              key: const Key('map-here-badge'),
+              width: dot >= 12 ? 12 : 8,
+              height: dot >= 12 ? 12 : 8,
+              decoration: const BoxDecoration(shape: BoxShape.circle, color: Joy.surface, boxShadow: _markerShadow),
+              child: dot >= 12 ? const Icon(Icons.schedule_rounded, size: 9, color: Joy.primary) : null,
+            ),
+          ),
+        ]),
       );
     }
     if (selected) {

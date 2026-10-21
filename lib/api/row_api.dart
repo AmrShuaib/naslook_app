@@ -1,9 +1,9 @@
 import 'client.dart';
 
-/// عنصر في «الصف» (server/row.js): بطاقة واحدة من نوع لحظة/عرض/فعالية/وظيفة/سوق بترتيب الأقرب أولاً.
-/// الحقول كلها متسامحة مع النقص حتى لا يُسقط عنصرٌ ناقص الصفَّ كله.
+/// عنصر في «الصف» (server/row.js): بطاقة واحدة من نوع لحظة/عرض/فعالية/وظيفة/سوق/دائرة «هنا اليوم» بترتيب الأقرب أولاً.
+/// الحقول كلها متسامحة مع النقص حتى لا يُسقط عنصرٌ ناقص الصفَّ كله، ونوع غير معروف يُعرض ببطاقة افتراضية.
 class RowItem {
-  /// moment | offer | event | job | listing
+  /// moment | offer | event | job | listing | circle
   final String kind;
   final String id;
   /// معرّف الوجهة: الدائرة للعرض والوظيفة، والفعالية، والإعلان، والمنشور
@@ -70,6 +70,7 @@ class RowItem {
         'event' => 'تذكرة',
         'job' => 'قدّم',
         'listing' => 'اطلب',
+        'circle' => 'زيارة',
         _ => 'شاهد',
       };
 
@@ -79,18 +80,24 @@ class RowItem {
         'event' => 'فعالية',
         'job' => 'وظيفة',
         'listing' => 'سوق',
+        'circle' => 'هنا اليوم',
         _ => 'لحظة',
       };
 
   /// مفتاح الدبّوس المقابل على الخريطة (نفس صيغة `MapItem.key`).
+  /// الدائرة «هنا اليوم» تحمل مفتاح دبّوس الدوائر (business) حتى يُبرز دبّوس طبقة الدوائر عند دبّوسها المؤقت.
   String get pinKey => switch (kind) {
         'moment' => 'post:$id',
         'offer' => 'offer:$id',
         'listing' => 'listing:$id',
         'event' => 'event:$id',
         'job' => 'job:$id',
+        'circle' => 'business:$refId',
         _ => '$kind:$id',
       };
+
+  /// للدائرة «هنا اليوم»: نهاية الدبّوس المؤقت من الحمولة (`payload.until`) أو من `endsAt`.
+  DateTime? get hereUntil => DateTime.tryParse(payload['until']?.toString() ?? '') ?? endsAt;
 }
 
 /// ردّ `GET /row`: العناصر، وهل رُتّبت بموقع المستخدم.
