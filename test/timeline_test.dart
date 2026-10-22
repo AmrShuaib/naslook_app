@@ -66,6 +66,7 @@ class _Srv {
   /// بوابتان تحجزان ردّ الصفحة الأولى أو صفحة `before` حتى تُفتحا (لترتيب الطلبات المتزامنة)؛ الردّ يُحسب بعد فتحها
   Completer<void>? firstGate, moreGate;
   final deleted = <String>[];
+  final hidden = <String>[];
   final live = <Map<String, dynamic>>[];
   int liveSeq = 0;
   bool liveFail = false;
@@ -86,6 +87,15 @@ class _Srv {
       if (before != null) list = list.where((it) => DateTime.parse(it['at'] as String).isBefore(DateTime.parse(before.split('~').first))).toList();
       final page = list.take(pageSize).toList();
       return _json({'items': page, 'next': page.length == pageSize && list.length > pageSize ? _cursor(page.last) : null, 'located': q.containsKey('lat')});
+    }
+    if (req.method == 'PATCH' && req.url.path.startsWith('/mapposts/')) {
+      final id = req.url.pathSegments.last;
+      final status = (jsonDecode(req.body) as Map)['status'] as String?;
+      hidden.add(id);
+      final it = items.firstWhere((x) => x['kind'] == 'moment' && x['id'] == id);
+      // الخادم لا يعيد المخفية في /feed: تُحذف من القائمة الوهمية كما يفعل الحقيقي
+      if (status == 'hidden') items.remove(it);
+      return _json({...(it['payload'] as Map), 'status': status});
     }
     if (req.method == 'DELETE' && req.url.path.startsWith('/mapposts/')) {
       final id = req.url.pathSegments.last;
@@ -577,6 +587,31 @@ void main() {
     expect(find.text('مباشر · 44'), findsOneWidget, reason: 'الصفحتان باقيتان ناقص المحذوفة');
     expect(find.byKey(Key('tl-post-${srv.deleted.single}')), findsNothing);
     expect(_offset(tester), closeTo(offset, 1), reason: 'موضع التمرير باقٍ');
+  });
+
+  testWidgets('hiding a moment from the viewer removes its card even when it sits past the first page', (tester) async {
+    final srv = _Srv()..items = [for (var i = 1; i <= 45; i++) _momentItem(_post(i, ago: Duration(minutes: i), caption: 'لحظة $i', mine: true))];
+    await _pump(tester, srv: srv);
+    await tester.drag(find.byKey(const Key('tl-list')), const Offset(0, -6000));
+    await _settle(tester);
+    expect(find.text('مباشر · 45'), findsOneWidget);
+    // بطاقة من الصفحة الثانية (31–45): التحديث وحده لا يصلها لأنه يجلب مدى الصفحة الأولى
+    // الصفحة الثانية تُلحق بعد الوصول إلى النهاية: سحبة ثانية لتظهر بطاقاتها
+    await tester.drag(find.byKey(const Key('tl-list')), const Offset(0, -1500));
+    await _settle(tester);
+    final target = [for (var i = 45; i >= 31; i--) i].firstWhere((i) => find.byKey(Key('tl-post-${_pid(i)}')).hitTestable().evaluate().isNotEmpty);
+    await tester.tap(find.byKey(Key('tl-post-${_pid(target)}')).hitTestable());
+    await _settle(tester, 3);
+    expect(find.byType(PostViewerPage), findsOneWidget);
+    await tester.tap(find.byTooltip('خيارات').hitTestable().first);
+    await _settle(tester, 2);
+    await tester.tap(find.text('إخفاء من الخريطة'));
+    await _settle(tester, 3);
+    expect(srv.hidden, [_pid(target)]);
+    Navigator.of(tester.element(find.byType(PostViewerPage))).pop();
+    await _settle(tester, 3);
+    expect(find.byKey(Key('tl-post-${_pid(target)}')), findsNothing, reason: 'المخفية تُزال في مكانها ولو كانت بعد الصفحة الأولى');
+    expect(find.text('مباشر · 44'), findsOneWidget);
   });
 
   testWidgets('after the grid is rebuilt from empty at offset 0, a live moment goes straight to the top, not behind a pill', (tester) async {

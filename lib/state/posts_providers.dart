@@ -30,7 +30,9 @@ final trendingPlacesProvider = FutureProvider<List<TrendingPlace>>((ref) {
   return ref.watch(apiClientProvider).trendingPlaces(lat: o.latitude, lng: o.longitude);
 });
 
-void invalidatePosts(WidgetRef ref) {
+/// [removedPostId]: لحظة حُذفت أو أُخفيت أو أخفاها بلاغ من العارض؛ تُزال بطاقتها في مكانها من كل قائمة مفتوحة
+/// لأن التحديث وحده يصل مدى الصفحة الأولى فقط، فتبقى المخفية في الصفحات التالية حتى التحديث الكامل.
+void invalidatePosts(WidgetRef ref, {String? removedPostId}) {
   ref.invalidate(trendingPlacesProvider);
   ref.invalidate(mapPostsProvider);
   ref.invalidate(recentPostsProvider);
@@ -40,6 +42,7 @@ void invalidatePosts(WidgetRef ref) {
   // «اللحظات» لا تُرمى: إبطالها كان يمسح القائمة وصفحاتها وموضع التمرير تحت العارض بعد كل حذف أو إخفاء أو بلاغ أو حظر.
   // كل قائمة مفتوحة تتحدّث في مكانها: الجديد خلف الكبسولة (أو مباشرة في الأعلى) وما زال من مدى الصفحة الأولى يُزال
   for (final n in openMoments(ref)) {
+    if (removedPostId != null) n.removeMoment(removedPostId);
     n.refresh(applyNow: false);
   }
 }

@@ -170,7 +170,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
         final r = await showReportSheet(context, ref, type: 'post', id: p.id, author: p.user, title: 'إبلاغ عن المنشور');
         paused = false;
         if (r != null && (r.blocked || r.hidden)) {
-          invalidatePosts(ref);
+          invalidatePosts(ref, removedPostId: r.hidden ? p.id : null);
           if (!mounted) return;
           if (r.blocked) return Navigator.pop(context);
           // أُخفي المنشور تلقائياً بالبلاغ: يختفي من العارض كما يختفي من البث
@@ -240,7 +240,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
           return;
         }
         final updated = await api.updatePost(p.id, {'status': p.status == 'active' ? 'hidden' : 'active'});
-        invalidatePosts(ref);
+        invalidatePosts(ref, removedPostId: updated.status == 'active' ? null : p.id);
         if (mounted) setState(() => posts[i] = updated);
       } else if (choice == 'delete') {
         final ok = await showDialog<bool>(
@@ -253,7 +253,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
         );
         if (ok != true || !mounted) return;
         await api.deletePost(p.id);
-        invalidatePosts(ref);
+        invalidatePosts(ref, removedPostId: p.id);
         if (!mounted) return;
         _removeAt(i);
       }
