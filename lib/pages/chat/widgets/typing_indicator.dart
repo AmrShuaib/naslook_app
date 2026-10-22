@@ -26,17 +26,16 @@ class _TypingIndicatorState extends State<TypingIndicator> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) => Align(
-        alignment: AlignmentDirectional.centerStart,
+        // الطرف الآخر في جهة النهاية (اليسار في العربية) كفقاعاته، وصورته على الحافة الخارجية
+        alignment: AlignmentDirectional.centerEnd,
         child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
-          ProfileAvatar(person: widget.peer, size: 28),
-          const SizedBox(width: 6),
           Container(
             key: const Key('typing-indicator'),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
               color: Joy.bubbleIn,
               border: Border.all(color: Joy.bubbleInBorder),
-              borderRadius: const BorderRadiusDirectional.only(topStart: Radius.circular(18), topEnd: Radius.circular(18), bottomStart: Radius.circular(6), bottomEnd: Radius.circular(18)),
+              borderRadius: const BorderRadiusDirectional.only(topStart: Radius.circular(18), topEnd: Radius.circular(18), bottomStart: Radius.circular(18), bottomEnd: Radius.circular(6)),
             ),
             child: AnimatedBuilder(
               animation: _ctl,
@@ -52,6 +51,8 @@ class _TypingIndicatorState extends State<TypingIndicator> with SingleTickerProv
               ]),
             ),
           ),
+          const SizedBox(width: 6),
+          ProfileAvatar(person: widget.peer, size: 28),
         ]),
       );
 }

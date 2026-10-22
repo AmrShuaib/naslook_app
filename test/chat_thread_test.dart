@@ -148,8 +148,8 @@ void main() {
     await _pumpThread(tester, srv);
     AlignmentGeometry sideOf(String text) => tester.widgetList<Align>(find.ancestor(of: find.text(text), matching: find.byType(Align)))
         .map((a) => a.alignment).firstWhere((a) => a == AlignmentDirectional.centerEnd || a == AlignmentDirectional.centerStart);
-    expect(sideOf('أهلاً'), AlignmentDirectional.centerEnd, reason: 'رسالتي في جهة النهاية');
-    expect(sideOf('مرحبا'), AlignmentDirectional.centerStart, reason: 'رسالة الطرف الآخر في جهة البداية');
+    expect(sideOf('أهلاً'), AlignmentDirectional.centerStart, reason: 'رسالتي في جهة البداية (اليمين)');
+    expect(sideOf('مرحبا'), AlignmentDirectional.centerEnd, reason: 'رسالة الطرف الآخر في جهة النهاية (اليسار)');
   });
 
   testWidgets('my sent message stays on my side when the send reply carries no sender or recipient', (tester) async {
@@ -163,8 +163,8 @@ void main() {
     await tester.pumpAndSettle();
     AlignmentGeometry sideOf(String text) => tester.widgetList<Align>(find.ancestor(of: find.text(text), matching: find.byType(Align)))
         .map((a) => a.alignment).firstWhere((a) => a == AlignmentDirectional.centerEnd || a == AlignmentDirectional.centerStart);
-    expect(sideOf('تفضلي'), AlignmentDirectional.centerEnd, reason: 'رسالتي في جهة النهاية رغم ردّ الخادم الخالي من المرسل');
-    expect(sideOf('بدي استشارة'), AlignmentDirectional.centerStart);
+    expect(sideOf('تفضلي'), AlignmentDirectional.centerStart, reason: 'رسالتي في جهة البداية (اليمين) رغم ردّ الخادم الخالي من المرسل');
+    expect(sideOf('بدي استشارة'), AlignmentDirectional.centerEnd);
     expect(find.byIcon(Icons.done_rounded), findsOneWidget, reason: 'أُكّدت بمعرّف الخادم');
   });
 

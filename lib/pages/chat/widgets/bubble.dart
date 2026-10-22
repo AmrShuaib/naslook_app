@@ -274,8 +274,9 @@ class _ChatBubbleState extends State<ChatBubble> {
     final radius = BorderRadiusDirectional.only(
       topStart: full,
       topEnd: full,
-      bottomStart: !mine && !widget.joinedBelow ? tail : full,
-      bottomEnd: mine && !widget.joinedBelow ? tail : full,
+      // قرار المالك (22 أكتوبر 2026): رسائلي في جهة البداية (اليمين في العربية) والطرف الآخر في النهاية (اليسار)
+      bottomStart: mine && !widget.joinedBelow ? tail : full,
+      bottomEnd: !mine && !widget.joinedBelow ? tail : full,
     );
     IconData? tick;
     Color tickColor = mine ? Colors.white.withValues(alpha: .75) : Joy.textMuted;
@@ -365,12 +366,8 @@ class _ChatBubbleState extends State<ChatBubble> {
         child: Padding(
           padding: EdgeInsets.only(top: topGap),
           child: Align(
-            alignment: mine ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
+            alignment: mine ? AlignmentDirectional.centerStart : AlignmentDirectional.centerEnd,
             child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              if (!mine) ...[
-                SizedBox(width: 28, height: 28, child: showAvatar ? ProfileAvatar(key: Key('avatar-${m.key}'), person: widget.peer, size: 28) : null),
-                const SizedBox(width: 6),
-              ],
               Flexible(
                 child: ConstrainedBox(
                   constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.78),
@@ -382,7 +379,7 @@ class _ChatBubbleState extends State<ChatBubble> {
                       child: GestureDetector(
                         onLongPress: widget.onLongPress,
                         onTap: failed ? widget.onRetry : null,
-                        child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                        child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.start : CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
                           Stack(alignment: Alignment.center, children: [box, HeartBurst(trigger: widget.heartTrigger, size: 64)]),
                           if (widget.reactions.isNotEmpty)
                             Padding(padding: const EdgeInsets.fromLTRB(6, 2, 6, 2), child: ReactionChips(reactions: widget.reactions, onTap: widget.onReactionTap, compact: true)),
@@ -393,6 +390,11 @@ class _ChatBubbleState extends State<ChatBubble> {
                   ),
                 ),
               ),
+              // صورة الطرف الآخر على الحافة الخارجية (اليسار) بجانب فقاعته
+              if (!mine) ...[
+                const SizedBox(width: 6),
+                SizedBox(width: 28, height: 28, child: showAvatar ? ProfileAvatar(key: Key('avatar-${m.key}'), person: widget.peer, size: 28) : null),
+              ],
             ]),
           ),
         ),
@@ -460,10 +462,10 @@ class _SwipeToReplyState extends State<_SwipeToReply> with SingleTickerProviderS
     super.dispose();
   }
 
-  /// اتجاه المنتصف بإحداثيات الشاشة: الواردة عند البداية والصادرة عند النهاية، والبداية يمين في العربية.
+  /// اتجاه المنتصف بإحداثيات الشاشة: الصادرة (رسائلي) عند البداية والواردة عند النهاية، والبداية يمين في العربية.
   int _centreSign() {
     final rtl = Directionality.of(context) == TextDirection.rtl;
-    return (widget.mine ? -1 : 1) * (rtl ? -1 : 1);
+    return (widget.mine ? 1 : -1) * (rtl ? -1 : 1);
   }
 
   void _detach() {

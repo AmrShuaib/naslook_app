@@ -151,6 +151,12 @@ Radius _bottomStartOf(WidgetTester tester, String id) {
   return (box.decoration as BoxDecoration).borderRadius!.resolve(TextDirection.ltr).bottomLeft;
 }
 
+/// زاوية النهاية السفلية: ذيل فقاعة الطرف الآخر بعد قلب الجهتين (هو في جهة النهاية).
+Radius _bottomEndOf(WidgetTester tester, String id) {
+  final box = tester.widget<AnimatedContainer>(find.byKey(Key('bubble-$id')));
+  return (box.decoration as BoxDecoration).borderRadius!.resolve(TextDirection.ltr).bottomRight;
+}
+
 /// ضغط مطوّل على زر الميكروفون: يبقى الإصبع نازلاً ويُعاد اللمس للتحريك أو الرفع.
 Future<TestGesture> _holdMic(WidgetTester tester) async {
   final g = await tester.startGesture(tester.getCenter(find.byKey(const Key('composer-main'))));
@@ -287,7 +293,7 @@ void main() {
     });
   });
 
-  testWidgets('peer bubbles sit at the start with an avatar on the first of a group; mine at the end without; tail only on the last', (tester) async {
+  testWidgets('peer bubbles sit at the end with an avatar on the first of a group; mine at the start without; tail only on the last', (tester) async {
     final srv = _FakeServer()
       ..messages.addAll([
         _msg('p1', 'SA0000002', 'مرحبا', const Duration(minutes: 3)),
@@ -304,17 +310,18 @@ void main() {
     // الذيل (زاوية 6) على آخر فقاعة في المجموعة؛ الأولى ملتصقة بما بعدها فزاويتها كاملة
     expect(_bubbleOf(tester, 'مرحبا').joinedBelow, isTrue);
     expect(_bubbleOf(tester, 'كيف الحال؟').joinedBelow, isFalse);
-    expect(_bottomStartOf(tester, 'p1'), const Radius.circular(18));
-    expect(_bottomStartOf(tester, 'p2'), const Radius.circular(6));
+    expect(_bottomEndOf(tester, 'p1'), const Radius.circular(18));
+    expect(_bottomEndOf(tester, 'p2'), const Radius.circular(6));
+    expect(_bottomStartOf(tester, 'm1'), const Radius.circular(6), reason: 'ذيل فقاعتي في جهة البداية');
     // الجهتان كما كانتا (Align)
     AlignmentGeometry sideOf(String text) => tester.widgetList<Align>(find.ancestor(of: find.text(text), matching: find.byType(Align)))
         .map((a) => a.alignment).firstWhere((a) => a == AlignmentDirectional.centerEnd || a == AlignmentDirectional.centerStart);
-    expect(sideOf('بخير'), AlignmentDirectional.centerEnd);
-    expect(sideOf('مرحبا'), AlignmentDirectional.centerStart);
+    expect(sideOf('بخير'), AlignmentDirectional.centerStart, reason: 'رسالتي يميناً');
+    expect(sideOf('مرحبا'), AlignmentDirectional.centerEnd, reason: 'الطرف الآخر يساراً');
     expect(find.text('اليوم'), findsOneWidget);
   });
 
-  testWidgets('RTL: peer bubbles sit at the right edge and mine at the left', (tester) async {
+  testWidgets('RTL: my bubbles sit at the right edge and the peer at the left (owner decision)', (tester) async {
     final srv = _FakeServer()
       ..messages.addAll([
         _msg('p1', 'SA0000002', 'مرحبا', const Duration(minutes: 3)),
@@ -323,10 +330,10 @@ void main() {
     await _pumpThread(tester, srv, rtl: true);
     final peer = tester.getRect(find.byKey(const Key('bubble-p1')));
     final mine = tester.getRect(find.byKey(const Key('bubble-m1')));
-    expect(peer.center.dx, greaterThan(210));
-    expect(mine.center.dx, lessThan(210));
-    // الصورة عن يمين الفقاعة الواردة (جهة البداية)
-    expect(tester.getRect(find.byKey(const Key('avatar-p1'))).left, greaterThan(peer.right));
+    expect(mine.center.dx, greaterThan(210), reason: 'رسالتي يميناً');
+    expect(peer.center.dx, lessThan(210), reason: 'الطرف الآخر يساراً');
+    // الصورة عن يسار الفقاعة الواردة (الحافة الخارجية)
+    expect(tester.getRect(find.byKey(const Key('avatar-p1'))).right, lessThan(peer.left));
   });
 
   testWidgets('seen marker sits under my last message the peer has read, and only there', (tester) async {
@@ -368,8 +375,8 @@ void main() {
     final srv = _FakeServer()..messages.add(_msg('p1', 'SA0000002', 'متى نتقابل؟', const Duration(minutes: 3)));
     await _pumpThread(tester, srv);
     expect(find.byKey(const Key('reply-strip')), findsNothing);
-    // الاختبار يعمل بالاتجاه LTR: الواردة عند اليسار والمنتصف إلى اليمين
-    await tester.drag(find.text('متى نتقابل؟'), const Offset(90, 0));
+    // الاختبار يعمل بالاتجاه LTR: الواردة في جهة النهاية (اليمين) والمنتصف إلى اليسار
+    await tester.drag(find.text('متى نتقابل؟'), const Offset(-90, 0));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('reply-strip')), findsOneWidget);
     expect(find.text('متى نتقابل؟'), findsNWidgets(2), reason: 'النص في الفقاعة وفي شريط الرد');
@@ -378,11 +385,11 @@ void main() {
     await tester.tap(find.byIcon(Icons.close_rounded));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('reply-strip')), findsNothing);
-    await tester.drag(find.text('متى نتقابل؟'), const Offset(30, 0));
+    await tester.drag(find.text('متى نتقابل؟'), const Offset(-30, 0));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('reply-strip')), findsNothing);
     // الرد يصل مع الاقتباس
-    await tester.drag(find.text('متى نتقابل؟'), const Offset(90, 0));
+    await tester.drag(find.text('متى نتقابل؟'), const Offset(-90, 0));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'الساعة 7');
     await tester.pump();
@@ -392,28 +399,28 @@ void main() {
     expect(find.byKey(const Key('reply-strip')), findsNothing);
   });
 
-  testWidgets('RTL: swiping a peer bubble leftwards (toward the centre) sets the reply; rightwards does nothing', (tester) async {
+  testWidgets('RTL: swiping a peer bubble rightwards (toward the centre) sets the reply; leftwards does nothing', (tester) async {
     final srv = _FakeServer()
       ..messages.addAll([
         _msg('p1', 'SA0000002', 'متى نتقابل؟', const Duration(minutes: 3)),
         _msg('m1', 'SA0000001', 'بعد العصر', const Duration(minutes: 1)),
       ]);
     await _pumpThread(tester, srv, rtl: true);
-    // الواردة عند اليمين: السحب يميناً يبتعد عن المنتصف
-    await tester.drag(find.text('متى نتقابل؟'), const Offset(90, 0));
+    // الواردة عند اليسار: السحب يساراً يبتعد عن المنتصف
+    await tester.drag(find.text('متى نتقابل؟'), const Offset(-90, 0));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('reply-strip')), findsNothing);
-    await tester.drag(find.text('متى نتقابل؟'), const Offset(-90, 0));
+    await tester.drag(find.text('متى نتقابل؟'), const Offset(90, 0));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('reply-strip')), findsOneWidget);
     expect(find.text('متى نتقابل؟'), findsNWidgets(2));
     await tester.tap(find.byIcon(Icons.close_rounded));
     await tester.pumpAndSettle();
-    // فقاعتي عند اليسار: السحب يميناً نحو المنتصف
-    await tester.drag(find.text('بعد العصر'), const Offset(-90, 0));
+    // فقاعتي عند اليمين: السحب يساراً نحو المنتصف
+    await tester.drag(find.text('بعد العصر'), const Offset(90, 0));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('reply-strip')), findsNothing);
-    await tester.drag(find.text('بعد العصر'), const Offset(90, 0));
+    await tester.drag(find.text('بعد العصر'), const Offset(-90, 0));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('reply-strip')), findsOneWidget);
     expect(find.text('أنت'), findsOneWidget);
