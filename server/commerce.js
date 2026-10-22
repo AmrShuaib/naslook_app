@@ -256,6 +256,8 @@ export default async function commerce(app, opts) {
     }
     return vesselPubCol ? ` AND (${alias}.vessel_id IS NULL OR NOT EXISTS (SELECT 1 FROM vessels gv WHERE gv.id::text = ${alias}.vessel_id::text AND gv."${vesselPubCol}" = false))` : "";
   };
+  // القاعدة نفسها لـ«الصف» و«التغذية» (row.js) حتى لا يرى الضيف هناك ما يخفيه عنه GET /events
+  globalThis.naslifeGuestEventsSql = guestEventsSql;
   app.get("/events", async (req, reply) => {
     const uid = await optionalAuth(req);
     const bb = bbox(req.query?.bbox); const mine = req.query?.mine === "1"; const vessel = UUID_RE.test(req.query?.vessel ?? "") ? req.query.vessel : null;

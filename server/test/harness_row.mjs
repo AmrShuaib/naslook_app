@@ -1,5 +1,5 @@
 // «الصف» (server/row.js): الحالة، المصادر الخمسة وشكل البطاقة، الترتيب بالقرب والدفعات (ينتهي قريباً، نُشر للتو، فعالية قريبة)،
-// نصف القطر، بلا موقع، الحد، التوزيع (لا أكثر من ثلاث متتالية من نوع)، حد 12 لكل نوع، الحظر، الضيف، والجدول الغائب.
+// نصف القطر، بلا موقع، الحد، التوزيع (لا أكثر من ثلاث متتالية من نوع)، حد 12 لكل نوع، الحظر، الضيف، وظائف الدائرة الموقوفة أو المخفية، والجدول الغائب.
 import Fastify from 'fastify';
 import pg from 'pg';
 import crypto from 'node:crypto';
@@ -60,6 +60,8 @@ await biz('row-reef', 'مقهى ريف', ORIGIN, { logo: 'https://naslife.app/se
 await biz('row-mid', 'مطعم الشاطئ', MID);
 await biz('row-dmm', 'كافيه الدمام', DMM);
 await biz('row-off', 'دائرة موقوفة', ORIGIN, { active: false });
+await biz('row-hid', 'دائرة مخفية', ORIGIN);
+await pool.query("UPDATE biz SET hidden=true WHERE id='row-hid'");
 const offer = async (bizId, title, startsH, endsH, active = true) => { const id = uid(); await pool.query("INSERT INTO biz_offers(id,biz_id,kind,title,value,members_only,starts_at,ends_at,active) VALUES($1,$2,'deal',$3,'{\"type\":\"percent\",\"amount\":15}',false,$4,$5,$6)", [id, bizId, title, hrs(startsH), endsH == null ? null : hrs(endsH), active]); return id; };
 const O1 = await offer('row-reef', 'كورتادو بـ 10', -2, 1);            // ينتهي خلال ساعة: الدفعة -2
 const O2 = await offer('row-mid', 'عشاء لشخصين', -24, 72);
@@ -87,12 +89,14 @@ const J1 = await job('row-reef', 'باريستا', { type: 'part', max: 4500, vi
 const J2 = await job('row-reef', 'مسودة', { status: 'draft' });
 const J3 = await job('row-reef', 'غير عامة', { pub: false });
 const J4 = await job('row-mid', 'كاشير', { type: 'full', min: 4000, max: 6000, visible: false, district: 'الشاطئ' });
+const J5 = await job('row-off', 'وظيفة دائرة موقوفة');                 // الدائرة غير نشطة
+const J6 = await job('row-hid', 'وظيفة دائرة مخفية');                  // الدائرة مخفية بالإشراف
 const listing = async (seller, title, p, { price = 265000, images = ['https://naslife.app/seed/bike.jpg'], status = 'active', created = -2, publishAt = null, place = 'الروضة' } = {}) => { const id = uid(); await pool.query("INSERT INTO market_listings(id,seller_id,kind,category,title,price,images,place_name,lat,lng,status,created_at,publish_at) VALUES($1,$2,'product','sports',$3,$4,$5,$6,$7,$8,$9,$10,$11)", [id, seller, title, price, JSON.stringify(images), place, p?.lat ?? null, p?.lng ?? null, status, hrs(created), publishAt == null ? null : hrs(publishAt)]); return id; };
 const L1 = await listing(NORA, 'دراجة هوائية', ORIGIN);
 const L2 = await listing(NORA, 'مباعة', ORIGIN, { status: 'sold' });
 const L3 = await listing(NORA, 'بلا موقع', null);
 const L4 = await listing(NORA, 'مجدولة', ORIGIN, { publishAt: 24 });
-const EXCLUDED = [O3, O4, O5, O6, P3, P4, E4, E5, E6, E7, J2, J3, L2, L3, L4];
+const EXCLUDED = [O3, O4, O5, O6, P3, P4, E4, E5, E6, E7, J2, J3, J5, J6, L2, L3, L4];
 const NEAR = [O1, P1, E1, E3, E8, J1, L1], MIDS = [O2, E2, J4];
 const Q = `/row?lat=${ORIGIN.lat}&lng=${ORIGIN.lng}`;
 
@@ -103,7 +107,7 @@ check(st.ok === true && KINDS.every((k) => st.sources[k] === true), 'status dete
 // ---- الترتيب بالموقع
 let r = await call('GET', Q, { expect: 200 });
 check(r.located === true && r.items.length === NEAR.length + MIDS.length, 'located call returns the near and mid items only', `${r.items.length}`);
-check(EXCLUDED.every((id) => !ids(r).includes(id)), 'inactive, upcoming, expired, hidden, cancelled, draft, private, sold, scheduled and no-location rows excluded');
+check(EXCLUDED.every((id) => !ids(r).includes(id)), 'inactive, upcoming, expired, hidden, cancelled, draft, private, sold, scheduled and no-location rows, and jobs of inactive or hidden circles, excluded');
 check(!ids(r).includes(O3), 'items beyond the radius excluded');
 check(NEAR.every((id) => at(r, id) >= 0) && Math.max(...NEAR.map((id) => at(r, id))) < Math.min(...MIDS.map((id) => at(r, id))), 'near items rank before the 8 km ones', r.items.map((i) => i.kind + ':' + (i.distanceKm ?? '-')).join(' '));
 check(r.items[0].id === O1 && at(r, O1) < at(r, L1), 'offer ending within the hour ranks first, before the equally near listing');

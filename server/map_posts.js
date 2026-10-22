@@ -67,6 +67,8 @@ export default async function posts(app, opts) {
       views INT NOT NULL DEFAULT 0, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS map_posts_user ON map_posts(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS map_posts_active ON map_posts(expires_at) WHERE status='active';
+    -- «التغذية» (row.js GET /feed) تقرأ اللحظات الأحدث أولاً وتقارن مؤشرها بـ created_at مباشرة
+    CREATE INDEX IF NOT EXISTS map_posts_active_created ON map_posts(created_at DESC) WHERE status='active';
     CREATE TABLE IF NOT EXISTS map_post_likes (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
     CREATE TABLE IF NOT EXISTS map_post_views (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
     ALTER TABLE map_posts ADD COLUMN IF NOT EXISTS audio_url TEXT, ADD COLUMN IF NOT EXISTS audio_sec INT;
