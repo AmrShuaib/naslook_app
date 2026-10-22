@@ -220,7 +220,7 @@ void main() {
   setUp(() {
     VoiceRecordSession.factoryOverride = () => _FakeRecorder();
     VoicePlayer.factoryOverride = () => _FakePlayer();
-    VideoView.factoryOverride = (url, {autoplay = false, loop = false, muted = false}) => Text('video:$url', key: const Key('fake-video'));
+    VideoView.factoryOverride = (url, {autoplay = false, loop = false, muted = false, controls = true}) => Text('video:$url', key: const Key('fake-video'));
   });
   tearDown(() {
     VoiceRecordSession.factoryOverride = null;
