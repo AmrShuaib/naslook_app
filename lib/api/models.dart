@@ -144,6 +144,8 @@ class Message {
   bool isMine({required String myId, required String peerId}) {
     final s = senderId.trim().toUpperCase(), me = myId.trim().toUpperCase(), peer = peerId.trim().toUpperCase();
     if (s == 'ME') return true;
+    // أُنشئت على هذا الجهاز (إرسال متفائل أو صندوق صادر): لي مهما كان شكل ردّ الخادم
+    if (localId != null) return true;
     if (s.isNotEmpty && me.isNotEmpty && s == me) return true;
     if (s.isNotEmpty && peer.isNotEmpty && s != peer) return true;
     if (s.isEmpty) { final r = (recipientId ?? '').trim().toUpperCase(); return r.isNotEmpty && r == peer; }
@@ -190,8 +192,8 @@ class Message {
         'text' => content, 'image' => '📷 صورة', 'video' => '🎬 فيديو', 'audio' => '🎤 رسالة صوتية', _ => '📎 ملف',
       };
   Message copyWith({String? id, DateTime? sentAt, DateTime? deliveredAt, DateTime? readAt, MessageStatus? status, String? localId, String? replyTo,
-      MessageQuote? quote, String? forwardedFrom, Map<String, dynamic>? extra, String? content}) => Message(
-      id: id ?? this.id, senderId: senderId, recipientId: recipientId, type: type, content: content ?? this.content, sentAt: sentAt ?? this.sentAt,
+      MessageQuote? quote, String? forwardedFrom, Map<String, dynamic>? extra, String? content, String? senderId, String? recipientId}) => Message(
+      id: id ?? this.id, senderId: senderId ?? this.senderId, recipientId: recipientId ?? this.recipientId, type: type, content: content ?? this.content, sentAt: sentAt ?? this.sentAt,
       deliveredAt: deliveredAt ?? this.deliveredAt, readAt: readAt ?? this.readAt, status: status ?? this.status, localId: localId ?? this.localId,
       replyTo: replyTo ?? this.replyTo, quote: quote ?? this.quote, forwardedFrom: forwardedFrom ?? this.forwardedFrom, extra: extra ?? this.extra);
   /// دمج بيانات إضافية قادمة من /chat/meta.

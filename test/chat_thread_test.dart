@@ -26,6 +26,8 @@ class _SignedIn extends AppStateNotifier {
 class _FakeServer {
   final List<Map<String, dynamic>> messages = [];
   bool failSend = false;
+  /// ردّ الإرسال بلا مرسل ولا مستلم (شكل رأيناه من النواة)
+  bool bareSendReply = false;
   /// إن وُجدت، يُؤخَّر الرد على الإرسال حتى تكتمل (لاختبار حالة "جارٍ الإرسال").
   Completer<void>? gate;
   int counter = 0;
@@ -50,6 +52,7 @@ class _FakeServer {
       final b = jsonDecode(req.body) as Map;
       final m = {'id': 'srv-${++counter}', 'sender_id': 'SA0000001', 'type': 'text', 'content': b['content'], 'sent_at': DateTime.now().toUtc().toIso8601String()};
       messages.add(m);
+      if (bareSendReply) return _json({'id': m['id'], 'content': m['content'], 'created_at': m['sent_at']});
       return _json({'message': m});
     }
     if (req.method == 'POST' && path.endsWith('/read')) return _json({'ok': true});
@@ -126,6 +129,7 @@ void main() {
       expect(m('', to: 'SA0000002').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isTrue);
       expect(m('', to: 'SA0000001').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isFalse);
       expect(m('').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isFalse);
+      expect(Message(id: 'x', localId: 'local-1', senderId: '', type: 'text', content: 't').isMine(myId: 'SA0000001', peerId: 'SA0000002'), isTrue, reason: 'المنشأة على هذا الجهاز لي');
     });
     test('fromJson reads the sender under the names the core may use', () {
       for (final k in ['sender_id', 'senderId', 'from', 'from_id', 'user_id', 'author_id']) {
@@ -146,6 +150,22 @@ void main() {
         .map((a) => a.alignment).firstWhere((a) => a == AlignmentDirectional.centerEnd || a == AlignmentDirectional.centerStart);
     expect(sideOf('أهلاً'), AlignmentDirectional.centerEnd, reason: 'رسالتي في جهة النهاية');
     expect(sideOf('مرحبا'), AlignmentDirectional.centerStart, reason: 'رسالة الطرف الآخر في جهة البداية');
+  });
+
+  testWidgets('my sent message stays on my side when the send reply carries no sender or recipient', (tester) async {
+    final srv = _FakeServer()
+      ..bareSendReply = true
+      ..messages.add(_msg('p1', 'SA0000002', 'بدي استشارة', const Duration(minutes: 1)));
+    await _pumpThread(tester, srv);
+    await tester.enterText(find.byType(TextField), 'تفضلي');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.send_rounded));
+    await tester.pumpAndSettle();
+    AlignmentGeometry sideOf(String text) => tester.widgetList<Align>(find.ancestor(of: find.text(text), matching: find.byType(Align)))
+        .map((a) => a.alignment).firstWhere((a) => a == AlignmentDirectional.centerEnd || a == AlignmentDirectional.centerStart);
+    expect(sideOf('تفضلي'), AlignmentDirectional.centerEnd, reason: 'رسالتي في جهة النهاية رغم ردّ الخادم الخالي من المرسل');
+    expect(sideOf('بدي استشارة'), AlignmentDirectional.centerStart);
+    expect(find.byIcon(Icons.done_rounded), findsOneWidget, reason: 'أُكّدت بمعرّف الخادم');
   });
 
   testWidgets('loads messages, shows the day separator and marks them read', (tester) async {

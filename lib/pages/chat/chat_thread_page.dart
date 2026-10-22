@@ -1012,6 +1012,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       final sent = (serverId != null ? m : local).copyWith(
         id: serverId ?? local.key, status: MessageStatus.sent, localId: local.localId, sentAt: m.sentAt ?? local.sentAt, content: body,
         quote: local.quote, replyTo: local.replyTo, forwardedFrom: local.forwardedFrom, extra: {...extra, ...m.extra},
+        // ردّ النواة على الإرسال قد يخلو من المرسل والمستلم؛ بدونهما كانت الرسالة تُرسم كأنها من الطرف الآخر
+        senderId: m.senderId.isEmpty ? local.senderId : null, recipientId: m.recipientId == null || m.recipientId!.isEmpty ? _peerId : null,
       );
       setState(() {
         _byKey.remove(local.key);
@@ -1130,7 +1132,9 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       final sent = await _api.sendMessage(target.id, m.type == 'text' ? m.content : _api.absolute(m.content), type: 'text', forwardedFrom: from, extra: extra);
       if (sent.id.isNotEmpty && sent.senderId != 'me') {
         _quiet(_api.setMessageMeta(sent.id, peerId: target.id, forwardedFrom: from, extra: extra.isEmpty ? null : extra));
-        if (target.id == _peerId && mounted) setState(() { _merge([sent.copyWith(forwardedFrom: from, extra: extra)], animate: true); });
+        if (target.id == _peerId && mounted) {
+          setState(() { _merge([sent.copyWith(forwardedFrom: from, extra: extra, senderId: sent.senderId.isEmpty ? myId : null, recipientId: (sent.recipientId ?? '').isEmpty ? _peerId : null)], animate: true); });
+        }
       }
       ref.invalidate(chatsProvider);
       if (mounted) toast(context, 'أُعيد التوجيه إلى ${target.nickname}');
