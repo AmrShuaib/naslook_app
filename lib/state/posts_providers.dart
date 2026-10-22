@@ -35,7 +35,11 @@ void invalidatePosts(WidgetRef ref) {
   ref.invalidate(mapPostsProvider);
   ref.invalidate(recentPostsProvider);
   ref.invalidate(myPostsProvider);
-  // اللحظة الجديدة تظهر في «الصف» و«اللحظات» فور نشرها بدل انتظار التحديث الدوري
+  // اللحظة الجديدة تظهر في «الصف» فور نشرها بدل انتظار التحديث الدوري
   ref.invalidate(rowProvider);
-  ref.invalidate(momentsProvider);
+  // «اللحظات» لا تُرمى: إبطالها كان يمسح القائمة وصفحاتها وموضع التمرير تحت العارض بعد كل حذف أو إخفاء أو بلاغ أو حظر.
+  // كل قائمة مفتوحة تتحدّث في مكانها: الجديد خلف الكبسولة (أو مباشرة في الأعلى) وما زال من مدى الصفحة الأولى يُزال
+  for (final n in openMoments(ref)) {
+    n.refresh(applyNow: false);
+  }
 }

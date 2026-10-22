@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show SliverConstraints, SliverGridGeometry, SliverGridLayout;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../api/client.dart';
 import '../../api/live_api.dart';
@@ -16,6 +17,7 @@ import '../../core/nav_provider.dart';
 import '../../state/feed_providers.dart';
 import '../../state/live_providers.dart';
 import '../../state/safety_providers.dart';
+import '../../state/search_providers.dart';
 import '../../ui/widgets.dart';
 import '../events/events_page.dart';
 import '../home/row_deck.dart';
@@ -46,11 +48,14 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
   StreamSubscription<LiveEvent>? _liveSub;
   LiveChannel? _live;
   String _kind = 'all';
-  bool _atTop = true;
   /// مفاتيح البطاقات التي وصلت للتو فتدخل بحركة مرة واحدة
   final _fresh = <String>{};
 
   MomentsNotifier get _n => ref.read(momentsProvider(_kind).notifier);
+
+  /// في الأعلى؟ من موضع التمرير نفسه لا من حالة محفوظة: الشبكة التي يُعاد بناؤها بعد فراغ أو تحميل تبدأ من الصفر بلا حدث تمرير،
+  /// وبلا شبكة (فراغ أو تحميل) لا شيء يُخفى تحت الإصبع
+  bool get _atTop => !_scroll.hasClients || _scroll.offset < 40;
 
   @override
   void initState() {
@@ -65,10 +70,8 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
 
   void _onScroll() {
     if (!_scroll.hasClients) return;
-    final top = _scroll.offset < 40;
-    if (top != _atTop) setState(() => _atTop = top);
     // الوصول إلى الأعلى يعتمد الجديد تلقائياً
-    if (top && ref.read(momentsProvider(_kind)).pending.isNotEmpty) _applyPending();
+    if (_atTop && ref.read(momentsProvider(_kind)).pending.isNotEmpty) _applyPending();
     // قرب النهاية: الصفحة الأقدم
     if (_scroll.position.extentAfter < 600) _n.loadMore();
   }
@@ -79,28 +82,47 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
     _liveSub = c.events.listen(_onLive);
   }
 
-  /// حدث حيّ: لحظة جديدة تُدرج في أعلى «عام» و«لحظات» (أو خلف الكبسولة إن كان المستخدم يتصفح)، والمحذوفة تُزال في مكانها
+  /// حدث حيّ: لحظة جديدة تُدرج في أعلى «عام» و«لحظات» المفتوحتين (المرئية خلف الكبسولة إن كان المستخدم يتصفح)، والمحذوفة تُزال
+  /// في مكانها من كل قائمة مفتوحة لا من المرئية وحدها، فلا تعود عند تبديل الرقاقة.
   void _onLive(LiveEvent e) {
     if (!mounted) return;
     if (e.isReset || e.kind == LiveEvent.postRestored) {
       _n.refresh(applyNow: _atTop);
     } else if (e.kind == LiveEvent.post) {
-      if (_kind != 'all' && _kind != 'moment') return;
       final RowItem it;
+      final double? km;
       try {
-        it = RowItem.moment(e.data);
+        km = _distanceKm(e.data);
+        it = RowItem.moment(e.data, distanceKm: km);
       } catch (_) {
-        _n.refresh(applyNow: _atTop);
+        if (_kind == 'all' || _kind == 'moment') _n.refresh(applyNow: _atTop);
         return;
       }
       final uid = (e.data['user'] is Map ? (e.data['user'] as Map)['id'] : null)?.toString().toUpperCase() ?? '';
       if (ref.read(blockedIdsProvider).contains(uid)) return;
-      _fresh.add(it.pinKey);
-      _n.pushLive(it, applyNow: _atTop);
+      for (final k in const ['all', 'moment']) {
+        if (!ref.exists(momentsProvider(k))) continue;
+        // قائمة رُتّبت بالموقع تقصر على نطاقه: لحظة أبعد منه تظهر ثم تختفي مع أول تحديث، فلا تُدرج أصلاً
+        if (ref.read(momentsProvider(k)).located && (km == null || km > feedRadiusKm)) continue;
+        // القائمة غير المرئية تُدرج فيها مباشرة: تُفتح من الأعلى عند تبديل الرقاقة
+        final visible = k == _kind;
+        if (ref.read(momentsProvider(k).notifier).pushLive(it, applyNow: !visible || _atTop) && visible) _fresh.add(it.pinKey);
+      }
     } else if (e.kind == LiveEvent.postRemoved) {
       final id = e.data['id']?.toString();
-      if (id != null) _n.removeMoment(id);
+      if (id == null) return;
+      for (final n in openMoments(ref)) {
+        n.removeMoment(id);
+      }
     }
+  }
+
+  /// مسافة اللحظة الحيّة عن موقع المستخدم الذي رُتّبت به القائمة (حمولة البث عامة بلا مسافة)؛ null إن لم يُعرف أحدهما.
+  double? _distanceKm(Map data) {
+    final loc = ref.read(userLocationProvider).valueOrNull;
+    final lat = (data['lat'] as num?)?.toDouble(), lng = (data['lng'] as num?)?.toDouble();
+    if (loc == null || lat == null || lng == null) return null;
+    return const Distance().as(LengthUnit.Meter, loc, LatLng(lat, lng)) / 1000;
   }
 
   @override
@@ -109,6 +131,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
     _liveSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _scroll.dispose();
+    _videos.dispose();
     super.dispose();
   }
 
@@ -122,7 +145,6 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
     setState(() {
       _kind = k;
       _fresh.clear();
-      _atTop = true;
     });
     if (_scroll.hasClients) _scroll.jumpTo(0);
     // نوع فُتح من قبل يظهر فوراً من الذاكرة ثم يتحدّث في الخلفية؛ الجديد يجلب عند إنشائه
@@ -148,12 +170,27 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
   Widget build(BuildContext context) {
     // تغيّر الحساب يستبدل القناة: نعيد الاشتراك في الجديدة
     ref.listen<LiveChannel>(liveChannelProvider, (_, next) { if (next != _live) _subscribeLive(next); });
+    // ناشر حُظر (من العارض أو غيره): لحظاته تُزال في مكانها من كل قائمة مفتوحة، ومنها الصفحات الأقدم التي لا يشملها التحديث
+    ref.listen<Set<String>>(blockedIdsProvider, (prev, next) {
+      for (final uid in next.difference(prev ?? const <String>{})) {
+        for (final n in openMoments(ref)) {
+          n.removeByUser(uid);
+        }
+      }
+    });
+    // ما ينتظر والمستخدم في الأعلى (تحديث بعد نشر أو حذف من العارض) يُعتمد مباشرة كما في الجلب الدوري؛ بعد الإشعار لا أثناءه
+    ref.listen<MomentsState>(momentsProvider(_kind), (_, next) {
+      if (next.pending.isNotEmpty && _atTop) Future.microtask(() { if (mounted && _atTop) _applyPending(); });
+    });
     final online = ref.watch(liveChannelProvider).online;
     final st = ref.watch(momentsProvider(_kind));
     final items = st.items;
     final scale = MediaQuery.textScalerOf(context).scale(1.0);
     final noMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final heights = [for (final it in items) _mediaHeight(it) + _infoHeight(scale)];
+    // موضع كل بطاقة بمفتاحها: إدراج في الأعلى أو حذف ينقل العناصر القائمة إلى مواضعها الجديدة بدل هدمها وبنائها من جديد
+    // (وإلا أُعيد إنشاء كل مشغّل فيديو وفقدت المعاينات فتحاتها)
+    final indexOf = {for (var i = 0; i < items.length; i++) 'tl-${items[i].pinKey}': i};
     return Scaffold(
       backgroundColor: Joy.bg,
       appBar: AppBar(
@@ -177,7 +214,8 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
         else if (items.isEmpty)
           RefreshIndicator(
             onRefresh: _refresh,
-            child: CustomScrollView(slivers: [
+            // السحب للتحديث يعمل ولو لم يملأ المحتوى الشاشة
+            child: CustomScrollView(physics: const AlwaysScrollableScrollPhysics(), slivers: [
               SliverFillRemaining(
                 hasScrollBody: false,
                 child: _Empty(
@@ -201,6 +239,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
             child: CustomScrollView(
               key: const Key('tl-list'),
               controller: _scroll,
+              physics: const AlwaysScrollableScrollPhysics(),
               slivers: [
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -222,6 +261,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
                         );
                       },
                       childCount: items.length,
+                      findChildIndexCallback: (key) => key is ValueKey<String> ? indexOf[key.value] : null,
                     ),
                   ),
                 ),
@@ -242,7 +282,8 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
                 onPressed: _toTop,
                 style: FilledButton.styleFrom(minimumSize: const Size(0, 36), padding: const EdgeInsets.symmetric(horizontal: 14), shape: const StadiumBorder()),
                 icon: const Icon(Icons.arrow_upward_rounded, size: 16),
-                label: Text(st.pending.length == 1 ? 'لحظة جديدة' : '${st.pending.length} جديدة'),
+                // صفحة منفصلة عن القائمة: وراءها أكثر مما تعدّه
+                label: Text(st.pending.length == 1 && !st.pendingReplaces ? 'لحظة جديدة' : '${st.pending.length}${st.pendingReplaces ? '+' : ''} جديدة'),
               ),
             ),
           ),
@@ -368,18 +409,37 @@ class _MasonryLayout extends SliverGridLayout {
   double computeMaxScrollOffset(int childCount) => _total;
 }
 
-/// فتحات المعاينات الدائرة: أول أربع بطاقات فيديو مرئية تدور، وما بعدها يعرض إطاره الثابت حتى تُحرَّر فتحة بخروج بطاقة من الشاشة.
-class _PreviewRegistry {
+/// فتحات المعاينات الدائرة: أول أربع بطاقات فيديو مرئية تدور، وما بعدها يعرض إطاره الثابت حتى تُحرَّر فتحة (بطاقة خرجت من الشاشة
+/// أو حُذفت)، فيُخبر السجلّ المنتظرين فتأخذها أولاها.
+class _PreviewRegistry extends ChangeNotifier {
   final int max;
   int _active = 0;
+  bool _notifying = false, _disposed = false;
   _PreviewRegistry(this.max);
+
   bool acquire() {
     if (_active >= max) return false;
     _active++;
     return true;
   }
 
-  void release() => _active = math.max(0, _active - 1);
+  /// التحرير يقع أثناء البناء أو التفكيك حيث لا يجوز setState على بطاقة أخرى: الإخبار بعد انتهاء الإطار
+  void release() {
+    if (_active == 0) return;
+    _active--;
+    if (_notifying) return;
+    _notifying = true;
+    scheduleMicrotask(() {
+      _notifying = false;
+      if (!_disposed) notifyListeners();
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 }
 
 /// البطاقة: وسيط متحرك بارتفاع ثابت (فيديو يدور، صورة تتقرّب، نص على تدرّج) فوقه رقاقة النوع، ثم الناشر والعنوان وسطر الوقت
@@ -526,12 +586,14 @@ class _Typographic extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(14, 34, 14, 14),
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             if (!isText) ...[Icon(icon, size: 34, color: fg.withValues(alpha: .9)), const SizedBox(height: 8)],
-            Text(
-              text,
-              textAlign: TextAlign.center,
-              maxLines: isText ? 4 : 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontFamily: AppTheme.displayFont, fontSize: isText ? 19 : 15, fontWeight: FontWeight.w800, height: 1.35, color: fg),
+            // النص يأخذ ما بقي من ارتفاع اللوحة وأسطره بقدر ما يتسع: مع تكبير النص يُختصر بنقاط بدل أن يفيض
+            Flexible(
+              child: LayoutBuilder(builder: (context, c) {
+                final style = TextStyle(fontFamily: AppTheme.displayFont, fontSize: isText ? 19 : 15, fontWeight: FontWeight.w800, height: 1.35, color: fg);
+                final line = MediaQuery.textScalerOf(context).scale(style.fontSize!) * style.height!;
+                final room = c.maxHeight.isFinite ? (c.maxHeight / line).floor() : 4;
+                return Text(text, textAlign: TextAlign.center, maxLines: room.clamp(1, isText ? 4 : 2), overflow: TextOverflow.ellipsis, style: style);
+              }),
             ),
           ]),
         ),
@@ -560,26 +622,75 @@ class _VideoPreview extends StatefulWidget {
   State<_VideoPreview> createState() => _VideoPreviewState();
 }
 
+/// الفتحة تُحجز عند الإنشاء وتُحرَّر عند الخروج من الشجرة (deactivate) وتُستعاد عند العودة (activate)، والإطار الثابت يعيد المحاولة كلما
+/// حُرّرت فتحة؛ فلا تتجمّد المعاينات إطارات ثابتة بعد تغيّر القائمة أو التمرير.
 class _VideoPreviewState extends State<_VideoPreview> {
-  late final bool _slot = widget.videos.acquire();
+  bool _slot = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.videos.addListener(_retry);
+    _take();
+  }
+
+  void _take() {
+    if (!_slot && !widget.noMotion) _slot = widget.videos.acquire();
+  }
+
+  void _drop() {
+    if (!_slot) return;
+    _slot = false;
+    widget.videos.release();
+  }
+
+  /// فتحة تحرّرت: الإطار الثابت يحاول أخذها
+  void _retry() {
+    if (!mounted || _slot || widget.noMotion) return;
+    if (widget.videos.acquire()) setState(() => _slot = true);
+  }
+
+  @override
+  void didUpdateWidget(_VideoPreview old) {
+    super.didUpdateWidget(old);
+    // تعطيل الحركة لا يحجز فتحة لمعاينة لن تدور
+    widget.noMotion ? _drop() : _take();
+  }
+
+  @override
+  void deactivate() {
+    _drop();
+    super.deactivate();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _take();
+  }
 
   @override
   void dispose() {
-    if (_slot) widget.videos.release();
+    widget.videos.removeListener(_retry);
+    _drop();
     super.dispose();
   }
+
+  Widget _poster(String key) => Image.network(thumbUrl(widget.media), key: Key(key), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: const Color(0xFF14181C)));
 
   @override
   Widget build(BuildContext context) {
     if (_slot && !widget.noMotion) {
       return Stack(fit: StackFit.expand, children: [
+        // الإطار الثابت تحت المشغّل: يظهر ريثما يجهز المقطع أو إن تعذّر أو منع المتصفح التشغيل التلقائي، بدل بطاقة فارغة
+        _poster('tl-video-under'),
         // المعاينة لا تلتقط اللمس: لمسة البطاقة تفتح العارض
-        IgnorePointer(child: VideoView(key: const Key('tl-video-loop'), url: mediaUrl(widget.media), autoplay: true, loop: true, muted: true, controls: false)),
+        IgnorePointer(child: VideoView(key: const Key('tl-video-loop'), url: mediaUrl(widget.media), poster: thumbUrl(widget.media), autoplay: true, loop: true, muted: true, controls: false)),
         const PositionedDirectional(bottom: 8, end: 8, child: Icon(Icons.volume_off_rounded, size: 16, color: Colors.white70)),
       ]);
     }
     return Stack(fit: StackFit.expand, children: [
-      Image.network(thumbUrl(widget.media), key: const Key('tl-video-poster'), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: const Color(0xFF14181C))),
+      _poster('tl-video-poster'),
       const Center(child: Icon(Icons.play_circle_fill_rounded, size: 40, color: Colors.white)),
     ]);
   }
