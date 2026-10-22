@@ -911,10 +911,28 @@ function rowItems(located) {
     { kind: 'offer', id: 'off-3', refId: 'biz-brew92', title: 'V60 بسعر خاص', subtitle: 'برو 92 · ينتهي بعد 3 أيام', who: 'برو 92', logoUrl: null, imageUrl: null, lat: 21.585, lng: 39.16, distanceKm: d(0.7), at: ago(2880), endsAt: new Date(Date.now() + 3 * 86400e3).toISOString(), act: 'استخدم', payload: {} },
   ];
 }
+// ---- «التغذية» (GET /feed في server/row.js): بطاقات الصف نفسها وبضع بطاقات إضافية بأزمنة متفرقة، الأحدث أولاً عبر الأنواع،
+// تصفية بالنوع (kind=all افتراضياً)، مؤشر before، حدّ 1..40، وnext = at آخر بطاقة حين تمتلئ الصفحة؛ لتجربة التبويب العمودي والتصانيف في الشريط العلوي
+const ROW_KINDS = ['moment', 'offer', 'event', 'job', 'listing', 'circle'];
+function feedItems(located) {
+  const d = (km) => (located ? km : null);
+  const extraMoments = mockPosts.slice(2).filter((p) => p.status === 'active').map((p, i) => ({ kind: 'moment', id: p.id, refId: p.id, title: p.caption || p.title || 'لحظة', subtitle: `قبل ${3 + i} س · ${p.placeName || 'جدة'}`, who: p.user.nickname, logoUrl: null, imageUrl: p.kind === 'image' || p.kind === 'video' ? p.mediaUrl : null, lat: p.lat, lng: p.lng, distanceKm: d(1.5 + i), at: p.createdAt, endsAt: p.expiresAt, act: 'شاهد', payload: p }));
+  return [...rowItems(located), ...extraMoments,
+    { kind: 'listing', id: 'aaaaaaaa-0000-4000-8000-00000000l002', refId: 'aaaaaaaa-0000-4000-8000-00000000l002', title: 'آلة قهوة إسبريسو', subtitle: '650 ر.س · الروضة', who: 'nora', logoUrl: null, imageUrl: null, lat: 21.57, lng: 39.17, distanceKm: d(1.9), at: ago(95), endsAt: null, act: 'اطلب', payload: {} },
+    { kind: 'job', id: 'aaaaaaaa-0000-4000-8000-00000000j002', refId: 'biz-brew92', title: 'باريستا', subtitle: 'دوام جزئي · 4,500 ر.س', who: 'برو 92', logoUrl: null, imageUrl: null, lat: 21.585, lng: 39.16, distanceKm: d(0.7), at: ago(400), endsAt: new Date(Date.now() + 14 * 86400e3).toISOString(), act: 'قدّم', payload: {} },
+  ];
+}
 function rowRoute(req, res, url, key) {
   const json = (code, body) => { console.log(key, url.search, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
   if (key === 'GET /row/status') return json(200, { ok: true, sources: { moment: true, offer: true, event: true, job: true, listing: true } });
   if (key === 'GET /row') { const located = url.searchParams.has('lat'); const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 30)); return json(200, { items: rowItems(located).slice(0, limit), located }); }
+  if (key === 'GET /feed') {
+    const located = url.searchParams.has('lat'), kind = url.searchParams.get('kind') || 'all', before = Date.parse(url.searchParams.get('before') || '');
+    const limit = Math.max(1, Math.min(40, Number(url.searchParams.get('limit')) || 30));
+    const all = feedItems(located).filter((i) => (!ROW_KINDS.includes(kind) || i.kind === kind) && (!Number.isFinite(before) || Date.parse(i.at) < before)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    const page = all.slice(0, limit);
+    return json(200, { items: page, next: page.length === limit ? page[page.length - 1].at : null, located });
+  }
   return false;
 }
 function layoutRoute(req, res, url, key) {
@@ -1036,7 +1054,7 @@ http.createServer((req, res) => {
   if (url.pathname.startsWith('/jobs')) { if (jobsRoute(req, res, url, key)) return; }
   if (url.pathname === '/me/layout' || url.pathname === '/layout/status') { if (layoutRoute(req, res, url, key)) return; } // ---- home layout
   if (url.pathname === '/offers/map' || url.pathname === '/offers/near') { if (offersMapRoute(req, res, url, key)) return; }
-  if (url.pathname === '/row' || url.pathname === '/row/status') { if (rowRoute(req, res, url, key)) return; } // ---- الصف
+  if (url.pathname === '/row' || url.pathname === '/row/status' || url.pathname === '/feed') { if (rowRoute(req, res, url, key)) return; } // ---- الصف والتغذية
   if (url.pathname === '/live/wait' || url.pathname === '/live/status') { if (liveRoute(req, res, url, key)) return; } // ---- القناة الحية
   if (url.pathname.startsWith('/hotel/') || url.pathname.startsWith('/adminapi/hotels') || /^\/biz\/[^/]+\/hotel(\/|$)/.test(url.pathname)) { if (hotelRoute(req, res, url, key)) return; } // ---- حجز الفنادق
   // ---- chat live + suggest (stream B) start — تحاكي server/chat_live.js: جلسات الموقع المباشر في الذاكرة (POST/PUT/GET/DELETE /chat/live)؛

@@ -4,6 +4,8 @@
 // بشيء ولا يُسقط الطلب. الدرجة = المسافة بالكيلومتر ناقص دفعات (ينتهي خلال 3 ساعات، نُشر خلال 30 دقيقة، فعالية تبدأ خلال 6 ساعات)،
 // ثم توزيع حتى لا تتوالى أكثر من ثلاث بطاقات من نوع واحد، وبحد 12 لكل نوع. المسار عام: الضيف مسموح كما في /offers/near.
 // النوع السادس «circle» (21 أكتوبر 2026): دائرة متنقلة ثبّتت دبوس «هنا اليوم» (biz.here من biz_onboard.js) تظهر عند موقع الدبوس ما دام قائماً.
+// «التغذية» GET /feed (22 أكتوبر 2026): البطاقات نفسها بالبنّاء نفسه لكن الأحدث أولاً (لا بالقرب ولا بالتوزيع) مع تصفية بالنوع ومؤشر ترقيم before،
+// لتبويب عمودي من بطاقات متوسطة متحركة، التصنيف «عام» افتراضياً وبقية التصانيف في الشريط العلوي (طلب المالك).
 // التسجيل في register.txt:
 //   await app.register((await import("./row.js")).default, { pool, auth });
 import { CATEGORY_AR } from "./business.js";
@@ -16,6 +18,7 @@ const MEDIA_AR = { image: "صورة", video: "فيديو", audio: "تسجيل ص
 const TABLES = { moment: "map_posts", offer: "biz_offers", event: "events", job: "jobs", listing: "market_listings", circle: "biz" };
 const TYPE_AR = { full: "دوام كامل", part: "دوام جزئي", remote: "عن بُعد", intern: "تدريب", shift: "ورديات", freelance: "عمل حر" };
 export const CAND = 60, MAX_PER_KIND = 12, MAX_RUN = 3, LIMIT_DEFAULT = 30, LIMIT_MAX = 50, RADIUS_DEFAULT = 15, RADIUS_MAX = 100;
+export const FEED_LIMIT_MAX = 40; // صفحة التغذية: 1..40 (الافتراضي LIMIT_DEFAULT)
 const MIN = 60000, H = 3600000, DAY = 86400000, TZ = "Asia/Riyadh";
 
 const num = (v) => { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -107,6 +110,13 @@ const dist = (a) => `(6371*acos(least(1, cos(radians($1::float8))*cos(radians(${
 const KM = (a) => `CASE WHEN $3::float8 > 0 THEN ${dist(a)} END`;
 const WITHIN = (a) => `($3::float8 <= 0 OR ${dist(a)} <= $3::float8)`;
 const ACTIVE_OFFER = "o.active AND b.active AND o.starts_at <= now() AND (o.ends_at IS NULL OR o.ends_at > now())";
+// عمود الزمن لكل نوع: هو ما يصير «at» في البطاقة، وبه ترتّب التغذية الأحدث أولاً ويُطبَّق مؤشر before في WHERE (ترقيم صحيح لا قصّ بعد الفرز)
+const TIME = { moment: "p.created_at", offer: "o.starts_at", event: "e.starts_at", job: "COALESCE(j.published_at, j.created_at)", listing: "COALESCE(l.bumped_at, l.created_at)", circle: "c.set_at::timestamptz" };
+// ذيل الاستعلام ومعاملاته: /row الأقرب أولاً بحد CAND؛ التغذية (ctx.sort = "time") الأحدث أولاً بحد الصفحة، وbefore يُقارن بالعمود مقصوصاً إلى
+// الملي ثانية لأن «at» يصل العميل بدقة الملي ثانية، فلا تتكرر آخر بطاقة في الصفحة التالية
+const tail = (ctx, kind, params, rowOrder) => ctx.sort === "time"
+  ? [`AND ($${params.length + 1}::timestamptz IS NULL OR date_trunc('milliseconds', ${TIME[kind]}) < $${params.length + 1}::timestamptz) ORDER BY ${TIME[kind]} DESC NULLS LAST LIMIT ${ctx.cand}`, [...params, ctx.before]]
+  : [`ORDER BY km ASC NULLS LAST, ${rowOrder} LIMIT ${CAND}`, params];
 
 export default async function row(app, opts = {}) {
   const pool = opts.pool ?? globalThis.naslifePool ?? null;
@@ -136,13 +146,12 @@ export default async function row(app, opts = {}) {
     expired: new Date(p.expires_at).getTime() < Date.now(), audioUrl: p.audio_url ?? null, audioSec: p.audio_sec ?? null,
   });
 
-  // ---- المصادر الخمسة: استعلام مرشّحين (بحد CAND، الأقرب أولاً ثم الأحدث) ثم تحويل الصف إلى بطاقة
+  // ---- المصادر الستة: استعلام مرشّحين (الصف: بحد CAND الأقرب أولاً ثم الأحدث؛ التغذية: الأحدث أولاً بحد الصفحة) ثم تحويل الصف إلى بطاقة
   const SOURCES = {
     moment: {
-      rows: (ctx) => q("moment", `SELECT p.*, (SELECT count(*) FROM map_post_likes l WHERE l.post_id=p.id)::int AS likes,
+      rows: (ctx) => { const [t, P] = tail(ctx, "moment", [...ctx.geo, ctx.uid, ctx.blocked], "p.created_at DESC"); return q("moment", `SELECT p.*, (SELECT count(*) FROM map_post_likes l WHERE l.post_id=p.id)::int AS likes,
           ($4::text IS NOT NULL AND EXISTS (SELECT 1 FROM map_post_likes l WHERE l.post_id=p.id AND l.user_id=$4)) AS liked, ${KM("p")} AS km
-        FROM map_posts p WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($5::text[])) AND ${WITHIN("p")}
-        ORDER BY km ASC NULLS LAST, p.created_at DESC LIMIT ${CAND}`, [...ctx.geo, ctx.uid, ctx.blocked]),
+        FROM map_posts p WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($5::text[])) AND ${WITHIN("p")} ${t}`, P); },
       userId: (p) => p.user_id,
       item: (p, ctx, who) => ({
         kind: "moment", id: p.id, refId: p.id,
@@ -153,9 +162,8 @@ export default async function row(app, opts = {}) {
       }),
     },
     offer: {
-      rows: (ctx) => q("offer", `SELECT o.*, b.id AS b_id, b.name, b.name_ar, b.logo_url, b.lat, b.lng, ${KM("b")} AS km
-        FROM biz_offers o JOIN biz b ON b.id=o.biz_id WHERE ${ACTIVE_OFFER} AND ${WITHIN("b")}
-        ORDER BY km ASC NULLS LAST, o.starts_at DESC LIMIT ${CAND}`, ctx.geo),
+      rows: (ctx) => { const [t, P] = tail(ctx, "offer", ctx.geo, "o.starts_at DESC"); return q("offer", `SELECT o.*, b.id AS b_id, b.name, b.name_ar, b.logo_url, b.lat, b.lng, ${KM("b")} AS km
+        FROM biz_offers o JOIN biz b ON b.id=o.biz_id WHERE ${ACTIVE_OFFER} AND ${WITHIN("b")} ${t}`, P); },
       userId: () => null,
       item: (o, ctx) => ({
         kind: "offer", id: o.id, refId: o.b_id, title: cut(o.title, 80), subtitle: cut(`${bizName(o)} · ${endsText(o.ends_at, ctx.now)}`, 60),
@@ -165,10 +173,9 @@ export default async function row(app, opts = {}) {
     },
     event: {
       // الفعاليات الملغاة أو المخفية بالإشراف لا تُعرض (كما في GET /events)؛ الجارية تبقى حتى نهايتها أو 6 ساعات بعد بدايتها
-      rows: (ctx) => q("event", `SELECT e.*, (SELECT min(t.price) FROM ticket_tiers t WHERE t.event_id=e.id) AS min_price, ${KM("e")} AS km
+      rows: (ctx) => { const [t, P] = tail(ctx, "event", [...ctx.geo, ctx.blocked], "e.starts_at ASC"); return q("event", `SELECT e.*, (SELECT min(t.price) FROM ticket_tiers t WHERE t.event_id=e.id) AS min_price, ${KM("e")} AS km
         FROM events e WHERE NOT e.cancelled AND NOT e.hidden AND e.lat IS NOT NULL AND e.lng IS NOT NULL AND NOT (e.host_id = ANY($4::text[]))
-          AND ((e.ends_at IS NULL AND e.starts_at > now() - interval '6 hours') OR e.ends_at > now()) AND ${WITHIN("e")}
-        ORDER BY km ASC NULLS LAST, e.starts_at ASC LIMIT ${CAND}`, [...ctx.geo, ctx.blocked]),
+          AND ((e.ends_at IS NULL AND e.starts_at > now() - interval '6 hours') OR e.ends_at > now()) AND ${WITHIN("e")} ${t}`, P); },
       userId: (e) => e.host_id,
       item: (e, ctx, who) => ({
         kind: "event", id: e.id, refId: e.id, title: cut(e.title, 80),
@@ -178,10 +185,9 @@ export default async function row(app, opts = {}) {
       }),
     },
     job: {
-      rows: (ctx) => q("job", `SELECT j.id, j.title, j.type, j.city, j.district, j.salary_min, j.salary_max, j.salary_visible, j.published_at, j.created_at, j.deadline,
+      rows: (ctx) => { const [t, P] = tail(ctx, "job", ctx.geo, "j.published_at DESC NULLS LAST"); return q("job", `SELECT j.id, j.title, j.type, j.city, j.district, j.salary_min, j.salary_max, j.salary_visible, j.published_at, j.created_at, j.deadline,
           b.id AS b_id, b.name, b.name_ar, b.logo_url, b.lat, b.lng, ${KM("b")} AS km
-        FROM jobs j JOIN biz b ON b.id=j.biz_id WHERE j.status='open' AND j.public=true AND ${WITHIN("b")}
-        ORDER BY km ASC NULLS LAST, j.published_at DESC NULLS LAST LIMIT ${CAND}`, ctx.geo),
+        FROM jobs j JOIN biz b ON b.id=j.biz_id WHERE j.status='open' AND j.public=true AND ${WITHIN("b")} ${t}`, P); },
       userId: () => null,
       item: (j, ctx) => {
         // الراتب يظهر فقط حين أذن صاحب العمل (كما في publicJobOut)؛ وإلا الحي أو المدينة أو اسم الدائرة
@@ -196,10 +202,9 @@ export default async function row(app, opts = {}) {
       },
     },
     listing: {
-      rows: (ctx) => q("listing", `SELECT l.id, l.seller_id, l.title, l.price, l.image_url, l.images, l.place_name, l.city, l.lat, l.lng, l.created_at, l.bumped_at, ${KM("l")} AS km
+      rows: (ctx) => { const [t, P] = tail(ctx, "listing", [...ctx.geo, ctx.blocked], "COALESCE(l.bumped_at, l.created_at) DESC"); return q("listing", `SELECT l.id, l.seller_id, l.title, l.price, l.image_url, l.images, l.place_name, l.city, l.lat, l.lng, l.created_at, l.bumped_at, ${KM("l")} AS km
         FROM market_listings l WHERE l.status='active' AND l.lat IS NOT NULL AND l.lng IS NOT NULL AND (l.publish_at IS NULL OR l.publish_at <= now())
-          AND NOT (l.seller_id = ANY($4::text[])) AND ${WITHIN("l")}
-        ORDER BY km ASC NULLS LAST, COALESCE(l.bumped_at, l.created_at) DESC LIMIT ${CAND}`, [...ctx.geo, ctx.blocked]),
+          AND NOT (l.seller_id = ANY($4::text[])) AND ${WITHIN("l")} ${t}`, P); },
       userId: (l) => l.seller_id,
       item: (l, ctx, who) => ({
         kind: "listing", id: l.id, refId: l.id, title: cut(l.title, 80), subtitle: cut(`${sar(l.price)} · ${l.place_name || l.city || who.nickname}`, 60),
@@ -209,10 +214,10 @@ export default async function row(app, opts = {}) {
     },
     circle: {
       // الدائرة المتنقلة التي ثبّتت دبوس «هنا اليوم»: تُعرض عند موقع الدبوس ما دام until في المستقبل (business.js يملك العمود here)
-      rows: (ctx) => q("circle", `SELECT c.*, ${KM("c")} AS km FROM (
+      rows: (ctx) => { const [t, P] = tail(ctx, "circle", ctx.geo, "c.set_at DESC NULLS LAST"); return q("circle", `SELECT c.*, ${KM("c")} AS km FROM (
           SELECT b.id, b.name, b.name_ar, b.category, b.logo_url, (b.here->>'lat')::float8 AS lat, (b.here->>'lng')::float8 AS lng, b.here->>'until' AS until, b.here->>'setAt' AS set_at
           FROM biz b WHERE b.active AND NOT b.hidden AND b.here IS NOT NULL AND jsonb_typeof(b.here->'until')='string' AND (b.here->>'until')::timestamptz > now()) c
-        WHERE c.lat IS NOT NULL AND c.lng IS NOT NULL AND ${WITHIN("c")} ORDER BY km ASC NULLS LAST, c.set_at DESC NULLS LAST LIMIT ${CAND}`, ctx.geo),
+        WHERE c.lat IS NOT NULL AND c.lng IS NOT NULL AND ${WITHIN("c")} ${t}`, P); },
       userId: () => null,
       item: (c, ctx) => ({
         kind: "circle", id: c.id, refId: c.id, title: cut(bizName(c), 80), subtitle: cut(`هنا اليوم حتى ${hhmm(c.until)} · ${CATEGORY_AR[c.category] ?? c.category ?? ""}`, 60),
@@ -222,18 +227,43 @@ export default async function row(app, opts = {}) {
     },
   };
 
+  // جمع البطاقات من الأنواع المطلوبة: استعلامات المصادر معاً، ثم أسماء الأشخاص دفعة واحدة، ثم التحويل إلى بطاقات (مشترك بين /row و/feed)
+  const collect = async (kinds, ctx) => {
+    const batches = await Promise.all(kinds.map(async (k) => ({ k, rows: await SOURCES[k].rows(ctx) })));
+    const people = await persons(batches.flatMap(({ k, rows }) => rows.map(SOURCES[k].userId)));
+    return batches.flatMap(({ k, rows }) => rows.map((r) => SOURCES[k].item(r, ctx, people.get(SOURCES[k].userId(r)) ?? { id: "", nickname: "", avatarUrl: null })));
+  };
+  // الموقع ونصف القطر من الاستعلام كما في /offers/near؛ الإحداثيات خارج النطاق = بلا موقع
+  const geoOf = (query) => {
+    const lat = num(query?.lat), lng = num(query?.lng);
+    const located = lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    return { located, geo: located ? [lat, lng, clampInt(query?.radiusKm, 1, RADIUS_MAX, RADIUS_DEFAULT)] : [0, 0, 0] };
+  };
+
   // ---- GET /row?lat=&lng=&radiusKm=15&limit=30 → { items, located }؛ بلا موقع: الأحدث بلا مسافة
   app.get("/row", async (req) => {
     const uid = await optionalAuth(req);
-    const lat = num(req.query?.lat), lng = num(req.query?.lng);
-    const located = lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
-    const radius = clampInt(req.query?.radiusKm, 1, RADIUS_MAX, RADIUS_DEFAULT);
+    const { located, geo } = geoOf(req.query);
     const limit = clampInt(req.query?.limit, 1, LIMIT_MAX, LIMIT_DEFAULT);
-    const ctx = { geo: located ? [lat, lng, radius] : [0, 0, 0], uid, blocked: await blockedIds(uid), now: Date.now(), located };
-    const batches = await Promise.all(KINDS.map(async (k) => ({ k, rows: await SOURCES[k].rows(ctx) })));
-    const people = await persons(batches.flatMap(({ k, rows }) => rows.map(SOURCES[k].userId)));
-    const items = batches.flatMap(({ k, rows }) => rows.map((r) => SOURCES[k].item(r, ctx, people.get(SOURCES[k].userId(r)) ?? { id: "", nickname: "", avatarUrl: null })));
-    return { items: rankItems(items, limit, ctx.now), located };
+    const ctx = { geo, uid, blocked: await blockedIds(uid), now: Date.now(), located };
+    return { items: rankItems(await collect(KINDS, ctx), limit, ctx.now), located };
+  });
+
+  // ---- GET /feed?kind=all|moment|offer|event|job|listing|circle&lat=&lng=&radiusKm=15&limit=30&before=<ISO> → { items, next, located }
+  // التغذية العمودية: البطاقات نفسها (البنّاء نفسه، واللحظة تحمل المنشور في payload) لكن الأحدث أولاً بعمود الزمن الذي يصير «at»،
+  // بلا دفعات ولا حد لكل نوع ولا توزيع؛ الموقع يقصر على نصف القطر ويملأ المسافة فقط، وبلا موقع الأحدث أياً كان بعده.
+  // kind واحد يصفّي إليه، وall (أو قيمة غير معروفة) يدمج الأنواع كلها. before: بطاقات at < before؛ next = «at» آخر بطاقة حين تمتلئ الصفحة وإلا null.
+  app.get("/feed", async (req) => {
+    const uid = await optionalAuth(req);
+    const { located, geo } = geoOf(req.query);
+    const limit = clampInt(req.query?.limit, 1, FEED_LIMIT_MAX, LIMIT_DEFAULT);
+    const kinds = KINDS.includes(req.query?.kind) ? [req.query.kind] : KINDS;
+    const ctx = { geo, uid, blocked: await blockedIds(uid), now: Date.now(), located, sort: "time", before: iso(req.query?.before), cand: limit };
+    const items = await collect(kinds, ctx);
+    // الأحدث أولاً عبر الأنواع؛ التعادل بترتيب الأنواع ثم المعرّف حتى يثبت الترتيب بين الصفحات
+    items.sort((a, b) => (ms(b.at) || 0) - (ms(a.at) || 0) || KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || String(a.id).localeCompare(String(b.id)));
+    const page = items.slice(0, limit);
+    return { items: page, next: page.length === limit ? page[page.length - 1].at : null, located };
   });
 
   // ---- للفحص الحي: أي الجداول المصدرية موجودة
