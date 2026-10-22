@@ -40,9 +40,8 @@ import '../../state/live_providers.dart';
 import '../../state/row_providers.dart';
 import '../business/offers_page.dart';
 import '../../ui/joy_nav_bar.dart';
-import '../events/events_page.dart';
 import '../home/row_deck.dart';
-import '../jobs/job_page.dart';
+import '../home/row_open.dart';
 import '../notifications/notifications_page.dart';
 import '../search/search_page.dart';
 
@@ -379,24 +378,8 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     }
   }
 
-  /// زر البطاقة: رحلة العنصر القائمة بحسب نوعه.
-  void _actRow(RowItem it) {
-    switch (it.kind) {
-      case 'moment':
-        if (it.payload.isEmpty) return;
-        Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => PostViewerPage(posts: [MapPost.fromJson(it.payload)], initial: 0)));
-      case 'offer':
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleOffersPage(bizId: it.refId, title: it.who.isEmpty ? null : it.who)));
-      case 'event':
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: it.refId)));
-      case 'job':
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => JobPage(id: it.refId)));
-      case 'listing':
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(it.refId)));
-      case 'circle':
-        openBusiness(context, it.refId);
-    }
-  }
+  /// زر البطاقة: رحلة العنصر القائمة بحسب نوعه (مشتركة مع «اللحظات» في [openRowItem]).
+  void _actRow(RowItem it) => openRowItem(context, it);
 
   /// لمسة على منطقة خدمة دائرة متنقلة: كدبّوسها (في الرئيسية تقفز البطاقة إليها إن كانت في الصف، وإلا ورقة الدائرة).
   void _tapArea(String bizId) {

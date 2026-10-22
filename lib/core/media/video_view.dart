@@ -3,21 +3,21 @@ import 'package:flutter/material.dart';
 import 'video_view_stub.dart' if (dart.library.js_interop) 'video_view_web.dart' if (dart.library.io) 'video_view_io.dart' as impl;
 
 /// مشغّل فيديو: على الويب عنصر <video> أصلي، وعلى iOS/Android مشغّل video_player داخل التطبيق.
-/// يُنشأ المشغّل مرة واحدة لكل ودجت.
+/// يُنشأ المشغّل مرة واحدة لكل ودجت. [controls] false = معاينة صامتة تدور كصورة متحركة (بلا شريط تحكم، تملأ الإطار).
 class VideoView extends StatefulWidget {
   /// بديل للاختبارات: اختبارات الودجات تعمل على Dart VM (dart.library.io) فلا يجوز أن تلمس قناة المنصة.
-  static Widget Function(String url, {bool autoplay, bool loop, bool muted})? factoryOverride;
+  static Widget Function(String url, {bool autoplay, bool loop, bool muted, bool controls})? factoryOverride;
 
   final String url;
-  final bool autoplay, loop, muted;
-  const VideoView({super.key, required this.url, this.autoplay = false, this.loop = false, this.muted = false});
+  final bool autoplay, loop, muted, controls;
+  const VideoView({super.key, required this.url, this.autoplay = false, this.loop = false, this.muted = false, this.controls = true});
   @override
   State<VideoView> createState() => _VideoViewState();
 }
 
 class _VideoViewState extends State<VideoView> {
-  late final Widget _child = VideoView.factoryOverride?.call(widget.url, autoplay: widget.autoplay, loop: widget.loop, muted: widget.muted) ??
-      impl.createVideo(widget.url, autoplay: widget.autoplay, loop: widget.loop, muted: widget.muted);
+  late final Widget _child = VideoView.factoryOverride?.call(widget.url, autoplay: widget.autoplay, loop: widget.loop, muted: widget.muted, controls: widget.controls) ??
+      impl.createVideo(widget.url, autoplay: widget.autoplay, loop: widget.loop, muted: widget.muted, controls: widget.controls);
   @override
   Widget build(BuildContext context) => _child;
 }

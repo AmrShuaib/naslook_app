@@ -98,6 +98,34 @@ class RowItem {
 
   /// للدائرة «هنا اليوم»: نهاية الدبّوس المؤقت من الحمولة (`payload.until`) أو من `endsAt`.
   DateTime? get hereUntil => DateTime.tryParse(payload['until']?.toString() ?? '') ?? endsAt;
+
+  /// بطاقة لحظة من منشور بصيغة `/mapposts` (كما تصل من القناة الحية): نفس ما يبنيه `server/row.js` للنوع `moment`
+  /// حتى تُدرج اللحظة الحيّة في «اللحظات» بلا جلب، والحمولة المنشور نفسه ليُفتح العارض.
+  factory RowItem.moment(Map post) {
+    final user = post['user'] is Map ? Map<String, dynamic>.from(post['user'] as Map) : const <String, dynamic>{};
+    final kind = post['kind']?.toString() ?? 'text';
+    final caption = post['caption']?.toString().trim() ?? '';
+    final title = post['title']?.toString().trim() ?? '';
+    final nick = user['nickname']?.toString() ?? '';
+    final place = post['placeName']?.toString().trim() ?? '';
+    final mediaAr = switch (kind) { 'image' => 'صورة', 'video' => 'فيديو', 'audio' => 'تسجيل صوتي', _ => 'لحظة' };
+    final media = post['mediaUrl']?.toString();
+    return RowItem(
+      kind: 'moment',
+      id: post['id']?.toString() ?? '',
+      title: caption.isNotEmpty ? caption : title.isNotEmpty ? title : '$mediaAr من ${place.isNotEmpty ? place : nick.isNotEmpty ? nick : 'جار قريب'}',
+      subtitle: place,
+      who: nick,
+      logoUrl: _url(user['avatarUrl']),
+      imageUrl: (kind == 'image' || kind == 'video') ? _url(media) : null,
+      lat: (post['lat'] as num?)?.toDouble() ?? 0,
+      lng: (post['lng'] as num?)?.toDouble() ?? 0,
+      distanceKm: (post['distanceKm'] as num?)?.toDouble(),
+      at: DateTime.tryParse(post['createdAt']?.toString() ?? ''),
+      endsAt: DateTime.tryParse(post['expiresAt']?.toString() ?? ''),
+      payload: Map<String, dynamic>.from(post),
+    );
+  }
 }
 
 /// ردّ `GET /row`: العناصر، وهل رُتّبت بموقع المستخدم.
@@ -112,10 +140,52 @@ class RowFeed {
       );
 }
 
+/// أنواع «اللحظات» بترتيب رقائق الشريط العلوي: `all` (عام) ثم الأنواع الستة التي يبنيها `server/row.js`.
+const feedKinds = ['all', 'moment', 'offer', 'event', 'job', 'listing', 'circle'];
+
+/// اسم الرقاقة لكل نوع في «اللحظات».
+String feedKindLabel(String kind) => switch (kind) {
+      'moment' => 'لحظات',
+      'offer' => 'عروض',
+      'event' => 'فعاليات',
+      'job' => 'وظائف',
+      'listing' => 'السوق',
+      'circle' => 'دوائر',
+      _ => 'عام',
+    };
+
+/// صفحة من `GET /feed`: العناصر بصيغة `/row` نفسها الأحدث أولاً، ومؤشر الصفحة التالية (`at` آخر عنصر) أو null في النهاية.
+class FeedPage {
+  final List<RowItem> items;
+  final String? next;
+  final bool located;
+  const FeedPage({this.items = const [], this.next, this.located = false});
+
+  factory FeedPage.fromJson(Map m) => FeedPage(
+        items: [for (final e in (m['items'] as List? ?? const [])) if (e is Map) RowItem.fromJson(e)],
+        next: (m['next']?.toString().isNotEmpty ?? false) ? m['next'].toString() : null,
+        located: m['located'] == true,
+      );
+}
+
 extension RowApi on ApiClient {
   /// الصف حول موقع المستخدم (عام: يعمل للزائر). بلا موقع يعيد الأحدث.
   Future<RowFeed> rowNear({double? lat, double? lng, int radiusKm = 15, int limit = 30}) async {
     final m = await get('/row', query: {if (lat != null) 'lat': '$lat', if (lng != null) 'lng': '$lng', 'radiusKm': '$radiusKm', 'limit': '$limit'});
     return RowFeed.fromJson(m);
+  }
+
+  /// «اللحظات»: `GET /feed?kind=&lat=&lng=&radiusKm=&limit=&before=` الأحدث أولاً بين الأنواع المختارة (`all` يدمجها كلها)،
+  /// ضمن [radiusKm] حين يُعرف الموقع، و[before] مؤشر الصفحة التالية من الردّ السابق. عام: يعمل للزائر.
+  Future<FeedPage> feedItems({String kind = 'all', double? lat, double? lng, int radiusKm = 15, int limit = 30, String? before}) async {
+    final m = await get('/feed', query: {
+      'kind': kind,
+      if (lat != null) 'lat': '$lat',
+      if (lng != null) 'lng': '$lng',
+      'radiusKm': '$radiusKm',
+      'limit': '$limit',
+      if (before != null && before.isNotEmpty) 'before': before,
+    });
+    return FeedPage.fromJson(m);
   }
 }

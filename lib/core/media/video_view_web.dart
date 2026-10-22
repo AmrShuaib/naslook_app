@@ -6,22 +6,26 @@ import 'package:web/web.dart' as web;
 int _seq = 0;
 
 /// عنصر <video> أصلي في المتصفح: يعمل على iOS (playsinline) ويعرض أزرار التحكم.
-Widget createVideo(String url, {bool autoplay = false, bool loop = false, bool muted = false}) {
+/// بلا [controls]: معاينة تملأ الإطار (cover) بلا شريط ولا نقر، كصورة متحركة في بطاقة.
+Widget createVideo(String url, {bool autoplay = false, bool loop = false, bool muted = false, bool controls = true}) {
   final id = 'naslife-video-${_seq++}';
   ui_web.platformViewRegistry.registerViewFactory(id, (int viewId) {
     final v = web.HTMLVideoElement()
       ..src = url
-      ..controls = true
+      ..controls = controls
       ..autoplay = autoplay
       ..loop = loop
       ..muted = muted
-      ..preload = 'metadata';
+      ..preload = controls ? 'metadata' : 'auto';
     v.setAttribute('playsinline', 'true');
+    // المتصفح لا يشغّل تلقائياً إلا الصامت؛ والمعاينة لا تلتقط اللمس فتبقى لمسة البطاقة للتطبيق
+    if (!controls) v.setAttribute('disablepictureinpicture', 'true');
     v.style
       ..width = '100%'
       ..height = '100%'
-      ..objectFit = 'contain'
+      ..objectFit = controls ? 'contain' : 'cover'
       ..background = '#000';
+    if (!controls) v.style.pointerEvents = 'none';
     return v;
   });
   return HtmlElementView(viewType: id);

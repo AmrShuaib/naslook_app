@@ -156,7 +156,7 @@ void main() {
     nativeMobileOverride = true;
     addTearDown(() => nativeMobileOverride = null);
     final played = <String>[];
-    VideoView.factoryOverride = (url, {autoplay = false, loop = false, muted = false}) {
+    VideoView.factoryOverride = (url, {autoplay = false, loop = false, muted = false, controls = true}) {
       played.add('$url autoplay=$autoplay');
       return const ColoredBox(key: Key('fake-video'), color: Colors.black);
     };

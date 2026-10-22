@@ -6,13 +6,13 @@ import 'video_view_stub.dart' as stub;
 
 /// على iOS/Android: مشغّل video_player داخل التطبيق. على سطح المكتب (ومنها بيئة الاختبار) نعود للزر الخارجي
 /// لأن video_player لا يملك تنفيذاً هناك.
-Widget createVideo(String url, {bool autoplay = false, bool loop = false, bool muted = false}) =>
-    isNativeMobile ? _NativeVideo(url: url, autoplay: autoplay, loop: loop, muted: muted) : stub.createVideo(url, autoplay: autoplay, loop: loop, muted: muted);
+Widget createVideo(String url, {bool autoplay = false, bool loop = false, bool muted = false, bool controls = true}) =>
+    isNativeMobile ? _NativeVideo(url: url, autoplay: autoplay, loop: loop, muted: muted, controls: controls) : stub.createVideo(url, autoplay: autoplay, loop: loop, muted: muted, controls: controls);
 
 class _NativeVideo extends StatefulWidget {
   final String url;
-  final bool autoplay, loop, muted;
-  const _NativeVideo({required this.url, required this.autoplay, required this.loop, required this.muted});
+  final bool autoplay, loop, muted, controls;
+  const _NativeVideo({required this.url, required this.autoplay, required this.loop, required this.muted, required this.controls});
   @override
   State<_NativeVideo> createState() => _NativeVideoState();
 }
@@ -82,6 +82,16 @@ class _NativeVideoState extends State<_NativeVideo> {
       ]));
     }
     if (!_ready) return const Center(child: CircularProgressIndicator(color: Colors.white));
+    // معاينة بلا تحكم: الإطار يُملأ بالقص (كصورة الغلاف) ولا زر ولا شريط ولا لمس؛ اللمس للبطاقة الحاضنة
+    if (!widget.controls) {
+      return IgnorePointer(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          clipBehavior: Clip.hardEdge,
+          child: SizedBox(width: _c.value.size.width == 0 ? 16 : _c.value.size.width, height: _c.value.size.height == 0 ? 9 : _c.value.size.height, child: VideoPlayer(_c)),
+        ),
+      );
+    }
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: _toggle,

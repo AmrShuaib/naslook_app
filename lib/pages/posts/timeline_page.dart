@@ -1,54 +1,76 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SliverConstraints, SliverGridGeometry, SliverGridLayout;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/client.dart';
 import '../../api/live_api.dart';
-import '../../api/posts_api.dart';
+import '../../api/posts_api.dart' show distanceText;
+import '../../api/row_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/media/video_view.dart';
+import '../../core/nav_provider.dart';
+import '../../state/feed_providers.dart';
 import '../../state/live_providers.dart';
-import '../../state/posts_providers.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/widgets.dart';
-import 'post_viewer.dart';
+import '../events/events_page.dart';
+import '../home/row_deck.dart';
+import '../home/row_open.dart';
+import '../jobs/jobs_page.dart';
+import '../market/market_page.dart';
+import 'my_posts_page.dart';
+import 'overlay_canvas.dart' show colorFromHex;
 
-/// «الخط الزمني»: قائمة مبسّطة بكل المشاركات الموجودة على الخريطة الآن، الأحدث أولاً، تتحدّث وحدها.
-/// صف واحد لكل مشاركة (صورة مصغّرة، الناشر، المكان، الوقت)، ولمسه يفتح العارض عند تلك المشاركة.
-/// الجديد يصل فوراً عبر «القناة الحية» ([LiveChannel]: لحظة نُشرت تُدرج في مكانها، لحظة حُذفت تُزال)، والجلب الدوري كل
-/// [refreshEvery] وعند العودة إلى التطبيق احتياط فقط؛ ما يصل أثناء التمرير يظهر في كبسولة «N جديد» بدل أن يقفز القائمة.
+/// «اللحظات» (قرار المالك 22 أكتوبر 2026): شبكة متدرّجة بعمودين من بطاقات متوسطة تتحرك كالصور المتحركة (الفيديو يدور صامتاً بلا
+/// شريط تحكم، الصورة تتقرّب ببطء، النص على تدرّج لوني) لكل ما يبثه `GET /feed` الأحدث أولاً: لحظات وعروض وفعاليات ووظائف
+/// وسوق ودوائر «هنا اليوم». الرقاقة «عام» افتراضية وبقية الأنواع في الشريط العلوي. التصفح بالمؤشر عند الاقتراب من النهاية،
+/// والجديد يصل فوراً عبر «القناة الحية» ([LiveChannel]) ويُدرج في الأعلى، أو خلف كبسولة «N جديدة» إن كان المستخدم يتصفح.
+/// الجلب الدوري كل [refreshEvery] وعند العودة إلى التطبيق احتياط فقط.
 class TimelinePage extends ConsumerStatefulWidget {
   const TimelinePage({super.key});
   static const refreshEvery = Duration(seconds: 60);
+  /// أقصى معاينات فيديو تدور معاً؛ ما بعدها يعرض إطاره الثابت حتى تُحرَّر فتحة
+  static const maxLoopingPreviews = 4;
   @override
   ConsumerState<TimelinePage> createState() => _TimelinePageState();
 }
 
 class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBindingObserver {
   final _scroll = ScrollController();
+  final _videos = _PreviewRegistry(TimelinePage.maxLoopingPreviews);
   Timer? _timer;
   StreamSubscription<LiveEvent>? _liveSub;
   LiveChannel? _live;
-  /// المعرّفات المعروضة الآن؛ ما ليس فيها عند وصول جلب جديد يُعدّ «جديداً»
-  Set<String> _shown = {};
-  List<MapPost> _items = const [];
-  int _pendingNew = 0;
+  String _kind = 'all';
   bool _atTop = true;
+  /// مفاتيح البطاقات التي وصلت للتو فتدخل بحركة مرة واحدة
+  final _fresh = <String>{};
+
+  MomentsNotifier get _n => ref.read(momentsProvider(_kind).notifier);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _timer = Timer.periodic(TimelinePage.refreshEvery, (_) { if (mounted) ref.invalidate(timelineProvider); });
-    // قائمة مخزّنة من زيارة سابقة قد تفوتها لحظات وصلت حيّةً آنذاك: جلب جديد عند كل فتح (الفتح الأول يجلب أصلاً)
-    if (ref.read(timelineProvider).hasValue) Future.microtask(() { if (mounted) ref.invalidate(timelineProvider); });
+    _timer = Timer.periodic(TimelinePage.refreshEvery, (_) { if (mounted) _n.refresh(applyNow: _atTop); });
+    // قائمة مخزّنة من زيارة سابقة قد تفوتها لحظات وصلت حيّةً آنذاك: تحديث عند كل فتح (الفتح الأول يجلب أصلاً)
+    if (ref.read(momentsProvider(_kind)).loaded) Future.microtask(() { if (mounted) _n.refresh(); });
     _subscribeLive(ref.read(liveChannelProvider));
-    _scroll.addListener(() {
-      final top = _scroll.offset < 40;
-      if (top != _atTop) setState(() => _atTop = top);
-      // الوصول إلى الأعلى يعتمد الجديد تلقائياً
-      if (top && _pendingNew > 0) _applyPending();
-    });
+    _scroll.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final top = _scroll.offset < 40;
+    if (top != _atTop) setState(() => _atTop = top);
+    // الوصول إلى الأعلى يعتمد الجديد تلقائياً
+    if (top && ref.read(momentsProvider(_kind)).pending.isNotEmpty) _applyPending();
+    // قرب النهاية: الصفحة الأقدم
+    if (_scroll.position.extentAfter < 600) _n.loadMore();
   }
 
   void _subscribeLive(LiveChannel c) {
@@ -57,30 +79,27 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
     _liveSub = c.events.listen(_onLive);
   }
 
-  /// حدث حيّ: لحظة جديدة تُدرج في أعلى القائمة (أو خلف الكبسولة إن كان المستخدم يتصفح)، والمحذوفة تُزال في مكانها
+  /// حدث حيّ: لحظة جديدة تُدرج في أعلى «عام» و«لحظات» (أو خلف الكبسولة إن كان المستخدم يتصفح)، والمحذوفة تُزال في مكانها
   void _onLive(LiveEvent e) {
     if (!mounted) return;
     if (e.isReset || e.kind == LiveEvent.postRestored) {
-      ref.invalidate(timelineProvider);
+      _n.refresh(applyNow: _atTop);
     } else if (e.kind == LiveEvent.post) {
-      final MapPost p;
+      if (_kind != 'all' && _kind != 'moment') return;
+      final RowItem it;
       try {
-        p = MapPost.fromJson(e.data);
+        it = RowItem.moment(e.data);
       } catch (_) {
-        ref.invalidate(timelineProvider);
+        _n.refresh(applyNow: _atTop);
         return;
       }
-      if (ref.read(blockedIdsProvider).contains(p.user.id.toUpperCase())) return;
-      _onFetched([p, ..._latest.where((x) => x.id != p.id)]);
+      final uid = (e.data['user'] is Map ? (e.data['user'] as Map)['id'] : null)?.toString().toUpperCase() ?? '';
+      if (ref.read(blockedIdsProvider).contains(uid)) return;
+      _fresh.add(it.pinKey);
+      _n.pushLive(it, applyNow: _atTop);
     } else if (e.kind == LiveEvent.postRemoved) {
       final id = e.data['id']?.toString();
-      if (id == null) return;
-      _latest = _latest.where((x) => x.id != id).toList();
-      setState(() {
-        _items = _items.where((x) => x.id != id).toList();
-        _shown.remove(id);
-        if (_pendingNew > 0) _pendingNew = _latest.where((x) => !_shown.contains(x.id)).length;
-      });
+      if (id != null) _n.removeMoment(id);
     }
   }
 
@@ -95,28 +114,25 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && mounted) ref.invalidate(timelineProvider);
+    if (state == AppLifecycleState.resumed && mounted) _n.refresh(applyNow: _atTop);
   }
 
-  List<MapPost> _latest = const [];
-
-  /// جلب جديد: إن كان المستخدم في الأعلى نعرضه فوراً، وإلا نحتفظ به ونعدّ الجديد في الكبسولة
-  void _onFetched(List<MapPost> list) {
-    _latest = list;
-    final fresh = list.where((p) => !_shown.contains(p.id)).length;
-    if (_shown.isEmpty || _atTop || fresh == 0) {
-      _applyPending();
-    } else {
-      setState(() => _pendingNew = fresh);
-    }
+  void _setKind(String k) {
+    if (k == _kind) return;
+    setState(() {
+      _kind = k;
+      _fresh.clear();
+      _atTop = true;
+    });
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    // نوع فُتح من قبل يظهر فوراً من الذاكرة ثم يتحدّث في الخلفية؛ الجديد يجلب عند إنشائه
+    if (ref.read(momentsProvider(k)).loaded) ref.read(momentsProvider(k).notifier).refresh();
   }
 
   void _applyPending() {
-    setState(() {
-      _items = _latest;
-      _shown = {for (final p in _latest) p.id};
-      _pendingNew = 0;
-    });
+    final pending = ref.read(momentsProvider(_kind)).pending;
+    _fresh.addAll(pending.map((x) => x.pinKey));
+    _n.applyPending();
   }
 
   void _toTop() {
@@ -124,68 +140,98 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
     if (_scroll.hasClients) _scroll.animateTo(0, duration: const Duration(milliseconds: 350), curve: Curves.easeOut);
   }
 
+  Future<void> _refresh() => _n.refresh();
+
+  void _open(RowItem it, List<RowItem> items) => openRowItem(context, it, moments: items);
+
   @override
   Widget build(BuildContext context) {
-    ref.listen<AsyncValue<List<MapPost>>>(timelineProvider, (_, next) {
-      final v = next.valueOrNull;
-      if (v != null) _onFetched(v);
-    });
     // تغيّر الحساب يستبدل القناة: نعيد الاشتراك في الجديدة
     ref.listen<LiveChannel>(liveChannelProvider, (_, next) { if (next != _live) _subscribeLive(next); });
     final online = ref.watch(liveChannelProvider).online;
-    final state = ref.watch(timelineProvider);
-    if (_items.isEmpty && state.hasValue && _shown.isEmpty) {
-      // أول جلب وصل قبل أن يسجّل المستمع (الصفحة بُنيت والقيمة جاهزة من ذاكرة المزوّد)
-      WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted && _shown.isEmpty) _onFetched(state.value!); });
-    }
-    final groups = _group(_items);
+    final st = ref.watch(momentsProvider(_kind));
+    final items = st.items;
+    final scale = MediaQuery.textScalerOf(context).scale(1.0);
+    final noMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    final heights = [for (final it in items) _mediaHeight(it) + _infoHeight(scale)];
     return Scaffold(
+      backgroundColor: Joy.bg,
       appBar: AppBar(
-        title: const Text('الخط الزمني'),
+        title: const Text('اللحظات'),
         actions: [
-          // مؤشر «مباشر» وعدد المشاركات في الإجراءات لا في العنوان حتى لا يفيض على الشاشات الضيقة
+          // مؤشر «مباشر» وعدد البطاقات في الإجراءات لا في العنوان حتى لا يفيض على الشاشات الضيقة
           Row(mainAxisSize: MainAxisSize.min, children: [
             ValueListenableBuilder<bool>(valueListenable: online, builder: (_, on, __) => _LiveDot(on: on)),
             const SizedBox(width: 5),
-            Text(_items.isEmpty ? 'مباشر' : 'مباشر · ${_items.length}', key: const Key('tl-live'), style: const TextStyle(fontSize: 12, color: Joy.textMuted, fontWeight: FontWeight.w600)),
+            Text(items.isEmpty ? 'مباشر' : 'مباشر · ${items.length}', key: const Key('tl-live'), style: const TextStyle(fontSize: 12, color: Joy.textMuted, fontWeight: FontWeight.w600)),
           ]),
-          IconButton(key: const Key('tl-refresh'), tooltip: 'تحديث', onPressed: () => ref.invalidate(timelineProvider), icon: const Icon(Icons.refresh_rounded)),
+          IconButton(key: const Key('tl-refresh'), tooltip: 'تحديث', onPressed: _refresh, icon: const Icon(Icons.refresh_rounded)),
         ],
+        bottom: PreferredSize(preferredSize: const Size.fromHeight(50), child: _KindBar(kind: _kind, onKind: _setKind)),
       ),
       body: Stack(children: [
-        if (state.isLoading && _items.isEmpty)
+        if (st.loading && items.isEmpty)
           const Center(child: CircularProgressIndicator())
-        else if (state.hasError && _items.isEmpty)
-          ErrorState(state.error!, onRetry: () => ref.invalidate(timelineProvider))
-        else if (_items.isEmpty)
-          const EmptyState(icon: Icons.auto_awesome_outlined, title: 'لا مشاركات على الخريطة الآن', subtitle: 'كل لحظة تُنشر على الخريطة تظهر هنا في وقتها')
+        else if (st.error != null && items.isEmpty)
+          ErrorState(st.error!, onRetry: _n.load)
+        else if (items.isEmpty)
+          RefreshIndicator(
+            onRefresh: _refresh,
+            child: CustomScrollView(slivers: [
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: _Empty(
+                  kind: _kind,
+                  onCompose: () async {
+                    await composePostHere(context, ref);
+                    if (mounted) _n.refresh();
+                  },
+                  onGoTab: (tab) {
+                    // الصفحة فوق الشريط السفلي: نعود إليه ثم نبدّل القسم
+                    Navigator.of(context).maybePop();
+                    openNavTab(ref, tab);
+                  },
+                ),
+              ),
+            ]),
+          )
         else
           RefreshIndicator(
-            onRefresh: () async {
-              ref.invalidate(timelineProvider);
-              await ref.read(timelineProvider.future);
-            },
-            child: ListView.builder(
+            onRefresh: _refresh,
+            child: CustomScrollView(
               key: const Key('tl-list'),
               controller: _scroll,
-              padding: const EdgeInsets.fromLTRB(14, 6, 14, 24),
-              itemCount: groups.fold<int>(0, (n, g) => n + 1 + g.items.length),
-              itemBuilder: (context, i) {
-                var k = i;
-                for (final g in groups) {
-                  if (k == 0) return Padding(key: Key('tl-group-${g.title}'), padding: const EdgeInsets.fromLTRB(2, 12, 2, 6), child: Text(g.title, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Joy.textMuted)));
-                  k -= 1;
-                  if (k < g.items.length) {
-                    final p = g.items[k];
-                    return _Row(post: p, onTap: () => _open(p));
-                  }
-                  k -= g.items.length;
-                }
-                return const SizedBox.shrink();
-              },
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  sliver: SliverGrid(
+                    gridDelegate: _MasonryDelegate(heights, gap: 12),
+                    delegate: SliverChildBuilderDelegate(
+                      (context, i) {
+                        final it = items[i];
+                        return _FeedCard(
+                          key: ValueKey('tl-${it.pinKey}'),
+                          item: it,
+                          mediaHeight: _mediaHeight(it),
+                          infoHeight: _infoHeight(scale),
+                          videos: _videos,
+                          noMotion: noMotion,
+                          animateIn: _fresh.contains(it.pinKey),
+                          onEntered: () => _fresh.remove(it.pinKey),
+                          onTap: () => _open(it, items),
+                        );
+                      },
+                      childCount: items.length,
+                    ),
+                  ),
+                ),
+                if (st.loadingMore)
+                  const SliverToBoxAdapter(child: Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5))))),
+                const SliverToBoxAdapter(child: SizedBox(height: 24)),
+              ],
             ),
           ),
-        if (_pendingNew > 0)
+        if (st.pending.isNotEmpty)
           Positioned(
             top: 10,
             left: 0,
@@ -196,7 +242,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
                 onPressed: _toTop,
                 style: FilledButton.styleFrom(minimumSize: const Size(0, 36), padding: const EdgeInsets.symmetric(horizontal: 14), shape: const StadiumBorder()),
                 icon: const Icon(Icons.arrow_upward_rounded, size: 16),
-                label: Text(_pendingNew == 1 ? 'مشاركة جديدة' : '$_pendingNew جديدة'),
+                label: Text(st.pending.length == 1 ? 'لحظة جديدة' : '${st.pending.length} جديدة'),
               ),
             ),
           ),
@@ -204,95 +250,461 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
     );
   }
 
-  void _open(MapPost p) {
-    final i = _items.indexWhere((x) => x.id == p.id);
-    Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => PostViewerPage(posts: _items, initial: i < 0 ? 0 : i)));
+  /// ارتفاع الوسيط بحسب النوع مع تنويع ثابت لكل عنصر (من معرّفه) حتى تتدرّج الأعمدة ولا تتساوى صفوفها.
+  static double _mediaHeight(RowItem it) {
+    final seed = it.id.codeUnits.fold<int>(0, (a, c) => a + c) % 3;
+    return switch (it.kind) {
+      'moment' => switch (it.payload['kind']?.toString()) { 'text' => 150 + seed * 10.0, 'audio' => 150, _ => 190 + seed * 20.0 },
+      'listing' => 190 + seed * 20.0,
+      'offer' => 170 + seed * 10.0,
+      'circle' => 170,
+      'event' => 150 + seed * 10.0,
+      'job' => 150,
+      _ => 170,
+    };
   }
 
-  /// تجميع زمني: الآن (١٠ دقائق)، آخر ساعة، اليوم، أمس، أقدم
-  static List<_Group> _group(List<MapPost> items) {
-    final now = DateTime.now();
-    final out = <String, List<MapPost>>{};
-    for (final p in items) {
-      final t = p.createdAt ?? now;
-      final d = now.difference(t);
-      final key = d.inMinutes < 10 ? 'الآن' : d.inHours < 1 ? 'آخر ساعة' : (t.day == now.day && t.month == now.month) ? 'اليوم' : d.inHours < 48 ? 'أمس' : 'أقدم';
-      out.putIfAbsent(key, () => []).add(p);
+  /// كتلة النص تحت الوسيط بارتفاع ثابت (مع تكبير النص) حتى يُعرف ارتفاع البطاقة قبل بنائها.
+  static double _infoHeight(double scale) => 27 + 75 * scale;
+}
+
+/// شريط الرقاقات: «عام» ثم الأنواع الستة؛ المختارة بلون نوعها.
+class _KindBar extends StatelessWidget {
+  final String kind;
+  final ValueChanged<String> onKind;
+  const _KindBar({required this.kind, required this.onKind});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        height: 50,
+        // صف واحد لا قائمة كسولة: سبع رقاقات فقط، وكلها في الشجرة حتى تصل إليها الاختبارات وقارئ الشاشة
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+          child: Row(children: [
+            for (final k in feedKinds)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(end: 6),
+                child: ChoiceChip(
+                  key: Key('feed-kind-$k'),
+                  label: Text(feedKindLabel(k)),
+                  avatar: k == 'all' ? null : Icon(rowKindIcon(k), size: 15, color: kind == k ? Colors.white : rowKindColor(k)),
+                  selected: kind == k,
+                  showCheckmark: false,
+                  onSelected: (_) => onKind(k),
+                  selectedColor: k == 'all' ? Joy.primary : rowKindColor(k),
+                  backgroundColor: Joy.surface2,
+                  side: BorderSide.none,
+                  labelStyle: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: kind == k ? Colors.white : Joy.text),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                ),
+              ),
+          ]),
+        ),
+      );
+}
+
+/// شبكة متدرّجة بعمودين بلا حزمة خارجية: ارتفاع كل بطاقة معروف مسبقاً فتُوضع في العمود الأقصر، وتُبنى كسولاً كأي SliverGrid.
+class _MasonryDelegate extends SliverGridDelegate {
+  final List<double> heights;
+  final double gap;
+  const _MasonryDelegate(this.heights, {this.gap = 12});
+
+  @override
+  SliverGridLayout getLayout(SliverConstraints constraints) =>
+      _MasonryLayout(heights, crossAxisExtent: constraints.crossAxisExtent, gap: gap, reverse: axisDirectionIsReversed(constraints.crossAxisDirection));
+
+  @override
+  bool shouldRelayout(_MasonryDelegate old) => old.gap != gap || !listEquals(old.heights, heights);
+}
+
+class _MasonryLayout extends SliverGridLayout {
+  final List<double> _tops, _starts, _heights;
+  final double _colW, _total;
+
+  factory _MasonryLayout(List<double> heights, {required double crossAxisExtent, required double gap, required bool reverse}) {
+    final colW = math.max(0.0, (crossAxisExtent - gap) / 2);
+    final tops = <double>[], starts = <double>[];
+    final colH = [0.0, 0.0];
+    for (final h in heights) {
+      final c = colH[0] <= colH[1] ? 0 : 1;
+      tops.add(colH[c]);
+      final s = c * (colW + gap);
+      // في العربية العمود الأول في البداية (اليمين): إزاحة المحور العرضي تُعكس
+      starts.add(reverse ? crossAxisExtent - s - colW : s);
+      colH[c] += h + gap;
     }
-    const order = ['الآن', 'آخر ساعة', 'اليوم', 'أمس', 'أقدم'];
-    return [for (final k in order) if (out.containsKey(k)) _Group(k, out[k]!)];
+    final total = heights.isEmpty ? 0.0 : math.max(colH[0], colH[1]) - gap;
+    return _MasonryLayout._(tops, starts, List.of(heights), colW, total);
   }
+  const _MasonryLayout._(this._tops, this._starts, this._heights, this._colW, this._total);
+
+  /// RenderSliverGrid يطلب هندسة أول فهرس حتى بلا أطفال: خارج النطاق هندسة صفرية بدل خطأ
+  @override
+  SliverGridGeometry getGeometryForChildIndex(int index) => index < 0 || index >= _tops.length
+      ? SliverGridGeometry(scrollOffset: _total, crossAxisOffset: 0, mainAxisExtent: 0, crossAxisExtent: _colW)
+      : SliverGridGeometry(scrollOffset: _tops[index], crossAxisOffset: _starts[index], mainAxisExtent: _heights[index], crossAxisExtent: _colW);
+
+  /// أول بطاقة قد تكون مرئية: أول عنصر ينتهي بعد الإزاحة (الأعمدة شبه مرتّبة فالمسح الخطي يكفي لقوائم بمئات العناصر)
+  @override
+  int getMinChildIndexForScrollOffset(double scrollOffset) {
+    for (var i = 0; i < _tops.length; i++) {
+      if (_tops[i] + _heights[i] >= scrollOffset) return i;
+    }
+    return _tops.isEmpty ? 0 : _tops.length - 1;
+  }
+
+  @override
+  int getMaxChildIndexForScrollOffset(double scrollOffset) {
+    for (var i = _tops.length - 1; i >= 0; i--) {
+      if (_tops[i] <= scrollOffset) return i;
+    }
+    return 0;
+  }
+
+  @override
+  double computeMaxScrollOffset(int childCount) => _total;
 }
 
-class _Group {
-  final String title;
-  final List<MapPost> items;
-  const _Group(this.title, this.items);
+/// فتحات المعاينات الدائرة: أول أربع بطاقات فيديو مرئية تدور، وما بعدها يعرض إطاره الثابت حتى تُحرَّر فتحة بخروج بطاقة من الشاشة.
+class _PreviewRegistry {
+  final int max;
+  int _active = 0;
+  _PreviewRegistry(this.max);
+  bool acquire() {
+    if (_active >= max) return false;
+    _active++;
+    return true;
+  }
+
+  void release() => _active = math.max(0, _active - 1);
 }
 
-/// صف مشاركة: مصغّرة الوسيط (أو رمز النوع)، الناشر، التعليق أو المكان، والوقت.
-class _Row extends StatelessWidget {
-  final MapPost post;
-  final VoidCallback onTap;
-  const _Row({required this.post, required this.onTap});
+/// البطاقة: وسيط متحرك بارتفاع ثابت (فيديو يدور، صورة تتقرّب، نص على تدرّج) فوقه رقاقة النوع، ثم الناشر والعنوان وسطر الوقت
+/// والمسافة، وفعل البطاقة لغير اللحظات.
+class _FeedCard extends StatelessWidget {
+  final RowItem item;
+  final double mediaHeight, infoHeight;
+  final _PreviewRegistry videos;
+  final bool noMotion, animateIn;
+  final VoidCallback onEntered, onTap;
+  const _FeedCard({super.key, required this.item, required this.mediaHeight, required this.infoHeight, required this.videos, required this.noMotion, required this.animateIn, required this.onEntered, required this.onTap});
+
+  bool get _isMoment => item.kind == 'moment';
+  String get _postKind => item.payload['kind']?.toString() ?? '';
 
   @override
   Widget build(BuildContext context) {
-    final p = post;
-    final icon = switch (p.kind) { 'video' => Icons.videocam_rounded, 'audio' => Icons.mic_rounded, 'text' => Icons.notes_rounded, _ => Icons.photo_camera_rounded };
-    final media = p.mediaUrl;
-    final line = p.caption.isNotEmpty ? p.caption : p.title.isNotEmpty ? p.title : switch (p.kind) { 'video' => 'فيديو', 'audio' => 'تسجيل صوتي', 'text' => 'لحظة نصية', _ => 'صورة' };
-    final where = [if (p.placeName != null && p.placeName!.isNotEmpty) p.placeName!, timeAgo(p.createdAt)].join(' · ');
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+    final color = rowKindColor(item.kind);
+    final it = item;
+    final isText = _isMoment && _postKind == 'text';
+    final place = _isMoment ? (it.payload['placeName']?.toString().trim() ?? '') : '';
+    // اللحظة النصية تعرض نصها كبيراً في الوسيط فلا يُكرَّر في العنوان: مكانها بدله
+    final title = isText ? (place.isNotEmpty ? place : 'لحظة نصية') : it.title;
+    final meta = _isMoment
+        ? [timeAgo(it.at), if (it.distanceKm != null) distanceText(it.distanceKm), if (place.isNotEmpty && !isText) place].where((s) => s.isNotEmpty).join(' · ')
+        : [it.subtitle, if (it.distanceKm != null) distanceText(it.distanceKm)].where((s) => s.isNotEmpty).join(' · ');
+    return _EnterIn(
+      enabled: animateIn && !noMotion,
+      onDone: onEntered,
       child: Material(
         color: Joy.surface,
-        borderRadius: BorderRadius.circular(16),
+        elevation: 1.5,
+        shadowColor: Colors.black26,
+        borderRadius: BorderRadius.circular(18),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
-          key: Key('tl-post-${p.id}'),
-          borderRadius: BorderRadius.circular(16),
+          key: _isMoment ? Key('tl-post-${it.id}') : Key('tl-card-${it.kind}-${it.id}'),
           onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), border: Border.all(color: Joy.line)),
-            child: Row(children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 56,
-                  height: 56,
-                  child: media != null && p.kind != 'audio'
-                      ? Image.network(thumbUrl(media), fit: BoxFit.cover, errorBuilder: (_, __, ___) => _fallback(icon))
-                      : _fallback(icon),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            SizedBox(
+              height: mediaHeight,
+              child: Stack(fit: StackFit.expand, children: [
+                _Media(item: it, videos: videos, noMotion: noMotion),
+                PositionedDirectional(
+                  top: 8,
+                  start: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(color: Colors.white.withValues(alpha: .92), borderRadius: BorderRadius.circular(999)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(rowKindIcon(it.kind), size: 12, color: color),
+                      const SizedBox(width: 4),
+                      Text(it.kindLabel, style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: color)),
+                    ]),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              ]),
+            ),
+            SizedBox(
+              height: infoHeight,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(9, 8, 9, 10),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
-                    Avatar(name: p.user.nickname, url: p.user.avatarUrl, size: 18),
+                    Avatar(name: it.who.isEmpty ? it.kindLabel : it.who, url: it.logoUrl, size: 20),
                     const SizedBox(width: 6),
-                    Expanded(child: Text(p.user.nickname, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700))),
-                    Icon(icon, size: 14, color: Joy.textMuted),
+                    Expanded(child: Text(it.who.isEmpty ? it.kindLabel : it.who, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Joy.textMuted))),
                   ]),
-                  const SizedBox(height: 3),
-                  Text(line, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, color: Joy.text)),
-                  const SizedBox(height: 2),
-                  Text(where, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: Joy.textMuted)),
+                  const SizedBox(height: 5),
+                  Expanded(child: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontFamily: AppTheme.displayFont, fontSize: 13.5, fontWeight: FontWeight.w800, height: 1.3, color: Joy.text))),
+                  const SizedBox(height: 4),
+                  Row(children: [
+                    Expanded(child: Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: Joy.textMuted))),
+                    if (!_isMoment)
+                      Container(
+                        margin: const EdgeInsetsDirectional.only(start: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: color.withValues(alpha: .12), borderRadius: BorderRadius.circular(999)),
+                        child: Text(it.act, key: Key('tl-act-${it.kind}-${it.id}'), style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color)),
+                      ),
+                  ]),
                 ]),
               ),
-              if (p.likes > 0) ...[
-                const SizedBox(width: 6),
-                Column(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.favorite_rounded, size: 14, color: Joy.accent), Text('${p.likes}', style: const TextStyle(fontSize: 11, color: Joy.textMuted))]),
-              ],
-            ]),
-          ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// وسيط البطاقة بحسب النوع: فيديو يدور صامتاً، صورة تتقرّب ببطء، وإلا لوحة تدرّج لوني برمز النوع ونص.
+class _Media extends StatelessWidget {
+  final RowItem item;
+  final _PreviewRegistry videos;
+  final bool noMotion;
+  const _Media({required this.item, required this.videos, required this.noMotion});
+
+  @override
+  Widget build(BuildContext context) {
+    final it = item;
+    final postKind = it.payload['kind']?.toString() ?? '';
+    final url = it.imageUrl ?? (it.kind == 'circle' ? it.logoUrl : null);
+    if (it.kind == 'moment' && postKind == 'video' && url != null) {
+      return _VideoPreview(media: url, videos: videos, noMotion: noMotion);
+    }
+    if (url != null && postKind != 'audio') {
+      return _KenBurns(
+        seed: it.id,
+        enabled: !noMotion,
+        // صورة تعذّر تحميلها: اللوحة المطبعية بلا حركتها الخاصة (الحركة من الغلاف الخارجي)
+        child: Image.network(thumbUrl(url), fit: BoxFit.cover, errorBuilder: (_, __, ___) => _Typographic(item: it, noMotion: true)),
+      );
+    }
+    return _Typographic(item: it, noMotion: noMotion);
+  }
+}
+
+/// بطاقة مطبعية: تدرّج بلون النوع (أو لون خلفية اللحظة النصية) ونصها أو رمز النوع واسمه، يتقرّب ببطء كالصورة.
+class _Typographic extends StatelessWidget {
+  final RowItem item;
+  final bool noMotion;
+  const _Typographic({required this.item, required this.noMotion});
+
+  @override
+  Widget build(BuildContext context) {
+    final it = item;
+    final postKind = it.payload['kind']?.toString() ?? '';
+    final isText = it.kind == 'moment' && postKind == 'text';
+    final bgHex = it.payload['bg']?.toString();
+    Color base = isText && bgHex != null && bgHex.isNotEmpty ? colorFromHex(bgHex, Joy.accent) : _baseColor(it.kind, postKind);
+    if (isText && (bgHex == null || bgHex.isEmpty)) base = Joy.accent;
+    final dark = base.computeLuminance() < .45;
+    final fg = dark ? Colors.white : Joy.text;
+    final end = Color.lerp(base, dark ? Colors.black : Colors.white, dark ? .35 : .18)!;
+    final text = isText ? it.title : (it.who.isNotEmpty ? it.who : it.title);
+    final icon = postKind == 'audio' ? Icons.mic_rounded : rowKindIcon(it.kind);
+    return Container(
+      decoration: BoxDecoration(gradient: LinearGradient(begin: AlignmentDirectional.topStart, end: AlignmentDirectional.bottomEnd, colors: [base, end])),
+      child: _KenBurns(
+        seed: it.id,
+        enabled: !noMotion,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 34, 14, 14),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            if (!isText) ...[Icon(icon, size: 34, color: fg.withValues(alpha: .9)), const SizedBox(height: 8)],
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              maxLines: isText ? 4 : 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontFamily: AppTheme.displayFont, fontSize: isText ? 19 : 15, fontWeight: FontWeight.w800, height: 1.35, color: fg),
+            ),
+          ]),
         ),
       ),
     );
   }
 
-  static Widget _fallback(IconData icon) => Container(color: Joy.primarySoft, child: Icon(icon, color: Joy.primary, size: 24));
+  static Color _baseColor(String kind, String postKind) => switch (kind) {
+        'offer' => const Color(0xFFFFD66B),
+        'event' => const Color(0xFF6A1B9A),
+        'job' => const Color(0xFF1565C0),
+        'listing' => const Color(0xFF00897B),
+        'circle' => Joy.primary,
+        _ => postKind == 'audio' ? const Color(0xFF0A6E78) : Joy.accent,
+      };
+}
+
+/// معاينة فيديو تدور صامتة بلا شريط تحكم ما دامت فتحة متاحة (حد [TimelinePage.maxLoopingPreviews])، وإلا إطارها الثابت مع رمز التشغيل.
+class _VideoPreview extends StatefulWidget {
+  /// رابط الوسيط كما أرسله الخادم؛ المشغّل يأخذ `mediaUrl` والإطار الثابت `thumbUrl` (إطار من الفيديو)
+  final String media;
+  final _PreviewRegistry videos;
+  final bool noMotion;
+  const _VideoPreview({required this.media, required this.videos, required this.noMotion});
+  @override
+  State<_VideoPreview> createState() => _VideoPreviewState();
+}
+
+class _VideoPreviewState extends State<_VideoPreview> {
+  late final bool _slot = widget.videos.acquire();
+
+  @override
+  void dispose() {
+    if (_slot) widget.videos.release();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_slot && !widget.noMotion) {
+      return Stack(fit: StackFit.expand, children: [
+        // المعاينة لا تلتقط اللمس: لمسة البطاقة تفتح العارض
+        IgnorePointer(child: VideoView(key: const Key('tl-video-loop'), url: mediaUrl(widget.media), autoplay: true, loop: true, muted: true, controls: false)),
+        const PositionedDirectional(bottom: 8, end: 8, child: Icon(Icons.volume_off_rounded, size: 16, color: Colors.white70)),
+      ]);
+    }
+    return Stack(fit: StackFit.expand, children: [
+      Image.network(thumbUrl(widget.media), key: const Key('tl-video-poster'), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: const Color(0xFF14181C))),
+      const Center(child: Icon(Icons.play_circle_fill_rounded, size: 40, color: Colors.white)),
+    ]);
+  }
+}
+
+/// تقرّب بطيء مع انحراف خفيف (1.0 → 1.08 خلال ~8 ثوانٍ ذهاباً وإياباً) يجعل الصورة الثابتة «تتنفس»؛ طور البداية من المعرّف حتى
+/// لا تتحرك البطاقات كلها معاً. يحترم تعطيل الحركة في النظام.
+class _KenBurns extends StatefulWidget {
+  final String seed;
+  final bool enabled;
+  final Widget child;
+  const _KenBurns({required this.seed, required this.enabled, required this.child});
+  @override
+  State<_KenBurns> createState() => _KenBurnsState();
+}
+
+class _KenBurnsState extends State<_KenBurns> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 8));
+  late final CurvedAnimation _curve = CurvedAnimation(parent: _c, curve: Curves.easeInOut);
+  late final _phase = (widget.seed.codeUnits.fold<int>(0, (a, c) => a + c) % 7) / 7;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.enabled) {
+      _c.value = _phase;
+      _c.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _curve.dispose();
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled) return widget.child;
+    // الانحراف: مرساة التكبير تنتقل من ركن إلى المقابل فتبدو الصورة تنساب لا تنتفخ من مركزها
+    final from = _phase < .5 ? const Alignment(-.4, -.3) : const Alignment(.4, -.2);
+    final to = _phase < .5 ? const Alignment(.4, .3) : const Alignment(-.4, .3);
+    return ClipRect(
+      child: AnimatedBuilder(
+        key: const Key('tl-kenburns'),
+        animation: _curve,
+        child: widget.child,
+        builder: (_, child) => Transform.scale(scale: 1 + .08 * _curve.value, alignment: Alignment.lerp(from, to, _curve.value), child: child),
+      ),
+    );
+  }
+}
+
+/// دخول البطاقة الجديدة: تلاشٍ وانزلاق 16 نقطة خلال 220 مللي ثانية مرة واحدة (نمط فقاعة المحادثة).
+class _EnterIn extends StatefulWidget {
+  final bool enabled;
+  final VoidCallback onDone;
+  final Widget child;
+  const _EnterIn({required this.enabled, required this.onDone, required this.child});
+  @override
+  State<_EnterIn> createState() => _EnterInState();
+}
+
+class _EnterInState extends State<_EnterIn> {
+  late final bool _animate = widget.enabled;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_animate) WidgetsBinding.instance.addPostFrameCallback((_) => widget.onDone());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_animate) return widget.child;
+    return TweenAnimationBuilder<double>(
+      key: const Key('tl-enter'),
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      child: widget.child,
+      builder: (_, t, child) => Opacity(opacity: t, child: Transform.translate(offset: Offset(0, 16 * (1 - t)), child: child)),
+    );
+  }
+}
+
+/// الحالة الفارغة لكل نوع: اللحظات تدعو للمشاركة، وبقية الأنواع تدل على قسمها.
+class _Empty extends StatelessWidget {
+  final String kind;
+  final VoidCallback onCompose;
+  final ValueChanged<String> onGoTab;
+  const _Empty({required this.kind, required this.onCompose, required this.onGoTab});
+
+  @override
+  Widget build(BuildContext context) {
+    switch (kind) {
+      case 'offer':
+        return EmptyState(icon: Icons.local_offer_outlined, title: 'لا عروض حولك الآن', subtitle: 'عروض الدوائر القريبة تظهر هنا فور نشرها', action: _btn('tl-go-offer', Icons.groups_rounded, 'تصفّح الدوائر', () => onGoTab('circles')));
+      case 'event':
+        return EmptyState(icon: Icons.event_outlined, title: 'لا فعاليات قريبة', subtitle: 'الفعاليات القادمة حولك تظهر هنا', action: _btn('tl-go-event', Icons.event_rounded, 'كل الفعاليات', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EventsPage()))));
+      case 'job':
+        return EmptyState(icon: Icons.work_outline_rounded, title: 'لا وظائف معلنة الآن', subtitle: 'فرص الدوائر القريبة تظهر هنا', action: _btn('tl-go-job', Icons.work_rounded, 'كل الوظائف', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobsPage()))));
+      case 'listing':
+        return EmptyState(icon: Icons.shopping_bag_outlined, title: 'السوق هادئ الآن', subtitle: 'إعلانات الجيران القريبة تظهر هنا', action: _btn('tl-go-listing', Icons.storefront_rounded, 'افتح السوق', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MarketPage()))));
+      case 'circle':
+        return EmptyState(icon: Icons.storefront_outlined, title: 'لا دوائر «هنا اليوم» حولك', subtitle: 'الدوائر المتنقلة التي تثبّت دبوسها اليوم تظهر هنا', action: _btn('tl-go-circle', Icons.groups_rounded, 'تصفّح الدوائر', () => onGoTab('circles')));
+      default:
+        return EmptyState(
+          key: const Key('tl-empty'),
+          icon: Icons.photo_camera_outlined,
+          title: 'المدينة هادئة الآن',
+          subtitle: 'كن أول من يشارك لحظة من مكانك. اللحظات تبقى يوماً واحداً ثم تختفي.',
+          action: _btn('tl-compose', Icons.photo_camera_rounded, 'شارك لحظة الآن', onCompose),
+        );
+    }
+  }
+
+  static Widget _btn(String key, IconData icon, String label, VoidCallback onTap) => FilledButton.icon(
+        key: Key(key),
+        onPressed: onTap,
+        style: FilledButton.styleFrom(shape: const StadiumBorder(), padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
+        icon: Icon(icon, size: 18),
+        label: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+      );
 }
 
 /// نقطة حمراء تنبض: القناة الحية متصلة؛ رمادية ثابتة حين تنقطع (يبقى الجلب الدوري).
