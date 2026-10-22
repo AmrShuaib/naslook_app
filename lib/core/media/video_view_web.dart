@@ -6,8 +6,9 @@ import 'package:web/web.dart' as web;
 int _seq = 0;
 
 /// عنصر <video> أصلي في المتصفح: يعمل على iOS (playsinline) ويعرض أزرار التحكم.
-/// بلا [controls]: معاينة تملأ الإطار (cover) بلا شريط ولا نقر، كصورة متحركة في بطاقة.
-Widget createVideo(String url, {bool autoplay = false, bool loop = false, bool muted = false, bool controls = true}) {
+/// بلا [controls]: معاينة تملأ الإطار (cover) بلا شريط ولا نقر، كصورة متحركة في بطاقة، بخلفية شفافة وإطار [poster]
+/// فلا تظهر لوحة سوداء ريثما يُحمَّل المقطع أو إن منع المتصفح التشغيل التلقائي.
+Widget createVideo(String url, {bool autoplay = false, bool loop = false, bool muted = false, bool controls = true, String? poster}) {
   final id = 'naslife-video-${_seq++}';
   ui_web.platformViewRegistry.registerViewFactory(id, (int viewId) {
     final v = web.HTMLVideoElement()
@@ -18,13 +19,15 @@ Widget createVideo(String url, {bool autoplay = false, bool loop = false, bool m
       ..muted = muted
       ..preload = controls ? 'metadata' : 'auto';
     v.setAttribute('playsinline', 'true');
+    if (poster != null && poster.isNotEmpty) v.poster = poster;
     // المتصفح لا يشغّل تلقائياً إلا الصامت؛ والمعاينة لا تلتقط اللمس فتبقى لمسة البطاقة للتطبيق
     if (!controls) v.setAttribute('disablepictureinpicture', 'true');
     v.style
       ..width = '100%'
       ..height = '100%'
       ..objectFit = controls ? 'contain' : 'cover'
-      ..background = '#000';
+      // المعاينة شفافة: الإطار الثابت الذي ترسمه البطاقة تحتها يبقى ظاهراً حتى أول إطار من المقطع
+      ..background = controls ? '#000' : 'transparent';
     if (!controls) v.style.pointerEvents = 'none';
     return v;
   });
