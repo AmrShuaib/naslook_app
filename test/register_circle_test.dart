@@ -366,6 +366,32 @@ void main() {
     expect(find.byKey(const Key('reg-done')), findsNothing);
   });
 
+  testWidgets('circles: «دائرة جديدة» asks for the kind first; business opens the wizard, community opens the old sheet; تجارية tab FAB goes straight to the wizard', (tester) async {
+    await _pump(tester, const CirclesPage());
+    await tester.tap(find.byKey(const Key('circles-fab')));
+    await tester.pumpAndSettle();
+    expect(find.text('ما نوع الدائرة؟'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('new-circle-biz')));
+    await tester.pumpAndSettle();
+    expect(find.byType(RegisterCirclePage), findsOneWidget, reason: 'النشاط التجاري يذهب إلى المعالج لا إلى ورقة المجتمع');
+    await tester.tap(find.byKey(const Key('reg-back')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('circles-fab')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('new-circle-community')));
+    await tester.pumpAndSettle();
+    expect(find.text('دائرة مجتمع جديدة'), findsOneWidget, reason: 'ورقة المجتمع تسمّي نفسها بوضوح');
+    expect(find.byType(RegisterCirclePage), findsNothing);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تجارية').first);
+    await tester.pumpAndSettle();
+    expect(find.text('سجّل نشاطك'), findsWidgets, reason: 'في مقطع «تجارية» الزر العائم يسجّل النشاط مباشرة');
+    await tester.tap(find.byKey(const Key('circles-fab')));
+    await tester.pumpAndSettle();
+    expect(find.byType(RegisterCirclePage), findsOneWidget);
+  });
+
   testWidgets('circles: the discover banner and the empty mine state open the wizard; my businesses FAB too', (tester) async {
     await _pump(tester, const CirclesPage());
     expect(find.byKey(const Key('register-mine')), findsOneWidget, reason: 'بلا دوائر: زر التسجيل في الحالة الفارغة');

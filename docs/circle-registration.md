@@ -232,7 +232,7 @@ NASLIFE_TEST_DB=naslife_test_reg server/test/run.sh harness_biz_onboard.mjs
 شارات في الترويسة: `badge-verified` «موثّق»، `badge-mobile` «متنقل · يخدم ضمن N كم»، `badge-here` «هنا اليوم حتى HH:MM». للمتنقلة يحل `info-service-area` («يخدم ضمن N كم · الأحياء») محل سطر العنوان، ويظهر `info-here` أثناء الدبوس. `bizErrText('not-verified')` = «هذه الدائرة لم تُوثَّق بعد فلا يمكن الطلب منها الآن».
 
 ### مداخل أخرى
-- `circles_page.dart`: لافتة `register-banner` «هل تملك نشاطاً؟ سجّل دائرتك في دقيقتين» أعلى تبويب «اكتشف»، وزر `register-mine` «سجّل نشاطك» في الحالة الفارغة لتبويب «دوائري».
+- `circles_page.dart`: لافتة `register-banner` «هل تملك نشاطاً؟ سجّل دائرتك في دقيقتين» أعلى تبويب «اكتشف»، وزر `register-mine` «سجّل نشاطك» في الحالة الفارغة لتبويب «دوائري». ومنذ 22 أكتوبر 2026 الزر العائم `circles-fab` «دائرة جديدة» يفتح أولاً ورقة «ما نوع الدائرة؟» (`new-circle-biz` إلى المعالج، `new-circle-community` إلى ورقة «دائرة مجتمع جديدة») لأن المالك أنشأ دائرة مجتمع وهو يقصد نشاطه؛ وفي مقطع «تجارية» يصبح الزر «سجّل نشاطك» إلى المعالج مباشرة.
 - `my_businesses_page.dart`: الزر العائم `my-biz-register` يفتح المعالج (المحرّر القديم `business_editor.dart` يبقى للتعديل من اللوحة).
 - `notify_open.dart`: `biz_verified` و`biz_verification_rejected` → `VerifyCirclePage` للدائرة (أيقونتان ولونان خاصان؛ `biz_verification` للإدارة أيقونة فقط، وجهتها في مسار الإدارة).
 

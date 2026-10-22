@@ -30,12 +30,15 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
     final discover = ref.watch(discoverVesselsProvider(q));
     return Scaffold(
       backgroundColor: Joy.bg,
-      floatingActionButton: tab == 2 ? null : FloatingActionButton.extended(
-        onPressed: _create,
+      // «دائرة» اسم لنوعين: مجتمع (نقاش وأخبار) وتجارية (نشاط على الخريطة يبيع ويحجز)؛ الزر يسأل عن النوع أولاً،
+      // وفي مقطع «تجارية» يذهب إلى معالج التسجيل مباشرة
+      floatingActionButton: FloatingActionButton.extended(
+        key: const Key('circles-fab'),
+        onPressed: tab == 2 ? () => openRegisterCircle(context) : _create,
         backgroundColor: Joy.primary,
         foregroundColor: Joy.primaryOn,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('دائرة جديدة'),
+        icon: Icon(tab == 2 ? Icons.storefront_rounded : Icons.add_rounded),
+        label: Text(tab == 2 ? 'سجّل نشاطك' : 'دائرة جديدة'),
       ),
       body: Column(children: [
         Padding(
@@ -121,6 +124,9 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
       );
 
   Future<void> _create() async {
+    final kind = await showCircleKindSheet(context);
+    if (kind == null || !mounted) return;
+    if (kind == CircleKind.business) { openRegisterCircle(context); return; }
     final r = await showCreateCircleSheet(context);
     if (r == null) return;
     try {
@@ -285,6 +291,68 @@ class _DiscoverCard extends ConsumerWidget {
       );
 }
 
+/// نوع الدائرة الذي يختاره المستخدم قبل الإنشاء.
+enum CircleKind { business, community }
+
+/// ورقة اختيار النوع: تجارية (معالج التسجيل) أو مجتمع (الورقة أدناه)؛ تمنع إنشاء دائرة مجتمع لمن أراد تسجيل نشاطه.
+Future<CircleKind?> showCircleKindSheet(BuildContext context) => showModalBottomSheet<CircleKind>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Text('ما نوع الدائرة؟', style: TextStyle(fontFamily: AppTheme.displayFont, fontWeight: FontWeight.w700, fontSize: 21)),
+          const SizedBox(height: 14),
+          _KindCard(
+            key: const Key('new-circle-biz'),
+            icon: Icons.storefront_rounded,
+            title: 'دائرة تجارية',
+            subtitle: 'مقهى أو مطعم أو متجر أو خدمة: تظهر على الخريطة، ويتابعها جمهورك، وتبيع وتحجز بعد التوثيق.',
+            onTap: () => Navigator.of(ctx).pop(CircleKind.business),
+          ),
+          const SizedBox(height: 10),
+          _KindCard(
+            key: const Key('new-circle-community'),
+            icon: Icons.groups_rounded,
+            title: 'دائرة مجتمع',
+            subtitle: 'أصدقاء أو جيران أو مهتمّون بموضوع واحد: نقاش وأخبار وفعاليات، بلا بيع.',
+            onTap: () => Navigator.of(ctx).pop(CircleKind.community),
+          ),
+        ]),
+      ),
+    );
+
+class _KindCard extends StatelessWidget {
+  final IconData icon;
+  final String title, subtitle;
+  final VoidCallback onTap;
+  const _KindCard({super.key, required this.icon, required this.title, required this.subtitle, required this.onTap});
+  @override
+  Widget build(BuildContext context) => Material(
+        color: Joy.surface,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), border: Border.all(color: Joy.line)),
+            child: Row(children: [
+              Container(width: 44, height: 44, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(14)), child: Icon(icon, color: Joy.primary)),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                const SizedBox(height: 2),
+                Text(subtitle, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.4)),
+              ])),
+              const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
+            ]),
+          ),
+        ),
+      );
+}
+
 /// ما تعود به ورقة إنشاء الدائرة.
 class NewCircle {
   final String name, topic;
@@ -345,8 +413,8 @@ class _CreateCircleSheetState extends State<CreateCircleSheet> {
             Container(width: 44, height: 44, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.groups_rounded, color: Joy.primary)),
             const SizedBox(width: 12),
             const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('دائرة جديدة', style: TextStyle(fontFamily: AppTheme.displayFont, fontWeight: FontWeight.w700, fontSize: 21)),
-              Text('مكان لأصدقائك أو جيرانك أو مهتمّين بموضوع واحد', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+              Text('دائرة مجتمع جديدة', style: TextStyle(fontFamily: AppTheme.displayFont, fontWeight: FontWeight.w700, fontSize: 21)),
+              Text('مكان لأصدقائك أو جيرانك أو مهتمّين بموضوع واحد (لتسجيل نشاط تجاري اختر «دائرة تجارية»)', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
             ])),
           ]),
           const SizedBox(height: 18),
