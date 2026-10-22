@@ -133,6 +133,14 @@ class _AdminShellState extends ConsumerState<AdminShell> {
   }
 }
 
+/// الخروج من اللوحة المضمّنة إلى التطبيق. الدرج المفتوح يسجّل خطوة رجوع داخلية في المسار نفسه،
+/// فـ`maybePop` وحده كان يغلق الدرج ويبقي اللوحة؛ لذلك نُسقط تلك الخطوة أولاً ثم نخرج من المسار.
+void _exitToApp(BuildContext context) {
+  final nav = Navigator.of(context);
+  if (ModalRoute.of(context)?.willHandlePopInternally == true) nav.pop();
+  nav.maybePop();
+}
+
 class _Layout extends ConsumerWidget {
   final int index;
   final ValueChanged<int> onSelect;
@@ -192,7 +200,7 @@ class _Layout extends ConsumerWidget {
         if (status.roleName != null) Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), child: Text('${status.roleName}${status.title.isNotEmpty ? ' · ${status.title}' : ''}', key: const Key('admin-role'), style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
         const Divider(),
         if (me != null) ListTile(leading: ProfileAvatar(person: me, size: 36), title: Text(me.nickname), subtitle: Text(me.id, style: const TextStyle(fontSize: 11)), trailing: IconButton(tooltip: 'تسجيل الخروج', icon: const Icon(Icons.logout_rounded), onPressed: () => ref.read(appStateProvider.notifier).logout())),
-        if (!standalone) ListTile(leading: const Icon(Icons.arrow_back_rounded), title: const Text('العودة إلى التطبيق'), onTap: () => Navigator.of(context).maybePop()),
+        if (!standalone) ListTile(key: const Key('admin-exit-nav'), leading: const Icon(Icons.arrow_back_rounded), title: const Text('العودة إلى التطبيق'), onTap: () => _exitToApp(context)),
       ]);
       if (wide) {
         return Scaffold(
@@ -204,7 +212,7 @@ class _Layout extends ConsumerWidget {
                 height: 56,
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 decoration: const BoxDecoration(color: Joy.surface, border: Border(bottom: BorderSide(color: Joy.line))),
-                child: Row(children: [Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)), const Spacer(), IconButton(tooltip: 'تحديث', onPressed: () => invalidateAdmin(ref), icon: const Icon(Icons.refresh_rounded))]),
+                child: Row(children: [Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)), const Spacer(), if (!standalone) TextButton.icon(key: const Key('admin-exit'), onPressed: () => _exitToApp(context), icon: const Icon(Icons.arrow_back_rounded, size: 18), label: const Text('العودة إلى التطبيق')), IconButton(tooltip: 'تحديث', onPressed: () => invalidateAdmin(ref), icon: const Icon(Icons.refresh_rounded))]),
               ),
               Expanded(child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1100), child: _page(current)))),
             ])),
@@ -213,7 +221,11 @@ class _Layout extends ConsumerWidget {
       }
       return Scaffold(
         backgroundColor: Joy.bg,
-        appBar: AppBar(title: Text(title), actions: [IconButton(tooltip: 'تحديث', onPressed: () => invalidateAdmin(ref), icon: const Icon(Icons.refresh_rounded))]),
+        appBar: AppBar(title: Text(title), actions: [
+          IconButton(tooltip: 'تحديث', onPressed: () => invalidateAdmin(ref), icon: const Icon(Icons.refresh_rounded)),
+          // زر خروج ظاهر على الهاتف: الدرج يحجب الطريق الوحيد السابق للعودة
+          if (!standalone) IconButton(key: const Key('admin-exit'), tooltip: 'العودة إلى التطبيق', onPressed: () => _exitToApp(context), icon: const Icon(Icons.close_rounded)),
+        ]),
         drawer: Drawer(backgroundColor: Joy.surface, child: SafeArea(child: nav)),
         body: _page(current),
       );

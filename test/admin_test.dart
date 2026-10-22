@@ -76,6 +76,13 @@ class _Srv {
   }
 }
 
+/// شاشة مضيفة تفتح اللوحة مضمّنة كما يفعل ماي سبيس وإشعارات الإدارة.
+class _Host extends StatelessWidget {
+  const _Host();
+  @override
+  Widget build(BuildContext context) => Scaffold(body: Center(child: TextButton(key: const Key('open-admin'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminShell(standalone: false))), child: const Text('open'))));
+}
+
 Future<void> _pump(WidgetTester tester, _Srv srv, Widget home, {double width = 420}) async {
   tester.view.physicalSize = Size(width, 1400);
   tester.view.devicePixelRatio = 1;
@@ -138,6 +145,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('بلاغ ضد khalid'), findsOneWidget);
     expect(srv.calls, contains('GET /adminapi/reports'));
+  });
+
+  testWidgets('embedded panel on a phone: drawer «العودة إلى التطبيق» leaves the panel, not just the drawer', (tester) async {
+    final srv = _Srv();
+    await _pump(tester, srv, const _Host());
+    await tester.tap(find.byKey(const Key('open-admin')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AdminShell), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('admin-exit-nav')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AdminShell), findsNothing);
+    expect(find.byKey(const Key('open-admin')), findsOneWidget);
+  });
+
+  testWidgets('embedded panel: app bar close button returns to the app on phone and desktop', (tester) async {
+    for (final width in [420.0, 1200.0]) {
+      final srv = _Srv();
+      await _pump(tester, srv, const _Host(), width: width);
+      await tester.tap(find.byKey(const Key('open-admin')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('admin-exit')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('admin-exit')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AdminShell), findsNothing, reason: 'width $width');
+    }
+  });
+
+  testWidgets('standalone panel (admin.naslife.app) has no exit button', (tester) async {
+    final srv = _Srv();
+    await _pump(tester, srv, const AdminShell());
+    expect(find.byKey(const Key('admin-exit')), findsNothing);
   });
 
   testWidgets('crediting a user posts halalas and a note', (tester) async {
