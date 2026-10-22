@@ -911,9 +911,20 @@ function rowItems(located) {
     { kind: 'offer', id: 'off-3', refId: 'biz-brew92', title: 'V60 بسعر خاص', subtitle: 'برو 92 · ينتهي بعد 3 أيام', who: 'برو 92', logoUrl: null, imageUrl: null, lat: 21.585, lng: 39.16, distanceKm: d(0.7), at: ago(2880), endsAt: new Date(Date.now() + 3 * 86400e3).toISOString(), act: 'استخدم', payload: {} },
   ];
 }
-// ---- «التغذية» (GET /feed في server/row.js): بطاقات الصف نفسها وبضع بطاقات إضافية بأزمنة متفرقة، الأحدث أولاً عبر الأنواع،
-// تصفية بالنوع (kind=all افتراضياً)، مؤشر before، حدّ 1..40، وnext = at آخر بطاقة حين تمتلئ الصفحة؛ لتجربة التبويب العمودي والتصانيف في الشريط العلوي
+// ---- «التغذية» (GET /feed في server/row.js): بطاقات الصف نفسها وبضع بطاقات إضافية بأزمنة متفرقة، الأحدث نشراً أولاً عبر الأنواع (feedAt؛
+// الفعالية زمن نشرها لا موعدها)، تصفية بالنوع (kind=all افتراضياً)، حدّ 1..40، ومؤشر معتم next = «feedAt~رقم النوع~المعرّف» حين تمتلئ الصفحة
+// (ISO وحده يُقبل كما كان: أقدم من ذلك تماماً)؛ لتجربة التبويب العمودي والتصانيف في الشريط العلوي
 const ROW_KINDS = ['moment', 'offer', 'event', 'job', 'listing', 'circle'];
+// ترتيب الخادم نفسه: feedAt تنازلياً ثم رقم النوع ثم المعرّف بنقاط الترميز (بايتات UTF-8)
+const feedKey = (i) => ({ ms: Date.parse(i.feedAt), k: ROW_KINDS.indexOf(i.kind), id: String(i.id) });
+const feedCmp = (a, b) => b.ms - a.ms || a.k - b.k || Buffer.compare(Buffer.from(a.id), Buffer.from(b.id));
+const feedCursor = (s) => {
+  if (!s) return null;
+  const [at, k, ...id] = s.split('~'), ms = Date.parse(at);
+  if (!Number.isFinite(ms)) return null;
+  if (k === undefined) return { ms, k: ROW_KINDS.length, id: '' };
+  return /^\d$/.test(k) && Number(k) < ROW_KINDS.length && id.join('~') ? { ms, k: Number(k), id: id.join('~') } : null;
+};
 function feedItems(located) {
   const d = (km) => (located ? km : null);
   const extraMoments = mockPosts.slice(2).filter((p) => p.status === 'active').map((p, i) => ({ kind: 'moment', id: p.id, refId: p.id, title: p.caption || p.title || 'لحظة', subtitle: `قبل ${3 + i} س · ${p.placeName || 'جدة'}`, who: p.user.nickname, logoUrl: null, imageUrl: p.kind === 'image' || p.kind === 'video' ? p.mediaUrl : null, lat: p.lat, lng: p.lng, distanceKm: d(1.5 + i), at: p.createdAt, endsAt: p.expiresAt, act: 'شاهد', payload: p }));
@@ -927,11 +938,13 @@ function rowRoute(req, res, url, key) {
   if (key === 'GET /row/status') return json(200, { ok: true, sources: { moment: true, offer: true, event: true, job: true, listing: true } });
   if (key === 'GET /row') { const located = url.searchParams.has('lat'); const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 30)); return json(200, { items: rowItems(located).slice(0, limit), located }); }
   if (key === 'GET /feed') {
-    const located = url.searchParams.has('lat'), kind = url.searchParams.get('kind') || 'all', before = Date.parse(url.searchParams.get('before') || '');
+    const located = url.searchParams.has('lat'), kind = url.searchParams.get('kind') || 'all', before = feedCursor(url.searchParams.get('before'));
     const limit = Math.max(1, Math.min(40, Number(url.searchParams.get('limit')) || 30));
-    const all = feedItems(located).filter((i) => (!ROW_KINDS.includes(kind) || i.kind === kind) && (!Number.isFinite(before) || Date.parse(i.at) < before)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-    const page = all.slice(0, limit);
-    return json(200, { items: page, next: page.length === limit ? page[page.length - 1].at : null, located });
+    // feedAt = زمن النشر: الفعالية نُشرت قبل خمس ساعات وموعدها («at») غداً، وغيرها نُشر عند «at»
+    const all = feedItems(located).map((i) => ({ ...i, feedAt: i.kind === 'event' ? ago(300) : i.at }))
+      .filter((i) => (!ROW_KINDS.includes(kind) || i.kind === kind) && (!before || feedCmp(before, feedKey(i)) < 0)).sort((a, b) => feedCmp(feedKey(a), feedKey(b)));
+    const page = all.slice(0, limit), last = page[page.length - 1];
+    return json(200, { items: page, next: page.length === limit ? `${last.feedAt}~${ROW_KINDS.indexOf(last.kind)}~${last.id}` : null, located });
   }
   return false;
 }
