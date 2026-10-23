@@ -172,6 +172,8 @@ export default async function accountDelete(app, opts = {}) {
       if (has("map_posts", "user_id", "status")) await run("map_posts", "UPDATE map_posts SET status='hidden' WHERE user_id=$1 AND status NOT IN ('blocked','hidden')");
       if (has("map_post_likes", "user_id")) await run("map_post_likes", "DELETE FROM map_post_likes WHERE user_id=$1");
       if (has("map_post_views", "user_id")) await run("map_post_views", "DELETE FROM map_post_views WHERE user_id=$1");
+      // تفاعلات اللحظات (moment_extras.js) تُحذف مع الحساب
+      if (has("map_post_reactions", "user_id")) await run("map_post_reactions", "DELETE FROM map_post_reactions WHERE user_id=$1");
       if (has("map_post_events", "user_id")) await run("map_post_events", "UPDATE map_post_events SET user_id=NULL WHERE user_id=$1");
       if (has("biz_community_posts", "user_id", "hidden")) await run("community_posts", "UPDATE biz_community_posts SET hidden=true, hidden_by='account-deleted' WHERE user_id=$1 AND NOT hidden");
       if (has("biz_community_replies", "user_id", "hidden")) await run("community_replies", "UPDATE biz_community_replies SET hidden=true WHERE user_id=$1 AND NOT hidden");
