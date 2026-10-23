@@ -12,6 +12,7 @@ import '../../ui/widgets.dart';
 import '../business/business_page.dart';
 import '../events/events_page.dart';
 import '../market/market_page.dart';
+import '../posts/moment_actions.dart' show momentGone;
 import '../posts/post_viewer.dart';
 
 /// «محفوظاتي»: ما حفظه المستخدم من لحظات ومنتجات وخدمات وفعاليات، وأمنيات حرة يكتبها بنفسه.
@@ -95,12 +96,15 @@ class _WishlistPageState extends ConsumerState<WishlistPage> {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: w.refId!)));
       case 'post':
         // اللحظة المحفوظة تبقى متاحة لحافظها ولو انتهت على الخريطة (GET /mapposts/:id)
+        final MapPost p;
         try {
-          final p = await ref.read(apiClientProvider).mapPost(w.refId!);
-          if (mounted) await PostViewerPage.open(context, [p]);
-        } catch (_) {
-          if (mounted) toast(context, 'اللحظة لم تعد متاحة', error: true);
+          p = await ref.read(apiClientProvider).mapPost(w.refId!);
+        } catch (e) {
+          // «لم تعد متاحة» لرد الخادم بأنها غير موجودة فقط؛ انقطاع الشبكة يُقال كما هو حتى لا يظن أنها حُذفت
+          if (mounted) toast(context, momentGone(e) ? 'اللحظة لم تعد متاحة' : (e is ApiException ? e.message : 'تعذر تحميل اللحظة'), error: true);
+          return;
         }
+        if (mounted) await PostViewerPage.open(context, [p]);
       default:
         _editCustom(w);
     }

@@ -4,12 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../api/client.dart' show mediaUrl;
+import '../../api/client.dart' show ApiException, mediaUrl;
 import '../../api/commerce_models.dart';
 import '../../api/posts_api.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
-import '../../core/media/video_view.dart' show VideoViewController;
+import '../../core/media/video_view.dart' show VideoSuspend, VideoView, VideoViewController;
 import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
@@ -26,6 +26,8 @@ import 'overlay_canvas.dart';
 import 'post_composer.dart';
 import 'post_stats.dart';
 import 'post_media.dart';
+
+String _msg(Object e) => e is ApiException ? e.message : e.toString();
 
 /// ينفّذ زر الإجراء في المنشور: رابط، واتساب، اتصال، دائرة تجارية، عرض في السوق، مراسلة صاحب المنشور.
 Future<void> runPostCta(BuildContext context, MapPost p) async {
@@ -80,30 +82,85 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   late int index = widget.initial;
   Timer? _auto;
   double progress = 0;
-  bool _paused = false;
   final _viewed = <String>{};
   /// متحكم فيديو اللحظة النشطة (null لغير الفيديو): يُنشأ مع كل لحظة ويُحرَّر عند مغادرتها
   VideoViewController? _video;
   StreamSubscription<void>? _videoEnded;
   final _warmed = <String>{};
+  late final AppLifecycleListener _life;
+  /// مسار العارض نفسه: يُقرأ في didChangeDependencies فيصلنا تغيّر «هل هو الأعلى» حين يُفتح فوقه شيء أو يُغلق
+  ModalRoute<Object?>? _route;
 
-  /// الإيقاف المؤقت (ضغطة مطوّلة على صورة أو نص، أو قائمة/ورقة مفتوحة فوق العارض) يوقف الفيديو أيضاً ثم يستأنفه
-  bool get paused => _paused;
-  set paused(bool v) {
-    _paused = v;
-    final c = _video;
-    if (c == null) return;
-    v ? c.pause() : c.play();
+  // --- «العارض مغطّى»: مصدر واحد يوقف التقدّم التلقائي والفيديو، ويمنع الانتقال أو الإغلاق خلف ما فوقه ---
+  /// أفعال مفتوحة من العارض (القوائم، ورقة المشاركة ثم منتقي المحادثة، الحوارات) بما فيها الفجوة بين ورقة وأخرى؛
+  /// عدّاد لا علَم حتى لا يُنهي فعلٌ إيقافَ فعل آخر ما زال مفتوحاً
+  int _holds = 0;
+  /// التطبيق في الخلفية أو التبويب مخفي
+  bool _hidden = false;
+  /// ضغطة مطوّلة على صورة أو نص: توقف التقدّم فقط (الفيديو له إيماءاته)
+  bool _pressed = false;
+  /// انتهت اللحظة والعارض مغطّى: ننتقل حين يظهر بدل أن ننتقل أو نُغلق خلف ما فوقه
+  bool _pendingNext = false;
+
+  /// مسار أو ورقة أو حوار فوق العارض (ومنها دعوة دخول الزائر)، أو فعل مفتوح منه، أو التطبيق مخفي
+  bool get _covered => _holds > 0 || _hidden || !(_route?.isCurrent ?? true);
+  bool get _frozen => _covered || _pressed;
+
+  /// يطبّق حالة التغطية على الفيديو، وينفّذ الانتقال المؤجّل حين يظهر العارض (بعد الإطار: قد نكون داخل البناء).
+  void _syncCovered() {
+    if (!mounted) return;
+    final covered = _covered;
+    _video?.setSuspended(covered, reason: VideoSuspend.viewer);
+    if (!covered && _pendingNext) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _covered || !_pendingNext) return;
+        _pendingNext = false;
+        _next(auto: true);
+      });
+    }
+  }
+
+  void _hold(bool on) {
+    _holds = on ? _holds + 1 : (_holds - 1).clamp(0, 1 << 20);
+    _syncCovered();
+  }
+
+  /// يوقف العارض طوال [body] (قائمة ثم حوار أو صفحة بعدها) ويعيده بعدها مهما حدث.
+  Future<T> _held<T>(Future<T> Function() body) async {
+    _hold(true);
+    try {
+      return await body();
+    } finally {
+      _hold(false);
+    }
+  }
+
+  void _onLifecycle(AppLifecycleState s) {
+    // المخفي فقط (لا inactive): فقدان التركيز أو سحب مركز التحكم لا يوقف اللحظة
+    final hidden = s == AppLifecycleState.hidden || s == AppLifecycleState.paused || s == AppLifecycleState.detached;
+    if (hidden == _hidden) return;
+    _hidden = hidden;
+    _syncCovered();
   }
 
   @override
   void initState() {
     super.initState();
+    _life = AppLifecycleListener(onStateChange: _onLifecycle);
+    VideoView.prepareSound();
     _onShown();
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+    _syncCovered();
+  }
+
+  @override
   void dispose() {
+    _life.dispose();
     _auto?.cancel();
     _releaseVideo();
     _ctl.dispose();
@@ -121,24 +178,31 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     _markViewed();
     _auto?.cancel();
     _releaseVideo();
+    _pendingNext = false;
     progress = 0;
     final p = posts[index];
     if (p.kind == 'image' || p.kind == 'text') {
       _auto = Timer.periodic(const Duration(milliseconds: 50), (_) {
-        if (!mounted || paused) return;
+        if (!mounted) return;
+        // كل نبضة تعيد قراءة التغطية فلا يفوتنا تغيّر لم يصلنا خبره
+        _syncCovered();
+        if (_frozen) return;
         _timedStep();
       });
     } else if (p.kind == 'video' && (p.mediaUrl ?? '').isNotEmpty) {
       // الفيديو: الشريط يتبع موضع المقطع، وانتهاؤه ينقل إلى التالية؛ وإن تعذّر تشغيله يتقدّم كالصورة حتى لا يعلق العارض
       final c = _video = VideoViewController();
+      // لحظة تُعرض والعارض مغطّى (حُذفت سابقتها من قائمة مفتوحة): تنتظر حتى يظهر
+      c.setSuspended(_covered, reason: VideoSuspend.viewer);
       _videoEnded = c.onEnded.listen((_) {
-        if (mounted && identical(c, _video)) _next();
+        if (mounted && identical(c, _video)) _next(auto: true);
       });
       _auto = Timer.periodic(const Duration(milliseconds: 50), (_) {
         if (!mounted) return;
+        _syncCovered();
         final v = c.value;
         if (v.failed) {
-          if (!paused) _timedStep();
+          if (!_frozen) _timedStep();
           return;
         }
         final d = v.duration;
@@ -156,7 +220,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     setState(() => progress += 50 / _autoMs);
     if (progress < 1) return;
     _auto?.cancel();
-    _next();
+    _next(auto: true);
   }
 
   void _warmNext() {
@@ -171,16 +235,29 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     final p = posts[index];
     if (p.mine || !_viewed.add(p.id)) return;
     ref.read(apiClientProvider).viewPost(p.id).then((v) {
-      if (mounted) setState(() => posts[index] = posts[index].copyWith(views: v));
+      // بالمعرّف لا بالموضع: العارض قد يكون انتقل إلى لحظة أخرى قبل الرد
+      if (mounted) _replace(p.id, (x) => x.copyWith(views: v));
     }).catchError((_) {});
   }
 
-  void _next() {
+  void _replace(String id, MapPost Function(MapPost p) f) {
+    final at = posts.indexWhere((x) => x.id == id);
+    if (at >= 0) setState(() => posts[at] = f(posts[at]));
+  }
+
+  /// التالية، أو إغلاق العارض بعد الأخيرة. [auto] من انتهاء المقطع أو المؤقّت: لا يحدث والعارض مغطّى (يُؤجَّل حتى يظهر)،
+  /// فلا تنتقل اللحظات خلف ورقة ولا يُغلق ما فوق العارض.
+  void _next({bool auto = false}) {
+    if (!mounted) return;
+    if (auto && _covered) {
+      _pendingNext = true;
+      return;
+    }
     if (index + 1 < posts.length) {
       _ctl.nextPage(duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
     } else {
       _auto?.cancel();
-      if (mounted) Navigator.pop(context);
+      _close();
     }
   }
 
@@ -188,141 +265,154 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     if (index > 0) _ctl.previousPage(duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
   }
 
+  /// يغلق العارض نفسه لا أعلى المستكشف: Navigator.pop كان يغلق الورقة أو الحوار أو الصفحة المفتوحة فوقه.
+  void _close() {
+    if (!mounted) return;
+    final r = _route;
+    if (r == null || r.isCurrent) {
+      Navigator.of(context).pop();
+    } else if (r.isActive) {
+      Navigator.of(context).removeRoute(r);
+    }
+  }
+
   Future<void> _like(int i) async {
     final p = posts[i];
-    setState(() => posts[i] = p.copyWith(liked: !p.liked, likes: p.likes + (p.liked ? -1 : 1)));
+    _replace(p.id, (_) => p.copyWith(liked: !p.liked, likes: p.likes + (p.liked ? -1 : 1)));
     try {
       final r = await ref.read(apiClientProvider).likePost(p.id);
-      if (mounted) setState(() => posts[i] = posts[i].copyWith(liked: r.liked, likes: r.likes));
+      if (mounted) _replace(p.id, (x) => x.copyWith(liked: r.liked, likes: r.likes));
     } catch (e) {
       if (mounted) {
-        setState(() => posts[i] = p);
-        toast(context, e.toString(), error: true);
+        _replace(p.id, (_) => p);
+        toast(context, _msg(e), error: true);
       }
     }
   }
 
-  /// قائمة منشور شخص آخر: إبلاغ عن المنشور أو حظر ناشره.
-  Future<void> _otherMenu(int i) async {
-    final p = posts[i];
-    paused = true;
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: const Color(0xFF1C1F24),
-      builder: (ctx) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(key: const Key('moment-directions'), leading: const Icon(Icons.directions_rounded, color: Colors.white), title: const Text('الاتجاهات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'directions')),
-          ListTile(leading: const Icon(Icons.flag_outlined, color: Colors.white), title: const Text('إبلاغ عن المنشور', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'report')),
-          ListTile(leading: const Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر ${p.user.nickname}', style: const TextStyle(color: Joy.danger)), onTap: () => Navigator.pop(ctx, 'block')),
-          const SizedBox(height: 8),
-        ]),
-      ),
-    );
-    paused = false;
-    if (!mounted || choice == null) return;
-    if (choice == 'directions') return openMomentDirections(context, p);
-    // الإبلاغ والحظر يحتاجان حساباً: ندعو الزائر للدخول قبل ورقة الأسباب بدل رفض 401 بعدها
-    if (!requireAccount(context)) return;
-    final api = ref.read(apiClientProvider);
-    try {
-      if (choice == 'report') {
-        paused = true;
-        final r = await showReportSheet(context, ref, type: 'post', id: p.id, author: p.user, title: 'إبلاغ عن المنشور');
-        paused = false;
-        if (r != null && (r.blocked || r.hidden)) {
-          invalidatePosts(ref, removedPostId: r.hidden ? p.id : null);
-          if (!mounted) return;
-          if (r.blocked) return Navigator.pop(context);
-          // أُخفي المنشور تلقائياً بالبلاغ: يختفي من العارض كما يختفي من البث
-          _removeAt(i);
-        }
-      } else if (choice == 'block') {
-        await api.blockUser(p.user.id);
-        // قائمة المحظورين تصفّي منشورات الدوائر وتعليقاتها وحالة الملف؛ بلا تحديثها يبقى محتواه ظاهراً حتى إعادة التشغيل
-        ref.invalidate(blockedUsersProvider);
-        invalidatePosts(ref);
-        if (mounted) {
-          toast(context, 'تم حظر ${p.user.nickname}');
-          Navigator.pop(context);
-        }
-      }
-    } catch (e) {
-      if (mounted) toast(context, e.toString(), error: true);
-    }
-  }
-
-  /// يزيل منشوراً من العارض (حُذف أو أُخفي)، ويغلق العارض إن كان الأخير.
-  void _removeAt(int i) {
-    if (posts.length == 1) {
-      _auto?.cancel();
-      Navigator.pop(context);
-      return;
-    }
-    setState(() {
-      posts.removeAt(i);
-      index = index.clamp(0, posts.length - 1);
-    });
-    _onShown();
-  }
-
-  Future<void> _menu(int i) async {
-    final p = posts[i];
-    paused = true;
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: const Color(0xFF1C1F24),
-      builder: (ctx) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(leading: const Icon(Icons.insights_outlined, color: Colors.white), title: const Text('الإحصاءات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'stats')),
-          ListTile(key: const Key('moment-directions'), leading: const Icon(Icons.directions_rounded, color: Colors.white), title: const Text('الاتجاهات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'directions')),
-          ListTile(leading: const Icon(Icons.edit_outlined, color: Colors.white), title: const Text('تعديل المنشور', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'edit')),
-          ListTile(leading: Icon(p.status == 'active' ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: Colors.white), title: Text(p.status == 'active' ? 'إخفاء من الخريطة' : 'إظهار على الخريطة', style: const TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'toggle')),
-          ListTile(leading: const Icon(Icons.delete_outline_rounded, color: Joy.danger), title: const Text('حذف المنشور', style: TextStyle(color: Joy.danger)), onTap: () => Navigator.pop(ctx, 'delete')),
-          const SizedBox(height: 8),
-        ]),
-      ),
-    );
-    paused = false;
-    if (!mounted || choice == null) return;
-    if (choice == 'directions') return openMomentDirections(context, p);
-    final api = ref.read(apiClientProvider);
-    try {
-      if (choice == 'stats') {
-        paused = true;
-        await showPostStats(context, postId: p.id);
-        paused = false;
-        return;
-      }
-      if (choice == 'edit') {
-        final updated = await PostComposerPage.open(context, lat: p.lat, lng: p.lng, placeName: p.placeName, edit: p);
-        if (updated != null && mounted) setState(() => posts[i] = updated);
-      } else if (choice == 'toggle') {
-        if (p.status == 'blocked') {
-          toast(context, 'أخفته الإدارة؛ تواصل مع الدعم', error: true);
-          return;
-        }
-        final updated = await api.updatePost(p.id, {'status': p.status == 'active' ? 'hidden' : 'active'});
-        invalidatePosts(ref, removedPostId: updated.status == 'active' ? null : p.id);
-        if (mounted) setState(() => posts[i] = updated);
-      } else if (choice == 'delete') {
-        final ok = await showDialog<bool>(
+  /// قائمة منشور شخص آخر: إبلاغ عن المنشور أو حظر ناشره. العارض موقوف طوال القائمة وما يتبعها (ورقة الأسباب، دعوة الدخول).
+  Future<void> _otherMenu(int i) => _held(() async {
+        final p = posts[i];
+        final choice = await showModalBottomSheet<String>(
           context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('حذف المنشور'),
-            content: const Text('سيُزال من الخريطة نهائياً.'),
-            actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Joy.danger), onPressed: () => Navigator.pop(ctx, true), child: const Text('حذف'))],
+          backgroundColor: const Color(0xFF1C1F24),
+          builder: (ctx) => SafeArea(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ListTile(key: const Key('moment-directions'), leading: const Icon(Icons.directions_rounded, color: Colors.white), title: const Text('الاتجاهات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'directions')),
+              ListTile(key: const Key('moment-report'), leading: const Icon(Icons.flag_outlined, color: Colors.white), title: const Text('إبلاغ عن المنشور', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'report')),
+              ListTile(leading: const Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر ${p.user.nickname}', style: const TextStyle(color: Joy.danger)), onTap: () => Navigator.pop(ctx, 'block')),
+              const SizedBox(height: 8),
+            ]),
           ),
         );
-        if (ok != true || !mounted) return;
-        await api.deletePost(p.id);
-        invalidatePosts(ref, removedPostId: p.id);
-        if (!mounted) return;
-        _removeAt(i);
-      }
-    } catch (e) {
-      if (mounted) toast(context, e.toString(), error: true);
+        if (!mounted || choice == null) return;
+        if (choice == 'directions') return openMomentDirections(context, p);
+        // الإبلاغ والحظر يحتاجان حساباً: ندعو الزائر للدخول قبل ورقة الأسباب بدل رفض 401 بعدها
+        if (!requireAccount(context)) return;
+        final api = ref.read(apiClientProvider);
+        try {
+          if (choice == 'report') {
+            final r = await showReportSheet(context, ref, type: 'post', id: p.id, author: p.user, title: 'إبلاغ عن المنشور');
+            if (r != null && (r.blocked || r.hidden)) {
+              invalidatePosts(ref, removedPostId: r.hidden ? p.id : null);
+              if (!mounted) return;
+              if (r.blocked) return _close();
+              // أُخفي المنشور تلقائياً بالبلاغ: يختفي من العارض كما يختفي من البث
+              _remove(p.id);
+            }
+          } else if (choice == 'block') {
+            await api.blockUser(p.user.id);
+            // قائمة المحظورين تصفّي منشورات الدوائر وتعليقاتها وحالة الملف؛ بلا تحديثها يبقى محتواه ظاهراً حتى إعادة التشغيل
+            ref.invalidate(blockedUsersProvider);
+            invalidatePosts(ref);
+            if (mounted) {
+              toast(context, 'تم حظر ${p.user.nickname}');
+              _close();
+            }
+          }
+        } catch (e) {
+          if (mounted) toast(context, _msg(e), error: true);
+        }
+      });
+
+  /// يزيل منشوراً من العارض (حُذف أو أُخفي) بمعرّفه لا بموضعه، ويغلق العارض إن كان الأخير.
+  void _remove(String id) {
+    final at = posts.indexWhere((x) => x.id == id);
+    if (at < 0) return;
+    if (posts.length == 1) {
+      _auto?.cancel();
+      _close();
+      return;
+    }
+    final shown = at == index;
+    setState(() {
+      posts.removeAt(at);
+      if (at < index) index--;
+      index = index.clamp(0, posts.length - 1);
+    });
+    if (shown) {
+      _onShown();
+    } else {
+      _ctl.jumpToPage(index);
     }
   }
+
+  /// قائمة صاحب اللحظة. العارض موقوف طوال القائمة وما يتبعها (الإحصاءات، المحرّر، حوار الحذف)، فلا ينتهي المقطع
+  /// خلف حوار الحذف فيغلقه ويُلغى الحذف بصمت.
+  Future<void> _menu(int i) => _held(() async {
+        final p = posts[i];
+        final choice = await showModalBottomSheet<String>(
+          context: context,
+          backgroundColor: const Color(0xFF1C1F24),
+          builder: (ctx) => SafeArea(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ListTile(leading: const Icon(Icons.insights_outlined, color: Colors.white), title: const Text('الإحصاءات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'stats')),
+              ListTile(key: const Key('moment-directions'), leading: const Icon(Icons.directions_rounded, color: Colors.white), title: const Text('الاتجاهات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'directions')),
+              ListTile(key: const Key('moment-edit'), leading: const Icon(Icons.edit_outlined, color: Colors.white), title: const Text('تعديل المنشور', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'edit')),
+              ListTile(leading: Icon(p.status == 'active' ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: Colors.white), title: Text(p.status == 'active' ? 'إخفاء من الخريطة' : 'إظهار على الخريطة', style: const TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'toggle')),
+              ListTile(key: const Key('moment-delete'), leading: const Icon(Icons.delete_outline_rounded, color: Joy.danger), title: const Text('حذف المنشور', style: TextStyle(color: Joy.danger)), onTap: () => Navigator.pop(ctx, 'delete')),
+              const SizedBox(height: 8),
+            ]),
+          ),
+        );
+        if (!mounted || choice == null) return;
+        if (choice == 'directions') return openMomentDirections(context, p);
+        final api = ref.read(apiClientProvider);
+        try {
+          if (choice == 'stats') {
+            await showPostStats(context, postId: p.id);
+            return;
+          }
+          if (choice == 'edit') {
+            final updated = await PostComposerPage.open(context, lat: p.lat, lng: p.lng, placeName: p.placeName, edit: p);
+            if (updated != null && mounted) _replace(p.id, (_) => updated);
+          } else if (choice == 'toggle') {
+            if (p.status == 'blocked') {
+              toast(context, 'أخفته الإدارة؛ تواصل مع الدعم', error: true);
+              return;
+            }
+            final updated = await api.updatePost(p.id, {'status': p.status == 'active' ? 'hidden' : 'active'});
+            invalidatePosts(ref, removedPostId: updated.status == 'active' ? null : p.id);
+            if (mounted) _replace(p.id, (_) => updated);
+          } else if (choice == 'delete') {
+            final ok = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('حذف المنشور'),
+                content: const Text('سيُزال من الخريطة نهائياً.'),
+                actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(key: const Key('moment-delete-confirm'), style: FilledButton.styleFrom(backgroundColor: Joy.danger), onPressed: () => Navigator.pop(ctx, true), child: const Text('حذف'))],
+              ),
+            );
+            if (ok != true || !mounted) return;
+            await api.deletePost(p.id);
+            invalidatePosts(ref, removedPostId: p.id);
+            if (!mounted) return;
+            _remove(p.id);
+          }
+        } catch (e) {
+          if (mounted) toast(context, _msg(e), error: true);
+        }
+      });
 
   @override
   Widget build(BuildContext context) => Theme(
@@ -348,7 +438,12 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
                 onNext: _next,
                 onLike: () => _like(i),
                 onMenu: posts[i].mine ? () => _menu(i) : () => _otherMenu(i),
-                onHold: (h) => paused = h,
+                // الضغطة المطوّلة على صورة أو نص توقف التقدّم؛ وأفعال العمود (التفاعل، المشاركة) توقف العارض حتى تنتهي سلسلتها
+                onPress: (h) {
+                  _pressed = h;
+                  _syncCovered();
+                },
+                onHold: _hold,
               ),
             )),
           ),
@@ -364,8 +459,11 @@ class PostView extends ConsumerWidget {
   final int total, position;
   final VoidCallback onPrev, onNext, onLike;
   final VoidCallback? onMenu;
+  /// ضغطة مطوّلة على صورة أو نص (بدايتها ونهايتها)
+  final ValueChanged<bool>? onPress;
+  /// فعل من عمود الأفعال بدأ أو انتهى (true ثم false دائماً بأزواج)
   final ValueChanged<bool>? onHold;
-  const PostView({super.key, required this.post, required this.active, required this.progress, required this.total, required this.position, required this.onPrev, required this.onNext, required this.onLike, this.onMenu, this.onHold});
+  const PostView({super.key, required this.post, required this.active, required this.progress, required this.total, required this.position, required this.onPrev, required this.onNext, required this.onLike, this.onMenu, this.onPress, this.onHold});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -391,8 +489,8 @@ class PostView extends ConsumerWidget {
                   Positioned(
                     top: 0, left: 0, right: 0, height: box.maxHeight * .55,
                     child: Row(children: [
-                      Expanded(child: GestureDetector(behavior: HitTestBehavior.translucent, onTap: rtl ? onNext : onPrev, onLongPressStart: (_) => onHold?.call(true), onLongPressEnd: (_) => onHold?.call(false))),
-                      Expanded(child: GestureDetector(behavior: HitTestBehavior.translucent, onTap: rtl ? onPrev : onNext, onLongPressStart: (_) => onHold?.call(true), onLongPressEnd: (_) => onHold?.call(false))),
+                      Expanded(child: GestureDetector(behavior: HitTestBehavior.translucent, onTap: rtl ? onNext : onPrev, onLongPressStart: (_) => onPress?.call(true), onLongPressEnd: (_) => onPress?.call(false))),
+                      Expanded(child: GestureDetector(behavior: HitTestBehavior.translucent, onTap: rtl ? onPrev : onNext, onLongPressStart: (_) => onPress?.call(true), onLongPressEnd: (_) => onPress?.call(false))),
                     ]),
                   )
                 // الفيديو بلا أزرار تحكم (كسناب): اللحظة كلها للمس — النقر للتنقل كالصور (الصف أعلاه ينعكس مع الاتجاه فيبقى

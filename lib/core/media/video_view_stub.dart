@@ -17,3 +17,6 @@ Widget createVideo(String url, {bool autoplay = false, bool loop = false, bool m
 /// بلا مشغّل داخلي (سطح المكتب): الزر نفسه، والمتحكم يبقى بلا مشغّل فلا تقدّم ولا انتهاء.
 Widget createControlledVideo(String url, VideoViewController controller, {bool autoplay = true, bool loop = false, bool muted = false, String? poster, BoxFit? fit}) =>
     createVideo(url, autoplay: autoplay, loop: loop, muted: muted, controls: !loop, poster: poster);
+
+/// عناصر الصوت المفتوحة تخص سفاري على الويب فقط.
+void prepareSoundVideos() {}

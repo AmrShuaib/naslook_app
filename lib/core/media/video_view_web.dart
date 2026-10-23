@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:js_interop';
 import 'dart:ui_web' as ui_web;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:web/web.dart' as web;
 
 import 'video_controller.dart';
+import 'video_pool.dart';
 
 int _seq = 0;
 
@@ -38,7 +40,54 @@ Widget createVideo(String url, {bool autoplay = false, bool loop = false, bool m
   return HtmlElementView(viewType: id);
 }
 
+// --- عناصر الصوت المفتوحة (سفاري iOS) ---------------------------------------------------------------------------
+// المشغّل الذي يريد الصوت (عارض اللحظات) يأخذ عنصره من مجمّع يُعاد استعماله بدل عنصر جديد لكل لحظة: WebKit يرفع قيد
+// الصوت عن العنصر الذي شُغّل داخل لمسة، فيبقى مفتوحاً لكل لحظة تالية. كل pointerup في التطبيق يفتح العناصر الحرة.
+
+const _poolView = 'naslife-sound-video';
+MediaSlotPool<web.HTMLVideoElement>? _pool;
+
+MediaSlotPool<web.HTMLVideoElement> _soundPool() {
+  final existing = _pool;
+  if (existing != null) return existing;
+  final pool = _pool = MediaSlotPool<web.HTMLVideoElement>(create: _newPooledVideo, bless: _bless);
+  ui_web.platformViewRegistry.registerViewFactory(_poolView, (int viewId, {Object? params}) {
+    final Object el = pool.byId(params is int ? params : -1)?.element ?? web.HTMLDivElement();
+    return el;
+  });
+  // المسار العام يُستدعى متزامناً داخل حدث pointerup نفسه (قبل onTap)، فيُحتسب لمسةً عند المتصفح
+  GestureBinding.instance.pointerRouter.addGlobalRoute(_onPointer);
+  return pool;
+}
+
+void _onPointer(PointerEvent e) {
+  if (e is PointerUpEvent) _pool?.userGesture();
+}
+
+/// يجهّز المجمّع مبكراً (يُستدعى عند فتح العارض) حتى تفتح اللمسات التالية عناصره قبل أن تحتاجها اللحظات.
+void prepareSoundVideos() => _soundPool();
+
+web.HTMLVideoElement _newPooledVideo() {
+  final v = web.HTMLVideoElement();
+  v.setAttribute('playsinline', 'true');
+  v.setAttribute('webkit-playsinline', 'true');
+  v.style
+    ..width = '100%'
+    ..height = '100%';
+  return v;
+}
+
+void _bless(web.HTMLVideoElement v) {
+  // تشغيل صامت بلا مصدر ثم إيقاف فوري داخل اللمسة: WebKit يرفع قيد الصوت عن العنصر ولا يُسمع شيء. الصمت لأن iOS
+  // لا يسمح بفيديوهين بالصوت معاً فكان سيوقف مقطع اللحظة المعروضة
+  v.muted = true;
+  final p = v.play();
+  v.pause();
+  unawaited(p.toDart.then<void>((_) {}, onError: (Object _) {}));
+}
+
 /// عنصر <video> يقوده [VideoViewController]: بلا أزرار أصلية ولا لمس (اللمس لواجهة التطبيق فوقه)، شفاف حتى أول إطار.
+/// المشغّل بالصوت (العارض) يأخذ عنصراً مفتوحاً من المجمّع؛ المعاينات الصامتة الدوّارة (البطاقات) عنصر جديد لكل منها.
 Widget createControlledVideo(String url, VideoViewController controller, {bool autoplay = true, bool loop = false, bool muted = false, String? poster, BoxFit? fit}) =>
     _WebVideo(url: url, controller: controller, autoplay: autoplay, loop: loop, muted: muted, poster: poster, fit: fit);
 
@@ -56,9 +105,24 @@ class _WebVideo extends StatefulWidget {
 class _WebVideoState extends State<_WebVideo> implements VideoViewBackend {
   web.HTMLVideoElement? _v;
   final _subs = <StreamSubscription<web.Event>>[];
-  late final Widget _view = IgnorePointer(
-    child: HtmlElementView.fromTagName(tagName: 'video', onElementCreated: _setup),
-  );
+  late final Widget _view;
+  /// عنصر المجمّع (للمشغّل بالصوت)؛ null للمعاينة الصامتة
+  MediaSlot<web.HTMLVideoElement>? _slot;
+  /// الإيقاف القادم منّا (لا من المتصفح): حدث pause التالي ليس مقاطعة
+  bool _ownPause = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!widget.muted && !widget.loop) {
+      final slot = _slot = _soundPool().acquire();
+      _view = IgnorePointer(
+        child: HtmlElementView(viewType: _poolView, creationParams: slot.id, onPlatformViewCreated: (_) => _setup(slot.element)),
+      );
+    } else {
+      _view = IgnorePointer(child: HtmlElementView.fromTagName(tagName: 'video', onElementCreated: _setup));
+    }
+  }
 
   VideoViewController get _c => widget.controller;
 
@@ -86,9 +150,10 @@ class _WebVideoState extends State<_WebVideo> implements VideoViewBackend {
       };
 
   void _setup(Object element) {
-    if (!mounted) return;
+    if (!mounted || _v != null) return;
     final v = element as web.HTMLVideoElement;
     _v = v;
+    _ownPause = false;
     final muted = _c.wantsMuted ?? widget.muted;
     v
       ..controls = false
@@ -100,10 +165,10 @@ class _WebVideoState extends State<_WebVideo> implements VideoViewBackend {
     v.setAttribute('playsinline', 'true');
     v.setAttribute('webkit-playsinline', 'true');
     v.setAttribute('disablepictureinpicture', 'true');
-    // iOS يشترط خاصية muted في الوسم نفسه لقبول التشغيل التلقائي الصامت
-    if (muted) v.setAttribute('muted', '');
+    // iOS يشترط خاصية muted في الوسم نفسه لقبول التشغيل التلقائي الصامت؛ والعنصر المعاد استعماله قد يحملها من قبل
+    muted ? v.setAttribute('muted', '') : v.removeAttribute('muted');
     final poster = widget.poster;
-    if (poster != null && poster.isNotEmpty) v.poster = poster;
+    poster != null && poster.isNotEmpty ? v.poster = poster : v.removeAttribute('poster');
     v.style
       ..width = '100%'
       ..height = '100%'
@@ -118,12 +183,18 @@ class _WebVideoState extends State<_WebVideo> implements VideoViewBackend {
       v.onDurationChange.listen((_) => _report((s) => s.copyWith(duration: _dur))),
       v.onTimeUpdate.listen((_) => _report((s) => s.copyWith(position: _pos))),
       v.onSeeked.listen((_) => _report((s) => s.copyWith(position: _pos))),
-      v.onPlay.listen((_) => _report((s) => s.copyWith(ended: false))),
+      v.onPlay.listen((_) => _report((s) => s.copyWith(ended: false, interrupted: false))),
       v.onPlaying.listen((_) => _shown(playing: true)),
       v.onLoadedData.listen((_) => _shown()),
       // التعثّر في التحميل: يتوقف تقدير الموضع حتى يعود التشغيل
       v.onWaiting.listen((_) => _report((s) => s.copyWith(playing: false))),
-      v.onPause.listen((_) => _report((s) => s.copyWith(playing: false, position: _pos))),
+      v.onPause.listen((_) {
+        final own = _ownPause;
+        _ownPause = false;
+        // المتصفح أوقفه بنفسه ونحن نريده يعمل (مقاطعة صوت، فصل السماعة، الخلفية): رقاقة «اضغط للمتابعة» بدل لحظة متجمدة
+        final external = !own && !v.ended && _c.wantsPlaying && !_c.suspended;
+        _report((s) => s.copyWith(playing: false, position: _pos, interrupted: external ? true : null));
+      }),
       v.onEnded.listen((_) => _report((s) => s.copyWith(playing: false, ended: true, position: _dur ?? _pos))),
       v.onError.listen((_) => _report((s) => s.copyWith(playing: false, failed: true))),
       v.onVolumeChange.listen((_) => _report((s) => s.copyWith(muted: v.muted, soundBlocked: v.muted && s.soundBlocked))),
@@ -156,6 +227,9 @@ class _WebVideoState extends State<_WebVideo> implements VideoViewBackend {
   Future<void> _settle(web.HTMLVideoElement v, JSPromise<JSAny?> p) async {
     try {
       await p.toDart;
+      // بدأ بالصوت: العنصر مفتوح للحظات التالية
+      final slot = _slot;
+      if (slot != null && identical(_v, v) && !v.muted) _pool?.markBlessed(slot);
     } catch (e) {
       // مسار آخر أوقفه (pause قبل اكتمال play) أو أُزيل العنصر: ليس رفضاً للصوت
       if (!mounted || !identical(_v, v) || !_c.wantsPlaying || _c.suspended || '$e'.contains('AbortError')) return;
@@ -177,7 +251,12 @@ class _WebVideoState extends State<_WebVideo> implements VideoViewBackend {
   }
 
   @override
-  void pause() => _v?.pause();
+  void pause() {
+    final v = _v;
+    if (v == null) return;
+    if (!v.paused) _ownPause = true;
+    v.pause();
+  }
 
   @override
   void setRate(double rate) {
@@ -222,6 +301,9 @@ class _WebVideoState extends State<_WebVideo> implements VideoViewBackend {
       v.load();
     }
     _v = null;
+    // العنصر يعود إلى المجمّع مفتوحاً كما هو للحظة تالية
+    final slot = _slot;
+    if (slot != null) _pool?.release(slot);
     super.dispose();
   }
 

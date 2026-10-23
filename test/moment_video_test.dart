@@ -17,6 +17,7 @@ import 'package:naslook/api/client.dart';
 import 'package:naslook/api/posts_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/core/location.dart';
+import 'package:naslook/core/media/video_pool.dart';
 import 'package:naslook/core/media/video_view.dart';
 import 'package:naslook/pages/posts/post_media.dart';
 import 'package:naslook/pages/posts/post_viewer.dart';
@@ -166,6 +167,29 @@ Future<_Srv> _pump(WidgetTester tester, Widget home, {bool noAnimations = false}
 
 Future<_Srv> _viewer(WidgetTester tester, List<Map<String, dynamic>> posts, {int initial = 0, bool noAnimations = false}) =>
     _pump(tester, PostViewerPage(posts: [for (final p in posts) MapPost.fromJson(p)], initial: initial), noAnimations: noAnimations);
+
+/// العارض مفتوحاً فوق شاشة (كما يُفتح من الخريطة) حتى يُرى ما يُغلق بالضبط
+Future<_Srv> _opened(WidgetTester tester, List<Map<String, dynamic>> posts) async {
+  final srv = await _pump(tester, Scaffold(body: Builder(builder: (ctx) => Center(child: FilledButton(key: const Key('open'), onPressed: () => PostViewerPage.open(ctx, [for (final p in posts) MapPost.fromJson(p)]), child: const Text('افتح'))))));
+  await tester.tap(find.byKey(const Key('open')));
+  await _frames(tester, 1000);
+  return srv;
+}
+
+/// مشغّل أدنى لاختبار المتحكم وحده
+class _Backend implements VideoViewBackend {
+  final calls = <String>[];
+  @override
+  void play() => calls.add('play');
+  @override
+  void pause() => calls.add('pause');
+  @override
+  void setRate(double rate) => calls.add('rate:$rate');
+  @override
+  void seekBy(Duration delta) => calls.add('seek:${delta.inMilliseconds}');
+  @override
+  void setMuted(bool muted) => calls.add('muted:$muted');
+}
 
 /// عرض شريط تقدّم اللحظة الأولى في الصفحة الظاهرة
 double _progress(WidgetTester tester, [int i = 0]) => tester.widgetList<FractionallySizedBox>(find.byType(FractionallySizedBox)).elementAt(i).widthFactor!;
@@ -438,6 +462,187 @@ void main() {
       expect(v.c.disposed, isTrue);
       // لا مؤقّت ترجيع ولا مؤقّت تقدّم يبقى بعد الإغلاق (يفشل الاختبار تلقائياً إن بقي)
       await tester.pump(const Duration(seconds: 1));
+    });
+  });
+
+  // «العارض مغطّى» مصدر واحد: أي مسار أو ورقة أو حوار فوقه، أو فعل مفتوح منه، أو التطبيق مخفي، يوقف التقدّم والفيديو،
+  // ولا يجوز أن يُغلق انتهاءُ المقطع شيئاً غير العارض نفسه.
+  group('covered viewer', () {
+    testWidgets('the share flow holds the clip under the chat picker, and a late end never closes the picker', (tester) async {
+      await _opened(tester, [_post(1)]);
+      final v = _videos.last;
+      await tester.tap(find.byKey(const Key('moment-share')));
+      await _frames(tester);
+      expect(v.c.suspended, isTrue);
+      await tester.tap(find.byKey(const Key('moment-share-chat')));
+      await _frames(tester, 800);
+      expect(find.text('إرسال اللحظة إلى'), findsOneWidget);
+      // بين الورقة الأولى والمنتقي لم يُستأنف المقطع
+      expect(v.calls.where((c) => c == 'play'), isEmpty, reason: '${v.calls}');
+      expect(v.c.suspended, isTrue);
+      expect(v.c.wantsPlaying, isTrue, reason: 'إيقاف مؤقت لا يغيّر رغبة التشغيل');
+      // تبليغ انتهاء متأخر والمنتقي مفتوح: لا يُغلق المنتقي ولا العارض
+      v.report((s) => s.copyWith(playing: false, ended: true, position: const Duration(seconds: 10), duration: const Duration(seconds: 10)));
+      await _frames(tester, 800);
+      expect(find.text('إرسال اللحظة إلى'), findsOneWidget);
+      expect(find.byType(PostViewerPage), findsOneWidget);
+      // إغلاق المنتقي: يظهر العارض فينفّذ الانتقال المؤجّل، والأخيرة تُغلق العارض نفسه
+      Navigator.of(tester.element(find.text('إرسال اللحظة إلى'))).pop();
+      await _frames(tester, 1200);
+      expect(find.byType(PostViewerPage), findsNothing);
+      expect(find.byKey(const Key('open')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('the owner\'s delete dialog keeps the clip paused; its end does not dismiss the dialog, and deleting still works', (tester) async {
+      final srv = await _opened(tester, [{..._post(1), 'mine': true}]);
+      final v = _videos.last;
+      await tester.tap(find.byTooltip('خيارات'));
+      await _frames(tester);
+      await tester.tap(find.byKey(const Key('moment-delete')));
+      await _frames(tester);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(v.calls.where((c) => c == 'play'), isEmpty, reason: '${v.calls}');
+      expect(v.c.suspended, isTrue);
+      v.report((s) => s.copyWith(playing: false, ended: true, position: const Duration(seconds: 10), duration: const Duration(seconds: 10)));
+      await _frames(tester, 800);
+      expect(find.byType(AlertDialog), findsOneWidget, reason: 'الانتهاء لا يغلق الحوار فيُلغى الحذف بصمت');
+      await tester.tap(find.byKey(const Key('moment-delete-confirm')));
+      await _frames(tester, 1200);
+      expect(srv.calls, contains('DELETE /mapposts/${_pid(1)}'));
+      expect(find.byType(PostViewerPage), findsNothing);
+      expect(find.byKey(const Key('open')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a failed video does not advance behind an opaque page (the editor) and never closes it', (tester) async {
+      await _opened(tester, [_post(1)]);
+      _videos.last.report((s) => s.copyWith(failed: true, playing: false));
+      await tester.pump();
+      unawaited(Navigator.of(tester.element(find.byType(PostViewerPage))).push(MaterialPageRoute<void>(builder: (_) => const Scaffold(key: Key('cover'), body: Text('فوق العارض')))));
+      await _frames(tester, 9000);
+      expect(find.byKey(const Key('cover')), findsOneWidget, reason: 'مؤقّت الفيديو المتعذّر لا يغلق الصفحة التي فوقه');
+      expect(find.byType(PostViewerPage, skipOffstage: false), findsOneWidget);
+      // العودة إلى العارض: يكمل مدته ثم يُغلق نفسه
+      Navigator.of(tester.element(find.byKey(const Key('cover')))).pop();
+      await _frames(tester, 8500);
+      expect(find.byType(PostViewerPage), findsNothing);
+      expect(find.byKey(const Key('open')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('the app going to the background pauses the clip, coming back plays it again', (tester) async {
+      addTearDown(() => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+      await _viewer(tester, [_post(1), _post(2, kind: 'image')]);
+      final v = _videos.single;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(v.calls, ['autoplay'], reason: 'فقدان التركيز وحده لا يوقف اللحظة');
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(v.calls.last, 'pause');
+      expect(v.c.wantsPlaying, isTrue);
+      // المتصفح أوقف العنصر بنفسه في الخلفية أيضاً: العودة تشغّله
+      v.report((s) => s.copyWith(playing: false, position: const Duration(seconds: 3), duration: const Duration(seconds: 10)));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(v.calls.last, 'play');
+      expect(v.c.value.playing, isTrue);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('an image moment does not advance while the app is hidden', (tester) async {
+      addTearDown(() => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+      await _viewer(tester, [_post(1, kind: 'image'), _post(2, kind: 'image', caption: 'الثانية')]);
+      await tester.pump(const Duration(seconds: 1));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      await tester.pump(const Duration(milliseconds: 50));
+      final held = _progress(tester);
+      await _frames(tester, 8000);
+      expect(_progress(tester), held);
+      expect(find.text('الثانية'), findsNothing);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(milliseconds: 500));
+      // المؤقّت لم يعمل في الخلفية: يكمل من حيث توقف ولا يقفز إلى التالية عند العودة (الإطارات متوقفة في الخلفية فيُقاس بعدها)
+      await _frames(tester, 500);
+      expect(find.text('الثانية'), findsNothing);
+      expect(_progress(tester), greaterThan(held));
+      expect(_progress(tester), lessThan(held + .3));
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a clip the browser paused on its own shows «اضغط للمتابعة», and a tap resumes it', (tester) async {
+      await _viewer(tester, [_post(1)]);
+      final v = _videos.single;
+      expect(find.byKey(const Key('moment-resume')), findsNothing);
+      v.report((s) => s.copyWith(playing: false, interrupted: true, position: const Duration(seconds: 2), duration: const Duration(seconds: 10)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('▶ اضغط للمتابعة'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('moment-resume')));
+      await tester.pump();
+      expect(v.calls.last, 'play');
+      v.report((s) => s.copyWith(interrupted: false));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.byKey(const Key('moment-resume')), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
+
+  group('sound unlock (iOS Safari)', () {
+    test('suspension reasons are independent: the page coming back does not resume a clip the viewer still holds', () {
+      final c = VideoViewController();
+      final b = _Backend();
+      c.attach(b);
+      c.setSuspended(true);
+      c.setSuspended(true, reason: VideoSuspend.viewer);
+      expect(b.calls, ['pause']);
+      c.setSuspended(false);
+      expect(b.calls, ['pause'], reason: 'ما زال العارض مغطّى');
+      expect(c.suspended, isTrue);
+      c.play();
+      expect(b.calls, ['pause'], reason: 'لا تشغيل والعارض مغطّى');
+      c.setSuspended(false, reason: VideoSuspend.viewer);
+      expect(b.calls, ['pause', 'play']);
+      c.dispose();
+    });
+
+    test('the element pool reuses unlocked elements and unlocks only free ones inside a gesture', () {
+      var made = 0;
+      final blessed = <int>[];
+      final pool = MediaSlotPool<int>(create: () => made++, bless: blessed.add);
+      // أول لحظة قبل أي لمسة: عنصر جديد لم يُفتح
+      final a = pool.acquire();
+      expect(a.blessed, isFalse);
+      // لمسة (رفع الكتم أو «التالي»): العنصر المشغول لا يُلمس، ويُجهَّز عنصران حران مفتوحان
+      pool.userGesture();
+      expect(blessed, [1, 2]);
+      expect(a.blessed, isFalse);
+      // اللحظة التالية تأخذ عنصراً مفتوحاً، والسابقة تعيد عنصرها
+      final b = pool.acquire();
+      expect(b.blessed, isTrue);
+      pool.release(a);
+      // انتقال تلقائي بلا لمسة: يُفضَّل المفتوح على غير المفتوح
+      final c = pool.acquire();
+      expect(c.blessed, isTrue);
+      expect(identical(c, a), isFalse);
+      pool.release(b);
+      pool.release(c);
+      // لمسة لاحقة تفتح ما بقي مغلقاً، والمفتوح لا يُعاد فتحه
+      pool.userGesture();
+      expect(blessed, [1, 2, 0]);
+      expect(pool.slots.every((s) => s.blessed), isTrue);
+      expect(pool.byId(a.id), same(a));
+      // رقاقة رفع الكتم داخل لمسة فتحت عنصراً مشغولاً
+      final d = MediaSlotPool<int>(create: () => 0, bless: (_) {});
+      final s = d.acquire();
+      d.markBlessed(s);
+      d.release(s);
+      expect(d.acquire(), same(s));
     });
   });
 

@@ -37,7 +37,7 @@ class MomentRail extends ConsumerStatefulWidget {
   final MapPost post;
   final bool active;
   final VoidCallback onLike;
-  /// إيقاف التقدّم التلقائي مؤقتاً ما دام شريط التفاعل أو ورقة المشاركة مفتوحين.
+  /// إيقاف العارض ما دام فعل من العمود مفتوحاً (شريط التفاعل، ورقة المشاركة ثم منتقي المحادثة): true ثم false بأزواج.
   final ValueChanged<bool>? onHold;
   /// شاشة قصيرة: أيقونات بلا تسميات حتى لا يزاحم العمود التعليق.
   final bool compact;
@@ -51,6 +51,13 @@ class _MomentRailState extends ConsumerState<MomentRail> {
   final _anchor = GlobalKey();
   MomentReactions _r = MomentReactions.empty;
   bool _loaded = false;
+  int _loadFails = 0;
+  /// رقم آخر تفاعل أرسلناه: رد أقدم (أو جلب للعدّادات بدأ قبله) لا يكتب فوق حالة أحدث
+  int _seq = 0;
+  /// طلبات التفاعل تُرسل بالترتيب، كل طلب بعد انتهاء سابقه، فلا يعالج الخادم اختياراً أقدم بعد الأحدث
+  Future<void> _queue = Future.value();
+  /// تفاعلات أُرسلت ولم يصل ردها
+  int _inflight = 0;
 
   @override
   void initState() {
@@ -64,37 +71,67 @@ class _MomentRailState extends ConsumerState<MomentRail> {
     if (old.post.id != widget.post.id) {
       _r = MomentReactions.empty;
       _loaded = false;
+      _loadFails = 0;
+      _seq++;
     }
     if (widget.active && !_loaded) _load();
   }
 
+  /// العدّادات من الخادم. لا تكتب فوق تفاعل أُرسل بعد بدء الجلب، والفشل يسمح بمحاولة أخرى واحدة بدل بقاء «تفاعل» بلا أرقام.
   void _load() {
     _loaded = true;
     final id = widget.post.id;
+    final seq = _seq;
     ref.read(apiClientProvider).momentReactions(id).then((r) {
-      if (mounted && widget.post.id == id) setState(() => _r = r);
-    }).catchError((_) {});
+      if (!mounted || widget.post.id != id) return;
+      if (seq == _seq) {
+        setState(() => _r = r);
+      } else if (_inflight > 0) {
+        // تفاعل أُرسل بعد بدء الجلب وما زال معلّقاً: عدّادات الخادم مع اختياري المنتظر
+        setState(() => _r = r.withMine(_r.mine));
+      }
+    }).catchError((_) {
+      if (mounted && widget.post.id == id && ++_loadFails < 2) _loaded = false;
+    });
   }
 
   Future<void> _react() async {
     // الإرسال يحتاج حساباً: الزائر يُدعى للدخول قبل فتح الشريط
     if (!requireAccount(context)) return;
-    widget.onHold?.call(true);
-    final picked = await _showBar();
-    widget.onHold?.call(false);
-    if (picked == null || !mounted) return;
-    final prev = _r;
-    // الضغط على تفاعلي الحالي يزيله
-    final next = picked == prev.mine ? null : picked;
-    setState(() => _r = prev.withMine(next));
+    final hold = widget.onHold;
+    hold?.call(true);
+    String? picked;
     try {
-      final r = await ref.read(apiClientProvider).reactMoment(widget.post.id, next);
-      if (mounted) setState(() => _r = r);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _r = prev);
-      toast(context, _err(e), error: true);
+      picked = await _showBar();
+    } finally {
+      hold?.call(false);
     }
+    if (picked == null || !mounted) return;
+    final before = _r.mine;
+    // الضغط على تفاعلي الحالي يزيله
+    final next = picked == before ? null : picked;
+    final seq = ++_seq;
+    setState(() => _r = _r.withMine(next));
+    final id = widget.post.id;
+    final api = ref.read(apiClientProvider);
+    _inflight++;
+    final send = _queue.then((_) async {
+      try {
+        final r = await api.reactMoment(id, next);
+        _inflight--;
+        if (mounted && widget.post.id == id && seq == _seq) setState(() => _r = r);
+      } catch (e) {
+        _inflight--;
+        if (!mounted || widget.post.id != id) return;
+        toast(context, _err(e), error: true);
+        // تفاعل أحدث يملك الحالة الآن؛ وإلا نعيد تفاعلي السابق فقط (لا لقطة قديمة تمحو عدّادات وصلت بعدها) ثم نجلب الحقيقة
+        if (seq != _seq) return;
+        setState(() => _r = _r.withMine(before));
+        _load();
+      }
+    });
+    _queue = send.catchError((_) {});
+    await send;
   }
 
   /// الشريط بجانب زر التفاعل (بعيداً عن الحافة)، وفي وسط الشاشة إن تعذّر حساب موضعه.
@@ -147,7 +184,11 @@ class _MomentRailState extends ConsumerState<MomentRail> {
         label: '${p.likes}',
         semantic: p.liked ? 'إلغاء الإعجاب' : 'إعجاب',
         compact: widget.compact,
-        onTap: widget.onLike,
+        // الإعجاب يحتاج حساباً كالحفظ والتفاعل: الزائر يُدعى للدخول بدل قلب يتبدّل ثم رفض 401
+        onTap: () {
+          if (!requireAccount(context)) return;
+          widget.onLike();
+        },
         // ضغطة مطوّلة على القلب تفتح التفاعلات كما في التطبيقات المألوفة
         onLongPress: _react,
         child: Icon(p.liked ? Icons.favorite_rounded : Icons.favorite_outline_rounded, size: 26, color: p.liked ? Joy.accent : Colors.white),
@@ -275,13 +316,14 @@ class MomentReactionBar extends StatelessWidget {
         key: Key('moment-react-$i'),
         onTap: () => onPick(e),
         radius: 26,
+        // حد أدنى لا ارتفاع ثابت: الخلية تكبر مع تكبير الخط في النظام (التطبيق يكبّره 1.25 فوق إعداد الجهاز) بدل قص العدّاد
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
-          width: 50,
-          height: 58,
+          constraints: const BoxConstraints(minWidth: 50, minHeight: 58),
+          alignment: Alignment.center,
           margin: const EdgeInsets.symmetric(horizontal: 1),
           decoration: mine ? BoxDecoration(color: Joy.accent.withValues(alpha: .3), shape: BoxShape.circle, border: Border.all(color: Joy.accent, width: 1.5)) : null,
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          child: Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
             Text(e, style: TextStyle(fontSize: mine ? 27 : 25, height: 1.15)),
             if (n > 0) Text('$n', key: Key('moment-react-count-$i'), style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
           ]),
@@ -296,36 +338,41 @@ class MomentReactionBar extends StatelessWidget {
 // -----------------------------------------------------------------------------
 
 /// ورقة مشاركة اللحظة: إرسالها في محادثة (تظهر بطاقتها)، أو المشاركة الأصلية برابطها العام، أو نسخ الرابط.
+/// [onHold] يوقف العارض طوال السلسلة كلها (الورقة ثم جلب المحادثات ومنتقي الأشخاص أو ورقة النظام)، لا الورقة الأولى وحدها:
+/// وإلا انتهت اللحظة خلف المنتقي فأغلقته أو انتقل العارض فضاع الإرسال بصمت.
 Future<void> showMomentShareSheet(BuildContext context, WidgetRef ref, MapPost p, {ValueChanged<bool>? onHold}) async {
   onHold?.call(true);
-  const white = TextStyle(color: Colors.white);
-  final choice = await showModalBottomSheet<String>(
-    context: context,
-    backgroundColor: momentSheetColor,
-    builder: (ctx) => SafeArea(
-      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        const Padding(padding: EdgeInsets.fromLTRB(20, 16, 20, 4), child: Text('مشاركة اللحظة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16))),
-        ListTile(key: const Key('moment-share-chat'), leading: const Icon(Icons.send_rounded, color: Colors.white), title: const Text('إرسال في محادثة', style: white), subtitle: const Text('تظهر بطاقتها داخل الرسالة', style: TextStyle(color: Colors.white60, fontSize: 12)), onTap: () => Navigator.pop(ctx, 'chat')),
-        ListTile(key: const Key('moment-share-native'), leading: const Icon(Icons.ios_share_rounded, color: Colors.white), title: const Text('مشاركة…', style: white), onTap: () => Navigator.pop(ctx, 'native')),
-        ListTile(key: const Key('moment-share-copy'), leading: const Icon(Icons.link_rounded, color: Colors.white), title: const Text('نسخ الرابط', style: white), onTap: () => Navigator.pop(ctx, 'copy')),
-        const SizedBox(height: 8),
-      ]),
-    ),
-  );
-  onHold?.call(false);
-  if (choice == null || !context.mounted) return;
-  final url = momentLink(p.id);
-  switch (choice) {
-    case 'chat':
-      await sendMomentInChat(context, ref, p);
-    case 'native':
-      final title = p.title.isNotEmpty ? p.title : (p.caption.isNotEmpty ? p.caption : 'لحظة على ناس لايف');
-      final place = p.placeName != null && p.placeName!.isNotEmpty ? ' · ${p.placeName}' : '';
-      final ok = await share_impl.nativeShare(title: title, text: '${p.user.nickname}$place على ناس لايف', url: url);
-      // الويب بلا Web Share أو سطح المكتب: ننسخ الرابط بدل ورقة لا تظهر
-      if (!ok && context.mounted) await _copy(context, url);
-    case 'copy':
-      await _copy(context, url);
+  try {
+    const white = TextStyle(color: Colors.white);
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: momentSheetColor,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Padding(padding: EdgeInsets.fromLTRB(20, 16, 20, 4), child: Text('مشاركة اللحظة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16))),
+          ListTile(key: const Key('moment-share-chat'), leading: const Icon(Icons.send_rounded, color: Colors.white), title: const Text('إرسال في محادثة', style: white), subtitle: const Text('تظهر بطاقتها داخل الرسالة', style: TextStyle(color: Colors.white60, fontSize: 12)), onTap: () => Navigator.pop(ctx, 'chat')),
+          ListTile(key: const Key('moment-share-native'), leading: const Icon(Icons.ios_share_rounded, color: Colors.white), title: const Text('مشاركة…', style: white), onTap: () => Navigator.pop(ctx, 'native')),
+          ListTile(key: const Key('moment-share-copy'), leading: const Icon(Icons.link_rounded, color: Colors.white), title: const Text('نسخ الرابط', style: white), onTap: () => Navigator.pop(ctx, 'copy')),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    final url = momentLink(p.id);
+    switch (choice) {
+      case 'chat':
+        await sendMomentInChat(context, ref, p);
+      case 'native':
+        final title = p.title.isNotEmpty ? p.title : (p.caption.isNotEmpty ? p.caption : 'لحظة على ناس لايف');
+        final place = p.placeName != null && p.placeName!.isNotEmpty ? ' · ${p.placeName}' : '';
+        final ok = await share_impl.nativeShare(title: title, text: '${p.user.nickname}$place على ناس لايف', url: url);
+        // الويب بلا Web Share أو سطح المكتب: ننسخ الرابط بدل ورقة لا تظهر (إلغاء المستخدم للورقة يعيد true فلا نسخ)
+        if (!ok && context.mounted) await _copy(context, url);
+      case 'copy':
+        await _copy(context, url);
+    }
+  } finally {
+    onHold?.call(false);
   }
 }
 
@@ -335,37 +382,54 @@ Future<void> _copy(BuildContext context, String url) async {
 }
 
 /// يرسل رمز اللحظة (`#post/<id>`) إلى شخص من المحادثات وجهات الاتصال فتظهر بطاقتها في المحادثة.
+/// ما يلزم بعد المنتقي (العميل، المزوّدات، شريط الرسائل) يُلتقط قبل الانتظار: الإرسال لا يتوقف على بقاء عمود الأفعال.
 Future<void> sendMomentInChat(BuildContext context, WidgetRef ref, MapPost p) async {
   if (!requireAccount(context)) return;
+  final container = ProviderScope.containerOf(context, listen: false);
+  final api = container.read(apiClientProvider);
+  final messenger = ScaffoldMessenger.maybeOf(context);
   final target = await pickChatPerson(context, ref, title: 'إرسال اللحظة إلى');
-  if (target == null || !context.mounted) return;
+  if (target == null) return;
   try {
-    await ref.read(apiClientProvider).sendMessage(target.id, postCode(p.id));
-    ref.invalidate(chatsProvider);
-    if (context.mounted) toast(context, 'أُرسلت اللحظة إلى ${target.nickname}');
+    await api.sendMessage(target.id, postCode(p.id));
+    container.invalidate(chatsProvider);
+    _say(messenger, 'أُرسلت اللحظة إلى ${target.nickname}');
   } catch (e) {
-    if (context.mounted) toast(context, _err(e), error: true);
+    _say(messenger, _err(e), error: true);
   }
+}
+
+/// كـ [toast] لكن بشريط رسائل التُقط مسبقاً (السياق قد يكون زال).
+void _say(ScaffoldMessengerState? m, String msg, {bool error = false}) {
+  if (m == null) return;
+  m
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(msg), backgroundColor: error ? Joy.danger : null));
 }
 
 /// اختيار شخص من المحادثات وجهات الاتصال (نفس مصدر «إعادة التوجيه» في المحادثة).
 Future<Person?> pickChatPerson(BuildContext context, WidgetRef ref, {String title = 'إرسال إلى'}) async {
+  final container = ProviderScope.containerOf(context, listen: false);
+  final nav = Navigator.of(context);
   var chats = const <Chat>[];
   var contacts = const <Person>[];
   try {
-    chats = await ref.read(chatsProvider.future);
+    chats = await container.read(chatsProvider.future);
   } catch (_) {}
   try {
-    contacts = await ref.read(contactsProvider.future);
+    contacts = await container.read(contactsProvider.future);
   } catch (_) {}
-  if (!context.mounted) return null;
-  final me = ref.read(appStateProvider).user?.id;
+  final me = container.read(appStateProvider).user?.id;
   final people = <String, Person>{for (final c in chats) c.peer.id: c.peer, for (final p in contacts) p.id: p}..remove(me);
-  return showModalBottomSheet<Person>(
-    context: context,
-    isScrollControlled: true,
-    builder: (ctx) => MomentPeoplePicker(people: people.values.toList(), title: title),
-  );
+  Future<Person?> show(BuildContext ctx) => showModalBottomSheet<Person>(
+        context: ctx,
+        isScrollControlled: true,
+        builder: (_) => MomentPeoplePicker(people: people.values.toList(), title: title),
+      );
+  if (context.mounted) return show(context);
+  // السياق زال أثناء الجلب: المنتقي يُفتح على المستكشف نفسه بدل أن يضيع الفعل
+  if (!nav.mounted) return null;
+  return show(nav.context);
 }
 
 /// قائمة الأشخاص مع بحث بالاسم أو المعرّف.
@@ -448,6 +512,9 @@ Future<void> openMomentDirections(BuildContext context, MapPost p) async {
 // رابط اللحظة
 // -----------------------------------------------------------------------------
 
+/// الخادم يقول إن اللحظة غير موجودة أو مخفية أو المعرّف غير صالح (404/400)، لا انقطاع شبكة ولا خطأ خادم.
+bool momentGone(Object e) => e is ApiException && (e.statusCode == 404 || e.statusCode == 400);
+
 /// وجهة رابط اللحظة (`/m/<id>` → `#/m/<id>`) وإشعار التفاعل: تجلب اللحظة (GET /mapposts/:id) وتعرضها في العارض.
 class MomentLinkPage extends ConsumerStatefulWidget {
   final String id;
@@ -479,11 +546,20 @@ class _MomentLinkPageState extends ConsumerState<MomentLinkPage> {
                   ? Padding(
                       padding: const EdgeInsets.all(24),
                       child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.hide_image_outlined, color: Colors.white54, size: 48),
-                        const SizedBox(height: 12),
-                        const Text('اللحظة لم تعد متاحة', key: Key('moment-link-missing'), style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 6),
-                        const Text('ربما انتهت أو أخفاها صاحبها.', style: TextStyle(color: Colors.white70)),
+                        // «لم تعد متاحة» لرد الخادم بأنها غير موجودة فقط؛ انقطاع الشبكة أو خطأ الخادم لا يعني أن اللحظة حُذفت
+                        if (momentGone(s.error!)) ...[
+                          const Icon(Icons.hide_image_outlined, color: Colors.white54, size: 48),
+                          const SizedBox(height: 12),
+                          const Text('اللحظة لم تعد متاحة', key: Key('moment-link-missing'), style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 6),
+                          const Text('ربما انتهت أو أخفاها صاحبها.', style: TextStyle(color: Colors.white70)),
+                        ] else ...[
+                          const Icon(Icons.wifi_off_rounded, color: Colors.white54, size: 48),
+                          const SizedBox(height: 12),
+                          const Text('تعذر تحميل اللحظة', key: Key('moment-link-error'), style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 6),
+                          Text(_err(s.error!), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
+                        ],
                         const SizedBox(height: 16),
                         OutlinedButton(
                           key: const Key('moment-link-retry'),
