@@ -373,6 +373,12 @@ await pool.query("UPDATE map_posts SET expires_at = now() - interval '40 days', 
 await pool.query("UPDATE map_posts SET status='blocked' WHERE id=$1", [pSecret.id]);
 const swept2 = await globalThis.naslifeMapPostsSweep();
 check(!(await exists(oldHidden.id)) && !(await exists(pSecret.id)) && await exists(old[1].id), 'sweep: saved but hidden/blocked expired moments are deleted, saved active ones kept', String(swept2));
+// بعد الكنس لا تعود النسخة المخزّنة (العنوان «مخفية محفوظة» حُفظ وقت الحفظ)
+{
+  const list = await call('GET', '/wishlist', { expect: 200 });
+  const row = list.find((w) => w.refId === oldHidden.id);
+  check(row && row.title === 'لحظة لم تعد متاحة' && row.imageUrl === null && row.available === false && !JSON.stringify(row).includes('مخفية محفوظة'), 'swept saved moment shows the generic card, not its stored caption', JSON.stringify(row));
+}
 
 await pool.query('DROP TABLE IF EXISTS map_post_reactions, map_post_react_notified');
 await pool.query('DELETE FROM wishlist_items'); await pool.query('DELETE FROM user_blocks');

@@ -77,7 +77,8 @@ check(list.find((x) => x.id === w1.id).available === false, 'hidden listing → 
 await call('DELETE', `/mapposts/${post.id}`, { user: 'SA0000002', expect: 200 });
 list = await call('GET', '/wishlist', { expect: 200 });
 const gone = list.find((x) => x.id === w4.id);
-check(gone && gone.available === false && gone.title === 'عرض القهوة', 'deleted post keeps the saved title but is unavailable');
+// لحظة حذفها صاحبها: بطاقة عامة بلا عنوانها المخزّن (قراره يسبق نسخة الحافظ؛ انظر docs/moments.md)
+check(gone && gone.available === false && gone.title === 'لحظة لم تعد متاحة' && gone.imageUrl === null, 'deleted post shows a generic card, not its saved title');
 
 await call('DELETE', `/wishlist/${w2.id}`, { user: 'SA0000002', expect: 404 });
 await call('DELETE', `/wishlist/${w2.id}`, { expect: 200 });

@@ -96,11 +96,15 @@ export default async function wishlist(app, opts) {
     } catch { return null; }
   }
 
-  const out = (w, live) => ({
+  const out = (w, liveIn) => {
+    // لحظة محفوظة حُذفت أو كُنست: لا نعرض نسختها المخزّنة (قد تكون أُخفيت أو حُجبت قبل الكنس)، بطاقة عامة بدلها
+    const live = !liveIn && w.kind === "post" && w.ref_id ? HIDDEN_POST : liveIn;
+    return {
     id: w.id, kind: w.kind, refId: w.ref_id, title: live?.title ?? w.title, subtitle: live?.subtitle ?? w.subtitle,
     price: live?.hidden ? null : live?.price ?? (w.price == null ? null : Number(w.price)), imageUrl: live?.hidden ? null : live?.imageUrl ?? w.image_url, note: w.note, done: w.done,
     available: w.kind === "custom" ? true : !!live?.available, bizId: live?.bizId ?? null, createdAt: w.created_at,
-  });
+    };
+  };
 
   // ---- قائمتي: مع تحديث البيانات من مصدرها
   app.get("/wishlist", async (req, reply) => {
