@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../../api/client.dart';
@@ -11,6 +12,7 @@ import 'overlay_canvas.dart';
 
 /// وسائط المنشور خلف الطبقات: صورة (رابط أو بايتات)، فيديو (مشغّل أصلي عند العرض أو معاينة عند التحرير)،
 /// تسجيل صوتي (بطاقة تشغيل بموجات)، أو خلفية ملونة للنص.
+/// الفيديو المعروض داخل [MomentPlayback] (عارض اللحظات) يعمل كسناب: فوراً بالصوت وبلا أزرار، يقوده متحكم العارض، وغلافه تحته حتى أول إطار.
 class PostMedia extends StatelessWidget {
   final String kind;
   final String? url;
@@ -29,15 +31,25 @@ class PostMedia extends StatelessWidget {
         if (url != null && url!.isNotEmpty) return Image.network(mediaUrl(url!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => _fallback(Icons.broken_image_outlined));
         return _fallback(Icons.image_outlined);
       case 'video':
-        if (play && url != null && url!.isNotEmpty) return Container(color: Colors.black, child: VideoView(url: mediaUrl(url!), autoplay: true));
-        return Container(
-          color: const Color(0xFF14181C),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            const Icon(Icons.play_circle_fill_rounded, size: 72, color: Colors.white),
-            const SizedBox(height: 8),
-            Text('فيديو قصير${durationSec != null ? ' · $durationSec ث' : ''}', style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
-          ]),
-        );
+        final hasUrl = url != null && url!.isNotEmpty;
+        if (play && hasUrl) {
+          final c = MomentPlayback.maybeOf(context);
+          if (c != null) return _MomentVideo(media: url!, controller: c);
+          return Container(color: Colors.black, child: VideoView(url: mediaUrl(url!), autoplay: true));
+        }
+        final label = Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.play_circle_fill_rounded, size: 72, color: Colors.white),
+          const SizedBox(height: 8),
+          Text('فيديو قصير${durationSec != null ? ' · $durationSec ث' : ''}', style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600, shadows: [Shadow(color: Colors.black54, blurRadius: 4)])),
+        ]);
+        // مقطع مرفوع لا يعمل الآن (لحظة مجاورة أثناء السحب): إطاره الثابت بدل لوحة داكنة
+        if (hasUrl && bytes == null) {
+          return Stack(fit: StackFit.expand, children: [
+            Image.network(thumbUrl(url!), key: const Key('post-video-poster'), fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: const Color(0xFF14181C))),
+            label,
+          ]);
+        }
+        return Container(color: const Color(0xFF14181C), child: label);
       case 'audio':
         return _AudioCard(url: url, bytes: bytes, mime: mime, durationSec: durationSec, play: play);
       default:
@@ -47,6 +59,217 @@ class PostMedia extends StatelessWidget {
   }
 
   Widget _fallback(IconData icon) => Container(color: const Color(0xFF14181C), child: Icon(icon, size: 64, color: Colors.white38));
+}
+
+/// متحكم فيديو اللحظة المعروضة في العارض: يضعه العارض فوق صفحاته فيأخذه [PostMedia] و[MomentVideoGestures] للحظة النشطة.
+/// null حين لا تكون اللحظة النشطة فيديو.
+class MomentPlayback extends InheritedWidget {
+  final VideoViewController? controller;
+  const MomentPlayback({super.key, required this.controller, required super.child});
+
+  static VideoViewController? maybeOf(BuildContext context) => context.dependOnInheritedWidgetOfExactType<MomentPlayback>()?.controller;
+
+  @override
+  bool updateShouldNotify(MomentPlayback oldWidget) => !identical(controller, oldWidget.controller);
+}
+
+/// فيديو اللحظة في العارض: الغلاف (إطار من المقطع) تحته حتى أول إطار، ثم المقطع بلا أزرار يقوده المتحكم.
+class _MomentVideo extends StatelessWidget {
+  final String media;
+  final VideoViewController controller;
+  const _MomentVideo({required this.media, required this.controller});
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+        color: Colors.black,
+        child: Stack(fit: StackFit.expand, children: [
+          ValueListenableBuilder<VideoPlayback>(
+            valueListenable: controller,
+            builder: (_, v, __) => v.firstFrame && !v.failed
+                ? const SizedBox.shrink()
+                : Stack(fit: StackFit.expand, children: [
+                    Image.network(thumbUrl(media), key: const Key('moment-video-poster'), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+                    if (v.failed)
+                      const Center(
+                        child: Text('تعذر تشغيل الفيديو', key: Key('moment-video-failed'), style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, shadows: [Shadow(color: Colors.black87, blurRadius: 6)])),
+                      ),
+                  ]),
+          ),
+          // لكل لحظة متحكم جديد ومشغّل جديد: المفتاح يمنع إعادة استخدام مشغّل اللحظة السابقة
+          VideoView(key: ObjectKey(controller), url: mediaUrl(media), poster: thumbUrl(media), controller: controller, autoplay: true, controls: false),
+        ]),
+      );
+}
+
+/// منطقة لمس فيديو اللحظة (بلا أزرار تحكم، كسناب). النقرة كما في الصور: النصف الأيسر [onLeftTap] والأيمن [onRightTap].
+/// الضغطة المطوّلة بحسب الموضع الفعلي على الشاشة لا اتجاه الكتابة (قرار المالك): أقصى اليمين (~35%) تسريع 2x ما دام الضغط،
+/// أقصى اليسار ترجيع بضعف السرعة (إيقاف وقفز 200 م.ث للخلف كل 100 م.ث)، والوسط إيقاف مؤقت؛ وعند الرفع يعود التشغيل العادي.
+/// فوقها رقاقة السرعة أثناء الضغط، ورقاقة «اضغط لتشغيل الصوت» إن رفض المتصفح تشغيل الصوت تلقائياً.
+class MomentVideoGestures extends StatefulWidget {
+  final VideoViewController? controller;
+  final VoidCallback onLeftTap, onRightTap;
+  const MomentVideoGestures({super.key, required this.controller, required this.onLeftTap, required this.onRightTap});
+
+  /// عرض كل منطقة جانبية نسبةً إلى عرض اللحظة
+  static const sideZone = .35;
+  static const rewindStep = Duration(milliseconds: 200), rewindEvery = Duration(milliseconds: 100);
+
+  @override
+  State<MomentVideoGestures> createState() => _MomentVideoGesturesState();
+}
+
+enum _Hold { none, fast, rewind, pause }
+
+class _MomentVideoGesturesState extends State<MomentVideoGestures> {
+  _Hold _hold = _Hold.none;
+  Timer? _rewind;
+
+  double get _width => context.size?.width ?? 0;
+
+  void _tap(TapUpDetails d) {
+    final w = _width;
+    if (w > 0 && d.localPosition.dx < w / 2) {
+      widget.onLeftTap();
+    } else {
+      widget.onRightTap();
+    }
+  }
+
+  void _start(LongPressStartDetails d) {
+    final c = widget.controller;
+    final w = _width;
+    if (c == null || w <= 0) return;
+    final x = d.localPosition.dx / w;
+    final hold = x >= 1 - MomentVideoGestures.sideZone ? _Hold.fast : x <= MomentVideoGestures.sideZone ? _Hold.rewind : _Hold.pause;
+    _rewind?.cancel();
+    switch (hold) {
+      case _Hold.fast:
+        c.setRate(2);
+        c.play();
+      case _Hold.rewind:
+        // المتصفح لا يشغّل للخلف: إيقاف وقفزات قصيرة متتالية تعطي ترجيعاً بضعف السرعة
+        c.pause();
+        _rewind = Timer.periodic(MomentVideoGestures.rewindEvery, (_) => c.seekBy(-MomentVideoGestures.rewindStep));
+      case _Hold.pause:
+        c.pause();
+      case _Hold.none:
+        break;
+    }
+    setState(() => _hold = hold);
+  }
+
+  void _end() {
+    _rewind?.cancel();
+    _rewind = null;
+    final hold = _hold;
+    if (hold == _Hold.none) return;
+    setState(() => _hold = _Hold.none);
+    final c = widget.controller;
+    if (c == null) return;
+    if (hold == _Hold.fast) {
+      c.setRate(1);
+    } else {
+      c.play();
+    }
+  }
+
+  @override
+  void didUpdateWidget(MomentVideoGestures oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.controller, widget.controller)) return;
+    // انتقل العارض إلى لحظة أخرى أثناء الضغط: لا يبقى مؤقّت يقفز في مقطع آخر
+    _rewind?.cancel();
+    _rewind = null;
+    if (_hold == _Hold.fast) oldWidget.controller?.setRate(1);
+    _hold = _Hold.none;
+  }
+
+  @override
+  void dispose() {
+    _rewind?.cancel();
+    if (_hold == _Hold.fast) widget.controller?.setRate(1);
+    super.dispose();
+  }
+
+  Widget _chip(String text, Key key, {VoidCallback? onTap, TextDirection? direction}) => Center(
+        key: key,
+        child: Material(
+          color: Colors.black54,
+          shape: const StadiumBorder(),
+          child: InkWell(
+            customBorder: const StadiumBorder(),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              child: Text(text, textDirection: direction, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5)),
+            ),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.controller;
+    // تعطيل الحركة في النظام: الرقاقات تظهر وتختفي بلا تلاشٍ
+    final fade = (MediaQuery.maybeDisableAnimationsOf(context) ?? false) ? Duration.zero : const Duration(milliseconds: 160);
+    // رموز السرعة باتجاه ثابت من اليسار لليمين حتى يبقى ⏩ يميناً و⏪ يساراً كما على الشاشة
+    final speed = switch (_hold) {
+      _Hold.fast => _chip('2x ⏩', const Key('moment-fast'), direction: TextDirection.ltr),
+      _Hold.rewind => _chip('⏪ 2x', const Key('moment-rewind'), direction: TextDirection.ltr),
+      _ => const SizedBox.shrink(),
+    };
+    return Stack(fit: StackFit.expand, children: [
+      GestureDetector(
+        key: const Key('moment-video-zone'),
+        behavior: HitTestBehavior.translucent,
+        onTapUp: _tap,
+        onLongPressStart: _start,
+        onLongPressEnd: (_) => _end(),
+        onLongPressCancel: _end,
+      ),
+      Positioned(
+        top: 76,
+        left: 12,
+        right: 12,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (c != null)
+            ValueListenableBuilder<VideoPlayback>(
+              valueListenable: c,
+              builder: (_, v, __) => AnimatedSwitcher(
+                duration: fade,
+                child: v.soundBlocked && !v.failed ? _chip('🔇 اضغط لتشغيل الصوت', const Key('moment-unmute'), onTap: c.unmute) : const SizedBox.shrink(),
+              ),
+            ),
+          const SizedBox(height: 8),
+          AnimatedSwitcher(duration: fade, child: speed),
+        ]),
+      ),
+    ]);
+  }
+}
+
+final _chatMediaName = RegExp(r'^/chat/media/([a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5})$', caseSensitive: false);
+
+/// رابط المعاينة الخفيفة لفيديو مرفوع عبر /chat/upload: `GET /chat/vpreview/<name>` (360p، أول ست ثوانٍ، صامتة) يولّدها الخادم
+/// عند أول طلب ويحفظها. null لغير ملفاتنا فيأخذ المتصل الرابط الكامل.
+String? videoPreviewUrl(String media) {
+  final full = mediaUrl(media);
+  final m = _chatMediaName.firstMatch(Uri.tryParse(full)?.path ?? '');
+  return m == null ? null : '${ApiClient.mediaBase}/chat/vpreview/${m.group(1)}';
+}
+
+/// للاختبارات: يفرض طلب أول المقطع بترويسة Range كما على الويب (اختبارات الودجات تعمل على Dart VM).
+bool? momentRangeWarmOverride;
+
+/// أول 1.5 م.ب من المقطع: يكفي لبدء التشغيل فوراً لأن الخادم يضع فهرس MP4 في أوله (+faststart).
+const momentWarmBytes = 1572864;
+
+/// يسخّن لحظة فيديو قبل الوصول إليها: يحمّل غلافها مسبقاً، وعلى الويب يطلب أول المقطع بترويسة Range عبر عميل الخادم
+/// فيجده المتصفح في ذاكرته حين يبدأ التشغيل. على الجوال يكفي الغلاف (video_player يفتح اتصاله بنفسه).
+void warmMomentVideo(BuildContext context, ApiClient api, String media) {
+  if (media.isEmpty) return;
+  unawaited(precacheImage(NetworkImage(thumbUrl(media)), context, onError: (_, __) {}));
+  if (momentRangeWarmOverride ?? kIsWeb) unawaited(api.warmMedia(api.media(media), bytes: momentWarmBytes));
 }
 
 /// بطاقة التسجيل الصوتي: موجات ثابتة شبه عشوائية (بذرة من الرابط حتى تتطابق بين المحرّر والعارض) وزر تشغيل بتقدم.
