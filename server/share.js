@@ -109,7 +109,7 @@ export default async function share(app, opts) {
     const live = l && l.status === "active";
     return serve(req, reply, { title: live ? `${l.title} · ${price}` : `عرض في سوق ${SITE}`, description: live ? String(l.description ?? "").slice(0, 200) || "اطلبه من ناس لايف" : "افتح الرابط في ناس لايف لرؤية العرض.", image: live ? absImage(req, l.image_url) : null, url, type: live ? "product" : "website" });
   });
-  // ---- لحظة: /m/<معرّف اللحظة> صفحة صغيرة بوسوم المعاينة (العنوان من النص، والصورة من الصورة نفسها أو مصغّر الفيديو،
+  // ---- لحظة: /m/<معرّف اللحظة> صفحة صغيرة بوسوم المعاينة (العنوان من النص، والصورة مصغّر /chat/thumb للصورة والفيديو،
   // والوصف الناشر والمكان) تحوّل المتصفح إلى /#/m/<id> فيفتح التطبيق عارض اللحظة. التحويل بوسم refresh لا بسكربت لأن
   // CSP في Caddy يمنع السكربتات المضمّنة، والصفحة مستقلة عن index.html فتعمل ولو لم تُنشر حزمة الويب بعد.
   // اللحظة المخفية أو المحجوبة أو المحذوفة تُعرض بوسوم عامة بلا نص ولا صورة.
@@ -133,9 +133,12 @@ export default async function share(app, opts) {
     let meta;
     if (!p) meta = { title: DEFAULT_TITLE, description: "افتح الرابط في ناس لايف لمشاهدة اللحظة.", url };
     else {
+      // المصغّر (JPEG بحد 480 بكسل، عشرات الكيلوبايتات) للصورة والفيديو معاً: الصورة الأصلية حتى 2048 بكسل وقد تتجاوز
+      // نصف ميغابايت فيعرض واتساب البطاقة بلا صورة. الأصل فقط لصورة ليست من وسائطنا.
       let image = null;
-      if (p.kind === "image") image = absImage(req, p.media_url);
-      else if (p.kind === "video") { const m = MEDIA_NAME.exec(String(p.media_url ?? "")); if (m) image = `${origin}/chat/thumb/${m[1]}`; }
+      const m = p.kind === "image" || p.kind === "video" ? MEDIA_NAME.exec(String(p.media_url ?? "")) : null;
+      if (m) image = `${origin}/chat/thumb/${m[1]}`;
+      else if (p.kind === "image") image = absImage(req, p.media_url);
       const description = [oneLine(p.nickname, 40), oneLine(p.place_name, 80)].filter(Boolean).join(" · ") || "على ناس لايف";
       meta = { title: oneLine(p.caption, 100) || oneLine(p.title, 100) || DEFAULT_TITLE, description, url, image, type: p.kind === "video" ? "video.other" : "article", card: image ? "summary_large_image" : "summary" };
     }

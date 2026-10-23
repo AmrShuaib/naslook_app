@@ -579,9 +579,12 @@ let wishSeq = 10;
 function wishlistRoute(req, res, url, key) {
   const json = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
   const readBody = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => cb(JSON.parse(raw || '{}'))); };
-  if (key === 'GET /wishlist') return json(200, mockWishes);
+  // لحظة مخفية أو محجوبة (ليست لي): بطاقة عامة بلا نص ولا صورة، ولا حفظ جديد لها (كما في wishlist.js)
+  const hiddenPost = (refId) => { const p = mockPosts.find((x) => x.id === String(refId ?? '').toLowerCase()); return !!p && p.status !== 'active' && !p.mine; };
+  const masked = (w) => w.kind === 'post' && hiddenPost(w.refId) ? { ...w, title: 'لحظة لم تعد متاحة', subtitle: 'منشور على الخريطة', price: null, imageUrl: null, available: false } : w;
+  if (key === 'GET /wishlist') return json(200, mockWishes.map(masked));
   if (key === 'GET /wishlist/status') return json(200, { ok: true });
-  if (key === 'POST /wishlist') { readBody((b) => { const w = { id: 'w' + (++wishSeq), kind: b.kind, refId: b.refId ?? null, title: b.title ?? ('عنصر ' + b.refId), subtitle: b.kind === 'market' ? 'منتج في السوق' : b.kind === 'item' ? 'دائرة تجارية' : b.kind === 'event' ? 'فعالية' : b.kind === 'post' ? 'منشور على الخريطة' : '', price: b.price ?? 1500, imageUrl: null, note: b.note ?? '', done: false, available: true, createdAt: new Date().toISOString() }; mockWishes.unshift(w); json(200, w); }); return true; }
+  if (key === 'POST /wishlist') { readBody((b) => { if (b.kind === 'post' && hiddenPost(b.refId)) return json(404, { error: 'not-found' }); const w = { id: 'w' + (++wishSeq), kind: b.kind, refId: b.refId ?? null, title: b.title ?? ('عنصر ' + b.refId), subtitle: b.kind === 'market' ? 'منتج في السوق' : b.kind === 'item' ? 'دائرة تجارية' : b.kind === 'event' ? 'فعالية' : b.kind === 'post' ? 'منشور على الخريطة' : '', price: b.price ?? 1500, imageUrl: null, note: b.note ?? '', done: false, available: true, createdAt: new Date().toISOString() }; mockWishes.unshift(w); json(200, w); }); return true; }
   let m = key.match(/^PATCH \/wishlist\/(w\d+)$/); if (m) { readBody((b) => { const w = mockWishes.find((x) => x.id === m[1]); if (!w) return json(404, { error: 'not-found' }); Object.assign(w, b); json(200, w); }); return true; }
   m = key.match(/^DELETE \/wishlist\/(w\d+)$/); if (m) { const i = mockWishes.findIndex((x) => x.id === m[1]); if (i >= 0) mockWishes.splice(i, 1); return json(200, { ok: true }); }
   return false;
@@ -1127,10 +1130,13 @@ http.createServer((req, res) => {
       }
     }
     if (key === 'GET /moments/status') return mj(200, { ok: true, reactions: EMO });
-    if (key === 'GET /chat/status') return mj(200, { ok: true, media: true, durable: true, transcode: true, thumbs: true, peaks: true, vpreview: true, maxBytes: 31457280 });
+    if (key === 'GET /chat/status') return mj(200, { ok: true, media: true, durable: true, transcode: true, thumbs: true, peaks: true, vpreview: true, maxBytes: 31457280,
+      encode: { running: 0, waiting: 0, slots: 1, queue: 3, timeoutMs: 100000, nice: true }, previews: { running: 0, waiting: 0, slots: 2, queue: 20 } });
     if (req.method === 'GET' && url.pathname.startsWith('/chat/vpreview/')) {
       const f = path.join(MEDIA, path.basename(url.pathname));
-      if (!f.endsWith('.mp4') || !fs.existsSync(f)) { console.log(key, '-> 404'); res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"error":"not-found"}'); }
+      // اسم فيه busy يحاكي طابور المعاينات الممتلئ (503) حتى يُجرَّب رجوع التطبيق إلى المصغّر
+      if (f.includes('busy')) { console.log(key, '-> 503'); res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store', 'retry-after': '30' }); return res.end('{"error":"busy"}'); }
+      if (!f.endsWith('.mp4') || !fs.existsSync(f)) { console.log(key, '-> 404'); res.writeHead(404, { 'content-type': 'application/json', 'cache-control': 'public, max-age=3600' }); return res.end('{"error":"not-found"}'); }
       console.log(key, '-> 200'); res.writeHead(200, { 'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'cache-control': 'public, max-age=31536000, immutable' }); return fs.createReadStream(f).pipe(res);
     }
     const ml = url.pathname.match(/^\/m\/([^/]+)$/);
