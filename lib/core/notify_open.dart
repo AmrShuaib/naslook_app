@@ -18,6 +18,7 @@ import '../pages/jobs/job_offer_page.dart';
 import '../pages/jobs/job_offers_page.dart';
 import '../pages/market/market_page.dart';
 import '../pages/myspace/wishlist_page.dart';
+import '../pages/posts/moment_actions.dart';
 import '../pages/posts/my_posts_page.dart';
 import '../pages/search/search_page.dart';
 import '../pages/wallet/wallet_page.dart';
@@ -111,6 +112,10 @@ Widget? notificationTarget(AppNotification n) {
       return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'inbox').clamp(0, adminSections.length - 1));
     case 'post_blocked':
       return const MyPostsPage();
+    // تفاعل على لحظتي: تُفتح اللحظة نفسها في العارض
+    case 'moment_react':
+      final post = n.str('postId');
+      return post == null ? const MyPostsPage() : MomentLinkPage(id: post);
     case 'wish_price_drop':
     case 'wish_available':
     case 'wish_event_reminder':
@@ -180,6 +185,8 @@ Widget? notificationTarget(AppNotification n) {
     case 'wish_available':
     case 'wish_event_reminder':
       return (icon: Icons.bookmark_added_outlined, color: Joy.accent);
+    case 'moment_react':
+      return (icon: Icons.add_reaction_outlined, color: Joy.accent);
     case 'saved_search_match':
       return (icon: Icons.saved_search_rounded, color: Joy.primary);
     case 'community_post':

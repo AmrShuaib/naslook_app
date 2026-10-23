@@ -17,11 +17,11 @@ import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
-import '../../ui/wish_button.dart';
 import '../business/business_page.dart';
 import '../chat/chat_thread_page.dart';
 import '../market/market_page.dart';
 import 'composer/voice_layer.dart';
+import 'moment_actions.dart';
 import 'overlay_canvas.dart';
 import 'post_composer.dart';
 import 'post_stats.dart';
@@ -211,6 +211,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
       backgroundColor: const Color(0xFF1C1F24),
       builder: (ctx) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(key: const Key('moment-directions'), leading: const Icon(Icons.directions_rounded, color: Colors.white), title: const Text('الاتجاهات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'directions')),
           ListTile(leading: const Icon(Icons.flag_outlined, color: Colors.white), title: const Text('إبلاغ عن المنشور', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'report')),
           ListTile(leading: const Icon(Icons.block_rounded, color: Joy.danger), title: Text('حظر ${p.user.nickname}', style: const TextStyle(color: Joy.danger)), onTap: () => Navigator.pop(ctx, 'block')),
           const SizedBox(height: 8),
@@ -219,6 +220,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     );
     paused = false;
     if (!mounted || choice == null) return;
+    if (choice == 'directions') return openMomentDirections(context, p);
     // الإبلاغ والحظر يحتاجان حساباً: ندعو الزائر للدخول قبل ورقة الأسباب بدل رفض 401 بعدها
     if (!requireAccount(context)) return;
     final api = ref.read(apiClientProvider);
@@ -272,6 +274,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
       builder: (ctx) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           ListTile(leading: const Icon(Icons.insights_outlined, color: Colors.white), title: const Text('الإحصاءات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'stats')),
+          ListTile(key: const Key('moment-directions'), leading: const Icon(Icons.directions_rounded, color: Colors.white), title: const Text('الاتجاهات', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'directions')),
           ListTile(leading: const Icon(Icons.edit_outlined, color: Colors.white), title: const Text('تعديل المنشور', style: TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'edit')),
           ListTile(leading: Icon(p.status == 'active' ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: Colors.white), title: Text(p.status == 'active' ? 'إخفاء من الخريطة' : 'إظهار على الخريطة', style: const TextStyle(color: Colors.white)), onTap: () => Navigator.pop(ctx, 'toggle')),
           ListTile(leading: const Icon(Icons.delete_outline_rounded, color: Joy.danger), title: const Text('حذف المنشور', style: TextStyle(color: Joy.danger)), onTap: () => Navigator.pop(ctx, 'delete')),
@@ -281,6 +284,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     );
     paused = false;
     if (!mounted || choice == null) return;
+    if (choice == 'directions') return openMomentDirections(context, p);
     final api = ref.read(apiClientProvider);
     try {
       if (choice == 'stats') {
@@ -433,32 +437,42 @@ class PostView extends ConsumerWidget {
             ]),
           ]),
         ),
-        // الأسفل: العنوان والسعر، التعليق، زر الإجراء، الإعجاب والمشاهدات والمراسلة
+        // الأسفل: العنوان والسعر والتعليق، وبجانبها عمود الأفعال على الحافة كسناب وتيك توك (إعجاب، تفاعل، حفظ، مشاركة، خريطة)،
+        // ثم زر الإجراء، وصف المراسلة والمشاهدات والخيارات
         Positioned(
           bottom: 10, left: 12, right: 12,
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            if (p.title.isNotEmpty || p.price != null)
-              Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(14)),
-                child: Row(children: [
-                  if (p.title.isNotEmpty) Expanded(child: Text(p.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15))),
-                  if (p.price != null) Text(p.price == 0 ? 'مجاناً' : money(p.price!), style: const TextStyle(color: Joy.sun, fontWeight: FontWeight.w800, fontSize: 16)),
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                  if (p.title.isNotEmpty || p.price != null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(14)),
+                      child: Row(children: [
+                        if (p.title.isNotEmpty) Expanded(child: Text(p.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15))),
+                        if (p.price != null) Text(p.price == 0 ? 'مجاناً' : money(p.price!), style: const TextStyle(color: Joy.sun, fontWeight: FontWeight.w800, fontSize: 16)),
+                      ]),
+                    ),
+                  if (p.caption.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(p.caption, maxLines: 4, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.5, shadows: [Shadow(color: Colors.black87, blurRadius: 6)]))),
                 ]),
               ),
-            if (p.caption.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(p.caption, maxLines: 4, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.5, shadows: [Shadow(color: Colors.black87, blurRadius: 6)]))),
+              const SizedBox(width: 8),
+              // شاشة قصيرة: أيقونات بلا تسميات حتى يبقى للتعليق مكان
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: MomentRail(key: ValueKey('moment-rail-${p.id}'), post: p, active: active, onLike: onLike, onHold: onHold, compact: box.maxHeight < 640),
+              ),
+            ]),
             if (p.cta != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () { if (!p.mine) unawaited(ref.read(apiClientProvider).trackCta(p.id)); runPostCta(context, p); }, icon: Icon(_ctaIcon(p.cta!.type)), label: Text(p.cta!.label.isNotEmpty ? p.cta!.label : postCtaTypes[p.cta!.type] ?? ''))),
               ),
             Row(children: [
-              _action(p.liked ? Icons.favorite_rounded : Icons.favorite_outline_rounded, '${p.likes}', onLike, color: p.liked ? Joy.accent : Colors.white),
-              const SizedBox(width: 6),
               if (p.mine) _action(Icons.visibility_outlined, '${p.views}', null),
               if (!p.mine && me != null) ...[
-                const SizedBox(width: 6),
                 _action(Icons.chat_bubble_outline_rounded, 'مراسلة', () {
                   if (!requireAccount(context)) return;
                   unawaited(ref.read(apiClientProvider).trackContact(p.id));
@@ -471,8 +485,6 @@ class PostView extends ConsumerWidget {
                   unawaited(ref.read(apiClientProvider).trackContact(p.id));
                   Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p.user, initialText: '#post/${p.id} ')));
                 }, key: const Key('post-reply-private'), tooltip: 'رد خاص'),
-                const SizedBox(width: 2),
-                WishButton(kind: 'post', refId: p.id, dark: true, compact: true),
               ],
               const Spacer(),
               if (onMenu != null) IconButton(tooltip: 'خيارات', onPressed: onMenu, icon: const Icon(Icons.more_horiz_rounded, color: Colors.white)),

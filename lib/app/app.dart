@@ -30,6 +30,7 @@ import '../state/providers.dart';
 import '../screens/login_page.dart';
 import '../screens/verify_email_page.dart';
 import '../ui/joy_nav_bar.dart';
+import '../pages/posts/moment_actions.dart';
 import '../pages/posts/my_posts_page.dart';
 import '../pages/map/map_page.dart';
 import '../pages/circles/circles_page.dart';
@@ -165,12 +166,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     }
   }
 
-  /// رابط عام (`/c/<دائرة>` أو `/u/<نك نيم>`) وصل عند الإقلاع: نفتح وجهته بعد الدخول.
+  /// رابط عام (`/c/<دائرة>` أو `/u/<نك نيم>` أو `/m/<لحظة>`) وصل عند الإقلاع: نفتح وجهته بعد الدخول.
   void _openPendingLink() {
     final l = pendingLink;
     if (l == null || !mounted) return;
     pendingLink = null;
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => pendingLinkPage(l)));
+    Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: l.isMoment, builder: (_) => pendingLinkPage(l)));
   }
 
   /// إشعار دفع نُقر عليه والتطبيق مغلق: وصل الرابط `#/n/<id>` عند الإقلاع، نفتح وجهته بعد الدخول.
@@ -299,8 +300,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 }
 
 
-/// وجهة رابط عام: صفحة الدائرة أو الملف العام بالنك نيم.
-Widget pendingLinkPage(PendingLink l) => l.isCircle ? BusinessPage(id: l.value) : PublicProfilePage(handle: l.value);
+/// وجهة رابط عام: صفحة الدائرة أو الملف العام بالنك نيم أو عارض اللحظة.
+Widget pendingLinkPage(PendingLink l) => l.isMoment ? MomentLinkPage(id: l.value) : l.isCircle ? BusinessPage(id: l.value) : PublicProfilePage(handle: l.value);
 
 /// تصفّح كزائر. مع رابط مشترك: الوجهة مع شريط سفلي للدخول. بلا رابط: تبويبات عامة (الخريطة، الأماكن، السوق، الفعاليات،
 /// حسابي). أي فعل يتطلب حساباً (401 أو [requireAccount]) يعرض دعوة للدخول.
@@ -324,6 +325,13 @@ class _GuestShellState extends ConsumerState<GuestShell> {
   void initState() {
     super.initState();
     ApiClient.onUnauthorized = _promptSignIn;
+    // رابط لحظة: العارض فوق تبويبات الزائر، فإغلاقه يعيد إلى الخريطة لا إلى صفحة فارغة
+    final l = widget.link;
+    if (l != null && l.isMoment) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => pendingLinkPage(l)));
+      });
+    }
   }
 
   @override
@@ -368,7 +376,7 @@ class _GuestShellState extends ConsumerState<GuestShell> {
       if (n != null && _tab != 0) setState(() => _tab = 0);
     });
     final link = widget.link;
-    if (link != null) return _linkView(link);
+    if (link != null && !link.isMoment) return _linkView(link);
     return Scaffold(
       key: const Key('guest-shell'),
       // HeroMode: لكل من السوق والفعاليات زر عائم بوسم Hero الافتراضي؛ بقاؤهما معاً في IndexedStack يُفشل انتقال أي صفحة تُفتح

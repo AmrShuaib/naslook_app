@@ -24,15 +24,15 @@ class WishItem {
   /// مفتاح التطابق مع الأزرار: النوع والمرجع.
   String get key => '$kind:${refId ?? id}';
   bool get isCustom => kind == 'custom';
-  String get kindLabel => wishKinds[kind] ?? 'أمنية';
+  String get kindLabel => kind == 'post' ? 'لحظة' : wishKinds[kind] ?? 'أمنية';
 
   WishItem copyWith({bool? done, String? note}) => WishItem(
         id: id, kind: kind, title: title, subtitle: subtitle, note: note ?? this.note, refId: refId, imageUrl: imageUrl, bizId: bizId, price: price,
         done: done ?? this.done, available: available, createdAt: createdAt);
 }
 
-/// أنواع الأمنيات وتسمياتها (ترتيب شرائح التصفية).
-const wishKinds = {'market': 'السوق', 'item': 'خدمات ومنتجات', 'event': 'فعاليات', 'post': 'منشورات', 'biz': 'دوائر تجارية', 'custom': 'أمنياتي الحرة'};
+/// أنواع الأمنيات وتسمياتها (ترتيب شرائح التصفية؛ اللحظات المحفوظة من العارض أولاً).
+const wishKinds = {'post': 'اللحظات', 'market': 'السوق', 'item': 'خدمات ومنتجات', 'event': 'فعاليات', 'biz': 'دوائر تجارية', 'custom': 'أمنياتي الحرة'};
 
 extension WishlistApi on ApiClient {
   Future<List<WishItem>> wishlist() async => asList(await getList('/wishlist')).map(WishItem.fromJson).toList();

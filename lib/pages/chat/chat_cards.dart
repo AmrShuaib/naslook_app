@@ -9,7 +9,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/biz_api.dart';
 import '../../api/biz_models.dart';
@@ -22,11 +21,14 @@ import '../../api/models.dart';
 import '../../api/wishlist_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
-import '../../core/share/legal_links.dart';
+import '../../core/directions.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../ui/widgets.dart';
 import 'live_share.dart';
+
+// الاتجاهات انتقلت إلى core/directions.dart (يستعملها عارض اللحظات أيضاً)؛ تبقى متاحة لمن يستورد هذا الملف
+export '../../core/directions.dart' show openExternalUrl, directionsUrl, openDirections;
 
 /// إجراء على بطاقة يُنفَّذ في صفحة المحادثة (open, chat, pay, accept, decline, cancel, counter, share-loc, directions, join, copy).
 typedef CodeAction = void Function(ChatCode code, String action);
@@ -880,18 +882,6 @@ class _Bullet extends StatelessWidget {
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('• ', style: TextStyle(color: Joy.primary, fontWeight: FontWeight.w800)), Expanded(child: Text(text, style: const TextStyle(fontSize: 13, height: 1.5)))]),
       );
 }
-
-/// يفتح رابطاً خارج التطبيق عبر الوسيلة نفسها في بقية التطبيق (LegalLinks.openOverride يلتقطه في الاختبارات).
-Future<void> openExternalUrl(Uri u) async {
-  final o = LegalLinks.openOverride;
-  if (o != null) return o(u);
-  await launchUrl(u, mode: LaunchMode.externalApplication);
-}
-
-Uri directionsUrl(double lat, double lng) => Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng');
-
-/// يفتح خرائط جوجل للاتجاهات إلى نقطة.
-Future<void> openDirections(double lat, double lng) => openExternalUrl(directionsUrl(lat, lng));
 
 // -----------------------------------------------------------------------------
 // زر الاتجاهات في بطاقة الموعد
