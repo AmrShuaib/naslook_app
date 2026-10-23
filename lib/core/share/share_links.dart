@@ -8,12 +8,13 @@ import '../../ui/widgets.dart';
 import '../app_theme.dart';
 import 'share_stub.dart' if (dart.library.js_interop) 'share_web.dart' if (dart.library.io) 'share_io.dart' as impl;
 
-/// رابط عام وصل عند الإقلاع: دائرة (`/c/<id>`) أو حساب (`/u/<نك نيم>`)، بالمسار أو بالجزء (`#/c/…`).
+/// رابط عام وصل عند الإقلاع: دائرة (`/c/<id>`) أو حساب (`/u/<نك نيم>`) أو لحظة (`/m/<uuid>`)، بالمسار أو بالجزء (`#/c/…`).
 class PendingLink {
-  final String kind; // circle | user
+  final String kind; // circle | user | moment
   final String value;
   const PendingLink(this.kind, this.value);
   bool get isCircle => kind == 'circle';
+  bool get isMoment => kind == 'moment';
   @override
   String toString() => '$kind:$value';
 }
@@ -23,6 +24,8 @@ PendingLink? pendingLink;
 
 final _circleRe = RegExp(r'^/?c/([a-z0-9][a-z0-9-]{1,63})/?$');
 final _userRe = RegExp(r'^/?u/([^/?#]{2,40})/?$');
+// رابط اللحظة: صفحة /m/<id> في الخادم تحوّل المتصفح إلى /#/m/<id>
+final _momentRe = RegExp(r'^/?m/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/?$');
 
 PendingLink? parsePendingLink(Uri uri) {
   for (final s in [uri.path, uri.fragment]) {
@@ -30,6 +33,8 @@ PendingLink? parsePendingLink(Uri uri) {
     if (m != null) return PendingLink('circle', m.group(1)!);
     final u = _userRe.firstMatch(s);
     if (u != null) return PendingLink('user', Uri.decodeComponent(u.group(1)!));
+    final m2 = _momentRe.firstMatch(s);
+    if (m2 != null) return PendingLink('moment', m2.group(1)!.toLowerCase());
   }
   return null;
 }

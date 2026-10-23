@@ -106,7 +106,8 @@ class MySpacePage extends ConsumerWidget {
             _Tile(icon: Icons.auto_awesome_motion_outlined, title: 'منشوراتي', hint: 'على الخريطة', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyPostsPage()))),
             _Tile(icon: Icons.storefront_outlined, title: 'السوق', hint: 'عروضي وطلباتي', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 0)))),
             _Tile(icon: Icons.storefront_rounded, title: 'نشاطي التجاري', hint: 'لوحة دائرتك', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBusinessesPage()))),
-            _Tile(icon: Icons.bookmark_added_outlined, title: 'أمنياتي', hint: 'منتجات وفعاليات', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WishlistPage()))),
+            // «محفوظاتي»: اللحظات المحفوظة من العارض مع الأمنيات (صفحة واحدة بتصفية)
+            _Tile(key: const Key('myspace-saved'), icon: Icons.bookmark_added_outlined, title: 'محفوظاتي', hint: 'لحظات وأمنيات', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WishlistPage()))),
             _Tile(icon: Icons.saved_search_rounded, title: 'بحوثي المحفوظة', hint: 'تنبيه عند جديد', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SavedSearchesPage()))),
           ]),
           const SizedBox(height: 14),
@@ -843,7 +844,7 @@ class _Tile extends StatelessWidget {
   final IconData icon;
   final String title, hint;
   final VoidCallback onTap;
-  const _Tile({required this.icon, required this.title, required this.hint, required this.onTap});
+  const _Tile({super.key, required this.icon, required this.title, required this.hint, required this.onTap});
   @override
   Widget build(BuildContext context) => JoyCard(
         padding: const EdgeInsets.all(10),

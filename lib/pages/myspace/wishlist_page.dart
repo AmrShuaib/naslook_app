@@ -14,23 +14,25 @@ import '../events/events_page.dart';
 import '../market/market_page.dart';
 import '../posts/post_viewer.dart';
 
-/// قائمة الأمنيات: ما حفظه المستخدم من منتجات وخدمات وفعاليات ومنشورات، وأمنيات حرة يكتبها بنفسه.
-/// تصفية حسب النوع، فتح المصدر، تعليم "تحقّقت"، ملاحظة، وحذف.
+/// «محفوظاتي»: ما حفظه المستخدم من لحظات ومنتجات وخدمات وفعاليات، وأمنيات حرة يكتبها بنفسه.
+/// تصفية حسب النوع («اللحظات» تُفتح في العارض)، فتح المصدر، تعليم "تحقّقت"، ملاحظة، وحذف.
 class WishlistPage extends ConsumerStatefulWidget {
-  const WishlistPage({super.key});
+  /// شريحة البداية: 'all' أو نوع من [wishKinds] (مثل 'post' للحظات).
+  final String initialFilter;
+  const WishlistPage({super.key, this.initialFilter = 'all'});
   @override
   ConsumerState<WishlistPage> createState() => _WishlistPageState();
 }
 
 class _WishlistPageState extends ConsumerState<WishlistPage> {
-  String filter = 'all';
+  late String filter = widget.initialFilter;
 
   @override
   Widget build(BuildContext context) {
     final list = ref.watch(wishlistProvider);
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('قائمة أمنياتي')),
+      appBar: AppBar(title: const Text('محفوظاتي')),
       floatingActionButton: FloatingActionButton.extended(onPressed: _addCustom, icon: const Icon(Icons.add_rounded), label: const Text('أمنية جديدة')),
       body: list.when(
         data: (items) {
@@ -47,13 +49,16 @@ class _WishlistPageState extends ConsumerState<WishlistPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Row(children: [
                   _chip('الكل', 'all', items.length),
-                  for (final e in wishKinds.entries) if ((counts[e.key] ?? 0) > 0) _chip(e.value, e.key, counts[e.key]!),
+                  // «اللحظات» ظاهرة دائماً (ولو صفراً) لأنها مدخل ما يُحفظ من العارض؛ بقية الأنواع حين يوجد منها شيء
+                  for (final e in wishKinds.entries) if ((counts[e.key] ?? 0) > 0 || e.key == 'post' || e.key == filter) _chip(e.value, e.key, counts[e.key] ?? 0),
                 ]),
               ),
             ),
             Expanded(
               child: shown.isEmpty
-                  ? const EmptyState(icon: Icons.favorite_border_rounded, title: 'قائمتك فارغة', subtitle: 'اضغط رمز الحفظ على أي منتج أو خدمة أو فعالية أو منشور ليُحفظ هنا، أو أضف أمنية حرة.')
+                  ? (filter == 'post'
+                      ? const EmptyState(key: Key('wish-moments-empty'), icon: Icons.bookmark_border_rounded, title: 'لا لحظات محفوظة', subtitle: 'اضغط «حفظ» على أي لحظة في العارض لتجدها هنا ولو انتهت على الخريطة.')
+                      : const EmptyState(icon: Icons.favorite_border_rounded, title: 'قائمتك فارغة', subtitle: 'اضغط رمز الحفظ على أي لحظة أو منتج أو خدمة أو فعالية ليُحفظ هنا، أو أضف أمنية حرة.'))
                   : RefreshIndicator(
                       onRefresh: () async => ref.invalidate(wishlistProvider),
                       child: ListView.separated(
@@ -74,7 +79,7 @@ class _WishlistPageState extends ConsumerState<WishlistPage> {
 
   Widget _chip(String label, String value, int n) => Padding(
         padding: const EdgeInsetsDirectional.only(end: 8),
-        child: FilterChip(selected: filter == value, onSelected: (_) => setState(() => filter = value), label: Text('$label · $n')),
+        child: FilterChip(key: Key('wish-filter-$value'), selected: filter == value, onSelected: (_) => setState(() => filter = value), label: Text('$label · $n')),
       );
 
   Future<void> _open(WishItem w) async {
@@ -89,11 +94,12 @@ class _WishlistPageState extends ConsumerState<WishlistPage> {
       case 'event':
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: w.refId!)));
       case 'post':
+        // اللحظة المحفوظة تبقى متاحة لحافظها ولو انتهت على الخريطة (GET /mapposts/:id)
         try {
           final p = await ref.read(apiClientProvider).mapPost(w.refId!);
-          if (mounted) PostViewerPage.open(context, [p]);
+          if (mounted) await PostViewerPage.open(context, [p]);
         } catch (_) {
-          if (mounted) toast(context, 'المنشور لم يعد متاحاً', error: true);
+          if (mounted) toast(context, 'اللحظة لم تعد متاحة', error: true);
         }
       default:
         _editCustom(w);
