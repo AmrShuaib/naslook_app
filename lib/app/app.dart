@@ -318,6 +318,8 @@ class GuestShell extends ConsumerStatefulWidget {
 class _GuestShellState extends ConsumerState<GuestShell> {
   bool _prompting = false;
   int _tab = 0;
+  /// غادر الزائر صفحة الرابط المشترك إلى الخريطة («عرض على الخريطة» من لحظة فتحها في الملف أو الدائرة)
+  bool _linkClosed = false;
   // التبويب يُبنى أول مرة يُفتح فقط، فلا تُطلب بيانات السوق والفعاليات قبل أن يزورها الزائر
   final _visited = <int>{0};
 
@@ -372,11 +374,21 @@ class _GuestShellState extends ConsumerState<GuestShell> {
   @override
   Widget build(BuildContext context) {
     // «على الخريطة» في صفحة الدائرة يضبط موضع الخريطة؛ واجهة الزائر لا تستمع لـ navIndexProvider فننتقل لتبويب الخريطة هنا
-    ref.listen(mapFocusProvider, (_, n) {
-      if (n != null && _tab != 0) setState(() => _tab = 0);
-    });
     final link = widget.link;
-    if (link != null && !link.isMoment) return _linkView(link);
+    final inLink = link != null && !link.isMoment && !_linkClosed;
+    ref.listen(mapFocusProvider, (_, n) {
+      if (n == null) return;
+      // صفحة الرابط لا خريطة فيها: نتركها إلى تبويبات الزائر، والخريطة تلتقط التركيز حين تجهز (MapPage.onMapReady)
+      if (inLink) {
+        setState(() {
+          _linkClosed = true;
+          _tab = 0;
+        });
+      } else if (_tab != 0) {
+        setState(() => _tab = 0);
+      }
+    });
+    if (inLink) return _linkView(link);
     return Scaffold(
       key: const Key('guest-shell'),
       // HeroMode: لكل من السوق والفعاليات زر عائم بوسم Hero الافتراضي؛ بقاؤهما معاً في IndexedStack يُفشل انتقال أي صفحة تُفتح

@@ -17,6 +17,10 @@ class VideoView extends StatefulWidget {
   /// بلا هذا البديل يُستخدم [factoryOverride] إن وُجد ويبقى المتحكم بلا مشغّل.
   static Widget Function(String url, VideoViewController controller, {bool autoplay, bool loop, bool muted, String? poster})? controlledFactoryOverride;
 
+  /// الويب: يجهّز عناصر <video> يُعاد استعمالها لمشغّل الصوت (العارض) وتُفتح عند كل لمسة، لأن سفاري iOS لا يقبل الصوت
+  /// إلا لعنصر شُغّل داخل لمسة. بلا أثر خارج الويب.
+  static void prepareSound() => impl.prepareSoundVideos();
+
   final String url;
   final bool autoplay, loop, muted, controls;
   /// إطار ثابت يعرضه عنصر الويب ريثما يبدأ التشغيل أو إن منع المتصفح التشغيل التلقائي (خاصية poster)

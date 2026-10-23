@@ -104,7 +104,7 @@ class _MomentVideo extends StatelessWidget {
 /// منطقة لمس فيديو اللحظة (بلا أزرار تحكم، كسناب). النقرة كما في الصور: النصف الأيسر [onLeftTap] والأيمن [onRightTap].
 /// الضغطة المطوّلة بحسب الموضع الفعلي على الشاشة لا اتجاه الكتابة (قرار المالك): أقصى اليمين (~35%) تسريع 2x ما دام الضغط،
 /// أقصى اليسار ترجيع بضعف السرعة (إيقاف وقفز 200 م.ث للخلف كل 100 م.ث)، والوسط إيقاف مؤقت؛ وعند الرفع يعود التشغيل العادي.
-/// فوقها رقاقة السرعة أثناء الضغط، ورقاقة «اضغط لتشغيل الصوت» إن رفض المتصفح تشغيل الصوت تلقائياً.
+/// فوقها رقاقة السرعة أثناء الضغط، ورقاقة «اضغط لتشغيل الصوت» إن رفض المتصفح تشغيل الصوت تلقائياً، و«اضغط للمتابعة» إن أوقفه المتصفح بنفسه.
 class MomentVideoGestures extends StatefulWidget {
   final VideoViewController? controller;
   final VoidCallback onLeftTap, onRightTap;
@@ -237,7 +237,14 @@ class _MomentVideoGesturesState extends State<MomentVideoGestures> {
               valueListenable: c,
               builder: (_, v, __) => AnimatedSwitcher(
                 duration: fade,
-                child: v.soundBlocked && !v.failed ? _chip('🔇 اضغط لتشغيل الصوت', const Key('moment-unmute'), onTap: c.unmute) : const SizedBox.shrink(),
+                child: v.failed
+                    ? const SizedBox.shrink()
+                    : v.soundBlocked
+                        ? _chip('🔇 اضغط لتشغيل الصوت', const Key('moment-unmute'), onTap: c.unmute)
+                        // المتصفح أوقف المقطع بنفسه (مكالمة، فصل السماعة): لمسة تستأنفه داخل حدث اللمس بدل لحظة متجمدة
+                        : v.interrupted && !v.playing
+                            ? _chip('▶ اضغط للمتابعة', const Key('moment-resume'), onTap: c.play)
+                            : const SizedBox.shrink(),
               ),
             ),
           const SizedBox(height: 8),

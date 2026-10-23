@@ -458,6 +458,12 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
             onLongPress: (_, latlng) => _hereMenu(latlng),
             onMapReady: () {
               _onMapEvent(MapEventMoveEnd(camera: _map.camera, source: MapEventSource.mapController));
+              // تركيز طُلب قبل أن تُبنى الخريطة (زائر غادر صفحة رابط إلى الخريطة): المستمع لا يرى إلا التغييرات بعد بنائها
+              final focus = widget.home ? ref.read(mapFocusProvider) : null;
+              if (focus != null) {
+                ref.read(mapFocusProvider.notifier).state = null;
+                _map.move(LatLng(focus.lat, focus.lng), 16.5);
+              }
               // بطاقة اختيرت قبل تهيئة الخريطة: نتبعها الآن
               final sel = _rowSel;
               if (widget.home && sel != null) _followRow(sel);

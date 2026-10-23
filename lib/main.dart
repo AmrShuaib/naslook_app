@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
 import 'core/media/audio_setup.dart';
+import 'core/media/video_view.dart';
 import 'core/share/share_links.dart';
 import 'state/admin_providers.dart';
 import 'state/notify_providers.dart';
@@ -19,5 +20,7 @@ void main() {
   capturePendingLink();
   // جلسة الصوت على iOS/Android فقط (لا تعمل على الويب)؛ لا ننتظرها حتى لا تؤخر أول إطار
   unawaited(configureAudioSession());
+  // الويب: أول لمسة في التطبيق تفتح عناصر فيديو اللحظات للصوت (سفاري iOS) فتبدأ أول لحظة بالصوت حين تُفتح بلمسة
+  VideoView.prepareSound();
   runApp(const ProviderScope(child: MainApp()));
 }

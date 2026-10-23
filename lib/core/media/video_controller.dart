@@ -16,6 +16,8 @@ class VideoPlayback {
   final bool firstFrame;
   final bool ended;
   final bool failed;
+  /// المتصفح أوقف المقطع بنفسه ونحن نريده يعمل (مكالمة، فصل السماعة، مقاطعة الصوت): رقاقة «اضغط للمتابعة» بدل لحظة متجمدة
+  final bool interrupted;
   final double rate;
   /// أبعاد المقطع الطبيعية (صفر قبل البيانات الوصفية)
   final double width, height;
@@ -28,6 +30,7 @@ class VideoPlayback {
     this.firstFrame = false,
     this.ended = false,
     this.failed = false,
+    this.interrupted = false,
     this.rate = 1,
     this.width = 0,
     this.height = 0,
@@ -45,6 +48,7 @@ class VideoPlayback {
     bool? firstFrame,
     bool? ended,
     bool? failed,
+    bool? interrupted,
     double? rate,
     double? width,
     double? height,
@@ -58,11 +62,16 @@ class VideoPlayback {
         firstFrame: firstFrame ?? this.firstFrame,
         ended: ended ?? this.ended,
         failed: failed ?? this.failed,
+        interrupted: interrupted ?? this.interrupted,
         rate: rate ?? this.rate,
         width: width ?? this.width,
         height: height ?? this.height,
       );
 }
+
+/// سبب الإيقاف المؤقت. لكل سبب علَمه فلا يُلغي أحدها إيقاف الآخر: صفحة العارض تُغطّى بمسار معتم (TickerMode)
+/// مستقل عن العارض نفسه حين تفتح فوقه ورقة أو حوار أو يختفي التطبيق.
+enum VideoSuspend { ticker, viewer }
 
 /// ما يربطه المشغّل الفعلي (أو الوهمي في الاختبار) بالمتحكم ليستقبل أوامره؛ ويبلّغ حالته عبر [VideoViewController.report].
 abstract class VideoViewBackend {
@@ -80,7 +89,8 @@ class VideoViewController extends ChangeNotifier implements ValueListenable<Vide
   VideoPlayback _value = const VideoPlayback();
   VideoViewBackend? _backend;
   final _ended = StreamController<void>.broadcast();
-  bool _wantPlaying = true, _suspended = false, _disposed = false;
+  bool _wantPlaying = true, _disposed = false;
+  final _suspendedBy = <VideoSuspend>{};
   bool? _wantMuted;
   double _rate = 1;
   /// منذ آخر تبليغ بالموضع: المتصفح يبلّغ نحو أربع مرات في الثانية فقط، فنقدّر ما بينها حتى يتحرك شريط التقدّم بسلاسة
@@ -94,8 +104,8 @@ class VideoViewController extends ChangeNotifier implements ValueListenable<Vide
   /// كتم طُلب صراحة؛ null = ما طلبه الودجت
   bool? get wantsMuted => _wantMuted;
   double get rate => _rate;
-  /// متوقف مؤقتاً لأن الصفحة مغطاة (TickerMode)؛ يعود حين تظهر إن كان مطلوباً
-  bool get suspended => _suspended;
+  /// متوقف مؤقتاً لأن الصفحة أو العارض مغطّى أو التطبيق مخفي ([VideoSuspend])؛ يعود حين يزول آخر سبب إن كان مطلوباً
+  bool get suspended => _suspendedBy.isNotEmpty;
   bool get attached => _backend != null;
   bool get disposed => _disposed;
 
@@ -113,7 +123,7 @@ class VideoViewController extends ChangeNotifier implements ValueListenable<Vide
   void play() {
     if (_disposed) return;
     _wantPlaying = true;
-    if (!_suspended) _backend?.play();
+    if (!suspended) _backend?.play();
   }
 
   void pause() {
@@ -178,10 +188,13 @@ class VideoViewController extends ChangeNotifier implements ValueListenable<Vide
 
   bool _notifyPending = false;
 
-  /// الصفحة غُطّيت بمسار آخر أو عادت (TickerMode): إيقاف مؤقت لا يغيّر رغبة التشغيل.
-  void setSuspended(bool suspended) {
-    if (_disposed || suspended == _suspended) return;
-    _suspended = suspended;
+  /// إيقاف مؤقت لسبب [reason] لا يغيّر رغبة التشغيل: الصفحة غُطّيت بمسار آخر (TickerMode)، أو العارض مغطّى بورقة
+  /// أو حوار أو التطبيق في الخلفية. يعود التشغيل حين يزول آخر سبب فقط.
+  void setSuspended(bool on, {VideoSuspend reason = VideoSuspend.ticker}) {
+    if (_disposed) return;
+    final was = suspended;
+    on ? _suspendedBy.add(reason) : _suspendedBy.remove(reason);
+    if (was == suspended) return;
     if (suspended) {
       _backend?.pause();
     } else if (_wantPlaying) {

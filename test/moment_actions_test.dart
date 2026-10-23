@@ -1,6 +1,7 @@
 // أفعال اللحظة في العارض: عمود الحافة (إعجاب، تفاعل، حفظ، مشاركة، خريطة)، التفاعلات الأربعة (إرسال وإزالة مع العدّادات)،
 // الحفظ في «محفوظاتي» عبر قائمة الأمنيات، ورقة المشاركة (محادثة بـ #post/<id>، مشاركة أصلية، نسخ الرابط)، «عرض على الخريطة»
 // و«الاتجاهات»، دعوة الزائر للدخول قبل الحفظ والتفاعل، رابط اللحظة #/m/<id> وإشعار التفاعل، وشريحة «اللحظات» في المحفوظات.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -32,6 +33,7 @@ import 'package:naslook/state/providers.dart';
 
 const _post = 'aaaaaaaa-0000-4000-8000-000000000001';
 const _mine = 'aaaaaaaa-0000-4000-8000-000000000002';
+const _other = 'aaaaaaaa-0000-4000-8000-000000000003';
 
 class _SignedIn extends AppStateNotifier {
   _SignedIn(super.api, super.store) {
@@ -60,6 +62,8 @@ class _Srv {
   final wishes = <Map<String, dynamic>>[];
   int seq = 0;
   bool postMissing = false;
+  /// رد خطأ غير 404 لجلب اللحظة (انقطاع أو خطأ خادم)
+  int? postError;
 
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   Map<String, dynamic> get _reactions => {'counts': counts, 'mine': mine};
@@ -97,7 +101,10 @@ class _Srv {
       wishes.removeWhere((w) => w['id'] == wm.group(1));
       return _json({'ok': true});
     }
-    if (key == 'GET /mapposts/$_post') return postMissing ? _json({'error': 'not-found'}, 404) : _json(_postJson());
+    if (key == 'GET /mapposts/$_post') {
+      if (postError != null) return _json({'error': 'server'}, postError!);
+      return postMissing ? _json({'error': 'not-found'}, 404) : _json(_postJson());
+    }
     if (key == 'GET /chats') return _json([{'id': 'SA0000002', 'nickname': 'sara'}]);
     if (key == 'GET /contacts') return _json([{'id': 'SA0000003', 'nickname': 'khalid'}, {'id': 'SA0000001', 'nickname': 'amr'}]);
     if (key == 'POST /messages') {
@@ -135,6 +142,21 @@ Future<void> _settle(WidgetTester tester, [int n = 2]) async {
   for (var i = 0; i < n; i++) {
     await tester.pump(const Duration(milliseconds: 300));
   }
+}
+
+/// ثوانٍ من النبضات (نصف ثانية) تتجاوز مدة اللحظة النصية (7 ث)
+Future<void> _wait(WidgetTester tester, int seconds) async {
+  for (var i = 0; i < seconds * 2; i++) {
+    await tester.pump(const Duration(milliseconds: 500));
+  }
+}
+
+/// يفتح شريط التفاعل ويختار الرمز [i]
+Future<void> _pick(WidgetTester tester, int i) async {
+  await tester.tap(find.byKey(const Key('moment-react')));
+  await _settle(tester);
+  await tester.tap(find.byKey(Key('moment-react-$i')));
+  await _settle(tester);
 }
 
 PostViewerPage _viewer({bool mine = false}) => PostViewerPage(posts: [MapPost.fromJson(_postJson(id: mine ? _mine : _post, mine: mine))]);
@@ -429,6 +451,18 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
+    testWidgets('a network or server error is not reported as «no longer available», and retry recovers', (tester) async {
+      final srv = _Srv()..postError = 503;
+      await _pump(tester, const MomentLinkPage(id: _post), srv: srv);
+      expect(find.byKey(const Key('moment-link-error')), findsOneWidget);
+      expect(find.byKey(const Key('moment-link-missing')), findsNothing);
+      srv.postError = null;
+      await tester.tap(find.byKey(const Key('moment-link-retry')));
+      await _settle(tester);
+      expect(find.byType(PostViewerPage), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+
     test('a moment_react notification opens the moment', () {
       final n = AppNotification.fromJson({'id': 'n1', 'kind': 'moment_react', 'title': 'sara تفاعل مع لحظتك 🔥', 'body': '', 'data': {'postId': _post}, 'createdAt': DateTime.now().toIso8601String()});
       final page = notificationTarget(n);
@@ -450,6 +484,153 @@ void main() {
       expect(find.byKey(const Key('guest-shell')), findsOneWidget, reason: 'إغلاق العارض يعيد إلى تبويبات الزائر');
       await tester.pumpWidget(const SizedBox());
     });
+  });
+
+
+  // العارض مغطّى طوال سلسلة الفعل: لا تقدّم تلقائي خلف منتقي المحادثة أو دعوة الدخول، ولا يُغلق انتهاء اللحظة ما فوقها.
+  group('actions hold the viewer', () {
+    testWidgets('a single moment: the chat picker survives the 7 s auto-advance and the send still goes out', (tester) async {
+      final (srv, _) = await _pump(tester, _viewer());
+      await tester.tap(find.byKey(const Key('moment-share')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('moment-share-chat')));
+      await _settle(tester);
+      expect(find.byKey(const Key('moment-pick-SA0000002')), findsOneWidget);
+      await _wait(tester, 10);
+      expect(find.byKey(const Key('moment-pick-SA0000002')), findsOneWidget, reason: 'المنتقي لا يُغلق خلف المستخدم');
+      expect(find.byType(PostViewerPage), findsOneWidget);
+      await tester.tap(find.byKey(const Key('moment-pick-SA0000002')));
+      await _settle(tester);
+      expect(srv.bodies['POST /messages']!.single, containsPair('content', '#post/$_post'));
+      expect(find.text('أُرسلت اللحظة إلى sara'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('several moments: the viewer does not move on behind the picker, so picking a person sends it', (tester) async {
+      final (srv, _) = await _pump(tester, PostViewerPage(posts: [MapPost.fromJson(_postJson()), MapPost.fromJson({..._postJson(id: _other), 'caption': 'اللحظة الثانية'})]));
+      await tester.tap(find.byKey(const Key('moment-share')).first);
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('moment-share-chat')));
+      await _settle(tester);
+      await _wait(tester, 8);
+      expect(find.byKey(const Key('moment-pick-SA0000002')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('moment-pick-SA0000002')));
+      await _settle(tester);
+      expect(srv.calls.where((c) => c == 'POST /messages'), hasLength(1));
+      expect(find.text('أُرسلت اللحظة إلى sara'), findsOneWidget);
+      expect(find.text('الكورنيش الليلة'), findsOneWidget, reason: 'العارض بقي على اللحظة التي شاركها');
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a guest\'s sign-in sheet from the rail is not closed by the auto-advance', (tester) async {
+      final (srv, _) = await _pump(tester, _viewer(), signedIn: false);
+      await tester.tap(find.byKey(const Key('moment-save')));
+      await _settle(tester);
+      expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+      await _wait(tester, 10);
+      expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+      expect(find.byType(PostViewerPage), findsOneWidget);
+      expect(srv.calls.where((c) => c.startsWith('POST ')).where((c) => !c.endsWith('/view')), isEmpty);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a guest tapping the heart is asked to sign in: no flip, no like request, no raw error', (tester) async {
+      final (srv, _) = await _pump(tester, _viewer(), signedIn: false);
+      await tester.tap(find.byKey(const Key('moment-like')));
+      await _settle(tester);
+      expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+      expect(srv.calls, isNot(contains('POST /mapposts/$_post/like')));
+      expect(_label(tester, 'moment-like'), '1');
+      expect(find.textContaining('ApiException'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
+
+  group('reaction ordering', () {
+    testWidgets('a slow first pick cannot win over a later one: requests go out in order and the last pick stays', (tester) async {
+      final srv = _GatedReact(afterHandling: true);
+      await _pump(tester, _viewer(), srv: srv);
+      await _pick(tester, 0); // 😍 ورده يتأخر
+      await _pick(tester, 2); // 🔥
+      expect(tester.widget<Text>(find.byKey(const Key('moment-react-mine'))).data, '🔥');
+      srv.gate.complete();
+      await _settle(tester);
+      expect(srv.mine, '🔥');
+      expect(tester.widget<Text>(find.byKey(const Key('moment-react-mine'))).data, '🔥');
+      expect([for (final b in srv.bodies['POST /moments/$_post/react']!) b['emoji']], ['😍', '🔥']);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('the server sees picks in the order they were made even if the first request is slow to arrive', (tester) async {
+      final srv = _GatedReact(afterHandling: false);
+      await _pump(tester, _viewer(), srv: srv);
+      await _pick(tester, 0);
+      await _pick(tester, 2);
+      srv.gate.complete();
+      await _settle(tester);
+      expect(srv.mine, '🔥', reason: 'آخر اختيار للمستخدم');
+      expect(tester.widget<Text>(find.byKey(const Key('moment-react-mine'))).data, '🔥');
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a failed reaction made before the counts loaded rolls back only my pick, not the counts', (tester) async {
+      final srv = _SlowCountsFailingReact();
+      await _pump(tester, _viewer(), srv: srv);
+      expect(_label(tester, 'moment-react'), 'تفاعل', reason: 'العدّادات لم تصل بعد');
+      await tester.tap(find.byKey(const Key('moment-react')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('moment-react-0')));
+      await tester.pump();
+      // العدّادات تصل والطلب ما زال معلّقاً، ثم يرفضه الخادم
+      srv.countsGate.complete();
+      await _settle(tester);
+      srv.react.complete();
+      await _settle(tester);
+      expect(find.byKey(const Key('moment-react-mine')), findsNothing);
+      expect(_label(tester, 'moment-react'), '3');
+      expect(find.byType(SnackBar), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a failed counts request is retried once instead of leaving «تفاعل» without numbers', (tester) async {
+      final srv = _FlakyCounts();
+      await _pump(tester, _viewer(), srv: srv);
+      expect(srv.calls.where((c) => c == 'GET /moments/$_post/reactions'), hasLength(2));
+      expect(_label(tester, 'moment-react'), '3');
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
+
+  testWidgets('the reaction bar grows with large system text instead of clipping the counts', (tester) async {
+    for (final scale in [1.0, 1.25, 1.6]) {
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (ctx) => MediaQuery(
+            data: MediaQuery.of(ctx).copyWith(textScaler: TextScaler.linear(scale)),
+            child: Scaffold(body: Center(child: MomentReactionBar(reactions: MomentReactions.fromJson({'counts': {'😍': 12, '🔥': 3}, 'mine': '🔥'}), onPick: (_) {}))),
+          ),
+        ),
+      ));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull, reason: 'scale $scale');
+      expect(find.byKey(const Key('moment-react-count-2')), findsOneWidget);
+    }
+  });
+
+  testWidgets('«الخريطة» from a guest\'s shared profile link leaves the link page for the map tab', (tester) async {
+    DeviceLocation.override = () async => null;
+    addTearDown(() => DeviceLocation.override = null);
+    final (_, c) = await _pump(tester, const GuestShell(link: PendingLink('user', 'sara')), signedIn: false, size: const Size(900, 1400));
+    expect(find.byKey(const Key('guest-bar')), findsOneWidget);
+    unawaited(PostViewerPage.open(tester.element(find.byKey(const Key('guest-bar'))), [MapPost.fromJson(_postJson())]));
+    await _settle(tester, 3);
+    await tester.tap(find.byKey(const Key('moment-map')));
+    await _settle(tester, 4);
+    expect(find.byType(PostViewerPage), findsNothing);
+    expect(find.byKey(const Key('guest-bar')), findsNothing);
+    expect(find.byKey(const Key('guest-shell')), findsOneWidget);
+    expect(c.read(mapFocusProvider), isNull, reason: 'الخريطة التقطت التركيز حين جهزت');
+    await tester.pumpWidget(const SizedBox());
   });
 
   group('saved moments', () {
@@ -485,6 +666,54 @@ class _FailingReact extends _Srv {
   @override
   Future<http.Response> handle(http.Request req) async {
     if (req.method == 'POST' && req.url.path == '/moments/$_post/react') return _json({'error': 'blocked'}, 403);
+    return super.handle(req);
+  }
+}
+
+/// يمسك أول طلب تفاعل حتى يُفتح [gate]: بعد معالجته في الخادم ([afterHandling]) أو قبل وصوله إليه.
+class _GatedReact extends _Srv {
+  final bool afterHandling;
+  final gate = Completer<void>();
+  var _n = 0;
+  _GatedReact({required this.afterHandling});
+  @override
+  Future<http.Response> handle(http.Request req) async {
+    if (req.method == 'POST' && req.url.path == '/moments/$_post/react' && ++_n == 1) {
+      if (!afterHandling) await gate.future;
+      final r = await super.handle(req);
+      if (afterHandling) await gate.future;
+      return r;
+    }
+    return super.handle(req);
+  }
+}
+
+/// العدّادات الأولى تتأخر حتى [countsGate]، والتفاعل يُرفض (403) بعد [react].
+class _SlowCountsFailingReact extends _Srv {
+  final countsGate = Completer<void>();
+  final react = Completer<void>();
+  var _gets = 0;
+  @override
+  Future<http.Response> handle(http.Request req) async {
+    if (req.method == 'GET' && req.url.path == '/moments/$_post/reactions' && ++_gets == 1) await countsGate.future;
+    if (req.method == 'POST' && req.url.path == '/moments/$_post/react') {
+      calls.add('POST ${req.url.path}');
+      await react.future;
+      return _json({'error': 'blocked'}, 403);
+    }
+    return super.handle(req);
+  }
+}
+
+/// أول جلب للعدّادات يفشل (500) ثم ينجح.
+class _FlakyCounts extends _Srv {
+  var _gets = 0;
+  @override
+  Future<http.Response> handle(http.Request req) async {
+    if (req.method == 'GET' && req.url.path == '/moments/$_post/reactions' && ++_gets == 1) {
+      calls.add('GET ${req.url.path}');
+      return _json({'error': 'down'}, 500);
+    }
     return super.handle(req);
   }
 }
