@@ -1,6 +1,6 @@
-// روابط المشاركة العامة في Naslife: /c/<معرّف الدائرة> و /u/<النك نيم> يقدّمان واجهة التطبيق نفسها مع وسوم Open Graph
+// روابط المشاركة العامة في Naslife: /c/<معرّف الدائرة> و /u/<النك نيم> و /l/<عرض> يقدّمان واجهة التطبيق نفسها مع وسوم Open Graph
 // (العنوان والوصف والصورة) حتى تظهر بطاقة معاينة عند لصق الرابط في واتساب وإكس وغيرهما، ثم يفتح التطبيق الوجهة من المسار.
-// الملفات الخاصة (is_public=false إن وُجد العمود) تُعرض بوسوم عامة بلا صورة أو نبذة.
+// الملفات الخاصة (is_public=false إن وُجد العمود) تُعرض بوسوم عامة بلا صورة أو نبذة. و/m/<لحظة> صفحة وسوم صغيرة تحوّل إلى /#/m/<id>.
 // التسجيل في src/index.js: await app.register((await import("./share.js")).default, { pool, webappDir });
 import fs from "node:fs";
 import path from "node:path";
@@ -44,9 +44,9 @@ export default async function share(app, opts) {
     try { cache = { at: now, html: await fs.promises.readFile(path.join(WEBAPP, "index.html"), "utf8") }; } catch { return null; }
     return cache.html;
   }
-  // يحقن الوسوم بعد <head> ويبدّل <title>؛ الوسوم القديمة من الحزمة (إن وُجدت) تبقى لكن المتصفحات والمعاينات تأخذ الأولى
-  function withMeta(html, m) {
-    const tags = [
+  // وسوم المعاينة (Open Graph وتويتر) لصفحة واحدة
+  function metaTags(m) {
+    return [
       `<title>${esc(m.title)}</title>`,
       `<meta property="og:site_name" content="${esc(SITE)}">`,
       `<meta property="og:type" content="${esc(m.type ?? "website")}">`,
@@ -55,12 +55,16 @@ export default async function share(app, opts) {
       `<meta property="og:url" content="${esc(m.url)}">`,
       m.image ? `<meta property="og:image" content="${esc(m.image)}">` : "",
       `<meta name="description" content="${esc(m.description)}">`,
-      `<meta name="twitter:card" content="${m.image ? "summary" : "summary"}">`,
+      `<meta name="twitter:card" content="${esc(m.card ?? "summary")}">`,
       `<meta name="twitter:title" content="${esc(m.title)}">`,
       `<meta name="twitter:description" content="${esc(m.description)}">`,
       m.image ? `<meta name="twitter:image" content="${esc(m.image)}">` : "",
       `<link rel="canonical" href="${esc(m.url)}">`,
     ].filter(Boolean).join("\n");
+  }
+  // يحقن الوسوم بعد <head> ويبدّل <title>؛ الوسوم القديمة من الحزمة (إن وُجدت) تبقى لكن المتصفحات والمعاينات تأخذ الأولى
+  function withMeta(html, m) {
+    const tags = metaTags(m);
     let out = html.replace(/<title>[\s\S]*?<\/title>/i, "");
     out = out.replace(/<head([^>]*)>/i, (all) => `${all}\n${tags}`);
     return out;
@@ -104,6 +108,49 @@ export default async function share(app, opts) {
     const price = l ? (Number(l.price) / 100).toLocaleString("ar-SA") + " ر.س" : "";
     const live = l && l.status === "active";
     return serve(req, reply, { title: live ? `${l.title} · ${price}` : `عرض في سوق ${SITE}`, description: live ? String(l.description ?? "").slice(0, 200) || "اطلبه من ناس لايف" : "افتح الرابط في ناس لايف لرؤية العرض.", image: live ? absImage(req, l.image_url) : null, url, type: live ? "product" : "website" });
+  });
+  // ---- لحظة: /m/<معرّف اللحظة> صفحة صغيرة بوسوم المعاينة (العنوان من النص، والصورة من الصورة نفسها أو مصغّر الفيديو،
+  // والوصف الناشر والمكان) تحوّل المتصفح إلى /#/m/<id> فيفتح التطبيق عارض اللحظة. التحويل بوسم refresh لا بسكربت لأن
+  // CSP في Caddy يمنع السكربتات المضمّنة، والصفحة مستقلة عن index.html فتعمل ولو لم تُنشر حزمة الويب بعد.
+  // اللحظة المخفية أو المحجوبة أو المحذوفة تُعرض بوسوم عامة بلا نص ولا صورة.
+  const MEDIA_NAME = /\/chat\/media\/([a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5})(?:[?#].*)?$/i;
+  app.get("/m/:id", async (req, reply) => {
+    const id = String(req.params.id ?? "").toLowerCase();
+    const ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
+    const origin = publicOrigin(req);
+    const url = `${origin}/m/${ok ? id : ""}`;
+    const target = ok ? `/#/m/${id}` : "/";
+    let p = null;
+    if (ok) {
+      try {
+        p = (await pool.query(`SELECT p.kind, p.media_url, p.caption, p.title, p.place_name, p.status, ${userCols.has("nickname") ? "u.nickname" : "NULL::text AS nickname"}
+          FROM map_posts p ${userCols.has("nickname") ? "LEFT JOIN users u ON u.id = p.user_id" : ""} WHERE p.id=$1`, [id])).rows[0] ?? null;
+      } catch { p = null; }
+    }
+    if (p && p.status !== "active") p = null;
+    const DEFAULT_TITLE = "لحظة على ناس لايف";
+    const oneLine = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+    let meta;
+    if (!p) meta = { title: DEFAULT_TITLE, description: "افتح الرابط في ناس لايف لمشاهدة اللحظة.", url };
+    else {
+      let image = null;
+      if (p.kind === "image") image = absImage(req, p.media_url);
+      else if (p.kind === "video") { const m = MEDIA_NAME.exec(String(p.media_url ?? "")); if (m) image = `${origin}/chat/thumb/${m[1]}`; }
+      const description = [oneLine(p.nickname, 40), oneLine(p.place_name, 80)].filter(Boolean).join(" · ") || "على ناس لايف";
+      meta = { title: oneLine(p.caption, 100) || oneLine(p.title, 100) || DEFAULT_TITLE, description, url, image, type: p.kind === "video" ? "video.other" : "article", card: image ? "summary_large_image" : "summary" };
+    }
+    const html = `<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${metaTags(meta)}
+<meta http-equiv="refresh" content="0; url=${esc(target)}">
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#0b3d4f;color:#fff}a{color:#fff}</style>
+</head>
+<body><p><a href="${esc(target)}">افتح اللحظة في ناس لايف</a></p></body>
+</html>`;
+    return reply.type("text/html; charset=utf-8").header("cache-control", "no-cache").send(html);
   });
   app.get("/share/status", async () => ({ ok: true, webappDir: WEBAPP, avatarColumn: avatarCol, privacy: !!privacy }));
 }
