@@ -147,6 +147,13 @@ else {
   const light = gen('light720.mp4', [...src('1280x720', 30), ...tone()], ['-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '700k', '-maxrate', '900k', '-bufsize', '1800k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '64k', '-shortest', '-movflags', '+faststart']);
   r = await upload(light, 'video/mp4');
   check(r.code === 200 && r.body.size === fs.statSync(light).size && fs.readFileSync(stored(r.body.url)).equals(fs.readFileSync(light)), '720p h264/aac under 3Mbps .mp4 kept byte-for-byte', `${r.body.size} vs ${fs.statSync(light).size}`);
+  // الخفيف نفسه بفهرس في آخر الملف (كما يكتبه MediaRecorder في أندرويد وكثير من برامج التصدير): يُعاد تغليفه بلا ترميز
+  const lightEnd = gen('light720_end.mp4', [...src('1280x720', 30), ...tone()], ['-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '700k', '-maxrate', '900k', '-bufsize', '1800k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '64k', '-shortest']);
+  check(!faststart(lightEnd), 'fixture: light 720p mp4 with moov after mdat');
+  r = await upload(lightEnd, 'video/mp4');
+  p = probe(stored(r.body.url));
+  check(r.code === 200 && r.body.type === 'video/mp4' && faststart(stored(r.body.url)) && p.v === 'h264' && p.a === 'aac' && p.w === 1280 && p.h === 720 && Math.abs(r.body.size - fs.statSync(lightEnd).size) < 4096,
+    'light .mp4 with moov at the end → remuxed with +faststart (no re-encode)', `${r.body.size} vs ${fs.statSync(lightEnd).size} ${JSON.stringify(p)}`);
   const lightMov = path.join(tmp, 'light720.mov');
   execFileSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', light, '-c', 'copy', lightMov]);
   r = await upload(lightMov, 'video/quicktime');
@@ -282,7 +289,7 @@ const refresh = (html) => (html.match(/<meta http-equiv="refresh" content="([^"]
 let h = await getHtml(`/m/${pImg.id}`);
 check(h.code === 200 && /text\/html/.test(h.type) && !/<script/i.test(h.body), 'moment link: html page without scripts (CSP)');
 check(meta(h.body, 'og:title') === 'غروب &lt;b&gt;الكورنيش&lt;/b&gt;' && h.body.includes('<title>غروب &lt;b&gt;الكورنيش&lt;/b&gt;</title>'), 'og:title = caption (escaped)', meta(h.body, 'og:title'));
-check(meta(h.body, 'og:image') === iUrl && meta(h.body, 'twitter:card') === 'summary_large_image', 'og:image = the image itself on the bare host', meta(h.body, 'og:image'));
+check(meta(h.body, 'og:image') === `https://naslife.app/chat/thumb/${iName}` && meta(h.body, 'twitter:card') === 'summary_large_image', 'og:image = the light /chat/thumb of the photo on the bare host (not the 2048px original)', meta(h.body, 'og:image'));
 check(meta(h.body, 'og:description') === 'sara · الكورنيش', 'og:description = nickname · place', meta(h.body, 'og:description'));
 check(meta(h.body, 'og:url') === `https://naslife.app/m/${pImg.id}` && refresh(h.body) === `0; url=/#/m/${pImg.id}` && h.body.includes(`href="/#/m/${pImg.id}"`), 'og:url canonical, refresh + link to /#/m/<id>', refresh(h.body));
 h = await getHtml(`/m/${pVid.id.toUpperCase()}`);
@@ -291,6 +298,10 @@ check(refresh(h.body) === `0; url=/#/m/${pVid.id}`, 'redirect uses the lowercase
 const pBare = await call('POST', '/mapposts', { body: { kind: 'image', mediaUrl: `/chat/media/${iName}`, lat: 21.5, lng: 39.2 }, user: 'SA0000001', expect: 200 });
 h = await getHtml(`/m/${pBare.id}`);
 check(meta(h.body, 'og:title') === 'لحظة على ناس لايف' && meta(h.body, 'og:description') === 'amr', 'no caption → «لحظة على ناس لايف»', meta(h.body, 'og:title'));
+// صورة ليست من وسائطنا (رابط قديم أو خارجي): لا مصغّر لها، فتبقى الصورة نفسها
+await pool.query("UPDATE map_posts SET media_url='https://cdn.example.com/photo.jpg' WHERE id=$1", [pBare.id]);
+h = await getHtml(`/m/${pBare.id}`);
+check(meta(h.body, 'og:image') === 'https://cdn.example.com/photo.jpg', 'foreign photo: og:image falls back to the original', meta(h.body, 'og:image'));
 await call('PATCH', `/mapposts/${pVid.id}`, { body: { status: 'hidden' }, user: 'SA0000002', expect: 200 });
 h = await getHtml(`/m/${pVid.id}`);
 check(h.code === 200 && meta(h.body, 'og:title') === 'لحظة على ناس لايف' && meta(h.body, 'og:image') === undefined && !h.body.includes('موج') && !h.body.includes('sara'), 'hidden moment: generic tags, no caption/image/author');
@@ -323,6 +334,45 @@ check(savedRow && savedRow.available === false, 'expired saved moment is listed 
 await call('DELETE', `/wishlist/${savedRow.id}`, { expect: 200 });
 await globalThis.naslifeMapPostsSweep();
 check(!(await exists(old[0].id)) && await exists(old[1].id), 'unsaving lets the next sweep delete it');
+
+// ---- اللحظة المخفية أو المحجوبة أو المحظور صاحبها: «محفوظاتي» لا تكشف نصها ولا صورتها، ولا حفظ جديد، والكنس لا يحميها
+const secretImg = 'mtysecret-' + 'f'.repeat(24) + '.jpg';
+const pSecret = await call('POST', '/mapposts', { body: { kind: 'image', mediaUrl: `/chat/media/${secretImg}`, caption: 'SECRET caption', lat: 21.5, lng: 39.2 }, user: 'SA0000002', expect: 200 });
+const savedSecret = await call('POST', '/wishlist', { body: { kind: 'post', refId: pSecret.id }, expect: 200 });
+check(savedSecret.title === 'SECRET caption' && /mtysecret/.test(savedSecret.imageUrl), 'active moment saved with its caption and image');
+await call('PATCH', `/mapposts/${pSecret.id}`, { body: { status: 'hidden' }, user: 'SA0000002', expect: 200 });
+await call('GET', `/mapposts/${pSecret.id}`, { expect: 404 });
+const leak = (rows) => JSON.stringify(rows).includes('SECRET') || JSON.stringify(rows).includes('mtysecret');
+let mine = (await call('GET', '/wishlist', { expect: 200 })).find((x2) => x2.refId === pSecret.id);
+check(mine && mine.title === 'لحظة لم تعد متاحة' && mine.imageUrl === null && mine.available === false && mine.price === null && !leak(mine), 'hidden by owner: saved row shows a generic card, no caption or image', JSON.stringify(mine));
+x = await call('POST', '/wishlist', { body: { kind: 'post', refId: pSecret.id }, user: 'SA0000003', expect: 404 });
+check(!leak(x), 'hidden moment cannot be newly saved by id (404, nothing leaked)', JSON.stringify(x));
+x = await call('POST', '/wishlist', { body: { kind: 'post', refId: pSecret.id }, expect: 404 });
+check(!leak(x), 'saving it again by the earlier saver: 404 too');
+x = await call('PATCH', `/wishlist/${savedSecret.id}`, { body: { note: 'x' }, expect: 200 });
+check(x.title === 'لحظة لم تعد متاحة' && x.imageUrl === null && !leak(x), 'PATCH on the saved row does not leak either');
+const ownSave = await call('POST', '/wishlist', { body: { kind: 'post', refId: pSecret.id }, user: 'SA0000002', expect: 200 });
+check(ownSave.title === 'SECRET caption', 'the owner still sees (and may save) own hidden moment, as GET /mapposts/:id allows');
+await call('PATCH', `/mapposts/${pSecret.id}`, { body: { status: 'active' }, user: 'SA0000002', expect: 200 });
+await pool.query("UPDATE map_posts SET status='blocked' WHERE id=$1", [pSecret.id]);
+mine = (await call('GET', '/wishlist', { expect: 200 })).find((x2) => x2.refId === pSecret.id);
+check(mine.title === 'لحظة لم تعد متاحة' && mine.imageUrl === null && !leak(mine), 'blocked by moderation: generic card as well');
+await pool.query("UPDATE map_posts SET status='active' WHERE id=$1", [pSecret.id]);
+mine = (await call('GET', '/wishlist', { expect: 200 })).find((x2) => x2.refId === pSecret.id);
+check(mine.title === 'SECRET caption' && mine.available === true, 'restored moment shows again');
+await pool.query("INSERT INTO user_blocks(user_id,blocked_id) VALUES('SA0000002','SA0000001')");
+mine = (await call('GET', '/wishlist', { expect: 200 })).find((x2) => x2.refId === pSecret.id);
+check(mine.title === 'لحظة لم تعد متاحة' && mine.imageUrl === null && !leak(mine), 'owner blocked the saver: generic card for the saver');
+await call('POST', '/wishlist', { body: { kind: 'post', refId: pSecret.id }, user: 'SA0000001', expect: 404 });
+await pool.query('DELETE FROM user_blocks');
+// الكنس: لحظة منتهية منذ 31 يوماً محفوظة لكنها مخفية تُحذف، والنشطة المحفوظة تبقى
+const oldHidden = await call('POST', '/mapposts', { body: { kind: 'text', caption: 'مخفية محفوظة', lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 });
+await call('POST', '/wishlist', { body: { kind: 'post', refId: oldHidden.id }, expect: 200 });
+await call('PATCH', `/mapposts/${oldHidden.id}`, { body: { status: 'hidden' }, user: 'SA0000003', expect: 200 });
+await pool.query("UPDATE map_posts SET expires_at = now() - interval '40 days', created_at = now() - interval '41 days' WHERE id = ANY($1::uuid[])", [[oldHidden.id, pSecret.id]]);
+await pool.query("UPDATE map_posts SET status='blocked' WHERE id=$1", [pSecret.id]);
+const swept2 = await globalThis.naslifeMapPostsSweep();
+check(!(await exists(oldHidden.id)) && !(await exists(pSecret.id)) && await exists(old[1].id), 'sweep: saved but hidden/blocked expired moments are deleted, saved active ones kept', String(swept2));
 
 await pool.query('DROP TABLE IF EXISTS map_post_reactions, map_post_react_notified');
 await pool.query('DELETE FROM wishlist_items'); await pool.query('DELETE FROM user_blocks');

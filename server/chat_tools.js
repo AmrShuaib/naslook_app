@@ -1,5 +1,6 @@
 // أدوات المحادثات في Naslife: رفع الوسائط وتقديمها، وموجة الصوت (48 قيمة مع الرفع وGET /chat/peaks)، وبيانات إضافية للرسائل (رد مقتبس، إعادة توجيه، مدة الصوت).
-// الفيديو المرفوع «خفيف» (videoArgs: 720p وسقف 2 ميغابت/ث و30 إطاراً)، وGET /chat/vpreview/:name معاينة صامتة 360p لست ثوانٍ (docs/moments.md).
+// الفيديو المرفوع «خفيف» (videoArgs: 720p وسقف 2 ميغابت/ث و30 إطاراً) عبر طابور ترميز محدود (CHAT_TRANSCODE_*)، وGET /chat/vpreview/:name
+// معاينة صامتة 360p لست ثوانٍ بطابورها وتذكّر فشلها (docs/moments.md).
 // التسجيل في src/index.js قبل app.listen:
 //   await app.register((await import("./chat_tools.js")).default, { pool, auth });
 // الملفات تُحفظ في CHAT_MEDIA_DIR (الافتراضي /opt/naslife/media/chat) بأسماء عشوائية غير قابلة للتخمين،
@@ -93,6 +94,72 @@ export function previewArgs(probe) {
   return ["-t", String(P.seconds), "-an", "-sn", "-dn", "-c:v", "libx264", "-preset", "veryfast", "-crf", String(P.crf), "-pix_fmt", "yuv420p", "-vf", vf, "-movflags", "+faststart"];
 }
 
+/// سبب رفض مدخل المعاينة قبل فك ترميزه، أو null: أبعاد أو معدّل إطارات أو مدة لا معنى لها تجعل فك أول ست ثوانٍ يحتل
+/// فتحة المعاينة حتى المهلة. حد البكسلات 4096×2304 (فوق 4K قليلاً)، وما يُخزَّن بعد الرفع 720p أصلاً.
+export function previewInputProblem(probe) {
+  const v = probe?.video;
+  const w = Number(v?.width) || 0, h = Number(v?.height) || 0;
+  if (!w || !h) return "no-size";
+  if (w * h > 4096 * 2304) return "too-large";
+  // avg_frame_rate فقط: r_frame_rate في ملفات VFR قد يكون أساس الزمن (1000/1) لا معدّلاً حقيقياً
+  const [a, b] = String(v?.avg_frame_rate ?? "").split("/").map(Number);
+  const fps = b ? a / b : a;
+  if (Number.isFinite(fps) && fps > 480) return "fps";
+  const dur = Number(probe?.format?.duration);
+  if (Number.isFinite(dur) && (dur < 0 || dur > 6 * 3600)) return "duration";
+  return null;
+}
+
+/// فتحات عمل بترتيب الوصول (FIFO): acquire(maxWaitMs) يعيد دالة الإفلات، أو null إن انقضى maxWaitMs (0 = بلا حد) قبل أن تتاح فتحة.
+/// الإفلات يسلّم الفتحة للمنتظر التالي مباشرة فلا يسبقه طلب جديد ولا يتجاوز العدد n.
+export function createSlots(n) {
+  let running = 0;
+  const queue = [];
+  const release = () => { const next = queue.shift(); if (next) next.grant(); else running--; };
+  const once = () => { let done = false; return () => { if (!done) { done = true; release(); } }; };
+  return {
+    get running() { return running; },
+    get waiting() { return queue.length; },
+    get full() { return running >= n; },
+    acquire(maxWaitMs = 0) {
+      if (running < n) { running++; return Promise.resolve(once()); }
+      return new Promise((resolve) => {
+        const w = { timer: null, grant: () => { clearTimeout(w.timer); resolve(once()); } };
+        if (maxWaitMs > 0) w.timer = setTimeout(() => { const i = queue.indexOf(w); if (i >= 0) queue.splice(i, 1); resolve(null); }, maxWaitMs);
+        queue.push(w);
+      });
+    },
+  };
+}
+
+/// هل فهرس MP4 (moov) قبل البيانات (mdat)؟ نمشي على الصناديق العليا بقراءة رؤوسها فقط (8 أو 16 بايتاً لكل صندوق).
+/// الفهرس في الآخر يجبر المشغّل على طلب Range إضافي إلى نهاية الملف قبل أول إطار ويُضيّع تسخين أول 1.5 م.ب في العارض.
+/// أي شك (ملف تالف أو صندوق بطول مفتوح) = false، فيُعاد التغليف (ثانية تقريباً بلا خسارة).
+export async function moovFirst(file) {
+  let fh = null;
+  try {
+    fh = await fs.open(file, "r");
+    const { size } = await fh.stat();
+    const buf = Buffer.alloc(16);
+    let pos = 0;
+    for (let i = 0; i < 64 && pos + 8 <= size; i++) {
+      const { bytesRead } = await fh.read(buf, 0, 16, pos);
+      if (bytesRead < 8) return false;
+      const type = buf.toString("latin1", 4, 8);
+      if (type === "moov") return true;
+      if (type === "mdat") return false;
+      let len = buf.readUInt32BE(0);
+      if (len === 1) { if (bytesRead < 16) return false; len = Number(buf.readBigUInt64BE(8)); }
+      if (len < 8) return false; // 0 = الصندوق حتى نهاية الملف، فلا moov بعده
+      pos += len;
+    }
+    return false;
+  } catch { return false; } finally { await fh?.close().catch(() => {}); }
+}
+
+// عدد صحيح من متغير بيئة (أو من خيارات الإضافة في الاختبار)، والقيمة غير الصالحة تعود للافتراضي
+const intOpt = (v, def, min = 0) => { const n = Number(v); return v != null && v !== "" && Number.isFinite(n) && n >= min ? Math.floor(n) : def; };
+
 // أي خطأ أثناء التهيئة يُسجَّل ولا يُسقط الخادم: تبقى المحادثات النصية تعمل ولو تعطلت أدوات الوسائط
 export default async function chatTools(app, opts) {
   try {
@@ -134,6 +201,22 @@ async function setup(app, opts) {
   let ffmpeg = false;
   try { await execFileP("ffmpeg", ["-version"], { timeout: 5000 }); ffmpeg = true; } catch {}
   logger(`chat_tools: ffmpeg ${ffmpeg ? "available" : "not found (audio kept as recorded)"}`);
+  // الترميز الثقيل (فيديو الرفع والمعاينات) بأولوية منخفضة (nice 10) وخيطين حتى يبقى الخادم يرد على الخريطة والمحادثات أثناءه
+  let niceOk = false;
+  if (ffmpeg) { try { await execFileP("nice", ["-n", "10", "ffmpeg", "-version"], { timeout: 5000 }); niceOk = true; } catch {} }
+  const T = opts.transcode ?? {};
+  const ENC = {
+    slots: intOpt(T.slots ?? process.env.CHAT_TRANSCODE_SLOTS, 1, 1),
+    // أكثر من هذا العدد ينتظرون = يُخزَّن الرفع الجديد بالطريق السريع (الأصل أو إعادة تغليف) بدل الانتظار
+    queue: intOpt(T.queue ?? process.env.CHAT_TRANSCODE_QUEUE, 3, 0),
+    // مهلة الترميز أقل بكثير من مهلة رفع الفيديو في التطبيق (5 دقائق) مع الانتظار في الطابور
+    timeoutMs: intOpt(T.timeoutMs ?? process.env.CHAT_TRANSCODE_TIMEOUT_MS, 100000, 1),
+    waitMs: intOpt(T.waitMs ?? process.env.CHAT_TRANSCODE_WAIT_MS, 90000, 1),
+    threads: intOpt(T.threads ?? process.env.CHAT_TRANSCODE_THREADS, 2, 1),
+  };
+  const heavy = (args, timeout) => niceOk ? execFileP("nice", ["-n", "10", "ffmpeg", ...args], { timeout }) : execFileP("ffmpeg", args, { timeout });
+  const transcodeSlots = createSlots(ENC.slots);
+  const threadArgs = ["-threads", String(ENC.threads)];
   // ffprobe: ترميزا الفيديو والصوت وأبعاد الإطار ومعدّل الإطارات والمعدّل الكلي (لقرار «الفيديو الخفيف»)
   async function probeStreams(file) {
     const { stdout } = await execFileP("ffprobe", ["-v", "error", "-show_entries",
@@ -143,17 +226,58 @@ async function setup(app, opts) {
     return { video: streams.find((x) => x.codec_type === "video"), audio: streams.find((x) => x.codec_type === "audio"), format: j.format ?? {} };
   }
   // الفيديو يُوحَّد إلى MP4 (H.264/AAC وmoov في المقدمة): iPhone يرسل .mov وAndroid يرسل .webm ولا يشغّل أيٌّ منهما ملفات الآخر.
-  // الخفيف أصلاً يُعاد تغليفه فقط (سريع، مع إسقاط مسارات البيانات الوصفية)، وغيره يُرمَّز بقواعد videoArgs (720p، سقف 2 ميغابت/ث، 30 إطاراً).
+  // الخفيف أصلاً يبقى كما هو إن كان فهرسه في المقدمة وإلا يُعاد تغليفه فقط (سريع)، وغيره يُرمَّز بقواعد videoArgs (720p، سقف 2 ميغابت/ث،
+  // 30 إطاراً) في فتحة من طابور الترميز (ENC.slots). الطابور الممتلئ أو الانتظار الطويل أو فشل الترميز ومهلته = الطريق السريع fastPath.
+  const newMp4 = (inFile) => path.join(path.dirname(inFile), `${Date.now().toString(36)}-${crypto.randomBytes(12).toString("hex")}.mp4`);
+  // إعادة تغليف إلى MP4 بلا ترميز للصورة (+faststart)؛ الصوت غير AAC يُرمَّز إلى AAC لأنه رخيص (ثانية لدقيقة صوت) ويُشغَّل في كل مكان.
+  async function remux(inFile, probe) {
+    const out = newMp4(inFile);
+    const a = probe?.audio;
+    const audio = !a || a.codec_name === "aac" ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", LIGHT_VIDEO.audio];
+    // HEVC في MP4 يحتاج الوسم hvc1 حتى يشغّله سفاري
+    const tag = probe?.video?.codec_name === "hevc" ? ["-tag:v", "hvc1"] : [];
+    const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-c:v", "copy", ...tag, ...audio, "-movflags", "+faststart", out];
+    try { await execFileP("ffmpeg", args, { timeout: 30000 }); }
+    catch (e) { await fs.unlink(out).catch(() => {}); throw e; }
+    await fs.unlink(inFile).catch(() => {});
+    return out;
+  }
+  async function fastPath(inFile, ext, probe, why) {
+    if (ext === "mp4" && await moovFirst(inFile)) { logger(`chat_tools: video kept as uploaded (${why})`); return inFile; }
+    try {
+      const out = await remux(inFile, probe);
+      logger(`chat_tools: video remuxed ${path.basename(out)} (${why})`);
+      return out;
+    } catch (e) {
+      logger(`chat_tools: remux failed, keeping original (${why}): ${e?.message || e}`);
+      return inFile;
+    }
+  }
   async function normalizeVideo(inFile, ext) {
     const probe = await probeStreams(inFile);
     if (!probe.video) throw new Error("no video stream");
     const plan = videoArgs(probe, ext);
-    if (plan.keep) return inFile;
-    const out = path.join(path.dirname(inFile), `${Date.now().toString(36)}-${crypto.randomBytes(12).toString("hex")}.mp4`);
-    const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", ...plan.args, "-movflags", "+faststart", out];
-    try { await execFileP("ffmpeg", args, { timeout: 180000 }); }
-    catch (e) { await fs.unlink(out).catch(() => {}); throw e; }
-    if (!plan.copy) logger(`chat_tools: light video ${path.basename(out)} (${plan.reasons.join(",")})`);
+    if (plan.keep) {
+      if (await moovFirst(inFile)) return inFile;
+      return fastPath(inFile, ext, probe, "faststart");
+    }
+    if (plan.copy) return fastPath(inFile, ext, probe, "copy");
+    // طابور ممتلئ: لا ننتظر حتى لا تتكدس ملفات 30 م.ب في الذاكرة ويتجاوز الطلب مهلة التطبيق
+    if (transcodeSlots.full && transcodeSlots.waiting >= ENC.queue) return fastPath(inFile, ext, probe, "queue-full");
+    const release = await transcodeSlots.acquire(ENC.waitMs);
+    if (!release) return fastPath(inFile, ext, probe, "queue-wait");
+    const out = newMp4(inFile);
+    let ok = false;
+    try {
+      const args = ["-y", "-hide_banner", "-loglevel", "error", ...threadArgs, "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", ...plan.args, ...threadArgs, "-movflags", "+faststart", out];
+      await heavy(args, ENC.timeoutMs);
+      ok = true;
+    } catch (e) {
+      await fs.unlink(out).catch(() => {});
+      logger(`chat_tools: light video encode ${e?.killed ? "timed out" : "failed"}: ${e?.message || e}`);
+    } finally { release(); }
+    if (!ok) return fastPath(inFile, ext, probe, "encode-failed");
+    logger(`chat_tools: light video ${path.basename(out)} (${plan.reasons.join(",")})`);
     await fs.unlink(inFile).catch(() => {});
     return out;
   }
@@ -287,35 +411,57 @@ async function setup(app, opts) {
   if (PREVIEW_DIR) await fs.mkdir(PREVIEW_DIR, { recursive: true }).catch(() => {});
   const previewPath = (name) => path.join(PREVIEW_DIR, name.replace(/\.[a-z0-9]+$/, "") + ".mp4");
   const previewInflight = new Map();
-  const PREVIEW_SLOTS = Math.max(1, Number(process.env.CHAT_VPREVIEW_SLOTS) || 2);
-  let previewRunning = 0;
-  const previewQueue = [];
-  const withPreviewSlot = async (fn) => {
-    if (previewRunning >= PREVIEW_SLOTS) await new Promise((r) => previewQueue.push(r));
-    previewRunning++;
-    try { return await fn(); } finally { previewRunning--; previewQueue.shift()?.(); }
+  const PV = {
+    slots: intOpt(opts.vpreview?.slots ?? process.env.CHAT_VPREVIEW_SLOTS, 2, 1),
+    // طابور محدود: ما زاد يُجاب 503 فوراً فيعرض التطبيق المصغّر، ولا ينتظر أحد أكثر من waitMs
+    queue: intOpt(opts.vpreview?.queue ?? process.env.CHAT_VPREVIEW_QUEUE, 20, 0),
+    waitMs: intOpt(opts.vpreview?.waitMs ?? process.env.CHAT_VPREVIEW_WAIT_MS, 30000, 1),
+    timeoutMs: intOpt(opts.vpreview?.timeoutMs ?? process.env.CHAT_VPREVIEW_TIMEOUT_MS, 60000, 1),
+    // الفشل يُتذكّر يوماً (علامة <name>.fail بجانب المعاينات تبقى بعد إعادة التشغيل) حتى لا يُعاد فك ملف تالف أو بطيء مع كل طلب
+    failTtlMs: intOpt(opts.vpreview?.failTtlMs, 24 * 3600 * 1000, 1),
   };
+  const previewSlots = createSlots(PV.slots);
+  const failPath = (name) => path.join(PREVIEW_DIR, `${name}.fail`);
+  const previewFailedAt = new Map();
+  async function previewFailedRecently(name) {
+    let at = previewFailedAt.get(name);
+    if (at == null) { try { at = (await fs.stat(failPath(name))).mtimeMs; } catch { at = 0; } }
+    if (at && Date.now() - at < PV.failTtlMs) { previewFailedAt.set(name, at); return true; }
+    previewFailedAt.delete(name);
+    return false;
+  }
+  async function rememberPreviewFailure(name) {
+    previewFailedAt.set(name, Date.now());
+    await fs.writeFile(failPath(name), new Date().toISOString()).catch(() => {});
+  }
+  // النتيجة {file} أو {failed} (404 يُخزَّن ساعة في المتصفح) أو {busy} (503 بلا تخزين: ليس عيباً في الملف)
   async function makePreview(name) {
-    if (!PREVIEW_DIR || !ffmpeg) return null;
+    if (!PREVIEW_DIR || !ffmpeg) return { failed: true };
     const out = previewPath(name);
-    try { await fs.access(out); return out; } catch { /* تُولَّد الآن */ }
+    try { await fs.access(out); return { file: out }; } catch { /* تُولَّد الآن */ }
+    if (await previewFailedRecently(name)) return { failed: true };
+    // من هنا حتى تسجيل المهمة بلا await: طلبان متزامنان للملف نفسه ينتظران ترميزاً واحداً
     if (previewInflight.has(name)) return previewInflight.get(name);
+    if (previewSlots.full && previewSlots.waiting >= PV.queue) return { busy: true };
     const job = (async () => {
       const tmp = out.replace(/\.mp4$/, `.part-${crypto.randomBytes(4).toString("hex")}.mp4`);
+      const release = await previewSlots.acquire(PV.waitMs);
+      if (!release) { previewInflight.delete(name); return { busy: true }; }
       try {
-        return await withPreviewSlot(async () => {
-          const src = path.join(MEDIA_DIR, name);
-          const probe = await probeStreams(src);
-          if (!probe.video) throw new Error("no video stream");
-          await execFileP("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-i", src, "-map", "0:v:0", ...previewArgs(probe), tmp], { timeout: 60000 });
-          await fs.rename(tmp, out);
-          return out;
-        });
+        const src = path.join(MEDIA_DIR, name);
+        const probe = await probeStreams(src);
+        if (!probe.video) throw new Error("no video stream");
+        const problem = previewInputProblem(probe);
+        if (problem) throw new Error(`input rejected: ${problem}`);
+        await heavy(["-y", "-hide_banner", "-loglevel", "error", ...threadArgs, "-i", src, "-map", "0:v:0", ...previewArgs(probe), ...threadArgs, tmp], PV.timeoutMs);
+        await fs.rename(tmp, out);
+        return { file: out };
       } catch (e) {
         await fs.unlink(tmp).catch(() => {});
         logger(`chat_tools: vpreview failed for ${name}: ${e?.message || e}`);
-        return null;
-      } finally { previewInflight.delete(name); }
+        await rememberPreviewFailure(name);
+        return { failed: true };
+      } finally { release(); previewInflight.delete(name); }
     })();
     previewInflight.set(name, job);
     return job;
@@ -326,9 +472,10 @@ async function setup(app, opts) {
     const type = EXT_TYPE[name.split(".").pop()] || "";
     if (!type.startsWith("video/")) return bad(reply, 404, "not-found");
     try { await fs.access(path.join(MEDIA_DIR, name)); } catch { return bad(reply, 404, "not-found"); }
-    const file = await makePreview(name);
-    if (!file) return bad(reply, 404, "not-found");
-    return serveRange(req, reply, file, "video/mp4");
+    const r = await makePreview(name);
+    if (r.busy) return reply.code(503).header("cache-control", "no-store").header("retry-after", "30").send({ error: "busy" });
+    if (!r.file) return reply.code(404).header("cache-control", "public, max-age=3600").send({ error: "not-found" });
+    return serveRange(req, reply, r.file, "video/mp4");
   });
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
@@ -341,11 +488,14 @@ async function setup(app, opts) {
     if (!MEDIA_DIR || !NAME_RE.test(name)) return false;
     await fs.unlink(path.join(MEDIA_DIR, name)).catch(() => {});
     if (THUMB_DIR) await fs.unlink(thumbPath(name)).catch(() => {});
-    if (PREVIEW_DIR) await fs.unlink(previewPath(name)).catch(() => {});
+    if (PREVIEW_DIR) { await fs.unlink(previewPath(name)).catch(() => {}); await fs.unlink(failPath(name)).catch(() => {}); previewFailedAt.delete(name); }
     await fs.unlink(peaksPath(name)).catch(() => {});
     return true;
   };
-  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, thumbs: !!MEDIA_DIR && ffmpeg, peaks: !!MEDIA_DIR && ffmpeg, vpreview: !!MEDIA_DIR && ffmpeg, maxBytes: MAX_BYTES }));
+  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, thumbs: !!MEDIA_DIR && ffmpeg, peaks: !!MEDIA_DIR && ffmpeg, vpreview: !!MEDIA_DIR && ffmpeg, maxBytes: MAX_BYTES,
+    // حالة طابوري الترميز (للتحقق الحي من الضغط): الجاري والمنتظر والحدود
+    encode: { running: transcodeSlots.running, waiting: transcodeSlots.waiting, slots: ENC.slots, queue: ENC.queue, timeoutMs: ENC.timeoutMs, nice: niceOk },
+    previews: { running: previewSlots.running, waiting: previewSlots.waiting, slots: PV.slots, queue: PV.queue } }));
 
   // ---- موجة الصوت لملف موجود (الرسائل الأقدم من هذه الميزة): تُحسب عند أول طلب وتُخزَّن بجانب الملف. يقبل الاسم أو الرابط كاملاً.
   // بلا مصادقة كالملف نفسه (الأسماء عشوائية غير قابلة للتخمين)؛ 404 لاسم غير صالح أو ملف غير صوتي أو مفقود، و{peaks:null} إن تعذّر الحساب.
@@ -386,6 +536,8 @@ async function setup(app, opts) {
     let file = path.join(MEDIA_DIR, name);
     await fs.writeFile(file, req.body);
     let size = req.body.length;
+    // الملف صار على القرص: نفلت الجسم (حتى 30 م.ب) فلا يبقى في الذاكرة طوال الانتظار في طابور الترميز
+    req.body = null;
     if (ffmpeg && ct.startsWith("audio/") && ext !== "m4a" && ext !== "mp3") {
       try {
         file = await transcodeAudio(file);
@@ -394,7 +546,8 @@ async function setup(app, opts) {
     } else if (ffmpeg && ct.startsWith("video/")) {
       try {
         file = await normalizeVideo(file, ext);
-        name = path.basename(file); ct = "video/mp4"; size = (await fs.stat(file)).size;
+        // الطريق السريع قد يُبقي الأصل بامتداده (.mov أو .webm) حين تتعذر إعادة التغليف، فالنوع من الامتداد
+        name = path.basename(file); ct = EXT_TYPE[name.split(".").pop()] || ct; size = (await fs.stat(file)).size;
       } catch (e) { logger(`chat_tools: video normalize failed, keeping original: ${e?.message || e}`); }
     }
     if (ct.startsWith("image/") || ct.startsWith("video/")) makeThumb(name).catch(() => {});

@@ -412,12 +412,13 @@ export default async function posts(app, opts) {
     return { ok: true, status: hidden ? "blocked" : "active" };
   });
 
-  // تنظيف دوري: حذف ما انتهت مدته منذ أكثر من 30 يوماً، إلا لحظة حفظها أحد في «محفوظاتي» (wishlist_items بالنوع post) فتبقى
-  // حتى يزيلها من حفظها. جدول الأمنيات قد لا يوجد (wishlist.js تُسجَّل بعدنا)، فيُفحص وجوده عند كل كنس.
+  // تنظيف دوري: حذف ما انتهت مدته منذ أكثر من 30 يوماً، إلا لحظة نشطة حفظها أحد في «محفوظاتي» (wishlist_items بالنوع post) فتبقى
+  // حتى يزيلها من حفظها. المخفية والمحجوبة لا يحميها الحفظ: قرار صاحبها أو الإدارة يسبق الحفظ، فتُكنس كغيرها.
+  // جدول الأمنيات قد لا يوجد (wishlist.js تُسجَّل بعدنا)، فيُفحص وجوده عند كل كنس.
   const sweep = async () => {
     try {
       const saved = (await pool.query("SELECT to_regclass('wishlist_items') IS NOT NULL AS ok")).rows[0]?.ok === true;
-      const keep = saved ? " AND NOT EXISTS (SELECT 1 FROM wishlist_items w WHERE w.kind='post' AND lower(w.ref_id) = p.id::text)" : "";
+      const keep = saved ? " AND NOT (p.status='active' AND EXISTS (SELECT 1 FROM wishlist_items w WHERE w.kind='post' AND lower(w.ref_id) = p.id::text))" : "";
       return (await pool.query(`DELETE FROM map_posts p WHERE p.expires_at < now() - interval '30 days'${keep}`)).rowCount;
     } catch { return 0; }
   };

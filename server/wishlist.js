@@ -46,8 +46,17 @@ export default async function wishlist(app, opts) {
   const tableExists = async (name) => (await pool.query("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1", [name])).rowCount > 0;
   const tables = { market: await tableExists("market_listings"), item: await tableExists("biz_items"), event: await tableExists("events"), biz: await tableExists("biz"), post: await tableExists("map_posts") };
 
-  // بيانات العنصر من مصدره؛ null إن لم يعد موجوداً
-  async function resolve(kind, refId) {
+  // الحظر بين المشاهد وصاحب اللحظة في أي اتجاه (safety.js)؛ بلا safety لا حظر
+  const blockedWith = async (uid, owner) => {
+    if (!uid || !owner || uid === owner) return false;
+    try { return ((await globalThis.naslifeBlockedIds?.(uid)) ?? []).includes(owner); } catch { return false; }
+  };
+  // لحظة أخفاها صاحبها أو حجبتها الإدارة أو بين حافظها وصاحبها حظر: بطاقة عامة بلا نص ولا صورة (hidden يمنع الرجوع إلى
+  // العنوان والصورة المحفوظين في الصف)، كما يرد GET /mapposts/:id بـ 404 للمستخدم نفسه.
+  const HIDDEN_POST = Object.freeze({ title: "لحظة لم تعد متاحة", subtitle: "منشور على الخريطة", price: null, imageUrl: null, available: false, hidden: true });
+
+  // بيانات العنصر من مصدره؛ null إن لم يعد موجوداً. uid المشاهد (لإخفاء اللحظة عنه إن كان بينه وبين صاحبها حظر)
+  async function resolve(kind, refId, uid = null) {
     try {
       switch (kind) {
         case "market": {
@@ -76,8 +85,10 @@ export default async function wishlist(app, opts) {
         }
         case "post": {
           if (!tables.post || !UUID_RE.test(refId)) return null;
-          const r = await pool.query("SELECT title, caption, price, media_url, kind, status, expires_at FROM map_posts WHERE id=$1", [refId]);
+          const r = await pool.query("SELECT user_id, title, caption, price, media_url, kind, status, expires_at FROM map_posts WHERE id=$1", [refId]);
           const p = r.rows[0]; if (!p) return null;
+          // صاحب اللحظة يرى لحظته المخفية كما في GET /mapposts/:id
+          if ((p.status !== "active" && p.user_id !== uid) || await blockedWith(uid, p.user_id)) return HIDDEN_POST;
           return { title: p.title || p.caption || "منشور على الخريطة", subtitle: "منشور على الخريطة", price: p.price == null ? null : Number(p.price), imageUrl: postImage(p), available: p.status === "active" && (!p.expires_at || new Date(p.expires_at) > new Date()) };
         }
         default: return null;
@@ -87,7 +98,7 @@ export default async function wishlist(app, opts) {
 
   const out = (w, live) => ({
     id: w.id, kind: w.kind, refId: w.ref_id, title: live?.title ?? w.title, subtitle: live?.subtitle ?? w.subtitle,
-    price: live?.price ?? (w.price == null ? null : Number(w.price)), imageUrl: live?.imageUrl ?? w.image_url, note: w.note, done: w.done,
+    price: live?.hidden ? null : live?.price ?? (w.price == null ? null : Number(w.price)), imageUrl: live?.hidden ? null : live?.imageUrl ?? w.image_url, note: w.note, done: w.done,
     available: w.kind === "custom" ? true : !!live?.available, bizId: live?.bizId ?? null, createdAt: w.created_at,
   });
 
@@ -96,7 +107,7 @@ export default async function wishlist(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const r = await pool.query("SELECT * FROM wishlist_items WHERE user_id=$1 ORDER BY done, created_at DESC LIMIT 300", [uid]);
     const list = [];
-    for (const w of r.rows) list.push(out(w, w.kind === "custom" || !w.ref_id ? null : await resolve(w.kind, w.ref_id)));
+    for (const w of r.rows) list.push(out(w, w.kind === "custom" || !w.ref_id ? null : await resolve(w.kind, w.ref_id, uid)));
     return list;
   });
 
@@ -111,8 +122,9 @@ export default async function wishlist(app, opts) {
     if (price != null && (!Number.isFinite(price) || price < 0 || price > 1e11)) return bad(reply, 400, "bad-price");
     if (kind !== "custom") {
       refId = str(b.refId, 64); if (!refId) return bad(reply, 400, "bad-ref");
-      const live = await resolve(kind, refId);
-      if (!live) return bad(reply, 404, "not-found");
+      const live = await resolve(kind, refId, uid);
+      // لا حفظ جديد للحظة مخفية أو محجوبة أو بين حافظها وصاحبها حظر (لا تُكشف بمعرّفها من رابط /m/<id>)
+      if (!live || live.hidden) return bad(reply, 404, "not-found");
       title = live.title; subtitle = live.subtitle; price = live.price; imageUrl = live.imageUrl ?? null;
       const dup = await pool.query("SELECT * FROM wishlist_items WHERE user_id=$1 AND kind=$2 AND ref_id=$3", [uid, kind, refId]);
       if (dup.rows[0]) return { ...out(dup.rows[0], live), existed: true };
@@ -122,7 +134,7 @@ export default async function wishlist(app, opts) {
     const r = await pool.query(
       "INSERT INTO wishlist_items(id,user_id,kind,ref_id,title,subtitle,price,image_url,note) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
       [id, uid, kind, refId, title, subtitle, price, imageUrl, note]);
-    return out(r.rows[0], kind === "custom" ? null : await resolve(kind, refId));
+    return out(r.rows[0], kind === "custom" ? null : await resolve(kind, refId, uid));
   });
 
   // ---- تعديل: تم/لم يتم، ملاحظة، وللأمنية الحرة العنوان والسعر
@@ -139,11 +151,11 @@ export default async function wishlist(app, opts) {
       if (b.title !== undefined) { const t = str(b.title, 120); if (!t) return bad(reply, 400, "bad-title"); set("title", t); }
       if (b.price !== undefined) { const p = b.price == null || b.price === "" ? null : Math.round(Number(b.price)); if (p != null && (!Number.isFinite(p) || p < 0)) return bad(reply, 400, "bad-price"); set("price", p); }
     }
-    if (!sets.length) return out(cur, cur.kind === "custom" ? null : await resolve(cur.kind, cur.ref_id));
+    if (!sets.length) return out(cur, cur.kind === "custom" ? null : await resolve(cur.kind, cur.ref_id, uid));
     set("updated_at", new Date());
     vals.push(id);
     const r = await pool.query(`UPDATE wishlist_items SET ${sets.join(",")} WHERE id=$${vals.length} RETURNING *`, vals);
-    return out(r.rows[0], cur.kind === "custom" ? null : await resolve(cur.kind, cur.ref_id));
+    return out(r.rows[0], cur.kind === "custom" ? null : await resolve(cur.kind, cur.ref_id, uid));
   });
 
   app.delete("/wishlist/:id", async (req, reply) => {
@@ -165,7 +177,7 @@ export default async function wishlist(app, opts) {
       const rows = (await pool.query("SELECT * FROM wishlist_items WHERE done=false AND kind<>'custom' AND ref_id IS NOT NULL ORDER BY created_at DESC LIMIT 5000")).rows;
       for (const w of rows) {
         stats.checked++;
-        const live = await resolve(w.kind, w.ref_id);
+        const live = await resolve(w.kind, w.ref_id, w.user_id);
         if (!live) continue;
         const sets = [], vals = []; const set = (col, v) => { vals.push(v); sets.push(`${col}=$${vals.length}`); };
         const oldPrice = w.price == null ? null : Number(w.price);

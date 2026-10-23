@@ -31,18 +31,34 @@ List<double>? parsePeaks(dynamic v) {
   return out;
 }
 
+/// مهلة رفع ملف: الفيديو يمر بطابور ترميز على الخادم (انتظار حتى 90 ث وترميز حتى 100 ث، docs/moments.md) بعد إرسال حتى 30 م.ب
+/// من الجوال، فمهلته خمس دقائق؛ الصور والصوت والملفات ثلاث.
+Duration uploadTimeoutFor(String contentType, {String? fileName}) {
+  final ext = (fileName ?? '').contains('.') ? fileName!.split('.').last.toLowerCase() : '';
+  final video = contentType.toLowerCase().startsWith('video/') || const {'mp4', 'mov', 'webm', 'm4v', '3gp'}.contains(ext);
+  return video ? const Duration(minutes: 5) : const Duration(minutes: 3);
+}
+
+/// هل فشل الرفع لأن المتصفح رفض ترويسة x-file-name نفسها؟ هذا رفض فوري قبل إرسال أي بايت، فإعادة الرفع بلا الترويسة آمنة.
+/// المهلة أو انقطاع بعد ثوانٍ لا يُعادان تلقائياً: قد يكون الخادم استلم الملف وما زال يرمّزه، فالإعادة ترفع 30 م.ب مرة ثانية
+/// وتبدأ ترميزاً ثانياً بجانب الأول.
+bool isHeaderRejection(ApiException e, Duration elapsed) =>
+    e.isNetwork && !e.message.contains('مهلة') && elapsed < const Duration(seconds: 3);
+
 /// مسارات إضافة أدوات المحادثات (server/chat_tools.js): رفع الوسائط وبيانات الرسائل الإضافية.
 extension ChatToolsApi on ApiClient {
   Future<UploadedMedia> uploadMedia(Uint8List bytes, {required String contentType, String? fileName}) async {
     // ترويسات HTTP لا تقبل إلا حروف ISO-8859-1؛ اسم ملف عربي يجعل WebKit يرمي "Type error"، فنرسل اسماً لاتينياً نظيفاً فقط
     final safeName = _asciiName(fileName, contentType);
+    final timeout = uploadTimeoutFor(contentType, fileName: fileName);
+    final started = Stopwatch()..start();
     Map<String, dynamic> d;
     try {
-      d = await postBytes('/chat/upload', bytes, contentType: contentType, headers: {if (safeName != null) 'x-file-name': safeName}, timeout: const Duration(minutes: 3));
+      d = await postBytes('/chat/upload', bytes, contentType: contentType, headers: {if (safeName != null) 'x-file-name': safeName}, timeout: timeout);
     } on ApiException catch (e) {
-      // احتياط: إن رفض المتصفح الترويسة لأي سبب نعيد المحاولة بدونها (الخادم يستنتج النوع من content-type)
-      if (!e.isNetwork || safeName == null) rethrow;
-      d = await postBytes('/chat/upload', bytes, contentType: contentType, timeout: const Duration(minutes: 3));
+      // احتياط: إن رفض المتصفح الترويسة نعيد المحاولة بدونها (الخادم يستنتج النوع من content-type)، ولا نعيد عند المهلة أو انقطاع متأخر
+      if (safeName == null || !isHeaderRejection(e, started.elapsed)) rethrow;
+      d = await postBytes('/chat/upload', bytes, contentType: contentType, timeout: timeout);
     }
     final url = (d['url'] ?? '').toString();
     if (url.isEmpty) throw const ApiException(500, 'الخادم لم يُرجع رابط الملف');
