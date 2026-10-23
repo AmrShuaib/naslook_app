@@ -7,6 +7,7 @@ await app.register((await import("./biz_community.js")).default, { pool, auth })
 await app.register((await import("./search.js")).default, { pool, auth });
 await app.register((await import("./profile.js")).default, { pool, auth });
 await app.register((await import("./map_posts.js")).default, { pool, auth });
+await app.register((await import("./moment_extras.js")).default, { pool, auth });
 await app.register((await import("./wishlist.js")).default, { pool, auth });
 await app.register((await import("./saved_search.js")).default, { pool, auth });
 await app.register((await import("./safety.js")).default, { pool, auth });

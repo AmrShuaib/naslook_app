@@ -1,4 +1,5 @@
 // أدوات المحادثات في Naslife: رفع الوسائط وتقديمها، وموجة الصوت (48 قيمة مع الرفع وGET /chat/peaks)، وبيانات إضافية للرسائل (رد مقتبس، إعادة توجيه، مدة الصوت).
+// الفيديو المرفوع «خفيف» (videoArgs: 720p وسقف 2 ميغابت/ث و30 إطاراً)، وGET /chat/vpreview/:name معاينة صامتة 360p لست ثوانٍ (docs/moments.md).
 // التسجيل في src/index.js قبل app.listen:
 //   await app.register((await import("./chat_tools.js")).default, { pool, auth });
 // الملفات تُحفظ في CHAT_MEDIA_DIR (الافتراضي /opt/naslife/media/chat) بأسماء عشوائية غير قابلة للتخمين،
@@ -36,6 +37,61 @@ const EXT_TYPE = Object.fromEntries(Object.entries(TYPES).map(([t, e]) => [e, t]
 const kindOf = (type) => type.startsWith("image/") ? "image" : type.startsWith("video/") ? "video" : type.startsWith("audio/") ? "audio" : "file";
 const NAME_RE = /^[a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5}$/;
 const UUID_RE = /^[0-9a-f-]{36}$/i;
+
+// ---- «الفيديو الخفيف» (قرار المالك لعارض اللحظات): حدود الفيديو بعد الرفع. ما يتجاوز 720p (الضلع الأقصر فوق 720 أو الأطول
+// فوق 1280، أياً كان الاتجاه) أو معدّله فوق 3 ميغابت/ث أو ليس H.264/AAC يُعاد ترميزه بسقف 2 ميغابت/ث، وغيره يبقى بلا ترميز.
+export const LIGHT_VIDEO = Object.freeze({ maxShort: 720, maxLong: 1280, maxBitrate: 3_000_000, crf: 26, maxrate: "2M", bufsize: "4M", maxFps: 30, audio: "96k" });
+// معاينة الشبكة («اللحظات» وعارضها): أول 6 ثوانٍ بلا صوت بدقة 360p تُعاد كحلقة
+export const VIDEO_PREVIEW = Object.freeze({ seconds: 6, maxShort: 360, maxLong: 640, crf: 30, maxFps: 30 });
+const fpsOf = (s) => {
+  const [a, b] = String(s ?? "").split("/").map(Number);
+  const v = b ? a / b : a;
+  return Number.isFinite(v) && v > 0 && v < 1000 ? v : null;
+};
+// يحجّم داخل صندوق بحسب الاتجاه (أفقي 1280×720، عمودي 720×1280) بلا تكبير، ثم أبعاد زوجية يطلبها H.264.
+// الاتجاه من الإطار بعد التدوير التلقائي (iw/ih داخل المرشّح) لا من أبعاد الملف، فلقطة الآيفون العمودية لا تصغر خطأً.
+const boxScale = (short, long) => [
+  `scale=w='if(gte(iw,ih),min(${long},iw),min(${short},iw))':h='if(gte(iw,ih),min(${short},ih),min(${long},ih))':force_original_aspect_ratio=decrease`,
+  "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+];
+
+/// قرار «الفيديو الخفيف» من نتيجة ffprobe ({video, audio, format}) وامتداد الملف المرفوع، بلا تشغيل ffmpeg (يُختبر وحده).
+/// يعيد {keep, copy, reasons, args}: keep = MP4 خفيف يبقى كما هو؛ copy بلا keep = إعادة تغليف (-c copy)؛
+/// وإلا ترميز بخيارات args (بلا -i ولا ملف الخرج). reasons أسباب الترميز: codec, audio, pix_fmt, size, bitrate.
+export function videoArgs(probe, ext = "mp4") {
+  const L = LIGHT_VIDEO;
+  const v = probe?.video ?? null, a = probe?.audio ?? null;
+  const w = Number(v?.width) || 0, h = Number(v?.height) || 0;
+  const bitrate = Number(probe?.format?.bit_rate) || Number(v?.bit_rate) || 0;
+  const fps = fpsOf(v?.avg_frame_rate) ?? fpsOf(v?.r_frame_rate);
+  const reasons = [];
+  if (v?.codec_name !== "h264") reasons.push("codec");
+  if (a && a.codec_name !== "aac") reasons.push("audio");
+  // H.264 بعشر بتات أو 4:2:2 لا يُشغَّل على كثير من الجوالات
+  if (v?.pix_fmt && !["yuv420p", "yuvj420p"].includes(v.pix_fmt)) reasons.push("pix_fmt");
+  if (Math.min(w, h) > L.maxShort || Math.max(w, h) > L.maxLong) reasons.push("size");
+  if (bitrate > L.maxBitrate) reasons.push("bitrate");
+  if (!reasons.length) return ext === "mp4" ? { keep: true, copy: true, reasons, args: [] } : { keep: false, copy: true, reasons, args: ["-c", "copy"] };
+  const capFps = fps != null && fps > L.maxFps + 0.01;
+  const outFps = capFps ? L.maxFps : fps ?? L.maxFps;
+  // إطار مرجعي كل ثانية: التقديم بالسحب والتشغيل من منتصف الملف يبدآن فوراً
+  const gop = String(Math.max(1, Math.round(outFps)));
+  const vf = [...(capFps ? [`fps=${L.maxFps}`] : []), ...boxScale(L.maxShort, L.maxLong)].join(",");
+  return {
+    keep: false, copy: false, reasons,
+    args: ["-c:v", "libx264", "-preset", "veryfast", "-crf", String(L.crf), "-maxrate", L.maxrate, "-bufsize", L.bufsize, "-pix_fmt", "yuv420p", "-vf", vf,
+      "-g", gop, "-keyint_min", gop, "-sc_threshold", "0", "-c:a", "aac", "-b:a", L.audio],
+  };
+}
+
+/// خيارات ترميز معاينة الشبكة (بلا -i ولا ملف الخرج): أول 6 ثوانٍ، بلا صوت، 360p، crf 30، و+faststart حتى تبدأ فوراً.
+export function previewArgs(probe) {
+  const P = VIDEO_PREVIEW;
+  const fps = fpsOf(probe?.video?.avg_frame_rate) ?? fpsOf(probe?.video?.r_frame_rate);
+  const capFps = fps != null && fps > P.maxFps + 0.01;
+  const vf = [...(capFps ? [`fps=${P.maxFps}`] : []), ...boxScale(P.maxShort, P.maxLong)].join(",");
+  return ["-t", String(P.seconds), "-an", "-sn", "-dn", "-c:v", "libx264", "-preset", "veryfast", "-crf", String(P.crf), "-pix_fmt", "yuv420p", "-vf", vf, "-movflags", "+faststart"];
+}
 
 // أي خطأ أثناء التهيئة يُسجَّل ولا يُسقط الخادم: تبقى المحادثات النصية تعمل ولو تعطلت أدوات الوسائط
 export default async function chatTools(app, opts) {
@@ -78,26 +134,26 @@ async function setup(app, opts) {
   let ffmpeg = false;
   try { await execFileP("ffmpeg", ["-version"], { timeout: 5000 }); ffmpeg = true; } catch {}
   logger(`chat_tools: ffmpeg ${ffmpeg ? "available" : "not found (audio kept as recorded)"}`);
-  // ffprobe: ترميزا الفيديو والصوت في الملف
+  // ffprobe: ترميزا الفيديو والصوت وأبعاد الإطار ومعدّل الإطارات والمعدّل الكلي (لقرار «الفيديو الخفيف»)
   async function probeStreams(file) {
-    const { stdout } = await execFileP("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "json", file], { timeout: 20000 });
-    const streams = JSON.parse(stdout || "{}").streams ?? [];
-    return { video: streams.find((x) => x.codec_type === "video"), audio: streams.find((x) => x.codec_type === "audio") };
+    const { stdout } = await execFileP("ffprobe", ["-v", "error", "-show_entries",
+      "stream=codec_type,codec_name,width,height,pix_fmt,avg_frame_rate,r_frame_rate,bit_rate:format=bit_rate,duration", "-of", "json", file], { timeout: 20000 });
+    const j = JSON.parse(stdout || "{}");
+    const streams = j.streams ?? [];
+    return { video: streams.find((x) => x.codec_type === "video"), audio: streams.find((x) => x.codec_type === "audio"), format: j.format ?? {} };
   }
   // الفيديو يُوحَّد إلى MP4 (H.264/AAC وmoov في المقدمة): iPhone يرسل .mov وAndroid يرسل .webm ولا يشغّل أيٌّ منهما ملفات الآخر.
-  // H.264/AAC يُعاد تغليفه فقط (سريع، مع إسقاط مسارات البيانات الوصفية)، وغيره (HEVC/VP8/VP9…) يُعاد ترميزه بحد أقصى 720 بكسل.
+  // الخفيف أصلاً يُعاد تغليفه فقط (سريع، مع إسقاط مسارات البيانات الوصفية)، وغيره يُرمَّز بقواعد videoArgs (720p، سقف 2 ميغابت/ث، 30 إطاراً).
   async function normalizeVideo(inFile, ext) {
-    const { video, audio } = await probeStreams(inFile);
-    if (!video) throw new Error("no video stream");
-    const copyOk = video.codec_name === "h264" && (!audio || audio.codec_name === "aac");
-    if (copyOk && ext === "mp4") return inFile;
+    const probe = await probeStreams(inFile);
+    if (!probe.video) throw new Error("no video stream");
+    const plan = videoArgs(probe, ext);
+    if (plan.keep) return inFile;
     const out = path.join(path.dirname(inFile), `${Date.now().toString(36)}-${crypto.randomBytes(12).toString("hex")}.mp4`);
-    const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn"];
-    if (copyOk) args.push("-c", "copy");
-    else args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-vf", "scale=min(720\\,iw):-2,scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:a", "aac", "-b:a", "96k");
-    args.push("-movflags", "+faststart", out);
-    try { await execFileP("ffmpeg", args, { timeout: 150000 }); }
+    const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", ...plan.args, "-movflags", "+faststart", out];
+    try { await execFileP("ffmpeg", args, { timeout: 180000 }); }
     catch (e) { await fs.unlink(out).catch(() => {}); throw e; }
+    if (!plan.copy) logger(`chat_tools: light video ${path.basename(out)} (${plan.reasons.join(",")})`);
     await fs.unlink(inFile).catch(() => {});
     return out;
   }
@@ -207,6 +263,74 @@ async function setup(app, opts) {
     return sendFile(reply, src, type, st.size);
   });
 
+  // ---- تقديم ملف بدعم Range (الصوت والفيديو ومعاينات الفيديو): 206 للجزء المطلوب و416 لنطاق خارج الملف
+  async function serveRange(req, reply, file, type) {
+    let st;
+    try { st = await fs.stat(file); } catch { return bad(reply, 404, "not-found"); }
+    reply.header("content-type", type).header("accept-ranges", "bytes").header("cache-control", "public, max-age=31536000, immutable");
+    const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ""));
+    if (range && (range[1] || range[2])) {
+      const start = range[1] ? Number(range[1]) : Math.max(0, st.size - Number(range[2]));
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), st.size - 1) : st.size - 1;
+      if (start >= st.size || start > end) return reply.code(416).header("content-range", `bytes */${st.size}`).send();
+      reply.code(206).header("content-range", `bytes ${start}-${end}/${st.size}`).header("content-length", end - start + 1);
+      return reply.send(createReadStream(file, { start, end }));
+    }
+    reply.header("content-length", st.size);
+    return reply.send(createReadStream(file));
+  }
+
+  // ---- معاينة الفيديو للشبكة وعارض اللحظات: MP4 صامت 360p لأول 6 ثوانٍ يُعاد كحلقة بدل تنزيل الفيديو كاملاً.
+  // تُولَّد عند أول طلب (فتشمل الفيديوهات القديمة) وتُخزَّن في MEDIA_DIR/vpreviews باسم الملف؛ ترميزان على الأكثر في الوقت نفسه
+  // حتى لا تُغرق شبكةٌ من الفيديوهات الجديدة المعالج. أي فشل (أو غياب ffmpeg) = 404 فيعود التطبيق إلى المصغّر.
+  const PREVIEW_DIR = MEDIA_DIR ? path.join(MEDIA_DIR, "vpreviews") : null;
+  if (PREVIEW_DIR) await fs.mkdir(PREVIEW_DIR, { recursive: true }).catch(() => {});
+  const previewPath = (name) => path.join(PREVIEW_DIR, name.replace(/\.[a-z0-9]+$/, "") + ".mp4");
+  const previewInflight = new Map();
+  const PREVIEW_SLOTS = Math.max(1, Number(process.env.CHAT_VPREVIEW_SLOTS) || 2);
+  let previewRunning = 0;
+  const previewQueue = [];
+  const withPreviewSlot = async (fn) => {
+    if (previewRunning >= PREVIEW_SLOTS) await new Promise((r) => previewQueue.push(r));
+    previewRunning++;
+    try { return await fn(); } finally { previewRunning--; previewQueue.shift()?.(); }
+  };
+  async function makePreview(name) {
+    if (!PREVIEW_DIR || !ffmpeg) return null;
+    const out = previewPath(name);
+    try { await fs.access(out); return out; } catch { /* تُولَّد الآن */ }
+    if (previewInflight.has(name)) return previewInflight.get(name);
+    const job = (async () => {
+      const tmp = out.replace(/\.mp4$/, `.part-${crypto.randomBytes(4).toString("hex")}.mp4`);
+      try {
+        return await withPreviewSlot(async () => {
+          const src = path.join(MEDIA_DIR, name);
+          const probe = await probeStreams(src);
+          if (!probe.video) throw new Error("no video stream");
+          await execFileP("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-i", src, "-map", "0:v:0", ...previewArgs(probe), tmp], { timeout: 60000 });
+          await fs.rename(tmp, out);
+          return out;
+        });
+      } catch (e) {
+        await fs.unlink(tmp).catch(() => {});
+        logger(`chat_tools: vpreview failed for ${name}: ${e?.message || e}`);
+        return null;
+      } finally { previewInflight.delete(name); }
+    })();
+    previewInflight.set(name, job);
+    return job;
+  }
+  app.get("/chat/vpreview/:name", { config: { rateLimit: false } }, async (req, reply) => {
+    const name = String(req.params.name);
+    if (!MEDIA_DIR || !ffmpeg || !NAME_RE.test(name)) return bad(reply, 404, "not-found");
+    const type = EXT_TYPE[name.split(".").pop()] || "";
+    if (!type.startsWith("video/")) return bad(reply, 404, "not-found");
+    try { await fs.access(path.join(MEDIA_DIR, name)); } catch { return bad(reply, 404, "not-found"); }
+    const file = await makePreview(name);
+    if (!file) return bad(reply, 404, "not-found");
+    return serveRange(req, reply, file, "video/mp4");
+  });
+
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error) => reply.code(code).send({ error });
 
@@ -217,10 +341,11 @@ async function setup(app, opts) {
     if (!MEDIA_DIR || !NAME_RE.test(name)) return false;
     await fs.unlink(path.join(MEDIA_DIR, name)).catch(() => {});
     if (THUMB_DIR) await fs.unlink(thumbPath(name)).catch(() => {});
+    if (PREVIEW_DIR) await fs.unlink(previewPath(name)).catch(() => {});
     await fs.unlink(peaksPath(name)).catch(() => {});
     return true;
   };
-  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, thumbs: !!MEDIA_DIR && ffmpeg, peaks: !!MEDIA_DIR && ffmpeg, maxBytes: MAX_BYTES }));
+  app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, thumbs: !!MEDIA_DIR && ffmpeg, peaks: !!MEDIA_DIR && ffmpeg, vpreview: !!MEDIA_DIR && ffmpeg, maxBytes: MAX_BYTES }));
 
   // ---- موجة الصوت لملف موجود (الرسائل الأقدم من هذه الميزة): تُحسب عند أول طلب وتُخزَّن بجانب الملف. يقبل الاسم أو الرابط كاملاً.
   // بلا مصادقة كالملف نفسه (الأسماء عشوائية غير قابلة للتخمين)؛ 404 لاسم غير صالح أو ملف غير صوتي أو مفقود، و{peaks:null} إن تعذّر الحساب.
@@ -282,21 +407,7 @@ async function setup(app, opts) {
   app.get("/chat/media/:name", { config: { rateLimit: false } }, async (req, reply) => {
     const name = String(req.params.name);
     if (!MEDIA_DIR || !NAME_RE.test(name)) return bad(reply, 404, "not-found");
-    const file = path.join(MEDIA_DIR, name);
-    let st;
-    try { st = await fs.stat(file); } catch { return bad(reply, 404, "not-found"); }
-    const type = EXT_TYPE[name.split(".").pop()] || "application/octet-stream";
-    reply.header("content-type", type).header("accept-ranges", "bytes").header("cache-control", "public, max-age=31536000, immutable");
-    const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ""));
-    if (range && (range[1] || range[2])) {
-      const start = range[1] ? Number(range[1]) : Math.max(0, st.size - Number(range[2]));
-      const end = range[1] && range[2] ? Math.min(Number(range[2]), st.size - 1) : st.size - 1;
-      if (start >= st.size || start > end) return reply.code(416).header("content-range", `bytes */${st.size}`).send();
-      reply.code(206).header("content-range", `bytes ${start}-${end}/${st.size}`).header("content-length", end - start + 1);
-      return reply.send(createReadStream(file, { start, end }));
-    }
-    reply.header("content-length", st.size);
-    return reply.send(createReadStream(file));
+    return serveRange(req, reply, path.join(MEDIA_DIR, name), EXT_TYPE[name.split(".").pop()] || "application/octet-stream");
   });
 
   // ---- بيانات إضافية للرسائل: رد مقتبس، إعادة توجيه، مدة الصوت… تُحفظ بمعرّف الرسالة بعد إرسالها

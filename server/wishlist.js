@@ -8,6 +8,13 @@ import crypto from "node:crypto";
 const KINDS = new Set(["market", "item", "event", "biz", "post", "custom"]);
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const str = (v, max) => { const s = String(v ?? "").trim(); return s ? s.slice(0, max) : ""; };
+// صورة اللحظة في «محفوظاتي»: الصورة نفسها، وللفيديو إطاره المصغّر من /chat/thumb (نسبي حتى يبنيه التطبيق على أصله، فـCSP يقبله)
+const MEDIA_NAME = /\/chat\/media\/([a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5})(?:[?#].*)?$/i;
+export function postImage(p) {
+  if (p?.kind === "image") return p.media_url ?? null;
+  if (p?.kind === "video") { const m = MEDIA_NAME.exec(String(p.media_url ?? "")); return m ? `/chat/thumb/${m[1]}` : null; }
+  return null;
+}
 
 export default async function wishlist(app, opts) {
   const { pool, auth } = opts;
@@ -71,7 +78,7 @@ export default async function wishlist(app, opts) {
           if (!tables.post || !UUID_RE.test(refId)) return null;
           const r = await pool.query("SELECT title, caption, price, media_url, kind, status, expires_at FROM map_posts WHERE id=$1", [refId]);
           const p = r.rows[0]; if (!p) return null;
-          return { title: p.title || p.caption || "منشور على الخريطة", subtitle: "منشور على الخريطة", price: p.price == null ? null : Number(p.price), imageUrl: p.kind === "image" ? p.media_url : null, available: p.status === "active" && (!p.expires_at || new Date(p.expires_at) > new Date()) };
+          return { title: p.title || p.caption || "منشور على الخريطة", subtitle: "منشور على الخريطة", price: p.price == null ? null : Number(p.price), imageUrl: postImage(p), available: p.status === "active" && (!p.expires_at || new Date(p.expires_at) > new Date()) };
         }
         default: return null;
       }

@@ -1097,6 +1097,54 @@ http.createServer((req, res) => {
     if (key === 'POST /chat/suggest') return lb((b) => { const last = [...(Array.isArray(b.messages) ? b.messages : [])].reverse().find((m) => !m.mine)?.text ?? ''; const sug = /السلام/.test(last) ? ['وعليكم السلام ورحمة الله', 'هلا والله', 'أهلاً، كيف الحال؟'] : /سعر|بكم|ريال/.test(last) ? ['كم السعر؟', 'فيه خصم؟', 'تمام، أبغى واحد'] : /[؟?]/.test(last) ? ['نعم', 'لا', 'خلني أتأكد'] : ['تمام', 'أبشر', 'خلني أرجع لك']; lj(200, { suggestions: sug, source: 'rules' }); });
   }
   // ---- chat live + suggest (stream B) end
+  // ---- moments extras (server) start — تحاكي server/moment_extras.js (تفاعلات 😍 😂 🔥 👏)، و/chat/vpreview في chat_tools.js
+  // (يقدّم ملف mp4 بالاسم نفسه من mock-media إن وُجد وإلا 404)، و/m/:id في share.js (صفحة وسوم تحوّل إلى /#/m/<id>).
+  // المنشور الأول فيه تفاعلان جاهزان من sara وkhalid حتى تظهر العدّادات.
+  {
+    const MX = (globalThis.__moments ??= { reactions: { 'aaaaaaaa-0000-4000-8000-000000000001': { SA0000002: '😍', SA0000003: '🔥' } } });
+    const EMO = ['😍', '😂', '🔥', '👏'];
+    const mj = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); };
+    const sum = (id) => { const r = MX.reactions[id] ?? {}; const counts = Object.fromEntries(EMO.map((e) => [e, 0])); for (const e of Object.values(r)) if (e in counts) counts[e]++; return { counts, mine: r[me.id] ?? null }; };
+    const mm = url.pathname.match(/^\/moments\/([^/]+)\/(react|reactions)$/);
+    if (mm) {
+      const id = mm[1].toLowerCase();
+      const p = mockPosts.find((x) => x.id === id);
+      if (!p || p.status !== 'active') return mj(404, { error: 'not-found' });
+      if (req.method === 'GET' && mm[2] === 'reactions') return mj(200, sum(id));
+      if (req.method === 'DELETE' && mm[2] === 'react') { delete (MX.reactions[id] ??= {})[me.id]; return mj(200, sum(id)); }
+      if (req.method === 'POST' && mm[2] === 'react') {
+        let raw = ''; req.on('data', (c) => raw += c);
+        req.on('end', () => {
+          const b = JSON.parse(raw || '{}');
+          if (!('emoji' in b)) return mj(400, { error: 'bad-emoji', allowed: EMO });
+          const e = b.emoji == null ? null : String(b.emoji).replace(/️/g, '').trim() || null;
+          if (e && !EMO.includes(e)) return mj(400, { error: 'bad-emoji', allowed: EMO });
+          const r = (MX.reactions[id] ??= {});
+          if (e) r[me.id] = e; else delete r[me.id];
+          mj(200, sum(id));
+        });
+        return;
+      }
+    }
+    if (key === 'GET /moments/status') return mj(200, { ok: true, reactions: EMO });
+    if (key === 'GET /chat/status') return mj(200, { ok: true, media: true, durable: true, transcode: true, thumbs: true, peaks: true, vpreview: true, maxBytes: 31457280 });
+    if (req.method === 'GET' && url.pathname.startsWith('/chat/vpreview/')) {
+      const f = path.join(MEDIA, path.basename(url.pathname));
+      if (!f.endsWith('.mp4') || !fs.existsSync(f)) { console.log(key, '-> 404'); res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"error":"not-found"}'); }
+      console.log(key, '-> 200'); res.writeHead(200, { 'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'cache-control': 'public, max-age=31536000, immutable' }); return fs.createReadStream(f).pipe(res);
+    }
+    const ml = url.pathname.match(/^\/m\/([^/]+)$/);
+    if (ml && req.method === 'GET') {
+      const id = /^[0-9a-f-]{36}$/i.test(ml[1]) ? ml[1].toLowerCase() : null;
+      const p = id ? mockPosts.find((x) => x.id === id && x.status === 'active') : null;
+      const e = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const title = p?.caption || p?.title || 'لحظة على ناس لايف', desc = p ? [p.user?.nickname, p.placeName].filter(Boolean).join(' · ') : 'افتح الرابط في ناس لايف لمشاهدة اللحظة.';
+      const to = id ? `/#/m/${id}` : '/';
+      console.log(key, '-> 200'); res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      return res.end(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${e(title)}</title><meta property="og:title" content="${e(title)}"><meta property="og:description" content="${e(desc)}"><meta http-equiv="refresh" content="0; url=${e(to)}"></head><body><a href="${e(to)}">افتح اللحظة في ناس لايف</a></body></html>`);
+    }
+  }
+  // ---- moments extras (server) end
   // ---- chat-smooth: موجة الصوت ومعاينة الروابط (تحاكي peaks في chat_tools.js وchat_preview.js). الموجة حتمية من اسم الملف،
   // والمعاينة من اسم المضيف (مضيف فيه nopreview = لا معاينة)، وصورة المعاينة تُقدَّم من وسائط المحاكي بدل المضيف الخارجي.
   if (url.pathname === '/chat/peaks' || url.pathname === '/chat/preview' || url.pathname === '/chat/preview/status' || url.pathname === '/chat/preview/image') {

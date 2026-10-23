@@ -53,7 +53,8 @@ check(faststart(stored(r.body.url)), 'transcode: faststart');
 r = await upload('test_hevc.mp4', 'video/mp4');
 check(r.code === 200 && r.body.url.endsWith('.mp4'), 'HEVC .mp4 → transcoded', JSON.stringify(r.body));
 p = probe(stored(r.body.url));
-check(p.v === 'h264' && !p.a && p.w === 720 && p.h === 406, 'hevc 1080p → h264 720x406 (no audio stream)', JSON.stringify(p));
+// «الفيديو الخفيف»: الحد 720p بحسب الاتجاه (أفقي 1280×720) لا عرض 720 (انظر harness_moment_extras.mjs لتغطية كاملة بملفات مولّدة)
+check(p.v === 'h264' && !p.a && p.w === 1280 && p.h === 720, 'hevc 1080p → h264 1280x720 (no audio stream)', JSON.stringify(p));
 
 const okSize = fs.statSync(path.join(dir, 'media', 'test_ok.mp4')).size;
 r = await upload('test_ok.mp4', 'video/mp4');

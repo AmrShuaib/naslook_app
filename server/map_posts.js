@@ -412,8 +412,16 @@ export default async function posts(app, opts) {
     return { ok: true, status: hidden ? "blocked" : "active" };
   });
 
-  // تنظيف دوري: حذف ما انتهت مدته منذ أكثر من 30 يوماً
-  const sweep = () => pool.query("DELETE FROM map_posts WHERE expires_at < now() - interval '30 days'").catch(() => {});
+  // تنظيف دوري: حذف ما انتهت مدته منذ أكثر من 30 يوماً، إلا لحظة حفظها أحد في «محفوظاتي» (wishlist_items بالنوع post) فتبقى
+  // حتى يزيلها من حفظها. جدول الأمنيات قد لا يوجد (wishlist.js تُسجَّل بعدنا)، فيُفحص وجوده عند كل كنس.
+  const sweep = async () => {
+    try {
+      const saved = (await pool.query("SELECT to_regclass('wishlist_items') IS NOT NULL AS ok")).rows[0]?.ok === true;
+      const keep = saved ? " AND NOT EXISTS (SELECT 1 FROM wishlist_items w WHERE w.kind='post' AND lower(w.ref_id) = p.id::text)" : "";
+      return (await pool.query(`DELETE FROM map_posts p WHERE p.expires_at < now() - interval '30 days'${keep}`)).rowCount;
+    } catch { return 0; }
+  };
+  globalThis.naslifeMapPostsSweep = sweep;
   const timer = setInterval(sweep, 6 * 3600 * 1000); timer.unref?.();
   app.addHook("onClose", async () => clearInterval(timer));
 }
