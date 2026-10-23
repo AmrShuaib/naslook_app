@@ -9,6 +9,7 @@ import '../../api/commerce_models.dart';
 import '../../api/posts_api.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/media/video_view.dart' show VideoViewController;
 import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
@@ -79,8 +80,21 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   late int index = widget.initial;
   Timer? _auto;
   double progress = 0;
-  bool paused = false;
+  bool _paused = false;
   final _viewed = <String>{};
+  /// متحكم فيديو اللحظة النشطة (null لغير الفيديو): يُنشأ مع كل لحظة ويُحرَّر عند مغادرتها
+  VideoViewController? _video;
+  StreamSubscription<void>? _videoEnded;
+  final _warmed = <String>{};
+
+  /// الإيقاف المؤقت (ضغطة مطوّلة على صورة أو نص، أو قائمة/ورقة مفتوحة فوق العارض) يوقف الفيديو أيضاً ثم يستأنفه
+  bool get paused => _paused;
+  set paused(bool v) {
+    _paused = v;
+    final c = _video;
+    if (c == null) return;
+    v ? c.pause() : c.play();
+  }
 
   @override
   void initState() {
@@ -91,22 +105,66 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   @override
   void dispose() {
     _auto?.cancel();
+    _releaseVideo();
     _ctl.dispose();
     super.dispose();
+  }
+
+  void _releaseVideo() {
+    _videoEnded?.cancel();
+    _videoEnded = null;
+    _video?.dispose();
+    _video = null;
   }
 
   void _onShown() {
     _markViewed();
     _auto?.cancel();
+    _releaseVideo();
     progress = 0;
     final p = posts[index];
     if (p.kind == 'image' || p.kind == 'text') {
       _auto = Timer.periodic(const Duration(milliseconds: 50), (_) {
         if (!mounted || paused) return;
-        setState(() => progress += 50 / _autoMs);
-        if (progress >= 1) _next();
+        _timedStep();
+      });
+    } else if (p.kind == 'video' && (p.mediaUrl ?? '').isNotEmpty) {
+      // الفيديو: الشريط يتبع موضع المقطع، وانتهاؤه ينقل إلى التالية؛ وإن تعذّر تشغيله يتقدّم كالصورة حتى لا يعلق العارض
+      final c = _video = VideoViewController();
+      _videoEnded = c.onEnded.listen((_) {
+        if (mounted && identical(c, _video)) _next();
+      });
+      _auto = Timer.periodic(const Duration(milliseconds: 50), (_) {
+        if (!mounted) return;
+        final v = c.value;
+        if (v.failed) {
+          if (!paused) _timedStep();
+          return;
+        }
+        final d = v.duration;
+        final f = d == null || d.inMilliseconds <= 0 ? 0.0 : (c.estimatedPosition.inMilliseconds / d.inMilliseconds).clamp(0.0, 1.0);
+        if ((f - progress).abs() >= .001) setState(() => progress = f);
       });
     }
+    // اللحظة التالية فيديو: غلافها وأول المقطع يُجلبان الآن فتبدأ فوراً حين تصلها (بعد الإطار لأن السياق يلزمه)
+    WidgetsBinding.instance.addPostFrameCallback((_) => _warmNext());
+  }
+
+  /// خطوة المؤقّت للصورة والنص (والفيديو المتعذّر): عند الامتلاء ينتقل مرة واحدة ويتوقف المؤقّت، فلا يُعاد بدء حركة الانتقال
+  /// كل 50 م.ث قبل اكتمالها؛ ظهور اللحظة التالية يبدأ مؤقّتها
+  void _timedStep() {
+    setState(() => progress += 50 / _autoMs);
+    if (progress < 1) return;
+    _auto?.cancel();
+    _next();
+  }
+
+  void _warmNext() {
+    if (!mounted || index + 1 >= posts.length) return;
+    final n = posts[index + 1];
+    final media = n.mediaUrl ?? '';
+    if (n.kind != 'video' || media.isEmpty || !_warmed.add(n.id)) return;
+    warmMomentVideo(context, ref.read(apiClientProvider), media);
   }
 
   void _markViewed() {
@@ -268,7 +326,8 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
         child: Scaffold(
           backgroundColor: Colors.black,
           body: SafeArea(
-            child: PageView.builder(
+            // متحكم فيديو اللحظة النشطة لوسائطها ومنطقة لمسها
+            child: MomentPlayback(controller: _video, child: PageView.builder(
               controller: _ctl,
               itemCount: posts.length,
               onPageChanged: (i) {
@@ -287,7 +346,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
                 onMenu: posts[i].mine ? () => _menu(i) : () => _otherMenu(i),
                 onHold: (h) => paused = h,
               ),
-            ),
+            )),
           ),
         ),
       );
@@ -331,7 +390,11 @@ class PostView extends ConsumerWidget {
                       Expanded(child: GestureDetector(behavior: HitTestBehavior.translucent, onTap: rtl ? onNext : onPrev, onLongPressStart: (_) => onHold?.call(true), onLongPressEnd: (_) => onHold?.call(false))),
                       Expanded(child: GestureDetector(behavior: HitTestBehavior.translucent, onTap: rtl ? onPrev : onNext, onLongPressStart: (_) => onHold?.call(true), onLongPressEnd: (_) => onHold?.call(false))),
                     ]),
-                  ),
+                  )
+                // الفيديو بلا أزرار تحكم (كسناب): اللحظة كلها للمس — النقر للتنقل كالصور (الصف أعلاه ينعكس مع الاتجاه فيبقى
+                // اليسار الفعلي للسابقة واليمين للتالية)، والضغط المطوّل يسرّع أو يرجّع أو يوقف
+                else if (active)
+                  Positioned.fill(child: MomentVideoGestures(controller: MomentPlayback.maybeOf(context), onLeftTap: onPrev, onRightTap: onNext)),
               ]),
             ),
           ),

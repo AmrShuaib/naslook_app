@@ -276,6 +276,14 @@ class ApiClient {
   /// رابط وسائط على أصل هذا العميل (انظر [mediaUrl]).
   String media(String url) => mediaUrl(url, base: baseUrl);
 
+  /// يطلب أول [bytes] من ملف وسائط بترويسة Range ويتجاهل الرد: يسخّن ذاكرة المتصفح للمقطع التالي في عارض اللحظات.
+  /// الفشل لا يهم لأن المشغّل يطلب الملف بنفسه.
+  Future<void> warmMedia(String url, {int bytes = 1572864}) async {
+    try {
+      await _http.get(Uri.parse(url), headers: {'Range': 'bytes=0-${bytes - 1}'}).timeout(timeout);
+    } catch (_) {}
+  }
+
   /// أصل WebSocket المطابق لعنوان الخادم.
   String get wsUrl => '${baseUrl.replaceFirst(RegExp(r'^http'), 'ws')}/ws';
 

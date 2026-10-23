@@ -26,6 +26,7 @@ import '../jobs/jobs_page.dart';
 import '../market/market_page.dart';
 import 'my_posts_page.dart';
 import 'overlay_canvas.dart' show colorFromHex;
+import 'post_media.dart' show videoPreviewUrl;
 
 /// «اللحظات» (قرار المالك 22 أكتوبر 2026): شبكة متدرّجة بعمودين من بطاقات متوسطة تتحرك كالصور المتحركة (الفيديو يدور صامتاً بلا
 /// شريط تحكم، الصورة تتقرّب ببطء، النص على تدرّج لوني) لكل ما يبثه `GET /feed` الأحدث أولاً: لحظات وعروض وفعاليات ووظائف
@@ -613,7 +614,7 @@ class _Typographic extends StatelessWidget {
 
 /// معاينة فيديو تدور صامتة بلا شريط تحكم ما دامت فتحة متاحة (حد [TimelinePage.maxLoopingPreviews])، وإلا إطارها الثابت مع رمز التشغيل.
 class _VideoPreview extends StatefulWidget {
-  /// رابط الوسيط كما أرسله الخادم؛ المشغّل يأخذ `mediaUrl` والإطار الثابت `thumbUrl` (إطار من الفيديو)
+  /// رابط الوسيط كما أرسله الخادم؛ المشغّل يأخذ المعاينة الخفيفة `videoPreviewUrl` (أو `mediaUrl` احتياطاً) والإطار الثابت `thumbUrl`
   final String media;
   final _PreviewRegistry videos;
   final bool noMotion;
@@ -626,6 +627,29 @@ class _VideoPreview extends StatefulWidget {
 /// حُرّرت فتحة؛ فلا تتجمّد المعاينات إطارات ثابتة بعد تغيّر القائمة أو التمرير.
 class _VideoPreviewState extends State<_VideoPreview> {
   bool _slot = false;
+  /// المعاينة تدور على النسخة الخفيفة (/chat/vpreview: 360p، أول ست ثوانٍ، صامتة) لا المقطع الكامل؛ وإن تعذّرت (خادم بلا ffmpeg
+  /// يعيد 404) تعود إلى المقطع الكامل بمتحكم ومشغّل جديدين
+  VideoViewController? _player;
+  bool _full = false;
+
+  String get _src => (_full ? null : videoPreviewUrl(widget.media)) ?? mediaUrl(widget.media);
+
+  VideoViewController _controller() => _player ??= VideoViewController()..addListener(_onPlayback);
+
+  void _onPlayback() {
+    final c = _player;
+    if (c == null || !c.value.failed || _full || videoPreviewUrl(widget.media) == null) return;
+    c.removeListener(_onPlayback);
+    // التبليغ قد يأتي أثناء بناء المشغّل: التبديل بعده
+    scheduleMicrotask(() {
+      c.dispose();
+      if (!mounted || !identical(_player, c)) return;
+      setState(() {
+        _full = true;
+        _player = null;
+      });
+    });
+  }
 
   @override
   void initState() {
@@ -673,6 +697,8 @@ class _VideoPreviewState extends State<_VideoPreview> {
   void dispose() {
     widget.videos.removeListener(_retry);
     _drop();
+    _player?.removeListener(_onPlayback);
+    _player?.dispose();
     super.dispose();
   }
 
@@ -684,8 +710,11 @@ class _VideoPreviewState extends State<_VideoPreview> {
       return Stack(fit: StackFit.expand, children: [
         // الإطار الثابت تحت المشغّل: يظهر ريثما يجهز المقطع أو إن تعذّر أو منع المتصفح التشغيل التلقائي، بدل بطاقة فارغة
         _poster('tl-video-under'),
-        // المعاينة لا تلتقط اللمس: لمسة البطاقة تفتح العارض
-        IgnorePointer(child: VideoView(key: const Key('tl-video-loop'), url: mediaUrl(widget.media), poster: thumbUrl(widget.media), autoplay: true, loop: true, muted: true, controls: false)),
+        // المعاينة لا تلتقط اللمس: لمسة البطاقة تفتح العارض. تبديل الرابط (العودة للمقطع الكامل) يعني مشغّلاً جديداً
+        KeyedSubtree(
+          key: ValueKey(_src),
+          child: IgnorePointer(child: VideoView(key: const Key('tl-video-loop'), url: _src, poster: thumbUrl(widget.media), controller: _controller(), autoplay: true, loop: true, muted: true, controls: false, fit: BoxFit.cover)),
+        ),
         const PositionedDirectional(bottom: 8, end: 8, child: Icon(Icons.volume_off_rounded, size: 16, color: Colors.white70)),
       ]);
     }
