@@ -91,6 +91,8 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
     final private = corePrivate || (p2 != null && p2.flags.isPrivate && !p2.flags.isFriend && !p2.flags.isMe && !isMe);
     final since = p2?.since ?? pc?.createdAt;
     final canMessage = p2?.flags.canMessage ?? true;
+    // أضفته ولم يضفني: «صديق» من جهتي فقط، وسياسة الأصدقاء عنده تنتظر قبوله (لا نقول «صديق» و«غير صديق» معاً)
+    final friendPending = !canMessage && p2?.flags.messageReason == 'friends-only' && contacts.any((c) => c.id == id);
 
     return Scaffold(
       backgroundColor: Joy.bg,
@@ -198,7 +200,11 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
                               height: 50,
                               alignment: Alignment.center,
                               decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(999)),
-                              child: const Text('لا يستقبل رسائل من غير الأصدقاء', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+                              child: Text(
+                                  friendPending
+                                      ? 'بانتظار قبول طلب الصداقة'
+                                      : switch (p2?.flags.messageReason) { 'nobody' => 'لا يستقبل رسائل جديدة', 'blocked' => 'حظرت هذا الشخص', _ => 'لا يستقبل رسائل من غير الأصدقاء' },
+                                  style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
                             ),
                     ),
                     if (p2 != null) ...[
@@ -208,7 +214,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: isContact
-                          ? OutlinedButton(key: const Key('friend-btn'), onPressed: () => _removeContact(context), child: const Text('صديق'))
+                          ? OutlinedButton(key: const Key('friend-btn'), onPressed: () => _removeContact(context), child: Text(friendPending ? 'طلب مُرسل' : 'صديق'))
                           : OutlinedButton(key: const Key('friend-btn'), onPressed: () => _addContact(context), child: const Text('إضافة صديق')),
                     ),
                   ]),

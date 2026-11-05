@@ -273,6 +273,11 @@ export default async function jobs(app, opts = {}) {
     return st;
   }
   globalThis.naslifeJobsSweep = sweep;
+  // «من يراسلني» (profile_ext.js): المرشح الذي أجاب على أسئلة الفرز (كُشفت هويته وأُعيد له chatWith) وفريق توظيف الوظيفة
+  // (المسؤول والمالك والمدير وhr) يتراسلون أياً كانت سياسة أي منهما؛ الانسحاب أو الرفض قبل الإجابة لا يفتح شيئاً
+  const hiringPair = async (cand, staff) => (await pool.query(`SELECT 1 FROM job_matches m JOIN jobs j ON j.id=m.job_id LEFT JOIN biz b ON b.id=m.biz_id
+    WHERE m.user_id=$1 AND m.status='answered' AND (j.assignee_id=$2 OR b.owner_id=$2 OR EXISTS (SELECT 1 FROM biz_staff s WHERE s.biz_id=m.biz_id AND s.user_id=$2 AND s.role IN ('manager','hr'))) LIMIT 1`, [cand, staff])).rowCount > 0;
+  (globalThis.naslifeMessageAllow ??= new Map()).set("jobs", async (a, b) => !!a && !!b && a !== b && ((await hiringPair(a, b)) || (await hiringPair(b, a))));
   const SWEEP_MS = opts.sweepMs ?? (Number(process.env.JOBS_SWEEP_MS) || 30 * 60 * 1000);
   let timer = null;
   if (SWEEP_MS > 0) { timer = setInterval(() => sweep().catch(() => {}), SWEEP_MS); timer.unref?.(); app.addHook("onClose", async () => { if (timer) clearInterval(timer); }); }

@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/jobs_models.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
+import '../../api/profile_v2_api.dart';
+import '../../api/profile_v2_models.dart';
 import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
@@ -367,8 +369,11 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
     final handle = await askText(context, title: 'محادثة جديدة', hint: 'النك نيم أو المعرّف', confirm: 'فتح', maxLines: 1);
     if (handle == null || handle.isEmpty) return;
     try {
-      final p = await ref.read(apiClientProvider).userByHandle(handle.trim().toLowerCase());
-      if (mounted) Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p)));
+      final api = ref.read(apiClientProvider);
+      final p = await api.userByHandle(handle.trim().toLowerCase());
+      // «من يراسلني» قبل أول رسالة: المحادثة تعرض السبب بدل المؤلّف إن رُفض، وتنفتح للرد إن كان قد كتب لي
+      final gate = await api.canMessage(p.id) ?? const MessageGate();
+      if (mounted) Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadPage(peer: p, gate: gate)));
     } catch (e) {
       if (mounted) toast(context, 'لم أجد "$handle"', error: true);
     }

@@ -10,6 +10,7 @@ import '../../api/models.dart';
 import '../../api/moments_api.dart';
 import '../../api/naslife_api.dart';
 import '../../api/posts_api.dart';
+import '../../api/profile_v2_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/directions.dart';
@@ -391,6 +392,12 @@ Future<void> sendMomentInChat(BuildContext context, WidgetRef ref, MapPost p) as
   final target = await pickChatPerson(context, ref, title: 'إرسال اللحظة إلى');
   if (target == null) return;
   try {
+    // «من يراسلني» عند المستلم: النواة لا تفحصه عند الإرسال
+    final gate = await api.canMessage(target.id);
+    if (gate != null && !gate.ok) {
+      _say(messenger, gate.notice, error: true);
+      return;
+    }
     await api.sendMessage(target.id, postCode(p.id));
     container.invalidate(chatsProvider);
     _say(messenger, 'أُرسلت اللحظة إلى ${target.nickname}');

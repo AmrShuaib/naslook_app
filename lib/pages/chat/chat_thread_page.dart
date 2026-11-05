@@ -21,6 +21,8 @@ import '../../api/community_api.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/posts_api.dart';
+import '../../api/profile_v2_api.dart';
+import '../../api/profile_v2_models.dart';
 import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
@@ -52,6 +54,7 @@ import 'widgets/audio_bubble.dart';
 import 'widgets/bubble.dart';
 import 'widgets/composer.dart';
 import 'widgets/jump_to_latest.dart';
+import 'widgets/message_gate_notice.dart';
 import 'widgets/reaction_bar.dart';
 import 'widgets/suggestion_chips.dart';
 import 'widgets/typing_indicator.dart';
@@ -102,7 +105,9 @@ class ChatThreadPage extends ConsumerStatefulWidget {
   final String? initialMessageId;
   /// نص يملأ المؤلّف عند الفتح ولا يُرسل تلقائياً (رمز `#job/…` بعد الإجابة على أسئلة التوظيف مثلاً).
   final String? initialText;
-  const ChatThreadPage({super.key, required this.peer, this.initialMessageId, this.initialText});
+  /// فحص «من يراسلني» أُجري قبل الفتح («محادثة جديدة») فلا يُعاد.
+  final MessageGate? gate;
+  const ChatThreadPage({super.key, required this.peer, this.initialMessageId, this.initialText, this.gate});
   @override
   ConsumerState<ChatThreadPage> createState() => _ChatThreadPageState();
 }
@@ -171,10 +176,23 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   Timer? _typingTimer, _presenceTimer;
   // صندوق الصادر المحفوظ محلياً (آخر نسخة كُتبت حتى لا نكرر الكتابة)
   String? _outboxSaved;
+  /// «من يراسلني» عند الطرف الآخر: يُفحص قبل أول رسالة ما لم يكتب لي هو. النواة تملك POST /messages ولا تفحص
+  /// السياسة، فالضمان في هذا الفحص المسبق وفي إخفاء المؤلّف.
+  MessageGate? _gate;
+  Future<void>? _gateCheck;
+  /// أول تحميل للسجل (نجح أو فشل): الإرسال قبله ينتظره ليعرف هل كتب لي الطرف الآخر، فلا يفلت إرسال من الفحص.
+  final _firstLoad = Completer<void>();
+  /// إرسال نص ينتظر الفحص (أو تحضير رمز): ضغطة ثانية لا تُرسل النص نفسه مرتين.
+  bool _preparingSend = false;
+  bool _friendBusy = false, _friendRequested = false;
 
   String get myId => ref.read(appStateProvider).user?.id ?? '';
   /// رسالتي أم رسالة الطرف الآخر؟ (لا تعتمد على اسم حقل المرسل في النواة؛ انظر [Message.isMine])
   bool _mine(Message m) => m.isMine(myId: myId, peerId: _peerId);
+  /// كتب لي الطرف الآخر في هذه المحادثة؟ الرد عليه لا يُمنع أبداً مهما كانت سياسته.
+  bool get _peerWrote => _messages.any((m) => !_mine(m));
+  /// المؤلّف مقفل: رفض من الفحص ولم يكتب لي الطرف الآخر بعد.
+  bool get _gated => _gate != null && !_gate!.ok && !_peerWrote;
   String get myName => ref.read(appStateProvider).user?.nickname ?? '';
   ApiClient get _api => ref.read(apiClientProvider);
   String get _peerId => widget.peer.id;
@@ -191,8 +209,14 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
 
   /// نقطة توسعة للمدمج: إجراءات إضافية في قائمة المرفقات (مثل «مشاركة موقعي الحي» عبر showLiveShareSheet).
   List<AttachAction> get _extraAttachActions => [
-        AttachAction(key: const Key('attach-live'), icon: Icons.my_location_rounded, label: 'موقعي الحي', onTap: () => showLiveShareSheet(context, ref, _peerId)),
+        AttachAction(key: const Key('attach-live'), icon: Icons.my_location_rounded, label: 'موقعي الحي', onTap: _shareLive),
       ];
+
+  /// «موقعي الحي» يرسل رسالة `/live` بنفسه (live_share.dart)، فيمر على «من يراسلني» قبل فتح الورقة.
+  Future<void> _shareLive() async {
+    if (_gateMatters && (!await _gateAllows() || !mounted)) return;
+    await showLiveShareSheet(context, ref, _peerId);
+  }
 
   @override
   void initState() {
@@ -201,6 +225,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     _positions.itemPositions.addListener(_onPositions);
     final draft = widget.initialText;
     if (draft != null && draft.trim().isNotEmpty) _text.text = draft;
+    _gate = widget.gate;
     _load();
     final s = ref.read(socketProvider);
     _sub = s?.events.listen(_onEvent);
@@ -454,13 +479,70 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         _error = null;
         _hasMore = list.length >= pageSize;
       });
+      if (!_peerWrote) _startGateCheck();
       _jumpToBottom(animate: false);
       _markRead();
       final target = widget.initialMessageId;
       if (target != null) WidgetsBinding.instance.addPostFrameCallback((_) => _revealMessage(target));
       _restoreOutbox();
     } catch (e) {
-      if (mounted) setState(() { _error = e; _loading = false; });
+      if (!mounted) return;
+      setState(() { _error = e; _loading = false; });
+      // تعذّر السجل فلا نعرف هل كتب لي: الفحص يقرّر (الخادم يستثني الرد على من كتب أولاً)، ونجاح «إعادة المحاولة» يفتح الرد
+      _startGateCheck();
+    } finally {
+      if (!_firstLoad.isCompleted) _firstLoad.complete();
+    }
+  }
+
+  /// يبدأ فحص «من يراسلني» مرة واحدة ما لم تصل نتيجته (من «محادثة جديدة» أو فحص سابق).
+  void _startGateCheck() {
+    if (_gate == null) _gateCheck ??= _checkGate();
+  }
+
+  Future<void> _checkGate() async {
+    // تعذّر الفحص أو خادم قديم (null) = مسموح كما كان، ويُحفظ نتيجةً حتى لا يُعاد مع كل رسالة
+    final g = await _api.canMessage(_peerId) ?? const MessageGate();
+    if (mounted) {
+      setState(() => _gate = g);
+    } else {
+      _gate = g;
+    }
+    _gateCheck = null;
+  }
+
+  /// هل يلزم المرور على [_gateAllows]؟ نعم ما دام السجل لم يحسم أن الطرف الآخر كتب لي ولم تصل نتيجة الفحص (أثناء
+  /// التحميل، بعد خطئه، أو والفحص جارٍ)، أو حين يكون المنع قائماً. غير ذلك يبقى الإرسال متزامناً كما كان.
+  bool get _gateMatters => _gated || _gateCheck != null || (_gate == null && !_peerWrote);
+
+  /// هل يُسمح بالإرسال الآن؟ ينتظر أول تحميل للسجل ثم الفحص إن لزم (إرسال فور الفتح، أو مع نص مُعبّأ مسبقاً)،
+  /// ويعرض السبب إن مُنع.
+  Future<bool> _gateAllows({bool quiet = false}) async {
+    if (!_firstLoad.isCompleted) await _firstLoad.future;
+    if (!mounted) return false;
+    if (!_peerWrote) _startGateCheck();
+    final pending = _gateCheck;
+    if (pending != null) await pending;
+    if (!mounted) return false;
+    if (!_gated) return true;
+    if (!quiet) toast(context, _gate!.notice, error: true);
+    return false;
+  }
+
+  /// «إضافة صديق» من إشعار المنع: طلب صداقة يفتح المراسلة حين يقبله الطرف الآخر.
+  Future<void> _addFriend() async {
+    setState(() => _friendBusy = true);
+    try {
+      await _api.addContact(_peerId);
+      ref.invalidate(contactsProvider);
+      ref.invalidate(requestsProvider);
+      if (!mounted) return;
+      setState(() => _friendRequested = true);
+      toast(context, 'أُرسل طلب الصداقة إلى ${widget.peer.nickname}');
+    } catch (e) {
+      if (mounted) toast(context, errText(e), error: true);
+    } finally {
+      if (mounted) setState(() => _friendBusy = false);
     }
   }
 
@@ -718,6 +800,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   // ---------------------------------------------------------------------------
 
   Future<void> _sendText() async {
+    // النص ما زال في الحقل أثناء الانتظار: ضغطة ثانية عليه لا تُطلق إرسالاً ثانياً
+    if (_preparingSend) return;
     var t = _text.text.trim();
     if (t.isEmpty) return;
     // تحقق مسبق من الكلمات المحظورة (رسائل النواة لا تمر بفلتر الخادم)
@@ -726,10 +810,17 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       toast(context, 'الرسالة تحتوي كلمة غير مسموحة: «$banned»', error: true);
       return;
     }
-    if (t.startsWith('/')) {
-      final prepared = await _prepareCommand(t);
-      if (prepared == null || !mounted) return;
-      t = prepared;
+    _preparingSend = true;
+    try {
+      // قبل مسح الحقل: رسالة مرفوضة بسياسة الطرف الآخر لا تضيع من المؤلّف
+      if (_gateMatters && (!await _gateAllows() || !mounted)) return;
+      if (t.startsWith('/')) {
+        final prepared = await _prepareCommand(t);
+        if (prepared == null || !mounted) return;
+        t = prepared;
+      }
+    } finally {
+      _preparingSend = false;
     }
     _text.clear();
     final cmd = parseCommand(t);
@@ -979,6 +1070,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     Future<void> Function(String serverId)? onSent,
     bool quiet = false,
   }) async {
+    if (_gateMatters && (!await _gateAllows(quiet: quiet) || !mounted)) return;
     final quote = retry?.quote ?? (_replyTo == null ? null : MessageQuote(id: _replyTo!.key, senderId: _replyTo!.senderId, senderName: _mine(_replyTo!) ? 'أنت' : widget.peer.nickname, type: _replyTo!.mediaKind, content: _replyTo!.mediaKind == 'text' ? _replyTo!.content : ''));
     final local = retry?.copyWith(status: MessageStatus.sending) ??
         Message(id: '', localId: 'local-${DateTime.now().microsecondsSinceEpoch}', senderId: myId, type: type, content: content, sentAt: DateTime.now(),
@@ -1125,6 +1217,13 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       builder: (ctx) => _PeoplePicker(people: people.values.toList(), title: 'إعادة التوجيه إلى'),
     );
     if (target == null || !mounted) return;
+    // «من يراسلني» عند المستلم (النواة لا تفحصه)؛ الطرف الحالي يُحكم بفحص هذه المحادثة
+    final gate = target.id == _peerId ? (_gated ? _gate : null) : await _api.canMessage(target.id);
+    if (!mounted) return;
+    if (gate != null && !gate.ok) {
+      toast(context, gate.notice, error: true);
+      return;
+    }
     final from = _mine(m) ? myName : widget.peer.nickname;
     // النسخة المعاد توجيهها رسالة جديدة: لا تحمل clientId الأصل
     final extra = {...m.extra}..remove('clientId');
@@ -1400,15 +1499,25 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           alignment: Alignment.topCenter,
           child: _peerTyping ? Padding(padding: const EdgeInsets.fromLTRB(14, 0, 14, 8), child: TypingIndicator(peer: widget.peer)) : const SizedBox(width: double.infinity),
         ),
-        _composer(),
+        if (_gated) _gateNotice() else _composer(),
       ]),
     );
+  }
+
+  Widget _gateNotice() {
+    final g = _gate!;
+    final inContacts = g.friendsOnly && (ref.watch(contactsProvider).valueOrNull ?? const <Person>[]).any((p) => p.id == _peerId);
+    return MessageGateNotice(gate: g, requested: _friendRequested || inContacts, busy: _friendBusy, onAddFriend: g.friendsOnly ? _addFriend : null);
   }
 
   Widget _list() {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return ErrorState(_error!, onRetry: _load);
-    if (_messages.isEmpty) return EmptyState(icon: Icons.waving_hand_rounded, title: 'قل مرحباً لـ ${widget.peer.nickname}');
+    if (_messages.isEmpty) {
+      return _gated
+          ? const EmptyState(icon: Icons.lock_outline_rounded, title: 'لا رسائل بينكما بعد')
+          : EmptyState(icon: Icons.waving_hand_rounded, title: 'قل مرحباً لـ ${widget.peer.nickname}');
+    }
     final q = _searching ? _searchCtl.text.trim() : '';
     return ScrollablePositionedList.builder(
       itemScrollController: _itemScroll,

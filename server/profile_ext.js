@@ -116,6 +116,14 @@ export default async function profileV2(app, opts) {
     if (!tables.has(t)) continue;
     const c = await colsOf(t); const key = pick(c, "user_id", "member_id", "uid"); if (key) { M = { table: t, key }; break; }
   }
+  // الرسائل في النواة: من كتب لمن، لاستثناء الرد من «من يراسلني» (بلا جدول معروف يبقى الاستثناء في التطبيق وحده)
+  let MS = null;
+  for (const t of ["messages", "direct_messages", "dm_messages", "chat_messages"]) {
+    if (!tables.has(t)) continue;
+    const c = await colsOf(t);
+    const from = pick(c, "sender_id", "from_id", "user_id", "author_id"), to = pick(c, "recipient_id", "to_id", "receiver_id", "peer_id");
+    if (from && to && from !== to) { MS = { table: t, from, to }; break; }
+  }
   // الحضور: جدول النواة إن وُجد (متصل = تحديث خلال خمس دقائق)
   let PR = null;
   for (const t of ["presence", "map_presence"]) {
@@ -172,6 +180,34 @@ export default async function profileV2(app, opts) {
     return out;
   };
   const isFriend = async (a, b) => (a && b && a !== b && C ? exists(`SELECT 1 FROM ${q(C.table)} WHERE (${q(C.a)}=$1 AND ${q(C.b)}=$2) OR (${q(C.a)}=$2 AND ${q(C.b)}=$1) LIMIT 1`, [a, b]) : false);
+  // ---- «من يراسلني»: النواة تملك POST /messages ولا تمر عليه الإضافات، فهذه القاعدة يفحصها التطبيق مسبقاً عبر
+  // GET /profiles/:id/can-message وتطابقها flags.canMessage في الملف. الصديق هنا من أضافه صاحب الحساب نفسه
+  // (طلب صداقة من طرف واحد لا يفتح المراسلة)، والرد على من كتب لي أولاً مسموح دائماً، والحظر يمنع في كل الحالات.
+  const hasContact = async (owner, other) => (owner && other && owner !== other && C ? exists(`SELECT 1 FROM ${q(C.table)} WHERE ${q(C.a)}=$1 AND ${q(C.b)}=$2 LIMIT 1`, [owner, other]) : false);
+  const wroteTo = async (from, to) => (MS && from && to ? exists(`SELECT 1 FROM ${q(MS.table)} WHERE ${q(MS.from)}=$1 AND ${q(MS.to)}=$2 LIMIT 1`, [from, to]) : false);
+  const blockedPair = async (a, b) => { try { const f = globalThis.naslifeIsBlocked; return f ? !!(await f(a, b)) : false; } catch { return false; } };
+  // اتجاه الحظر: «blocked» لمن حظر فقط؛ المحظور يرى «nobody» كأي حساب لا يستقبل رسائل حتى لا يعرف أنه حُظر
+  const hasBlocked = async (a, b) => { try { const f = globalThis.naslifeHasBlocked; return f ? !!(await f(a, b)) : false; } catch { return false; } };
+  // علاقات على المنصة تستلزم التواصل (المرشح وفريق التوظيف، أطراف طلب قائم): تسجّلها الإضافة المالكة لجداولها في
+  // globalThis.naslifeMessageAllow (اسم → async (caller, target) => bool) فتفتح المراسلة أياً كانت سياسة الطرفين.
+  // الخريطة مشتركة فلا يهم ترتيب التحميل، وفحص يرمي لا يفتح شيئاً ولا يُسقط الفحص كله.
+  const relationAllows = async (a, b) => {
+    const reg = globalThis.naslifeMessageAllow;
+    if (!a || !b || a === b || !(reg instanceof Map)) return false;
+    for (const fn of reg.values()) {
+      try { if (await fn(a, b)) return true; } catch { /* فحص معطّل = لا علاقة */ }
+    }
+    return false;
+  };
+  async function messageGate(caller, target, policy) {
+    if (caller && caller === target) return { ok: true, reason: null };
+    if (caller && (await blockedPair(caller, target))) return { ok: false, reason: (await hasBlocked(caller, target)) ? "blocked" : "nobody" };
+    if (policy !== "friends" && policy !== "none") return { ok: true, reason: null };
+    if (caller && (await wroteTo(target, caller))) return { ok: true, reason: null };
+    if (policy === "friends" && (await hasContact(target, caller))) return { ok: true, reason: null };
+    if (caller && (await relationAllows(caller, target))) return { ok: true, reason: null };
+    return { ok: false, reason: policy === "friends" ? "friends-only" : "nobody" };
+  }
   const isOnline = async (id) => (PR ? exists(`SELECT 1 FROM ${q(PR.table)} WHERE ${q(PR.key)}=$1 AND ${q(PR.at)} > now() - interval '5 minutes' LIMIT 1`, [id]) : null);
   const loadExt = async (id) => { try { return (await pool.query("SELECT * FROM profile_ext WHERE user_id=$1", [id])).rows[0] ?? null; } catch { return null; } };
   const EXT_DEFAULTS = { cover_url: null, display_name: "", job_title: "", city: "", district: "", links: [], intro_kind: null, intro_url: null, intro_sec: null, intro_at: null, intro_visibility: "all", msg_policy: "all", show_online: true, show_city: true, show_friends: false, account_type: null };
@@ -197,10 +233,10 @@ export default async function profileV2(app, opts) {
     const ext = { ...EXT_DEFAULTS, ...(ext0 ?? {}) };
     const links = (Array.isArray(ext.links) ? ext.links : []).map(normaliseLink).filter(Boolean).slice(0, MAX_LINKS).map((l) => ({ ...l, url: linkUrl(l.kind, l.value) }));
     const isPrivate = core.isPublic === false;
-    const flagsBase = { isMe, isFollowing: following, isFriend: friend, isPrivate, blocked: false };
+    const gate = await messageGate(viewer, id, ext.msg_policy);
+    const flagsBase = { isMe, isFollowing: following, isFriend: friend, isPrivate, blocked: false, canMessage: gate.ok, messageReason: gate.reason };
     const head = { id, nickname: u.nickname, displayName: ext.display_name, avatarUrl: u.avatarUrl, coverUrl: ext.cover_url };
-    if (isPrivate && !isMe && !friend) return { ...head, flags: { ...flagsBase, canMessage: ext.msg_policy === "all", online: null }, stats: {} };
-    const canMessage = isMe ? true : ext.msg_policy === "all" ? true : ext.msg_policy === "friends" ? friend : false;
+    if (isPrivate && !isMe && !friend) return { ...head, flags: { ...flagsBase, online: null }, stats: {} };
     const online = ext.show_online ? await isOnline(id) : null;
     const showCity = isMe || ext.show_city === true;
     const showFriends = isMe || ext.show_friends === true;
@@ -212,7 +248,7 @@ export default async function profileV2(app, opts) {
       intro: introVisible ? { kind: ext.intro_kind, url: ext.intro_url, sec: ext.intro_sec, at: iso(ext.intro_at) } : null,
       stats: { ...st, friends: showFriends ? st.friends : 0 },
       trust: { emailVerified: u.emailVerified === true, phoneVerified: false, memberSince, respondsFast: null },
-      flags: { ...flagsBase, canMessage, online, showFriends: ext.show_friends === true },
+      flags: { ...flagsBase, online, showFriends: ext.show_friends === true },
       memberSince,
       _core: core, _ext: ext, // للمالك فقط (تُحذف قبل الإرسال)
     };
@@ -233,7 +269,7 @@ export default async function profileV2(app, opts) {
     };
   }
 
-  app.get("/profile/v2/status", async () => ({ ok: true, users: U.ok, profiles: P?.table ?? null, contacts: C ? `${C.table}(${C.a},${C.b})` : null, posts: postsOk, reviews: reviewsOk, orders: ordersOk, members: M?.table ?? null, presence: PR?.table ?? null }));
+  app.get("/profile/v2/status", async () => ({ ok: true, users: U.ok, profiles: P?.table ?? null, contacts: C ? `${C.table}(${C.a},${C.b})` : null, messages: MS ? `${MS.table}(${MS.from},${MS.to})` : null, posts: postsOk, reviews: reviewsOk, orders: ordersOk, members: M?.table ?? null, presence: PR?.table ?? null }));
 
   // ---- ملف مستخدم كما يراه الزائر؛ الزيارة تُسجَّل مرة في اليوم لكل زائر مسجّل غير المالك
   app.get("/profiles/:id/v2", async (req, reply) => {
@@ -241,6 +277,13 @@ export default async function profileV2(app, opts) {
     const u = await findUser(req.params.id); if (!u) return bad(reply, 404, "not-found");
     if (viewer && viewer !== u.id) { try { await pool.query("INSERT INTO profile_views(user_id, viewer_id, day) VALUES($1,$2,current_date) ON CONFLICT DO NOTHING", [u.id, viewer]); } catch { /* ignore */ } }
     return strip(await buildProfile(u, viewer));
+  });
+
+  // ---- فحص مسبق قبل أول رسالة: {ok, reason: friends-only | nobody | blocked | null}
+  app.get("/profiles/:id/can-message", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const u = await findUser(req.params.id); if (!u) return bad(reply, 404, "not-found");
+    return messageGate(uid, u.id, (await loadExt(u.id))?.msg_policy ?? "all");
   });
 
   app.get("/me/profile/v2", async (req, reply) => {
@@ -386,6 +429,7 @@ export default async function profileV2(app, opts) {
 
   // ---- للإضافات الأخرى وحذف الحساب
   globalThis.naslifeProfileExt = async (uid) => loadExt(String(uid ?? ""));
+  globalThis.naslifeCanMessage = async (caller, target) => { const t = String(target ?? ""); return messageGate(String(caller ?? "") || null, t, (await loadExt(t))?.msg_policy ?? "all"); };
   globalThis.naslifeProfileV2Delete = async (uid) => {
     const id = String(uid ?? ""); if (!id) return false;
     try {

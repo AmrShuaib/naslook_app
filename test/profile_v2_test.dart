@@ -75,6 +75,9 @@ class _Srv {
   final bodies = <String, Map<String, dynamic>>{};
   final puts = <Map<String, dynamic>>[];
   bool following = false, canMessage = true, private = false, v2 = true;
+  String? messageReason;
+  /// جهات اتصالي (GET /contacts): أضفته أنا ولا يعني أنه أضافني
+  List<Map<String, dynamic>> contacts = const [];
   int followers = 1212;
   String accountType = 'personal';
   Map<String, dynamic>? intro = {'kind': 'voice', 'url': 'https://test.local/chat/media/intro.m4a', 'sec': 42, 'at': '2026-09-20T10:00:00Z'};
@@ -88,7 +91,7 @@ class _Srv {
         'intro': intro,
         'stats': {'posts': 128, 'followers': followers, 'following': 40, 'circles': 6, 'ratingAvg': 4.9, 'ratingCount': 47, 'completedOrders': 31, 'friends': 12},
         'trust': {'emailVerified': true, 'phoneVerified': false, 'memberSince': '2025-03-05T00:00:00Z', 'respondsFast': true},
-        'flags': {'isMe': false, 'isFollowing': following, 'isFriend': false, 'canMessage': canMessage, 'online': true, 'isPrivate': false, 'blocked': false},
+        'flags': {'isMe': false, 'isFollowing': following, 'isFriend': contacts.isNotEmpty, 'canMessage': canMessage, 'messageReason': messageReason, 'online': true, 'isPrivate': false, 'blocked': false},
         'memberSince': '2025-03-05T00:00:00Z',
       };
   Map<String, dynamic> _privateVisitor() => {'id': 'SA0000002', 'nickname': 'fahad.shots', 'displayName': 'فهد الغامدي', 'avatarUrl': null, 'coverUrl': null, 'flags': {'isPrivate': true, 'isMe': false, 'isFriend': false, 'canMessage': true}, 'stats': {}};
@@ -157,6 +160,8 @@ class _Srv {
       case 'DELETE /me/profile/intro':
         intro = null;
         return _json({'ok': true});
+      case 'GET /contacts':
+        return _json(contacts);
       case 'GET /me/profile/stats':
         return _json({'visits7': 312, 'visits7Prev': 220, 'messages7': 27, 'follows7': 9, 'shares7': 2, 'series': []});
       case 'GET /handles/check':
@@ -355,6 +360,30 @@ void main() {
       expect(find.byKey(const Key('message-off')), findsOneWidget);
       expect(find.text('لا يستقبل رسائل من غير الأصدقاء'), findsOneWidget);
       expect(find.byKey(const Key('follow-btn')), findsOneWidget, reason: 'المتابعة تبقى متاحة');
+    });
+
+    testWidgets('a friend request I sent under friends-only reads as pending, not «صديق» next to «غير الأصدقاء»', (tester) async {
+      await _pump(tester, const UserProfilePage(person: _sara), srv: _Srv()
+        ..canMessage = false
+        ..messageReason = 'friends-only'
+        ..contacts = [{'id': 'SA0000002', 'nickname': 'fahad.shots'}]);
+      expect(find.byKey(const Key('message-off')), findsOneWidget);
+      expect(find.text('بانتظار قبول طلب الصداقة'), findsOneWidget);
+      expect(find.text('لا يستقبل رسائل من غير الأصدقاء'), findsNothing);
+      expect(find.descendant(of: find.byKey(const Key('friend-btn')), matching: find.text('طلب مُرسل')), findsOneWidget);
+      expect(find.text('صديق'), findsNothing);
+    });
+
+    testWidgets('the message-off hint follows the reason (nobody, blocked by me)', (tester) async {
+      await _pump(tester, const UserProfilePage(person: _sara), srv: _Srv()
+        ..canMessage = false
+        ..messageReason = 'nobody');
+      expect(find.text('لا يستقبل رسائل جديدة'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await _pump(tester, const UserProfilePage(person: _sara), srv: _Srv()
+        ..canMessage = false
+        ..messageReason = 'blocked');
+      expect(find.text('حظرت هذا الشخص'), findsOneWidget);
     });
 
     testWidgets('a private profile shows the header and a locked state without tabs', (tester) async {

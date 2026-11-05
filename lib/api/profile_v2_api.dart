@@ -21,6 +21,16 @@ extension ProfileV2Api on ApiClient {
   /// حدث على الملف (message | share | link): خلفي، لا يزعج الزائر ولا يفشل الواجهة.
   Future<void> profileEvent(String id, String kind) => post('/profiles/$id/event', {'kind': kind}, prompt: false).then((_) {}).catchError((_) {});
 
+  /// فحص «من يراسلني» قبل أول رسالة إلى [peerId]. يعيد null (= مسموح كما كان) حين يغيب المسار عن خادم قديم (404)
+  /// أو يتعذّر الفحص: القفل الخاطئ أسوأ من رسالة تصل، والنواة لا تفحص السياسة على أي حال.
+  Future<MessageGate?> canMessage(String peerId) async {
+    try {
+      return MessageGate.fromJson(await get('/profiles/${Uri.encodeComponent(peerId)}/can-message'));
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<ProfileStats7> profileStats7() async => ProfileStats7.fromJson(await get('/me/profile/stats'));
   Future<HandleCheck> checkHandle(String nickname) async => HandleCheck.fromJson(await get('/handles/check', query: {'nickname': nickname.trim().toLowerCase()}));
 }

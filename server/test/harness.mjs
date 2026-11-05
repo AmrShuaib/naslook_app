@@ -93,6 +93,14 @@ await call('GET', '/biz?following=1', { expect: 200 }).then(l => console.log('  
 await call('DELETE', '/biz/biz-ikea/follow', { body: {}, expect: 200 });
 // طلباتي والإلغاء
 const mine = await call('GET', '/biz/orders/mine', { expect: 200 });
+// «من يراسلني» (profile_ext.js) لا يقفل صاحب الحجز وفريق الدائرة (هنا المالك خالد) بالاتجاهين
+{
+  const allowBiz = (a, b) => globalThis.naslifeMessageAllow.get('biz-orders')(a, b);
+  const okPair = await allowBiz('SA0000001', 'SA0000003') && await allowBiz('SA0000003', 'SA0000001');
+  const noOther = (await allowBiz('SA0000001', 'SA0000077')) === false && (await allowBiz('SA0000003', 'SA0000003')) === false;
+  if (!okPair || !noOther) fails++;
+  console.log((okPair && noOther ? 'OK  ' : 'FAIL') + ' message allow: a customer with a booking and the circle owner, nobody else');
+}
 console.log('   mine:', mine.map(o => o.kind + ':' + o.status + ':' + o.total + ':' + o.cancellable).join(' | '));
 const w1 = await call('GET', '/wallet', { expect: 200 });
 await call('POST', '/biz/orders/' + o1.id + '/cancel', { body: {}, expect: 200 });
