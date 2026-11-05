@@ -11,7 +11,7 @@ const OPS = new URL('./ops-test', import.meta.url).pathname;
 fs.rmSync(OPS, { recursive: true, force: true });
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query(`DROP TABLE IF EXISTS login_aliases, account_recovery, legal_consents, account_deletions, sessions, profiles, push_subscriptions, contacts, user_flags, admins, team_members CASCADE`);
-await pool.query(`DROP TABLE IF EXISTS wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders, admin_audit CASCADE`);
+await pool.query(`DROP TABLE IF EXISTS wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders, admin_audit, chat_live CASCADE`);
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
 await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ");
 await pool.query("DELETE FROM users");
@@ -31,7 +31,9 @@ await pool.query(`CREATE TABLE sessions (token TEXT PRIMARY KEY, user_id TEXT NO
   CREATE TABLE events (id UUID PRIMARY KEY, host_id TEXT NOT NULL, starts_at TIMESTAMPTZ NOT NULL, cancelled BOOLEAN NOT NULL DEFAULT false);
   CREATE TABLE tickets (id UUID PRIMARY KEY, event_id UUID NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'valid');
   CREATE TABLE biz (id TEXT PRIMARY KEY, name TEXT, owner_id TEXT, active BOOLEAN NOT NULL DEFAULT true);
-  CREATE TABLE biz_claims (biz_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'approved', PRIMARY KEY (biz_id, user_id));`);
+  CREATE TABLE biz_claims (biz_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'approved', PRIMARY KEY (biz_id, user_id));
+  CREATE TABLE chat_live (id UUID PRIMARY KEY, from_id TEXT NOT NULL, to_id TEXT NOT NULL, lat DOUBLE PRECISION, lng DOUBLE PRECISION, accuracy REAL, updated_at TIMESTAMPTZ,
+    until TIMESTAMPTZ NOT NULL, stopped_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now());`);
 
 // ---- نواة وهمية تقرأ الأسماء من جدول users (فتغيير الاسم في القاعدة يُلغي الدخول بالاسم القديم)
 const secrets = new Map(); // id -> {password, phrase}
@@ -147,6 +149,11 @@ await pool.query("INSERT INTO map_posts(id,user_id,media_url) VALUES($1,$2,'/cha
 await pool.query("INSERT INTO market_listings(id,seller_id,title) VALUES($1,$2,'chair')", [crypto.randomUUID(), mona]);
 await pool.query("INSERT INTO biz(id,name,owner_id) VALUES('mine','my shop',$1),('seeded','Seeded Cafe',$1)", [mona]);
 await pool.query("INSERT INTO biz_claims(biz_id,user_id) VALUES('seeded',$1)", [mona]);
+// مشاركات موقع مباشر نشطة منها وإليها، ومشاركة لا تخصها
+const liveOut = crypto.randomUUID(), liveIn = crypto.randomUUID(), liveOther = crypto.randomUUID();
+await pool.query(`INSERT INTO chat_live(id,from_id,to_id,lat,lng,accuracy,updated_at,until) VALUES
+  ($1,$4,'SA0000009',21.5,39.2,8,now(),now()+interval '8 hours'), ($2,'SA0000009',$4,21.6,39.1,null,now(),now()+interval '1 hour'),
+  ($3,'SA0000008','SA0000009',21.7,39.3,null,now(),now()+interval '1 hour')`, [liveOut, liveIn, liveOther, mona]);
 const walletSumBefore = await n('SELECT COALESCE(sum(amount),0)::bigint AS n FROM wallet_tx');
 const txBefore = await n('SELECT count(*)::int AS n FROM wallet_tx WHERE user_id=$1', [mona]);
 r = await call('POST', '/me/account/delete', { token: monaTok, body: { password: 'Password1', confirm: 'حذف', refund: true, reason: 'test' } });
@@ -157,6 +164,10 @@ check(/^deleted_[0-9a-f]{12}$/.test(u.nickname) && u.avatar_url === null && u.de
 check(await n('SELECT count(*)::int AS n FROM profiles WHERE user_id=$1', [mona]) === 0, 'profile row removed');
 check(await n('SELECT count(*)::int AS n FROM login_aliases WHERE user_id=$1', [mona]) === 0 && await n('SELECT count(*)::int AS n FROM account_recovery WHERE user_id=$1', [mona]) === 0, 'email alias and recovery phrase removed');
 check(await n('SELECT count(*)::int AS n FROM sessions WHERE user_id=$1', [mona]) === 0, 'all sessions revoked');
+const lives = Object.fromEntries((await pool.query('SELECT id, stopped_at, lat, lng, accuracy, updated_at FROM chat_live')).rows.map((x) => [x.id, x]));
+const wiped = (x) => x.stopped_at && new Date(x.stopped_at).getTime() <= Date.now() + 1000 && x.lat === null && x.lng === null && x.accuracy === null && x.updated_at === null;
+check(wiped(lives[liveOut]) && wiped(lives[liveIn]), 'live location shares from and to the account ended and their coordinates wiped', JSON.stringify(lives[liveOut]));
+check(lives[liveOther].stopped_at === null && lives[liveOther].lat === 21.7, 'other users\' live shares untouched');
 check(await n('SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id=$1', [mona]) === 0 && await n('SELECT count(*)::int AS n FROM contacts WHERE user_id=$1 OR contact_id=$1', [mona]) === 0, 'push subscriptions and contacts removed');
 check((await pool.query('SELECT status FROM map_posts WHERE id=$1', [post])).rows[0].status === 'hidden' && await n("SELECT count(*)::int AS n FROM market_listings WHERE seller_id=$1 AND status='hidden'", [mona]) === 1, 'posts and listings hidden');
 const bz = Object.fromEntries((await pool.query('SELECT id, owner_id, active FROM biz')).rows.map((x) => [x.id, x]));

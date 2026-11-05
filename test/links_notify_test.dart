@@ -1,6 +1,7 @@
 // روابط ووجهات كانت تفتح خطأً أو لا شيء: زر «قدّم» في بطاقة الوظيفة يفتح الوظيفة بمعرّفها (لا بمعرّف الدائرة)، رابط مشاركة
 // العرض /l/<id> و#/l/<id> يفتح صفحة العرض (مسجّلاً وزائراً)، إشعارات السوق والمحفظة والترقية تفتح شاشتها من حمولتها
-// والنوع المجهول لا يفعل شيئاً، وتسجيل الخروج يوقف مشاركات الموقع المباشر على الخادم أولاً بمهلة قصيرة.
+// والنوع المجهول لا يفعل شيئاً، وتسجيل الخروج يوقف مشاركات الموقع المباشر على الخادم أولاً بمهلة قصيرة ثم مؤقّتاتها المحلية
+// (فلا قراءة GPS ولا دفع بلا رمز يفتح دعوة الدخول وحده بعد الخروج).
 import 'dart:async';
 import 'dart:convert';
 
@@ -9,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:naslook/api/client.dart';
@@ -16,10 +18,12 @@ import 'package:naslook/api/notify_api.dart';
 import 'package:naslook/api/row_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/app/app.dart';
+import 'package:naslook/core/location.dart';
 import 'package:naslook/core/notify_open.dart';
 import 'package:naslook/core/share/share_links.dart';
 import 'package:naslook/pages/admin/admin_shell.dart';
 import 'package:naslook/pages/business/owner/business_dashboard_page.dart';
+import 'package:naslook/pages/chat/live_share.dart';
 import 'package:naslook/pages/home/row_open.dart';
 import 'package:naslook/pages/jobs/job_page.dart';
 import 'package:naslook/pages/market/market_page.dart';
@@ -44,6 +48,7 @@ class _SignedOut extends AppStateNotifier {
 const _job = '11111111-1111-4111-8111-111111111101';
 const _lid = '22222222-2222-4222-8222-222222222202';
 const _order = '33333333-3333-4333-8333-333333333303';
+const _live = '44444444-4444-4444-8444-444444444404';
 
 Map<String, dynamic> _jobJson() => {
       'id': _job, 'bizId': 'biz-brew92', 'title': 'باريستا', 'titleEn': '', 'department': '', 'description': 'تحضير القهوة', 'descriptionEn': '', 'requirements': {'must': [], 'nice': []}, 'skills': [],
@@ -62,6 +67,8 @@ class _Srv {
   /// تحجز ردّ إيقاف المشاركات (خادم بطيء) حتى تُفتح
   Completer<void>? stopGate;
   int stopped = 1;
+  /// خادم قديم بلا POST /chat/live/stop-all (404)
+  bool noStopAll = false;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   Future<http.Response> handle(http.Request req) async {
     final path = req.url.path;
@@ -76,8 +83,16 @@ class _Srv {
       case 'GET /market/$_lid/reviews':
         return _json([]);
       case 'POST /chat/live/stop-all':
+        if (noStopAll) return _json({'error': 'not-found'}, 404);
         if (stopGate != null) await stopGate!.future;
         return _json({'ok': true, 'stopped': stopped});
+      case 'POST /chat/live':
+        return _json({'id': _live, 'from': 'SA0000001', 'to': 'SA0000002', 'lat': null, 'lng': null, 'at': null, 'until': DateTime.now().add(const Duration(hours: 1)).toUtc().toIso8601String(), 'active': true});
+      case 'PUT /chat/live/$_live':
+      case 'DELETE /chat/live/$_live':
+        // كالخادم: بلا رمز جلسة 401
+        if (req.headers['x-token'] == null) return _json({'error': 'auth'}, 401);
+        return _json({'ok': true});
       case 'POST /logout':
         return _json({'ok': true});
     }
@@ -252,6 +267,98 @@ void main() {
       expect(srv.calls, contains('POST /logout'));
       expect(n.state.status, AuthStatus.signedOut);
       srv.stopGate!.complete();
+    });
+
+    /// يبدأ مشاركة موقع مع SA0000002 ويمرّر دفعة دورية واحدة؛ يعيد عدّاد قراءات GPS ودعوات الدخول.
+    Future<({_Srv srv, ApiClient api, _SignedIn n, LiveShareController ctl, int Function() gps, int Function() prompts})> startShare(WidgetTester tester, {bool noStopAll = false}) async {
+      var gps = 0, prompts = 0;
+      DeviceLocation.override = () async {
+        gps++;
+        return const LatLng(21.5, 39.2);
+      };
+      final prevPrompt = ApiClient.onUnauthorized;
+      ApiClient.onUnauthorized = () => prompts++;
+      addTearDown(() {
+        DeviceLocation.override = null;
+        ApiClient.onUnauthorized = prevPrompt;
+        LiveShareController.resetForTests();
+      });
+      final srv = _Srv()..noStopAll = noStopAll;
+      final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle))..token = 'tok';
+      final n = _SignedIn(api, SessionStore());
+      final ctl = LiveShareController.of('SA0000002');
+      unawaited(ctl.start(api, 60, const LatLng(21.5, 39.2)));
+      await _settle(tester, 2);
+      expect(ctl.active, isTrue);
+      await tester.pump(LiveShareController.pushEvery);
+      await _settle(tester, 2);
+      expect(srv.calls.where((c) => c == 'PUT /chat/live/$_live').length, 2, reason: 'الدفعة الأولى ثم دفعة المؤقّت');
+      expect(gps, 1);
+      return (srv: srv, api: api, n: n, ctl: ctl, gps: () => gps, prompts: () => prompts);
+    }
+
+    testWidgets('logout also stops this device\'s live-share timer: no GPS read, no tokenless push, no sign-in prompt afterwards', (tester) async {
+      final s = await startShare(tester);
+      unawaited(s.n.logout());
+      await _settle(tester, 2);
+      expect(s.n.state.status, AuthStatus.signedOut);
+      expect(s.api.token, isNull);
+      expect(s.ctl.active, isFalse, reason: 'خطّاف الخروج أوقف المتحكّم');
+      expect(s.srv.calls, containsAllInOrder(['POST /chat/live/stop-all', 'POST /logout']));
+      expect(s.srv.calls, isNot(contains('DELETE /chat/live/$_live')), reason: 'الخادم أوقفها كلها فلا إيقاف منفرد');
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(LiveShareController.pushEvery);
+        await _settle(tester, 2);
+      }
+      expect(s.srv.calls.where((c) => c == 'PUT /chat/live/$_live').length, 2, reason: 'لا دفع بعد الخروج');
+      expect(s.gps(), 1, reason: 'لا قراءة GPS بعد الخروج');
+      expect(s.prompts(), 0, reason: 'لا دعوة دخول تظهر وحدها بعد الخروج');
+    });
+
+    testWidgets('an old server without stop-all: the share this device knows is stopped by DELETE before the session ends', (tester) async {
+      final s = await startShare(tester, noStopAll: true);
+      unawaited(s.n.logout());
+      await _settle(tester, 2);
+      expect(s.ctl.active, isFalse);
+      expect(s.srv.calls, containsAllInOrder(['POST /chat/live/stop-all', 'DELETE /chat/live/$_live', 'POST /logout']), reason: 'بالرمز الصالح قبل إبطاله');
+      await tester.pump(LiveShareController.pushEvery * 2);
+      await _settle(tester, 2);
+      expect(s.srv.calls.where((c) => c == 'PUT /chat/live/$_live').length, 2);
+      expect(s.prompts(), 0);
+    });
+
+    testWidgets('a slow server with an open share: the timer stops and no extra DELETE wait is added after the timeout', (tester) async {
+      final s = await startShare(tester);
+      s.srv.stopGate = Completer<void>();
+      var done = false;
+      unawaited(s.n.logout().then((_) => done = true));
+      await tester.pump(const Duration(seconds: 1));
+      expect(done, isFalse);
+      await tester.pump(AppStateNotifier.liveStopTimeout);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(done, isTrue, reason: 'المهلة القصيرة وحدها');
+      expect(s.ctl.active, isFalse);
+      expect(s.srv.calls, isNot(contains('DELETE /chat/live/$_live')), reason: 'خادم بطيء: لا ننتظر طلبات إيقاف أخرى');
+      s.srv.stopGate!.complete();
+      await tester.pump(LiveShareController.pushEvery * 2);
+      await _settle(tester, 2);
+      expect(s.srv.calls.where((c) => c == 'PUT /chat/live/$_live').length, 2);
+      expect(s.gps(), 1);
+      expect(s.prompts(), 0);
+    });
+
+    testWidgets('signed out in another tab: this tab\'s live-share timer stops without any request', (tester) async {
+      final s = await startShare(tester);
+      final before = s.srv.calls.length;
+      unawaited(s.n.syncFromStore()); // التخزين المحلي فارغ = خرج في تبويب آخر
+      await _settle(tester, 2);
+      expect(s.n.state.status, AuthStatus.signedOut);
+      expect(s.ctl.active, isFalse);
+      await tester.pump(LiveShareController.pushEvery * 2);
+      await _settle(tester, 2);
+      expect(s.srv.calls.length, before, reason: 'لا دفع ولا DELETE برمز أُبطل');
+      expect(s.gps(), 1);
+      expect(s.prompts(), 0);
     });
 
     test('without a session token there is nothing to stop', () async {

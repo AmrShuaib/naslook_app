@@ -33,7 +33,13 @@ class LiveShareController extends ChangeNotifier {
   final String peerId;
   LiveShareController._(this.peerId);
 
-  static LiveShareController of(String peerId) => _byPeer.putIfAbsent(peerId, () => LiveShareController._(peerId));
+  static LiveShareController of(String peerId) {
+    // يكفي التسجيل مع أول متحكّم (بلا متحكّم لا مؤقّت يُوقف)؛ المجموعة تمنع التكرار
+    AppStateNotifier.signOutHooks.add(_onSignOut);
+    return _byPeer.putIfAbsent(peerId, () => LiveShareController._(peerId));
+  }
+  /// خطّاف الخروج: الخادم أوقف المشاركات (stop-all) فلا DELETE لكل واحدة؛ وإن تعذّر ذلك نجرّب DELETE لما يعرفه هذا الجهاز.
+  static Future<void> _onSignOut(bool serverStopped) => stopAll(notifyServer: !serverStopped);
   /// المتحكّم النشط مع هذا الطرف إن وُجد.
   static LiveShareController? activeFor(String peerId) { final c = _byPeer[peerId]; return c != null && c.active ? c : null; }
   /// يوقف جلسة بمعرّفها من أي شاشة (بطاقة المُشارِك): عبر متحكّمها إن كان حياً، وإلا بطلب DELETE مباشر.
@@ -43,8 +49,8 @@ class LiveShareController extends ChangeNotifier {
     }
     await api.liveStop(id);
   }
-  /// يوقف كل المشاركات مع كل الأطراف: يستدعيه الدامج عند تسجيل الخروج (قبل مسح رمز الجلسة حتى يُغلق الخادم الجلسات أيضاً؛
-  /// بعده تبقى مفتوحة حتى `until` لكن الدفع وقراءة GPS يتوقفان هنا على أي حال).
+  /// يوقف كل المشاركات مع كل الأطراف: يستدعيه خطّاف الخروج [_onSignOut] من AppStateNotifier.logout قبل مسح رمز الجلسة
+  /// (حتى يصل DELETE إن لزم؛ بعده تبقى مفتوحة حتى `until` لكن الدفع وقراءة GPS يتوقفان هنا على أي حال).
   static Future<void> stopAll({bool notifyServer = true}) async {
     final open = _byPeer.values.where((c) => c.id != null).toList();
     await Future.wait(open.map((c) => c.stop(notifyServer: notifyServer)));
