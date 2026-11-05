@@ -6,7 +6,8 @@ class RowItem {
   /// moment | offer | event | job | listing | circle
   final String kind;
   final String id;
-  /// معرّف الوجهة: الدائرة للعرض والوظيفة، والفعالية، والإعلان، والمنشور
+  /// معرّف الوجهة: الدائرة للعرض والوظيفة، والفعالية، والإعلان، والمنشور.
+  /// الوظيفة نفسها تُفتح بـ [id] (refId لها الدائرة صاحبتها)
   final String refId;
   final String title, subtitle, who, act;
   final String? logoUrl, imageUrl;

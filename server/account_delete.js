@@ -168,6 +168,12 @@ export default async function accountDelete(app, opts = {}) {
       if (has("chat_mutes", "user_id", "peer_id")) await run("chat_mutes", "DELETE FROM chat_mutes WHERE user_id=$1 OR peer_id=$1");
       if (has("chat_reactions", "user_id")) await run("chat_reactions", "DELETE FROM chat_reactions WHERE user_id=$1");
       if (has("chat_requests", "from_id", "to_id", "status")) await run("chat_requests", "UPDATE chat_requests SET status='cancelled' WHERE status='pending' AND (from_id=$1 OR to_id=$1)");
+      // مشاركات الموقع المباشر (chat_live.js) منه وإليه تنتهي وتُمسح إحداثياتها كما في الإيقاف العادي: الجلسات تُحذف بعد
+      // المعاملة فلا يصل إيقاف التطبيق عند الخروج، وبدون هذا يبقى آخر موقع مقروءاً للطرف الآخر حتى until (ثماني ساعات)
+      if (has("chat_live", "from_id", "to_id", "stopped_at", "until", "lat", "lng", "accuracy", "updated_at")) {
+        await run("chat_live", `UPDATE chat_live SET stopped_at=COALESCE(stopped_at, LEAST(until, now())), lat=NULL, lng=NULL, accuracy=NULL, updated_at=NULL
+          WHERE (from_id=$1 OR to_id=$1) AND (stopped_at IS NULL OR lat IS NOT NULL OR lng IS NOT NULL OR accuracy IS NOT NULL OR updated_at IS NOT NULL)`);
+      }
       // ---- المحتوى: يُخفى فوراً ويُمسح بعد 30 يوماً (يبقى المخالف منه للتحقيق في البلاغات)
       if (has("map_posts", "user_id", "status")) await run("map_posts", "UPDATE map_posts SET status='hidden' WHERE user_id=$1 AND status NOT IN ('blocked','hidden')");
       if (has("map_post_likes", "user_id")) await run("map_post_likes", "DELETE FROM map_post_likes WHERE user_id=$1");

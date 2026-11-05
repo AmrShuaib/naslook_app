@@ -36,6 +36,8 @@ class _Srv {
   final bodies = <String, Map<String, dynamic>>{};
   bool verified = false;
   String presence = 'fixed';
+  /// 409 يحاكي خادماً يرفض الدبوس لدائرة ثابتة (not-mobile)
+  int hereStatus = 200;
   Map<String, dynamic>? serviceArea, here;
   Map<String, dynamic> verification = {'status': 'none'};
   Map<String, dynamic>? next = {'key': 'catalog', 'title': 'أضف 3 عناصر إلى الكتالوج', 'hint': 'منتجات أو خدمات أو مواعيد', 'minutes': 5, 'tab': 'catalog'};
@@ -73,6 +75,7 @@ class _Srv {
         verification = {'status': 'pending', 'entityKind': b['entityKind'], 'submittedAt': DateTime.now().toUtc().toIso8601String()};
         return _json({'status': 'pending', 'verification': verification});
       case 'POST /biz/$_id/here':
+        if (hereStatus == 409) return _json({'error': 'not-mobile'}, 409);
         final b = bodies[key]!;
         here = {'lat': b['lat'], 'lng': b['lng'], 'until': DateTime.now().add(Duration(hours: (b['hours'] as num).toInt())).toUtc().toIso8601String()};
         return _json({'here': here});
@@ -227,8 +230,31 @@ void main() {
     expect(verifyErrText(const ApiException(409, 'x', body: {'error': 'already-approved'})), 'الدائرة موثّقة بالفعل');
   });
 
-  testWidgets('here today: the sheet posts hours and the device location; the active state shows «حتى» and ends', (tester) async {
+  testWidgets('here today: a fixed circle has no «أنا هنا اليوم» button; a stale 409 not-mobile reads in Arabic', (tester) async {
     final srv = _Srv();
+    await _pump(tester, srv, const BusinessDashboardPage(id: _id));
+    expect(find.byKey(const Key('completeness-card')), findsOneWidget);
+    expect(find.text('تأكيد استلام برمز'), findsOneWidget, reason: 'الإجراءات السريعة ظاهرة');
+    expect(find.byKey(const Key('here-today')), findsNothing, reason: 'الخادم يرفض الدبوس للدائرة الثابتة (409 not-mobile)');
+    expect(hereErrText(const ApiException(409, 'رفض الخادم الطلب (not-mobile)', body: {'error': 'not-mobile'})), startsWith('«أنا هنا اليوم» للدوائر المتنقلة فقط'));
+    expect(hereErrText(const ApiException(400, 'رفض الخادم الطلب (bad-location)', body: {'error': 'bad-location'})), 'حدّد موقعاً صحيحاً على الخريطة', reason: 'بقية الأخطاء كما في لوحة المالك');
+  });
+
+  testWidgets('here today: a stale sheet on a circle that became fixed shows the Arabic not-mobile message', (tester) async {
+    final srv = _Srv()..presence = 'mobile';
+    await _pump(tester, srv, const BusinessDashboardPage(id: _id));
+    await tester.tap(find.byKey(const Key('here-today')));
+    await tester.pumpAndSettle();
+    srv.presence = 'fixed';
+    srv.hereStatus = 409;
+    await tester.tap(find.byKey(const Key('here-set')));
+    await tester.pumpAndSettle();
+    expect(find.text('«أنا هنا اليوم» للدوائر المتنقلة فقط، ودائرتك مسجّلة بموقع ثابت يظهر على الخريطة دائماً'), findsOneWidget);
+    expect(find.textContaining('not-mobile'), findsNothing);
+  });
+
+  testWidgets('here today: the sheet posts hours and the device location; the active state shows «حتى» and ends', (tester) async {
+    final srv = _Srv()..presence = 'mobile';
     await _pump(tester, srv, const BusinessDashboardPage(id: _id));
     expect(find.byKey(const Key('here-active')), findsNothing);
     await tester.tap(find.byKey(const Key('here-today')));

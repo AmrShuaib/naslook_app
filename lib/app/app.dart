@@ -351,8 +351,13 @@ class ShellBarActions extends ConsumerWidget {
 }
 
 
-/// وجهة رابط عام: صفحة الدائرة أو الملف العام بالنك نيم أو عارض اللحظة.
-Widget pendingLinkPage(PendingLink l) => l.isMoment ? MomentLinkPage(id: l.value) : l.isCircle ? BusinessPage(id: l.value) : PublicProfilePage(handle: l.value);
+/// وجهة رابط عام: صفحة الدائرة أو الملف العام بالنك نيم أو عارض اللحظة أو صفحة العرض في السوق.
+Widget pendingLinkPage(PendingLink l) => switch (l.kind) {
+      'moment' => MomentLinkPage(id: l.value),
+      'circle' => BusinessPage(id: l.value),
+      'listing' => ListingPage(l.value),
+      _ => PublicProfilePage(handle: l.value),
+    };
 
 /// تصفّح كزائر. مع رابط مشترك: الوجهة مع شريط سفلي للدخول. بلا رابط: تبويبات عامة (الخريطة، الأماكن، السوق، الفعاليات،
 /// حسابي). أي فعل يتطلب حساباً (401 أو [requireAccount]) يعرض دعوة للدخول.

@@ -1,6 +1,7 @@
-// روابط المشاركة العامة في Naslife: /c/<معرّف الدائرة> و /u/<النك نيم> و /l/<عرض> يقدّمان واجهة التطبيق نفسها مع وسوم Open Graph
+// روابط المشاركة العامة في Naslife: /c/<معرّف الدائرة> و /u/<النك نيم> يقدّمان واجهة التطبيق نفسها مع وسوم Open Graph
 // (العنوان والوصف والصورة) حتى تظهر بطاقة معاينة عند لصق الرابط في واتساب وإكس وغيرهما، ثم يفتح التطبيق الوجهة من المسار.
-// الملفات الخاصة (is_public=false إن وُجد العمود) تُعرض بوسوم عامة بلا صورة أو نبذة. و/m/<لحظة> صفحة وسوم صغيرة تحوّل إلى /#/m/<id>.
+// الملفات الخاصة (is_public=false إن وُجد العمود) تُعرض بوسوم عامة بلا صورة أو نبذة. و/m/<لحظة> و/l/<عرض> صفحتا وسوم صغيرتان
+// تحوّلان إلى /#/m/<id> و/#/l/<id>.
 // التسجيل في src/index.js: await app.register((await import("./share.js")).default, { pool, webappDir });
 import fs from "node:fs";
 import path from "node:path";
@@ -99,15 +100,35 @@ export default async function share(app, opts) {
     if (!isPublic) return serve(req, reply, { title, description: `حساب ${u.nickname} على ناس لايف`, url, type: "profile" });
     return serve(req, reply, { title, description: bio.slice(0, 200) || `تواصل مع ${u.nickname} على ناس لايف`, url, type: "profile", image: absImage(req, u.avatar) });
   });
-  // رابط عرض في السوق: /l/<معرّف العرض> مع معاينة العنوان والسعر والصورة
+  // صفحة وسوم صغيرة تحوّل المتصفح إلى [target] بوسم refresh (لا سكربت: CSP في Caddy يمنع المضمّن)، مستقلة عن index.html
+  // فتعمل ولو لم تُنشر حزمة الويب بعد. يستعملها رابط اللحظة ورابط العرض.
+  const redirectPage = (meta, target, label) => `<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${metaTags(meta)}
+<meta http-equiv="refresh" content="0; url=${esc(target)}">
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#0b3d4f;color:#fff}a{color:#fff}</style>
+</head>
+<body><p><a href="${esc(target)}">${esc(label)}</a></p></body>
+</html>`;
+
+  // ---- عرض في السوق: /l/<معرّف العرض> صفحة وسوم المعاينة (العنوان والسعر والصورة للعرض النشط) تحوّل إلى /#/l/<id>
+  // فيفتح التطبيق صفحة العرض. كانت تقدّم index.html على المسار نفسه والتطبيق لا يعرف /l/ فيفتح الرئيسية.
+  // العرض الموجود غير النشط (مباع أو مخفي) يُحوَّل أيضاً بوسوم عامة: صفحة العرض تقرّر ما يُعرض (صاحبه يراه)؛ والمجهول إلى «/».
   app.get("/l/:id", async (req, reply) => {
-    const id = String(req.params.id ?? "");
+    const id = String(req.params.id ?? "").toLowerCase();
+    const ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
     let l = null;
-    if (/^[0-9a-f-]{36}$/i.test(id)) { try { l = (await pool.query("SELECT title, description, price, image_url, status FROM market_listings WHERE id=$1", [id])).rows[0] ?? null; } catch { l = null; } }
-    const url = `${publicOrigin(req)}/l/${esc(id)}`;
+    if (ok) { try { l = (await pool.query("SELECT title, description, price, image_url, status FROM market_listings WHERE id=$1", [id])).rows[0] ?? null; } catch { l = null; } }
+    const url = `${publicOrigin(req)}/l/${ok ? id : ""}`;
+    const target = l ? `/#/l/${id}` : "/";
     const price = l ? (Number(l.price) / 100).toLocaleString("ar-SA") + " ر.س" : "";
     const live = l && l.status === "active";
-    return serve(req, reply, { title: live ? `${l.title} · ${price}` : `عرض في سوق ${SITE}`, description: live ? String(l.description ?? "").slice(0, 200) || "اطلبه من ناس لايف" : "افتح الرابط في ناس لايف لرؤية العرض.", image: live ? absImage(req, l.image_url) : null, url, type: live ? "product" : "website" });
+    const image = live ? absImage(req, l.image_url) : null;
+    const meta = { title: live ? `${l.title} · ${price}` : `عرض في سوق ${SITE}`, description: live ? String(l.description ?? "").slice(0, 200) || "اطلبه من ناس لايف" : "افتح الرابط في ناس لايف لرؤية العرض.", image, url, type: live ? "product" : "website", card: image ? "summary_large_image" : "summary" };
+    return reply.type("text/html; charset=utf-8").header("cache-control", "no-cache").send(redirectPage(meta, target, "افتح العرض في ناس لايف"));
   });
   // ---- لحظة: /m/<معرّف اللحظة> صفحة صغيرة بوسوم المعاينة (العنوان من النص، والصورة مصغّر /chat/thumb للصورة والفيديو،
   // والوصف الناشر والمكان) تحوّل المتصفح إلى /#/m/<id> فيفتح التطبيق عارض اللحظة. التحويل بوسم refresh لا بسكربت لأن
@@ -142,18 +163,7 @@ export default async function share(app, opts) {
       const description = [oneLine(p.nickname, 40), oneLine(p.place_name, 80)].filter(Boolean).join(" · ") || "على ناس لايف";
       meta = { title: oneLine(p.caption, 100) || oneLine(p.title, 100) || DEFAULT_TITLE, description, url, image, type: p.kind === "video" ? "video.other" : "article", card: image ? "summary_large_image" : "summary" };
     }
-    const html = `<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-${metaTags(meta)}
-<meta http-equiv="refresh" content="0; url=${esc(target)}">
-<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#0b3d4f;color:#fff}a{color:#fff}</style>
-</head>
-<body><p><a href="${esc(target)}">افتح اللحظة في ناس لايف</a></p></body>
-</html>`;
-    return reply.type("text/html; charset=utf-8").header("cache-control", "no-cache").send(html);
+    return reply.type("text/html; charset=utf-8").header("cache-control", "no-cache").send(redirectPage(meta, target, "افتح اللحظة في ناس لايف"));
   });
   app.get("/share/status", async () => ({ ok: true, webappDir: WEBAPP, avatarColumn: avatarCol, privacy: !!privacy }));
 }

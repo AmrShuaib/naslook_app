@@ -2,6 +2,7 @@
 // الموقع المباشر: المُشارِك ينشئ جلسة (POST /chat/live) بمدة 15 أو 60 أو 480 دقيقة ثم يرسل رسالة عادية نصها "/live <id>"
 // ويدفع موقعه كل 10 ثوانٍ (PUT)؛ الطرف الآخر يقرأ آخر موقع (GET) كل 10 ثوانٍ ما دامت البطاقة ظاهرة. لا يرى الجلسة إلا طرفاها،
 // وتتوقف تلقائياً عند انقضاء المدة أو بإيقاف صاحبها (DELETE)؛ جلسة واحدة نشطة لكل زوج (من → إلى): بدء جديدة يوقف السابقة.
+// وPOST /chat/live/stop-all يوقف كل مشاركات المتصل (يستدعيه التطبيق قبل تسجيل الخروج).
 // الموقع لا يبقى بعد الانتهاء: الإيقاف والكنس يمسحان الإحداثيات من الصف، وGET لا يعيد موقعاً لجلسة غير نشطة.
 // الردود المقترحة: POST /chat/suggest يعيد ثلاث جمل عربية قصيرة عبر مفتاح Anthropic المخزَّن في صندوق البريد
 // (globalThis.naslifeAskClaude من inbox.js) أو قواعد محلية حين لا مفتاح أو عند أي خطأ؛ لا تُرسل معرّفات ولا أسماء إلى النموذج.
@@ -171,6 +172,19 @@ async function setup(app, opts) {
     // idempotent: يحتفظ بأول stopped_at ويمسح الموقع
     if (r.stopped_at == null || hasPosition(r)) await end(r.id);
     return { ok: true };
+  });
+
+  // إنهاء كل مشاركات المتصل (هو المُشارِك) دفعة واحدة: يستدعيه التطبيق قبل تسجيل الخروج حتى لا تبقى مشاركة موقع نشطة
+  // بعد مغادرة الحساب (من هذا الجهاز أو غيره). الإنهاء والمسح كما في DELETE لكل جلسة (أول stopped_at يبقى، والمنقضية تُختم
+  // بـ until كما في الكنس)، ويمسح أي موقع بقي في صف منتهٍ. لا إشعار ولا بث لأن الإيقاف العادي لا يرسل شيئاً: بطاقة الطرف
+  // الآخر تقرأ active:false في استطلاعها التالي. idempotent: يعيد عدد الجلسات التي أُغلقت الآن.
+  app.post("/chat/live/stop-all", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    const r = await pool.query(`WITH t AS (SELECT id, (stopped_at IS NULL AND until > now()) AS was_active FROM chat_live
+        WHERE from_id=$1 AND (stopped_at IS NULL OR lat IS NOT NULL OR lng IS NOT NULL OR accuracy IS NOT NULL OR updated_at IS NOT NULL) FOR UPDATE)
+      UPDATE chat_live c SET stopped_at=COALESCE(c.stopped_at, LEAST(c.until, now())), ${WIPE}
+      FROM t WHERE c.id=t.id RETURNING t.was_active`, [uid]);
+    return { ok: true, stopped: r.rows.filter((x) => x.was_active).length };
   });
 
   // ---- الردود المقترحة

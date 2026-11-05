@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/chat_live_api.dart';
 import '../api/client.dart';
 import '../api/naslife_api.dart';
 import '../api/session.dart';
@@ -291,11 +292,14 @@ class AppStateNotifier extends StateNotifier<AppState> {
     if (saved == null) {
       if (current != null) {
         _api.token = null;
+        // خرج في تبويب آخر (وأوقف مشاركاته هناك): مؤقّتات هذا التبويب تتوقف بلا طلبات، فالرمز لم يعد صالحاً
+        await _runSignOutHooks(true);
         state = const AppState(status: AuthStatus.signedOut);
       }
       return;
     }
     if (current == null || saved.token != current.token || saved.user.id != current.user.id) {
+      if (current != null && saved.user.id != current.user.id) await _runSignOutHooks(true);
       _api.token = saved.token;
       // الجلسة القادمة من تبويب آخر تمر بالبوابة نفسها (حساب لم يؤكد بريده)
       final gate = await _gateEmail();
@@ -305,9 +309,42 @@ class AppStateNotifier extends StateNotifier<AppState> {
     }
   }
 
+  /// مهلة إيقاف مشاركات الموقع المباشر قبل الخروج: قصيرة حتى لا يتأخر الخروج إن كان الخادم بطيئاً.
+  static const liveStopTimeout = Duration(seconds: 3);
+
+  /// ما يُوقف محلياً عند مغادرة الحساب (مؤقّتات تعمل برمز الجلسة، كدفع الموقع المباشر): تسجّله الشاشات صاحبتها حتى لا
+  /// تستورد الحالةُ الصفحات. بدونه يبقى المؤقّت يقرأ GPS ويدفع بلا رمز، فيرتد 401 ويفتح دعوة الدخول وحده بعد الخروج.
+  /// [serverStopped]: أوقف الخادم المشاركات، أو لا فائدة من مخاطبته الآن (بطء أو انقطاع أو رمز مُبطل)، فلا طلبات إيقاف منفردة.
+  static final signOutHooks = <Future<void> Function(bool serverStopped)>{};
+
+  static Future<void> _runSignOutHooks(bool serverStopped) async {
+    for (final h in signOutHooks.toList()) {
+      try {
+        await h(serverStopped).timeout(liveStopTimeout);
+      } catch (_) {
+        // خطّاف متعثر لا يوقف الخروج
+      }
+    }
+  }
+
   Future<void> logout() async {
     _clearPending();
     state = state.copyWith(busy: true, clearError: true);
+    // مشاركة موقع مباشر نشطة لا تبقى بعد مغادرة الحساب: تُوقف على الخادم ما دام رمز الجلسة صالحاً (بعده يرفضها الخادم)،
+    // بأفضل جهد ومهلة قصيرة، ثم تُوقف مؤقّتاتها المحلية
+    var serverStopped = true;
+    if (_api.token != null) {
+      try {
+        await _api.liveStopAll().timeout(liveStopTimeout);
+      } on ApiException catch (e) {
+        // خادم قديم بلا المسار (404) أو متعثر: الخطّافات تجرّب الإيقاف المنفرد لما يعرفه هذا الجهاز؛ أما الانقطاع والرمز
+        // المُبطل (بعد حذف الحساب يوقفها الخادم بنفسه) فلا يفيدهما ذلك. الخروج يمضي في كل حال
+        serverStopped = e.statusCode == 0 || e.isUnauthorized;
+      } catch (_) {
+        // انتهت المهلة: الخادم بطيء فلا نزيد الانتظار، والجلسة تنتهي عند until على أي حال
+      }
+    }
+    await _runSignOutHooks(serverStopped);
     try {
       await _api.logout();
       await _store.clear();
