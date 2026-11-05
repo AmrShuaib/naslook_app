@@ -68,7 +68,9 @@ final compareProvider = StateProvider<List<Listing>>((_) => const []);
 void invalidateMarket(WidgetRef ref) { ref.invalidate(marketHomeProvider); ref.invalidate(marketListProvider); ref.invalidate(myListingsProvider); ref.invalidate(rowProvider); }
 
 class MarketPage extends ConsumerStatefulWidget {
-  const MarketPage({super.key});
+  /// أفعال تُلحق بآخر الشريط العلوي: البحث والجرس حين تكون الصفحة قسماً في الشريط السفلي (HomeShell).
+  final List<Widget> barActions;
+  const MarketPage({super.key, this.barActions = const []});
   @override
   ConsumerState<MarketPage> createState() => _MarketPageState();
 }
@@ -107,6 +109,7 @@ class _MarketPageState extends ConsumerState<MarketPage> {
               PopupMenuItem(value: 'compare', child: ListTile(leading: const Icon(Icons.compare_arrows_rounded), title: Text('مقارنة${compare.isEmpty ? '' : ' (${compare.length})'}'))),
             ],
           ),
+          ...widget.barActions,
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(key: const Key('market-sell'), onPressed: () => createListing(context, ref), backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: const Text('اعرض للبيع')),

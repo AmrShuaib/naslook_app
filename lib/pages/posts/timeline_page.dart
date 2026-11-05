@@ -16,6 +16,7 @@ import '../../core/media/video_view.dart';
 import '../../core/nav_provider.dart';
 import '../../state/feed_providers.dart';
 import '../../state/live_providers.dart';
+import '../../state/providers.dart' show signedInProvider;
 import '../../state/safety_providers.dart';
 import '../../state/search_providers.dart';
 import '../../ui/widgets.dart';
@@ -165,6 +166,23 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
 
   Future<void> _refresh() => _n.refresh();
 
+  /// اختصار الحالة الفارغة إلى قسم: داخل HomeShell (حساب مسجّل) نعود إلى الشريط السفلي ثم نبدّل القسم، فلا تُفتح
+  /// نسخة ثانية من السوق أو الفعاليات فوقه. الزائر تبويباته منفصلة (GuestShell) فتُفتح الصفحة نفسها فوق «اللحظات».
+  void _goTab(String tab) {
+    final nav = Navigator.of(context);
+    if (ref.read(signedInProvider)) {
+      nav.popUntil((r) => r.isFirst);
+      openNavTab(ref, tab);
+      return;
+    }
+    final page = switch (tab) { 'market' => const MarketPage(), 'events' => const EventsPage(), _ => null };
+    if (page == null) {
+      nav.maybePop();
+    } else {
+      nav.push(MaterialPageRoute(builder: (_) => page));
+    }
+  }
+
   void _open(RowItem it, List<RowItem> items) => openRowItem(context, it, moments: items);
 
   @override
@@ -225,11 +243,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
                     await composePostHere(context, ref);
                     if (mounted) _n.refresh();
                   },
-                  onGoTab: (tab) {
-                    // الصفحة فوق الشريط السفلي: نعود إليه ثم نبدّل القسم
-                    Navigator.of(context).maybePop();
-                    openNavTab(ref, tab);
-                  },
+                  onGoTab: _goTab,
                 ),
               ),
             ]),
@@ -820,11 +834,11 @@ class _Empty extends StatelessWidget {
       case 'offer':
         return EmptyState(icon: Icons.local_offer_outlined, title: 'لا عروض حولك الآن', subtitle: 'عروض الدوائر القريبة تظهر هنا فور نشرها', action: _btn('tl-go-offer', Icons.groups_rounded, 'تصفّح الدوائر', () => onGoTab('circles')));
       case 'event':
-        return EmptyState(icon: Icons.event_outlined, title: 'لا فعاليات قريبة', subtitle: 'الفعاليات القادمة حولك تظهر هنا', action: _btn('tl-go-event', Icons.event_rounded, 'كل الفعاليات', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EventsPage()))));
+        return EmptyState(icon: Icons.event_outlined, title: 'لا فعاليات قريبة', subtitle: 'الفعاليات القادمة حولك تظهر هنا', action: _btn('tl-go-event', Icons.event_rounded, 'كل الفعاليات', () => onGoTab('events')));
       case 'job':
         return EmptyState(icon: Icons.work_outline_rounded, title: 'لا وظائف معلنة الآن', subtitle: 'فرص الدوائر القريبة تظهر هنا', action: _btn('tl-go-job', Icons.work_rounded, 'كل الوظائف', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobsPage()))));
       case 'listing':
-        return EmptyState(icon: Icons.shopping_bag_outlined, title: 'السوق هادئ الآن', subtitle: 'إعلانات الجيران القريبة تظهر هنا', action: _btn('tl-go-listing', Icons.storefront_rounded, 'افتح السوق', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MarketPage()))));
+        return EmptyState(icon: Icons.shopping_bag_outlined, title: 'السوق هادئ الآن', subtitle: 'إعلانات الجيران القريبة تظهر هنا', action: _btn('tl-go-listing', Icons.storefront_rounded, 'افتح السوق', () => onGoTab('market')));
       case 'circle':
         return EmptyState(icon: Icons.storefront_outlined, title: 'لا دوائر «هنا اليوم» حولك', subtitle: 'الدوائر المتنقلة التي تثبّت دبوسها اليوم تظهر هنا', action: _btn('tl-go-circle', Icons.groups_rounded, 'تصفّح الدوائر', () => onGoTab('circles')));
       default:

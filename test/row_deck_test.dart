@@ -1,7 +1,7 @@
 // «الصف» (نظام «واحد» بشكل البطاقة): الرئيسية خريطة كاملة وبطاقة مدمجة واحدة تُسحب جانبياً. يطلب /row ويعرض البطاقة
 // الأولى بعدّادها، السهمان والسحب يبدّلان البطاقة حلقياً، الخريطة تتبع البطاقة المختارة ودبّوسها يُبرز، النقر على دبّوس
 // يقفز بالبطاقة إليه، زر البطاقة يفتح رحلة العنصر القائمة لكل نوع، الزائر يطلب /row ولا شيء خاصاً، والحالة الفارغة،
-// وشريط التنقّل ثابت بأربعة أقسام.
+// وشريط التنقّل ثابت بستة أقسام.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -26,6 +26,7 @@ import 'package:naslook/pages/home/row_deck.dart';
 import 'package:naslook/pages/jobs/job_page.dart';
 import 'package:naslook/pages/map/map_page.dart';
 import 'package:naslook/pages/market/listing_page.dart';
+import 'package:naslook/pages/market/market_page.dart' show MarketPage;
 import 'package:naslook/pages/posts/post_viewer.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
@@ -449,23 +450,28 @@ void main() {
     expect(acted?.id, _pid);
   });
 
-  testWidgets('the pill nav is fixed to four tabs with the camera in the middle; HomeShell maps them', (tester) async {
+  testWidgets('the pill nav is fixed to six tabs with the camera in the middle; HomeShell maps them', (tester) async {
     int? picked;
     var composed = 0;
     await tester.pumpWidget(MaterialApp(home: Scaffold(bottomNavigationBar: JoyNavBar(tabs: navTabIds, index: 0, onSelect: (i) => picked = i, onCompose: () => composed++, badges: const {'chats': 3}))));
-    expect(navTabIds, ['home', 'circles', 'chats', 'me']);
-    expect(find.text('الخريطة'), findsOneWidget);
-    expect(find.text('الدوائر'), findsOneWidget);
-    expect(find.text('المحادثات'), findsOneWidget);
-    expect(find.text('ماي سبيس'), findsOneWidget);
+    expect(navTabIds, ['home', 'circles', 'market', 'events', 'chats', 'me']);
+    for (final l in ['الخريطة', 'الدوائر', 'السوق', 'الفعاليات', 'المحادثات', 'ماي سبيس']) {
+      expect(find.text(l), findsOneWidget);
+    }
     expect(find.text('3'), findsOneWidget);
-    expect(tester.getCenter(find.byKey(const Key('nav-compose'))).dx, closeTo(400, 30), reason: 'الكاميرا في المنتصف');
+    expect(tester.getCenter(find.byKey(const Key('nav-compose'))).dx, closeTo(400, 0.5), reason: 'الكاميرا في المنتصف');
     await tester.tap(find.byKey(const Key('nav-chats')));
+    expect(picked, 4);
+    await tester.tap(find.byKey(const Key('nav-market')));
     expect(picked, 2);
     await tester.tap(find.byKey(const Key('nav-compose')));
     expect(composed, 1);
     expect(HomeShell.pageOf('home'), isA<MapPage>().having((m) => m.home, 'home', isTrue));
+    expect(HomeShell.pageOf('market'), isA<MarketPage>().having((m) => m.barActions.length, 'barActions', 1));
+    expect(HomeShell.pageOf('events'), isA<EventsPage>().having((m) => m.barActions.length, 'barActions', 1));
     expect(HomeShell.ownBar('home'), isTrue);
+    expect(HomeShell.ownBar('market'), isTrue, reason: 'شريط السوق وحده لا شريطان');
+    expect(HomeShell.ownBar('events'), isTrue);
     expect(HomeShell.ownBar('chats'), isFalse);
   });
 }

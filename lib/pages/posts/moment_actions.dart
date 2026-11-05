@@ -495,7 +495,7 @@ class _MomentPeoplePickerState extends State<MomentPeoplePicker> {
 /// «عرض على الخريطة»: يغلق العارض ويعود إلى خريطة الرئيسية مركّزة على دبوس اللحظة (map_page يستمع لـ mapFocusProvider).
 void showMomentOnMap(BuildContext context, WidgetRef ref, MapPost p) {
   ref.read(mapFocusProvider.notifier).state = (lat: p.lat, lng: p.lng);
-  ref.read(navIndexProvider.notifier).state = 0;
+  openNavTab(ref, 'home');
   Navigator.of(context).popUntil((r) => r.isFirst);
 }
 

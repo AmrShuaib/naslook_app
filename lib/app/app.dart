@@ -103,14 +103,18 @@ class AuthGate extends ConsumerWidget {
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
-  /// صفحة كل قسم من الأقسام الأربعة الثابتة. الخريطة وحدها بلا شريط علوي (بحثها وجرسها فوق الخريطة).
+  /// صفحة كل قسم من الأقسام الستة الثابتة. السوق والفعاليات بشريطيهما وأفعالهما، ويُلحق بهما البحث والجرس كبقية الأقسام.
   static Widget pageOf(String tab) => switch (tab) {
         'home' => const MapPage(home: true),
         'circles' => const CirclesPage(),
+        'market' => const MarketPage(barActions: [ShellBarActions()]),
+        'events' => const EventsPage(barActions: [ShellBarActions()]),
         'chats' => const ChatsPage(),
         _ => const MySpacePage(),
       };
-  static bool ownBar(String tab) => tab == 'home';
+
+  /// أقسام تبني شريطها العلوي بنفسها: الخريطة (بحثها وجرسها فوقها)، والسوق والفعاليات (شريط واحد بأفعالهما لا شريطان).
+  static bool ownBar(String tab) => tab == 'home' || tab == 'market' || tab == 'events';
 
   @override
   ConsumerState<HomeShell> createState() => _HomeShellState();
@@ -119,6 +123,8 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   bool _recoveryShown = false;
   StreamSubscription<Map<String, dynamic>>? _socketSub;
+  // القسم يُبنى أول مرة يُفتح فقط: لا يطلب السوق موقعه ولا تُجلب الفعاليات والملف قبل زيارتها
+  final _visited = <int>{};
   late final MessageBell _bell = MessageBell(ref.read);
   // iOS يعلّق المقبس في الخلفية؛ عند العودة نعيد الاتصال فوراً بدل انتظار مهلة إعادة المحاولة
   late final AppLifecycleListener _life = AppLifecycleListener(onResume: () { ref.read(socketProvider)?.reconnectNow(force: true); AppUpdate.check(); });
@@ -136,9 +142,21 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     // يفتح اتصال WebSocket مبكراً، ويجدّد اشتراك الإشعارات الفورية إن كان الإذن ممنوحاً
     Future.microtask(() {
       if (!mounted) return;
-      _socketSub = ref.read(socketProvider)?.events.listen(_bell.handle);
+      _socketSub = ref.read(socketProvider)?.events.listen(_onSocket);
       PushService.resubscribeIfGranted(ref.read(apiClientProvider));
     });
+  }
+
+  void _onSocket(Map<String, dynamic> e) {
+    _bell.handle(e);
+    // شارة المحادثات: صفحتها تحدّث القائمة بنفسها حين تُبنى؛ وقبل أول زيارة (البناء الكسول) يحدّثها الغلاف فتبقى الشارة حيّة
+    if (_visited.contains(navTabIds.indexOf('chats'))) return;
+    final ev = e['event'];
+    final isMessage = MessageBell.isMessageEvent(e);
+    if (isMessage || ev == 'read' || ev == 'delivered' || ev == '_connected') {
+      ref.invalidate(chatsProvider);
+      if (isMessage && e['isRequest'] == true) ref.invalidate(requestsProvider);
+    }
   }
 
   @override
@@ -261,32 +279,32 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    // الأقسام الأربعة ثابتة (لا تخصيص للشريط)
+    // الأقسام الستة ثابتة (لا تخصيص للشريط)
     const tabs = navTabIds;
     final i = ref.watch(navIndexProvider).clamp(0, tabs.length - 1);
+    // يُفتح القسم من الشريط أو من أي مكان عبر openNavTab: يُبنى عند أول ظهور ويبقى بحالته بعدها
+    _visited.add(i);
     final current = tabs[i];
+    // الشارتان تُراقبان هنا لا في صفحاتهما، فتبقى مزوّداتهما حيّة ولو لم يُبنَ قسم المحادثات بعد
     final badge = ref.watch(unreadCountProvider);
-    // جرس التنبيهات يجمع الرسائل غير المقروءة وإشعارات التجارة والإدارة
-    final bell = badge + (ref.watch(notifyUnreadProvider).valueOrNull ?? 0);
+    ref.watch(notifyUnreadProvider);
     return Scaffold(
       extendBody: true,
-      appBar: HomeShell.ownBar(current)
-          ? null
-          : AppBar(
-              title: Text(navTabMeta(current)?.label ?? ''),
-              actions: [
-                IconButton(tooltip: 'بحث', icon: const Icon(Icons.search_rounded), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage()))),
-                IconButton(
-                  tooltip: 'التنبيهات',
-                  icon: Badge(isLabelVisible: bell > 0, label: Text('$bell'), backgroundColor: Joy.accent, child: const Icon(Icons.notifications_outlined)),
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsPage())),
-                ),
-                const SizedBox(width: 8),
-              ],
-            ),
-      // الصفحات غير الخريطة تُحجز أسفلها مساحة الكبسولة العائمة حتى لا يختفي محتواها خلفها
+      appBar: HomeShell.ownBar(current) ? null : AppBar(title: Text(navTabMeta(current)?.label ?? ''), actions: const [ShellBarActions()]),
       body: IndexedStack(index: i, children: [
-        for (final t in tabs) t == 'home' ? HomeShell.pageOf(t) : Padding(padding: EdgeInsets.only(bottom: JoyNavBar.inset(context)), child: HomeShell.pageOf(t)),
+        for (var x = 0; x < tabs.length; x++)
+          if (!_visited.contains(x))
+            const SizedBox.shrink()
+          else
+            // الأقسام المخفية بلا Hero (لكل من الدوائر والسوق والفعاليات والمحادثات زر عائم بالوسم الافتراضي نفسه،
+            // وبقاؤها معاً يُفشل انتقال أي صفحة تُفتح) وبلا مؤقتات حركة
+            HeroMode(
+              enabled: x == i,
+              child: TickerMode(
+                enabled: x == i,
+                child: tabs[x] == 'home' ? HomeShell.pageOf(tabs[x]) : _padded(tabs[x]),
+              ),
+            ),
       ]),
       bottomNavigationBar: JoyNavBar(
         tabs: tabs,
@@ -296,6 +314,37 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         badges: {'chats': badge},
       ),
     );
+  }
+
+  /// الصفحات غير الخريطة تُحجز أسفلها مساحة الكبسولة العائمة حتى لا يختفي محتواها خلفها. وتُزال حشوة الأسفل من
+  /// MediaQuery (سياق الجسم، لا سياق الغلاف حتى تبقى إزالة حشوة الأعلى تحت الشريط) لأن الحجز يشمل حافة الجهاز،
+  /// وإلا ارتفع الزر العائم فوق الكبسولة بقدرها مرة ثانية.
+  Widget _padded(String tab) => Builder(
+        builder: (ctx) => Padding(
+          padding: EdgeInsets.only(bottom: JoyNavBar.inset(ctx)),
+          child: MediaQuery.removePadding(context: ctx, removeBottom: true, child: HomeShell.pageOf(tab)),
+        ),
+      );
+}
+
+/// البحث والجرس في الشريط العلوي لأقسام الشريط السفلي (الدوائر والمحادثات وماي سبيس، ويُلحقان بشريطي السوق والفعاليات).
+/// الجرس يجمع الرسائل غير المقروءة وإشعارات التجارة والإدارة.
+class ShellBarActions extends ConsumerWidget {
+  const ShellBarActions({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bell = ref.watch(unreadCountProvider) + (ref.watch(notifyUnreadProvider).valueOrNull ?? 0);
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      IconButton(key: const Key('shell-search'), tooltip: 'بحث', icon: const Icon(Icons.search_rounded), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage()))),
+      IconButton(
+        key: const Key('shell-bell'),
+        tooltip: 'التنبيهات',
+        icon: Badge(isLabelVisible: bell > 0, label: Text('$bell'), backgroundColor: Joy.accent, child: const Icon(Icons.notifications_outlined)),
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsPage())),
+      ),
+      const SizedBox(width: 8),
+    ]);
   }
 }
 
