@@ -6,6 +6,7 @@ import '../../api/client.dart';
 import '../../api/hotel_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/require_account.dart';
+import '../../core/require_adult.dart';
 import '../../state/app_state.dart';
 import '../../state/hotel_providers.dart';
 import '../../state/providers.dart' show profileProvider;
@@ -419,6 +420,8 @@ class _ConfirmPageState extends ConsumerState<_ConfirmPage> {
     if (!requireAccount(context)) return;
     final bad = _validate();
     if (bad != null) { toast(context, bad, error: true); return; }
+    // الحجز شراء: إقرار 18+ مرة واحدة قبله
+    if (!await requireAdult(context, ref) || !mounted) return;
     setState(() => busy = true);
     try {
       final b = await ref.read(apiClientProvider).hotelBook(widget.bizId,

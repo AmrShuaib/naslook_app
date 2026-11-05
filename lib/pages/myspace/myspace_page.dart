@@ -221,6 +221,23 @@ class MySpacePage extends ConsumerWidget {
               ListTile(key: const Key('legal-privacy'), leading: const Icon(Icons.privacy_tip_outlined, color: Joy.text), title: const Text('سياسة الخصوصية'), onTap: () => LegalLinks.open('privacy')),
               const Divider(indent: 16, endIndent: 16),
               ListTile(key: const Key('legal-terms'), leading: const Icon(Icons.gavel_rounded, color: Joy.text), title: const Text('شروط الاستخدام'), onTap: () => LegalLinks.open('terms')),
+              const Divider(indent: 16, endIndent: 16),
+              // بيانات المنشأة النظامية (نظام التجارة الإلكترونية): الاسم دائماً، والسجل والرقم الضريبي والعنوان متى ضبطها المدير
+              Builder(builder: (_) {
+                final ps = ref.watch(publicSettingsProvider).valueOrNull;
+                final lines = [
+                  if ((ps?.companyCr ?? '').isNotEmpty) 'سجل تجاري رقم ${ps!.companyCr}',
+                  if ((ps?.companyVat ?? '').isNotEmpty) 'الرقم الضريبي ${ps!.companyVat}',
+                  if ((ps?.companyAddress ?? '').isNotEmpty) 'العنوان الوطني: ${ps!.companyAddress}',
+                ];
+                return ListTile(
+                  key: const Key('about-company'),
+                  leading: const Icon(Icons.apartment_rounded, color: Joy.text),
+                  title: const Text('شركة أريب الرقمية'),
+                  subtitle: Text(['Areeb Alraqmiah Company', ...lines].join('\n'), style: const TextStyle(height: 1.5)),
+                  isThreeLine: lines.isNotEmpty,
+                );
+              }),
             ]),
           ),
         ],

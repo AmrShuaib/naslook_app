@@ -111,6 +111,8 @@ class Biz {
   final String verificationStatus, tier;
   final bool canSell, phoneVerified;
   final String? entityKind;
+  /// الكيان النظامي للعامة بعد اعتماد التوثيق فقط (سجل تجاري أو وثيقة عمل حر ورقمها)؛ null قبله.
+  final BizEntity? entity;
 
   const Biz({
     required this.id, required this.name, this.nameAr = '', required this.category, this.sector = '', this.description = '', required this.lat, required this.lng,
@@ -118,6 +120,7 @@ class Biz {
     this.following = false, this.followers = 0, this.rating, this.ratingCount = 0, this.minPrice, this.itemsCount = 0, this.items = const [], this.reviews = const [], this.myOrders = const [],
     this.posts = const [], this.logoUrl, this.coverUrl, this.ownerId, this.myRole, this.active = true, this.views = 0, this.createdAt, this.openNow, this.distanceKm, this.matchedItem, this.offers = 0, this.offerEndsAt,
     this.presence = 'fixed', this.serviceArea, this.here, this.verificationStatus = 'none', this.tier = 'published', this.canSell = false, this.phoneVerified = false, this.entityKind,
+    this.entity,
   });
 
   factory Biz.fromJson(Map m) => Biz(
@@ -133,6 +136,7 @@ class Biz {
         presence: m['presence'] == 'mobile' ? 'mobile' : 'fixed', serviceArea: m['serviceArea'] is Map ? ServiceArea.fromJson(_m(m['serviceArea'])) : null, here: m['here'] is Map ? HerePin.fromJson(_m(m['here'])) : null,
         verificationStatus: m['verificationStatus']?.toString() ?? (m['verified'] == true ? 'approved' : 'none'), tier: m['tier']?.toString() ?? 'published',
         canSell: m['canSell'] is bool ? m['canSell'] as bool : m['verified'] == true, phoneVerified: m['phoneVerified'] == true, entityKind: m['entityKind']?.toString(),
+        entity: BizEntity.tryParse(m['entity']),
       );
 
   bool get isMobile => presence == 'mobile';
@@ -499,6 +503,19 @@ String? normalizeSaudiMobile(String raw) {
 
 String tierLabelOf(String tier) => switch (tier) { 'complete' => 'مكتملة', 'verified' => 'موثّقة', 'active' => 'نشطة', _ => 'منشورة' };
 String verificationLabelOf(String status) => switch (status) { 'pending' => 'قيد المراجعة', 'approved' => 'موثّقة', 'rejected' => 'مرفوض', _ => 'غير موثّقة' };
+/// الكيان النظامي المعتمد للدائرة كما يُعرض للعامة (server/business.js: entity).
+class BizEntity {
+  final String kind, number;
+  const BizEntity(this.kind, this.number);
+  static BizEntity? tryParse(Object? v) {
+    if (v is! Map) return null;
+    final k = v['kind']?.toString() ?? '', n = v['number']?.toString().trim() ?? '';
+    return (k == 'cr' || k == 'freelance') && n.isNotEmpty ? BizEntity(k, n) : null;
+  }
+  /// «سجل تجاري رقم …» أو «وثيقة عمل حر رقم …».
+  String get label => '${kind == 'cr' ? 'سجل تجاري' : 'وثيقة عمل حر'} رقم $number';
+}
+
 String entityKindLabel(String? kind) => switch (kind) { 'cr' => 'سجل تجاري', 'freelance' => 'وثيقة العمل الحر', _ => '—' };
 
 /// حالة توثيق الدائرة كما تعود مع الاكتمال أو بعد الإرسال (السبب والمستند للفريق فقط).

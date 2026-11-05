@@ -25,7 +25,7 @@ class LiveSession {
   LiveSession copyWith({bool? active}) => LiveSession(id: id, from: from, to: to, lat: lat, lng: lng, accuracy: accuracy, at: at, until: until, active: active ?? this.active);
 }
 
-/// ردود مقترحة من POST /chat/suggest: ثلاث جمل قصيرة ومصدرها (ai أو rules).
+/// ردود مقترحة من POST /chat/suggest: ثلاث جمل قصيرة ومصدرها (rules الآن؛ ai محجوز ليوم تعود الاقتراحات الذكية بموافقة).
 class ReplySuggestions {
   final List<String> suggestions;
   final String source;

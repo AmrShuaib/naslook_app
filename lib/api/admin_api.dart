@@ -590,7 +590,9 @@ class AdminSettings {
   final bool jobsEnabled, jobsRequireApproval;
   final int jobsFreeActive, jobsWeeklyCap;
   final double jobsMinScore;
-  const AdminSettings({this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.minTopup = 10000, this.maxCardTopup = 500000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
+  /// بيانات المنشأة النظامية (السجل التجاري، الرقم الضريبي، العنوان الوطني): تظهر للعامة متى ضُبطت
+  final String companyCr, companyVat, companyAddress;
+  const AdminSettings({this.companyCr = '', this.companyVat = '', this.companyAddress = '',this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.minTopup = 10000, this.maxCardTopup = 500000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
       this.transfersEnabled = false, this.chatPaymentsEnabled = false, this.bannedWordsDefault = true, this.requireEmailVerification = true,
       this.marketCommissionPct = 0, this.spotlightPricePerDay = 2000, this.spotlightMaxDays = 30, this.spotlightMaxActive = 12, this.marketReviewNewAccounts = false, this.marketBlockContacts = true,
       this.jobsEnabled = true, this.jobsRequireApproval = false, this.jobsFreeActive = 3, this.jobsWeeklyCap = 5, this.jobsMinScore = .45});
@@ -601,7 +603,8 @@ class AdminSettings {
       marketCommissionPct: (m['marketCommissionPct'] as num?)?.toDouble() ?? 0, spotlightPricePerDay: m['spotlightPricePerDay'] == null ? 2000 : _i(m['spotlightPricePerDay']), spotlightMaxDays: m['spotlightMaxDays'] == null ? 30 : _i(m['spotlightMaxDays']), spotlightMaxActive: m['spotlightMaxActive'] == null ? 12 : _i(m['spotlightMaxActive']),
       marketReviewNewAccounts: m['marketReviewNewAccounts'] == true, marketBlockContacts: m['marketBlockContacts'] != false,
       jobsEnabled: m['jobsEnabled'] != false, jobsRequireApproval: m['jobsRequireApproval'] == true, jobsFreeActive: m['jobsFreeActive'] == null ? 3 : _i(m['jobsFreeActive']), jobsWeeklyCap: m['jobsWeeklyCap'] == null ? 5 : _i(m['jobsWeeklyCap']),
-      jobsMinScore: (m['jobsMinScore'] as num?)?.toDouble() ?? .45);
+      jobsMinScore: (m['jobsMinScore'] as num?)?.toDouble() ?? .45,
+      companyCr: m['companyCr']?.toString() ?? '', companyVat: m['companyVat']?.toString() ?? '', companyAddress: m['companyAddress']?.toString() ?? '');
 }
 
 /// آخر إجراء إداري على عنصر في طابور الإشراف.
@@ -745,10 +748,13 @@ class PublicSettings {
   final bool transfersEnabled, chatPaymentsEnabled;
   /// التوظيف مفعّل (يُخفي الوظائف من الخريطة والدوائر حين يطفئه المدير).
   final bool jobsEnabled;
-  const PublicSettings({this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.maintenance = false, this.testTopup = false, this.transfersEnabled = false, this.chatPaymentsEnabled = false, this.jobsEnabled = true});
+  /// بيانات المنشأة النظامية من الإعدادات العامة (فارغة إن لم تُضبط): «عن ناس لايف» في ماي سبيس.
+  final String companyCr, companyVat, companyAddress;
+  const PublicSettings({this.companyCr = '', this.companyVat = '', this.companyAddress = '', this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.maintenance = false, this.testTopup = false, this.transfersEnabled = false, this.chatPaymentsEnabled = false, this.jobsEnabled = true});
   factory PublicSettings.fromJson(Map m) => PublicSettings(
       announcement: m['announcement']?.toString() ?? '', supportHandle: m['supportHandle']?.toString() ?? '', supportEmail: m['supportEmail']?.toString() ?? '',
-      maintenance: m['maintenance'] == true, testTopup: m['testTopup'] == true, transfersEnabled: m['transfersEnabled'] == true, chatPaymentsEnabled: m['chatPaymentsEnabled'] == true, jobsEnabled: m['jobsEnabled'] != false);
+      maintenance: m['maintenance'] == true, testTopup: m['testTopup'] == true, transfersEnabled: m['transfersEnabled'] == true, chatPaymentsEnabled: m['chatPaymentsEnabled'] == true, jobsEnabled: m['jobsEnabled'] != false,
+      companyCr: m['companyCr']?.toString() ?? '', companyVat: m['companyVat']?.toString() ?? '', companyAddress: m['companyAddress']?.toString() ?? '');
 }
 
 /// مسارات لوحة الإدارة (server/admin.js).

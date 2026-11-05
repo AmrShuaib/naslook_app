@@ -100,6 +100,8 @@ export default async function commerce(app, opts) {
     try { return (await pool.query("SELECT 1 FROM admins WHERE user_id=$1", [uid])).rowCount > 0; } catch { return false; }
   };
   const isSuspended = async (uid) => { try { return (await pool.query("SELECT 1 FROM user_flags WHERE user_id=$1 AND suspended", [uid])).rowCount > 0; } catch { return false; } };
+  // إقرار 18+ قبل أول عملية مالية (legal_pages.js): 403 adult-required؛ غياب المساعد أو خطؤه لا يحجب المال
+  const needsAdult = async (uid) => { try { const f = globalThis.naslifeAdultOk; return typeof f === "function" ? !(await f(uid)) : false; } catch { return false; } };
   const person = async (id) => {
     const u = await userRow(id);
     return u ? { id: u.id, nickname: u.nickname ?? "", avatarUrl: u.avatar_url ?? u.avatarUrl ?? null } : { id, nickname: "", avatarUrl: null };
@@ -164,6 +166,7 @@ export default async function commerce(app, opts) {
     // حتى 100,000 ر.س للشحن التجريبي الواحد (أسعار الفنادق والسيارات تتجاوز السقف القديم 5,000)
     const maxTopup = Number(globalThis.naslifeSettings?.maxTopup) || 10000000;
     if (amount <= 0 || amount > maxTopup) return bad(reply, 400, "bad-amount", { max: maxTopup });
+    if (await needsAdult(uid)) return bad(reply, 403, "adult-required");
     await tx((c) => ledger(c, uid, "test_topup", amount, { note: "شحن تجريبي" }));
     return { ok: true };
   });
@@ -193,6 +196,7 @@ export default async function commerce(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     // مفتاح المنصة transfersEnabled (قرار المالك التنظيمي): مغلق ما لم يكن true صراحة، ولا تحويلات في عميل iOS
     if (globalThis.naslifeSettings?.transfersEnabled !== true || iosNative(req)) return bad(reply, 403, "unavailable");
+    if (await needsAdult(uid)) return bad(reply, 403, "adult-required");
     const { to } = req.body ?? {};
     try {
       await transfer({ from: uid, to, amount: req.body?.amount, note: req.body?.note });
@@ -233,6 +237,8 @@ export default async function commerce(app, opts) {
     // التذكرة المدفوعة لفعالية حضورية فقط (مكان أو إحداثيات)، فلا تُباع محتويات رقمية عبر المحفظة
     const hasPlace = !!String(b.placeName ?? "").trim() || (Number.isFinite(lat) && Number.isFinite(lng) && lat !== null && lng !== null);
     if (tiers.some((t) => SAR(t?.price) > 0) && !hasPlace) return bad(reply, 400, "place-required");
+    // بيع التذاكر بمقابل عملية مالية: إقرار 18+ أولاً؛ الفعالية المجانية مفتوحة
+    if (tiers.some((t) => SAR(t?.price) > 0) && (await needsAdult(uid))) return bad(reply, 403, "adult-required");
     const id = crypto.randomUUID();
     await tx(async (c) => {
       await c.query("INSERT INTO events(id,host_id,vessel_id,title,description,starts_at,ends_at,place_name,lat,lng) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
@@ -288,6 +294,11 @@ export default async function commerce(app, opts) {
     if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     const { tierId } = req.body ?? {}; const qty = Math.max(1, Math.min(10, Number(req.body?.qty) || 1));
     if (!UUID_RE.test(req.params.id) || !UUID_RE.test(tierId ?? "")) return bad(reply, 400, "bad-id");
+    // التذكرة المدفوعة تحتاج إقرار 18+ (المجانية مفتوحة)؛ السعر يُقرأ قبل المعاملة فقط لمن لم يقرّ بعد
+    if (await needsAdult(uid)) {
+      const tp = (await pool.query("SELECT price FROM ticket_tiers WHERE id=$1 AND event_id=$2", [tierId, req.params.id]).catch(() => ({ rows: [] }))).rows[0];
+      if (tp && Number(tp.price) > 0) return bad(reply, 403, "adult-required");
+    }
     let made = [], sale = null;
     try {
       sale = await tx(async (c) => {
@@ -461,6 +472,8 @@ export default async function commerce(app, opts) {
     if (hasContact(title, description)) return bad(reply, 400, "contact-in-text");
     const guard = await globalThis.naslifeMarketGuard?.(uid, { title, price });
     if (guard) return bad(reply, 429, guard);
+    // البيع بمقابل (سعر أو خيار مسعّر) يحتاج إقرار 18+؛ العرض المجاني مفتوح
+    if ((price > 0 || parseVariants(b.variants).some((v) => v.price > 0)) && (await needsAdult(uid))) return bad(reply, 403, "adult-required");
     const publishAt = b.publishAt ? new Date(b.publishAt) : null;
     const scheduled = publishAt && !Number.isNaN(publishAt.getTime()) && publishAt.getTime() > Date.now() + 60000;
     const needsReview = settingsOf().marketReviewNewAccounts === true && (await accountAgeHours(uid)) < 24 * 7 && !(await isAdmin(uid));
@@ -535,6 +548,8 @@ export default async function commerce(app, opts) {
     const bannedP = globalThis.naslifeCheckText?.(b.title, b.description, b.placeName);
     if (bannedP) return reply.code(400).send({ error: "banned-words", word: bannedP });
     if (hasContact(b.title, b.description)) return bad(reply, 400, "contact-in-text");
+    // تحويل عرض مجاني إلى مسعّر بيعٌ بمقابل: إقرار 18+ أولاً
+    if (((b.price !== undefined && SAR(b.price) > 0) || (b.variants !== undefined && parseVariants(b.variants).some((v) => v.price > 0))) && (await needsAdult(uid))) return bad(reply, 403, "adult-required");
     if (b.title !== undefined) { const t = String(b.title).trim(); if (!t || t.length > 100) return bad(reply, 400, "bad-title"); set("title", t); }
     if (b.description !== undefined) set("description", String(b.description).slice(0, 2000));
     if (b.price !== undefined) { const pr = SAR(b.price); if (pr < 0) return bad(reply, 400, "bad-price"); set("price", pr); }
@@ -633,6 +648,8 @@ export default async function commerce(app, opts) {
     const slot = b.slot ? new Date(b.slot) : null;
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const blocked = await blockedIds(uid);
+    // الشراء بمقابل يحتاج إقرار 18+ (يُفحص المبلغ داخل المعاملة؛ الطلب المجاني مفتوح)
+    const adultMissing = await needsAdult(uid);
     const id = crypto.randomUUID(); const code = String(1000 + crypto.randomInt(9000));
     const fail = (err, extra = {}) => Object.assign(new Error(err), { code: err, ...extra });
     let l, variant = null, total = 0, discount = 0, commission = 0;
@@ -663,6 +680,7 @@ export default async function commerce(app, opts) {
           discount = cp.percent != null ? Math.floor(subtotal * Number(cp.percent) / 100) : Math.min(subtotal, Number(cp.amount ?? 0)); coupon = cp.code;
         }
         total = Math.max(0, subtotal - discount); commission = Math.floor(total * commissionPct() / 100);
+        if (total > 0 && adultMissing) throw fail("adult-required");
         if (total > 0) await ledger(c, uid, "market", -total, { peerId: l.seller_id, ref: id, note: l.title, points: Math.floor(total / 1000) });
         await c.query("INSERT INTO market_orders(id,listing_id,buyer_id,seller_id,qty,total,note,code,variant,coupon,discount,commission,slot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
           [id, l.id, uid, l.seller_id, qty, total, note, code, variant?.name ?? null, coupon, discount, commission, slot && !Number.isNaN(slot.getTime()) ? slot : null]);
@@ -679,6 +697,7 @@ export default async function commerce(app, opts) {
         case "slot-required": case "slot-unavailable": case "bad-coupon": return bad(reply, 400, e.code);
         case "coupon-min": return bad(reply, 400, "coupon-min", { minTotal: e.minTotal });
         case "insufficient-funds": return bad(reply, 402, "insufficient-funds");
+        case "adult-required": return bad(reply, 403, "adult-required");
         default: throw e;
       }
     }

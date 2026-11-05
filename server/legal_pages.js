@@ -3,12 +3,25 @@
 // صفحات HTML تُبنى في الخادم بلا أي سكربت: ترويسة CSP العامة في Caddy تمنع السكربتات المضمّنة (server/restore-caddy.sh).
 // الموافقة: GET /legal/version، GET /legal/consent (هل يلزم المستخدم أن يوافق على النسخة الحالية)، POST /legal/consent.
 // الإضافات الأخرى تسجّل الموافقة عبر globalThis.naslifeLegalConsent(uid, source) (التسجيل في auth_alias.js).
+// العمر (قرار المالك، 5 نوفمبر 2026): إقرار 13+ ضمن موافقة التسجيل وورقة الموافقة (صف age13)، وإقرار 18+ مرة واحدة لكل حساب
+// قبل أول عملية مالية: POST /me/adult-attest يحفظه صفاً في legal_consents (adult18، لا جداول نواة)، وحالته في GET /legal/consent،
+// وglobalThis.naslifeAdultOk(uid) تفحصه مسارات المال في الإضافات الأخرى (403 adult-required)؛ غيابها أو خطؤها يفتح ولا يحجب.
+// بيانات المنشأة (سجل تجاري، رقم ضريبي، عنوان وطني) من إعدادات المنصة تظهر في التذييل وقسم «من نحن» متى ضُبطت.
 // التسجيل في register.txt: await app.register((await import("./legal_pages.js")).default, { pool, auth });
-import { LEGAL_VERSION, privacyBody, termsBody, supportBody } from "./legal_content.js";
+import { LEGAL_VERSION, COMPANY_AR, privacyBody, termsBody, supportBody } from "./legal_content.js";
 
 const DOCS = ["terms", "privacy"];
+// إقرار «عمري 13 سنة فأكثر» يُحفظ مع كل موافقة على الوثيقتين (نص مربع التسجيل وورقة الموافقة يتضمنه)
+export const AGE_DOC = "age13";
+// إقرار «عمري 18 سنة فأكثر»: نسخة ثابتة لأن نصه لا يتغير بتغير الشروط
+export const ADULT_DOC = "adult18";
+export const ADULT_VERSION = "1";
 // بريد الدعم: نفس التعبير في admin.js حرفياً (لا استيراد بين الإضافات حتى لا يُسقط خطأ في إحداهما الأخرى)
 export const SUPPORT_EMAIL_RE = /^[^\s@<>"']+@[^\s@<>"']+\.[a-z]{2,}$/i;
+// بيانات المنشأة: نفس تعبيري admin.js حرفياً (سجل تجاري أو رقم موحّد 10 أرقام، رقم ضريبي 15 رقماً يبدأ وينتهي بـ3)؛
+// قيمة لا تطابق (كُتبت في القاعدة مباشرة) لا تظهر في الصفحات
+export const COMPANY_CR_RE = /^\d{10}$/;
+export const COMPANY_VAT_RE = /^3\d{13}3$/;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // نفس ألوان المدونة والتطبيق، مع وضع داكن؛ الخطوط من أصول التطبيق نفسه
@@ -61,6 +74,15 @@ export default async function legalPages(app, opts = {}) {
   const settings = () => globalThis.naslifeSettings ?? {};
   const supportEmail = () => { const e = String(settings().supportEmail ?? "").trim(); return SUPPORT_EMAIL_RE.test(e) ? e : "support@naslife.app"; };
   const supportHandle = () => String(settings().supportHandle ?? "").trim().replace(/^@/, "").replace(/[^a-z0-9_]/gi, "").slice(0, 25);
+  // بيانات المنشأة من إعدادات المنصة (admin.js)؛ الفارغ أو غير المطابق للصيغة لا يظهر
+  const company = () => {
+    const s = settings();
+    const cr = String(s.companyCr ?? "").trim(), vat = String(s.companyVat ?? "").trim();
+    const address = String(s.companyAddress ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    return { cr: COMPANY_CR_RE.test(cr) ? cr : "", vat: COMPANY_VAT_RE.test(vat) ? vat : "", address };
+  };
+  const footerIdentity = (c) => [c.cr ? `سجل تجاري <span dir="ltr">${esc(c.cr)}</span>` : "", c.vat ? `الرقم الضريبي <span dir="ltr">${esc(c.vat)}</span>` : "", c.address ? `العنوان الوطني: ${esc(c.address)}` : ""]
+    .filter(Boolean).map((t) => `<span>${t}</span>`).join("");
 
   const page = (key, title, body) => `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -79,40 +101,66 @@ export default async function legalPages(app, opts = {}) {
 <main>
 ${body}
 </main>
-<footer><span>© ${new Date().getFullYear()} شركة أريب الرقمية · Areeb Alraqmiah Company</span><a href="/privacy">سياسة الخصوصية</a><a href="/terms">شروط الاستخدام</a><a href="/support">الدعم</a><a href="/">naslife.app</a></footer>
+<footer><span>© ${new Date().getFullYear()} ${COMPANY_AR} · Areeb Alraqmiah Company</span>${footerIdentity(company())}<a href="/privacy">سياسة الخصوصية</a><a href="/terms">شروط الاستخدام</a><a href="/support">الدعم</a><a href="/">naslife.app</a></footer>
 </body>
 </html>`;
   const send = (reply, html) => reply.type("text/html; charset=utf-8").header("cache-control", "public, max-age=300").send(html);
 
-  app.get("/privacy", async (req, reply) => send(reply, page("privacy", "سياسة الخصوصية", privacyBody({ supportEmail: supportEmail() }))));
-  app.get("/terms", async (req, reply) => send(reply, page("terms", "شروط الاستخدام", termsBody({ supportEmail: supportEmail() }))));
-  app.get("/support", async (req, reply) => send(reply, page("support", "الدعم والمساعدة", supportBody({ supportEmail: supportEmail(), supportHandle: supportHandle() }))));
+  app.get("/privacy", async (req, reply) => send(reply, page("privacy", "سياسة الخصوصية", privacyBody({ supportEmail: supportEmail(), company: company() }))));
+  app.get("/terms", async (req, reply) => send(reply, page("terms", "شروط الاستخدام", termsBody({ supportEmail: supportEmail(), company: company() }))));
+  app.get("/support", async (req, reply) => send(reply, page("support", "الدعم والمساعدة", supportBody({ supportEmail: supportEmail(), supportHandle: supportHandle(), company: company() }))));
   app.get("/legal", async (req, reply) => reply.redirect("/privacy", 301));
-  app.get("/legal/version", async () => ({ version: LEGAL_VERSION, docs: DOCS, supportEmail: supportEmail(), urls: { privacy: "https://naslife.app/privacy", terms: "https://naslife.app/terms", support: "https://naslife.app/support" } }));
+  app.get("/legal/version", async () => ({ version: LEGAL_VERSION, docs: DOCS, supportEmail: supportEmail(), company: { nameAr: COMPANY_AR, nameEn: "Areeb Alraqmiah Company", ...company() },
+    urls: { privacy: "https://naslife.app/privacy", terms: "https://naslife.app/terms", support: "https://naslife.app/support" } }));
 
-  /// تسجيل موافقة مستخدم على النسخة الحالية من الوثيقتين (لا تُفشل أبداً الطلب الذي يستدعيها).
+  const SOURCES = ["app", "ios", "android", "web"];
+  /// تسجيل موافقة مستخدم على النسخة الحالية من الوثيقتين مع إقرار 13+ الذي يتضمنه نص الموافقة (لا تُفشل أبداً الطلب الذي يستدعيها).
   const record = async (uid, source = "app") => {
     if (!dbOk || !uid) return false;
     try {
-      for (const doc of DOCS) await pool.query("INSERT INTO legal_consents(user_id, doc, version, source) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING", [uid, doc, LEGAL_VERSION, String(source).slice(0, 20)]);
+      for (const doc of [...DOCS, AGE_DOC]) await pool.query("INSERT INTO legal_consents(user_id, doc, version, source) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING", [uid, doc, LEGAL_VERSION, String(source).slice(0, 20)]);
       return true;
     } catch { return false; }
   };
   globalThis.naslifeLegalConsent = record;
 
+  // ---- إقرار 18+: الموجب يُحفظ في الذاكرة (الإقرار لا يُسحب)، والسالب يُقرأ من القاعدة كل مرة حتى يظهر الإقرار فوراً
+  const adults = new Set();
+  const adultRow = async (uid) => (await pool.query("SELECT accepted_at FROM legal_consents WHERE user_id=$1 AND doc=$2 ORDER BY accepted_at LIMIT 1", [uid, ADULT_DOC])).rows[0] ?? null;
+  /// هل أقرّ الحساب بأنه 18+؟ تعطّل القاعدة أو خطؤها يعيد true: هذا الإقرار لا يحجب المال بسبب عطل
+  const adultOk = async (uid) => {
+    if (!uid) return false;
+    if (!dbOk || adults.has(uid)) return true;
+    try { const ok = !!(await adultRow(uid)); if (ok) adults.add(uid); return ok; } catch { return true; }
+  };
+  globalThis.naslifeAdultOk = adultOk;
+
   const me = async (req, reply) => { const uid = auth ? await auth(req) : null; if (!uid) { reply.code(401).send({ error: "auth" }); return null; } return uid; };
   app.get("/legal/consent", async (req, reply) => {
     const uid = await me(req, reply); if (!uid) return;
-    if (!dbOk) return { needs: false, version: LEGAL_VERSION };
-    const n = (await pool.query("SELECT count(DISTINCT doc)::int AS n FROM legal_consents WHERE user_id=$1 AND version=$2", [uid, LEGAL_VERSION])).rows[0]?.n ?? 0;
-    return { needs: n < DOCS.length, version: LEGAL_VERSION };
+    if (!dbOk) return { needs: false, version: LEGAL_VERSION, adult: true, adultAt: null };
+    const n = (await pool.query("SELECT count(DISTINCT doc)::int AS n FROM legal_consents WHERE user_id=$1 AND version=$2 AND doc = ANY($3::text[])", [uid, LEGAL_VERSION, DOCS])).rows[0]?.n ?? 0;
+    const a = await adultRow(uid);
+    if (a) adults.add(uid);
+    return { needs: n < DOCS.length, version: LEGAL_VERSION, adult: !!a, adultAt: a ? new Date(a.accepted_at).toISOString() : null };
   });
   app.post("/legal/consent", async (req, reply) => {
     const uid = await me(req, reply); if (!uid) return;
     const v = String(req.body?.version ?? LEGAL_VERSION);
     if (v !== LEGAL_VERSION) return reply.code(409).send({ error: "stale-version", version: LEGAL_VERSION });
-    const src = ["app", "ios", "android", "web"].includes(req.body?.source) ? req.body.source : "app";
+    const src = SOURCES.includes(req.body?.source) ? req.body.source : "app";
     const ok = await record(uid, src);
     return { ok, version: LEGAL_VERSION };
+  });
+  // الإقرار صريح: الجسم يحمل confirm:true (لا يُسجَّل بطلب فارغ)، وتكراره لا يغيّر تاريخ الإقرار الأول
+  app.post("/me/adult-attest", async (req, reply) => {
+    const uid = await me(req, reply); if (!uid) return;
+    if (req.body?.confirm !== true) return reply.code(400).send({ error: "confirm-required" });
+    if (!dbOk) return reply.code(503).send({ error: "unavailable" });
+    const src = SOURCES.includes(req.body?.source) ? req.body.source : "app";
+    await pool.query("INSERT INTO legal_consents(user_id, doc, version, source) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING", [uid, ADULT_DOC, ADULT_VERSION, src]);
+    adults.add(uid);
+    const a = await adultRow(uid);
+    return { ok: true, adult: true, adultAt: a ? new Date(a.accepted_at).toISOString() : null };
   });
 }

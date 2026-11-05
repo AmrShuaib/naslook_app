@@ -169,7 +169,7 @@ check(sub.status === 'pending' && sub.verification.status === 'pending' && sub.v
 check(sent('biz_verification', 'admins').length === 1 && sent('biz_verification', 'admins')[0].data.bizId === F.id, 'admins notified (kind biz_verification)');
 // بيانات الكيان مخفية عن غير الطاقم
 const pub = await call('GET', `/biz/${F.id}`, { user: KHALID, expect: 200 });
-check(pub.verificationStatus === 'pending' && pub.entityKind === null && !('entityNumber' in pub) && !('docUrl' in pub) && !JSON.stringify(pub).includes('1010123456') && !JSON.stringify(pub).includes('/media/cr.pdf'), 'public view shows only the status, never entity number or document');
+check(pub.verificationStatus === 'pending' && pub.entityKind === null && pub.entity === null && !('entityNumber' in pub) && !('docUrl' in pub) && !JSON.stringify(pub).includes('1010123456') && !JSON.stringify(pub).includes('/media/cr.pdf'), 'public view shows only the status, never entity number or document');
 const own = await call('GET', `/biz/${F.id}`, { expect: 200 });
 check(own.entityKind === 'cr' && !JSON.stringify(own).includes('1010123456'), 'owner view shows the entity kind (number only via /verification)');
 const ov = await call('GET', `/biz/${F.id}/verification`, { expect: 200 });
@@ -200,6 +200,7 @@ check(audits.some((a) => a.action === 'biz.verification.reject' && a.target === 
 c = await call('GET', `/biz/${F.id}/completeness`, { expect: 200 });
 check(c.verification.status === 'rejected' && c.verification.reason === 'الوثيقة غير واضحة' && c.verification.reviewedAt && c.canSell === false && c.tier === 'complete' && c.next?.key === 'entity' && c.next.hint === 'الوثيقة غير واضحة', 'completeness shows the rejection reason as the hint', JSON.stringify(c.verification));
 check((await call('GET', `/biz/${F.id}`, { user: KHALID })).verificationStatus === 'rejected' && !JSON.stringify(await call('GET', `/biz/${F.id}`, { user: KHALID })).includes('غير واضحة'), 'public view never shows the rejection reason');
+check((await call('GET', `/biz/${F.id}`, { user: KHALID })).entity === null, 'rejected: no public entity number');
 e = await call('POST', `/adminapi/biz/${F.id}/verification/reject`, { body: { reason: 'مرة أخرى' }, user: ADMIN, expect: 409 }); check(e.error === 'not-pending', 'cannot reject what is not pending');
 let adm = await call('GET', '/adminapi/biz/verifications?status=rejected', { user: ADMIN, expect: 200 });
 check(adm.some((x) => x.bizId === F.id && x.reason === 'الوثيقة غير واضحة'), 'rejected filter lists it with the reason');
@@ -226,6 +227,9 @@ o = await call('POST', `/biz/${F.id}/orders`, { body: { itemId: items[0].id, qty
 check(o.total === 5000, 'paid order allowed after approval');
 const pubF = await call('GET', `/biz/${F.id}`, { user: KHALID, expect: 200 });
 check(pubF.canSell === true && pubF.verified === true && pubF.tier === 'verified', 'public view shows canSell after approval');
+// الإفصاح النظامي بعد الاعتماد: نوع الكيان ورقمه للعامة (الزائر أيضاً)، والوثيقة لا تخرج
+check(pubF.entity?.kind === 'freelance' && pubF.entity.number === 'FL20250012' && !JSON.stringify(pubF).includes('/media/fl.pdf'), 'approved: public view shows the entity kind and number, never the document', JSON.stringify(pubF.entity));
+check((await call('GET', `/biz/${F.id}`, { user: null, expect: 200 })).entity?.number === 'FL20250012', 'guest sees the approved entity number too');
 await call('POST', `/biz/${F.id}/manage/offers`, { body: { kind: 'deal', title: 'خصم الافتتاح', value: { type: 'percent', amount: 10 }, endsAt: new Date(Date.now() + 48 * 3600000).toISOString() }, expect: 200 });
 c = await call('GET', `/biz/${F.id}/completeness`, { expect: 200 });
 check(c.tier === 'verified' && c.checks.offer30d === true && c.next?.key === 'post30d' && c.next.tab === 'posts', 'offer alone keeps verified; next = post', JSON.stringify([c.tier, c.next?.key]));

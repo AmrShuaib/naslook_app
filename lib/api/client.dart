@@ -48,6 +48,10 @@ class ApiClient {
   /// يُستدعى عند رفض الخادم طلباً لزائر بلا جلسة (401)؛ تعيّنه واجهة الزائر لعرض الدخول.
   static void Function()? onUnauthorized;
 
+  /// يُستدعى عند رفض الخادم عملية مالية قبل إقرار 18+ (403 adult-required) من أي شاشة؛ يعيّنه غلاف التطبيق
+  /// (AdultGate في core/require_adult.dart) لعرض ورقة الإقرار نفسها ثم دعوة المستخدم لإعادة المحاولة.
+  static void Function()? onAdultRequired;
+
   ApiClient({String? baseUrl, http.Client? httpClient, this.timeout = const Duration(seconds: 20)})
       : baseUrl = _normalize(baseUrl ?? resolveBaseUrl()),
         _http = httpClient ?? http.Client(),
@@ -306,6 +310,7 @@ class ApiClient {
       if (prompt) onUnauthorized?.call(); // القراءات الخلفية لا تزعج الزائر؛ الأفعال فقط
       throw const ApiException(401, 'سجّل الدخول أولاً');
     }
+    if (res.statusCode == 403 && decoded['error'] == 'adult-required') onAdultRequired?.call();
 
     throw ApiException(res.statusCode, _errorMessage(res.statusCode, decoded), body: decoded);
   }
@@ -351,6 +356,12 @@ class ApiClient {
     'stale-version': 'تحدّثت الشروط، أعد فتح التطبيق',
     'delete-failed': 'تعذّر حذف الحساب، حاول مرة أخرى',
     'iap-required': 'هذه الخدمة غير متاحة في هذا التطبيق',
+    // إقرار العمر وبيانات المنشأة
+    'adult-required': 'هذه العملية لمن عمره 18 سنة فأكثر؛ أكّد عمرك ثم أعد المحاولة',
+    'confirm-required': 'اضغط «أقر» لتأكيد عمرك',
+    'bad-cr': 'رقم السجل التجاري أو الرقم الموحّد 10 أرقام',
+    'bad-vat': 'الرقم الضريبي 15 رقماً يبدأ بـ3 وينتهي بـ3',
+    'bad-address': 'العنوان الوطني سطر واحد حتى 200 حرف',
     'unavailable': 'هذه الخدمة غير متاحة حالياً',
     'place-required': 'حدّد مكان الفعالية قبل تسعير التذاكر',
     'too-many': 'محاولات كثيرة، انتظر دقيقة ثم حاول',

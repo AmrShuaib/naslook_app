@@ -271,6 +271,8 @@ void main() {
     // لا حقول لتخصيص الرئيسية بعد اعتماد نظام «الصف»
     expect(find.byKey(const Key('set-home-order')), findsNothing);
     expect(find.byKey(const Key('set-home-pinned')), findsNothing);
+    // الصفحة طويلة (بطاقة «بيانات المنشأة» فوق التوظيف): زر الحفظ قد يقع خارج ما بنته القائمة
+    await tester.scrollUntilVisible(find.byKey(const Key('set-save')), 400, scrollable: find.byType(Scrollable).first);
     await tester.tap(find.byKey(const Key('set-save')));
     await tester.pumpAndSettle();
     final b = srv.bodies['POST /adminapi/settings']!;

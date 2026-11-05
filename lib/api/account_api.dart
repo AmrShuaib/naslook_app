@@ -62,4 +62,13 @@ extension AccountApi on ApiClient {
   }
 
   Future<void> acceptConsent(String version, {String source = 'app'}) => post('/legal/consent', {'version': version, 'source': source});
+
+  /// هل أقرّ الحساب بأن عمره 18 سنة فأكثر؟ من حالة الموافقة نفسها (GET /legal/consent)؛ null إن لم يُعِد الخادم الحقل (نسخة أقدم).
+  Future<bool?> adultAttested() async {
+    final a = (await get('/legal/consent'))['adult'];
+    return a is bool ? a : null;
+  }
+
+  /// إقرار 18+ مرة واحدة لكل حساب قبل أول عملية مالية (server/legal_pages.js)؛ تكراره لا يغيّر تاريخ الإقرار الأول.
+  Future<void> attestAdult({String source = 'app'}) => post('/me/adult-attest', {'confirm': true, 'source': source});
 }

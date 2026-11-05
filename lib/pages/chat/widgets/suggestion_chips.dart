@@ -1,5 +1,6 @@
 // ردود مقترحة فوق حقل الكتابة: بعد 600 مللي ثانية من آخر رسالة واردة تُطلب ثلاث جمل قصيرة من POST /chat/suggest
-// (server/chat_live.js: Claude بمفتاح صندوق البريد أو قواعد محلية) وتُعرض رقائق؛ تختفي حين تكون آخر رسالة لي أو لا اقتراح.
+// (server/chat_live.js: قواعد محلية فقط؛ لا يصل نص المحادثة إلى أي ذكاء اصطناعي حتى تُضاف موافقة كل مستخدم) وتُعرض رقائق؛
+// تختفي حين تكون آخر رسالة لي أو لا اقتراح.
 // الضغط على رقاقة يسلّم نصها إلى onPick (صفحة المحادثة تضعه في الحقل).
 import 'dart:async';
 
@@ -81,7 +82,8 @@ class _SuggestionChipsState extends ConsumerState<SuggestionChips> {
           for (var i = 0; i < _items.length; i++) ...[
             ActionChip(
               key: Key('suggest-chip-$i'),
-              avatar: i == 0 ? const Icon(Icons.auto_awesome_rounded, size: 15, color: Joy.primary) : null,
+              // أيقونة «رد سريع» لا «ذكاء»: الاقتراحات قواعد ثابتة
+              avatar: i == 0 ? const Icon(Icons.quickreply_outlined, size: 15, color: Joy.primary) : null,
               label: Text(_items[i], style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Joy.primary)),
               backgroundColor: Joy.primarySoft,
               side: BorderSide.none,

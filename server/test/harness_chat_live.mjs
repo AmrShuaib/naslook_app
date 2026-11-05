@@ -1,8 +1,9 @@
 // الموقع المباشر والردود المقترحة (server/chat_live.js): دورة بدء/دفع/قراءة/إيقاف، صلاحية الطرفين فقط، أخطاء التحقق، جلسة واحدة
 // نشطة لكل زوج، الانقضاء والكنس، مسح الموقع بعد الانتهاء (الرد والصف)، معرّفات مشوّهة تمرّ على الشكل العام، والاقتراحات: قواعد
-// بلا مفتاح، نموذج وهمي يعيد مصفوفة JSON أو كلاماً فارغاً، وحدّ المعدّل.
+// فقط ولا نداء لأي نموذج حتى مع وجود naslifeAskClaude (الذكاء موقوف حتى موافقة كل مستخدم، 5 نوفمبر 2026)، وحدّ المعدّل.
 import Fastify from 'fastify';
 import pg from 'pg';
+import fs from 'node:fs';
 import { rulesFor, parseSuggestions, LIVE_MINUTES, SUGGEST_PER_MIN, SUGGEST_MAX_CHARS } from '../chat_live.js';
 process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0';
 let fails = 0;
@@ -213,34 +214,27 @@ await call('POST', '/chat/suggest', { body: { peerId: 'x', messages: [] }, expec
 sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: 'nope' }, expect: 200 });
 check(sg.suggestions.length === 3, 'non-array messages tolerated');
 
-// ---- الاقتراحات مع نموذج وهمي
+// ---- الاقتراحات مع مفتاح ذكاء مضبوط: لا يُستدعى النموذج أبداً ولا يصله نص المحادثة (قواعد فقط حتى الموافقة)
 let prompts = [];
-globalThis.naslifeAskClaude = async ({ system, user }) => { prompts.push({ system, user }); return 'تفضّل:\n["أكيد أجي", "خلاص اتفقنا", "بعد شوي أرد عليك"]'; };
+globalThis.naslifeAskClaude = async ({ system, user }) => { prompts.push({ system, user }); return '["أكيد أجي", "خلاص اتفقنا", "بعد شوي أرد عليك"]'; };
 const history = [{ mine: false, text: 'سلام يا amr' }, { mine: true, text: 'هلا sara' }, { mine: false, text: 'SA0000002 تجي بكرة؟ ' + 'ط'.repeat(500) }];
 sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: history }, expect: 200 });
-check(sg.source === 'ai' && sg.suggestions.join('|') === 'أكيد أجي|خلاص اتفقنا|بعد شوي أرد عليك', 'fake model array → ai suggestions', JSON.stringify(sg));
-check(prompts.length === 1 && /أنا: هلا sara/.test(prompts[0].user) && /الطرف الآخر: سلام/.test(prompts[0].user), 'prompt labels turns as me / the other side');
-const lastLine = prompts[0].user.split('\n').pop();
-check(Array.from(lastLine).length <= 300 + 20 && !prompts[0].user.includes('ط'.repeat(301)), 'each message truncated to 300 chars before the model');
-check(!prompts[0].user.includes('SA0000001') && !prompts[0].system.includes('SA0000002') && !/peerId|nickname/.test(prompts[0].user), 'no ids of the caller nor field names reach the model (text only)');
-prompts = [];
-globalThis.naslifeAskClaude = async ({ user }) => { prompts.push(user); return '["واحد"]'; };
-sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: [{ mine: false, text: 'خلصت؟' }] }, expect: 200 });
-check(sg.source === 'ai' && sg.suggestions.length === 3 && sg.suggestions[0] === 'واحد' && sg.suggestions[1] === 'نعم', 'a short model answer is padded from the rules');
-globalThis.naslifeAskClaude = async () => 'آسف لا أستطيع المساعدة';
-sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: [{ mine: false, text: 'خلصت؟' }] }, expect: 200 });
-check(sg.source === 'rules' && sg.suggestions[0] === 'نعم', 'garbage from the model → rules');
-globalThis.naslifeAskClaude = async () => { throw Object.assign(new Error('ai-not-configured'), { code: 400 }); };
-sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: [{ mine: false, text: 'شكراً' }] }, expect: 200 });
-check(sg.source === 'rules' && sg.suggestions[0] === 'العفو', 'model error (no key) → rules');
-globalThis.naslifeAskClaude = async () => `["${'ك'.repeat(100)}", "b", "c", "d"]`;
-sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: [{ mine: false, text: 'هلا' }] }, expect: 200 });
-check(sg.source === 'ai' && sg.suggestions.length === 3 && Array.from(sg.suggestions[0]).length === SUGGEST_MAX_CHARS, 'model output limited: 40 chars each, three at most');
+check(sg.source === 'rules' && JSON.stringify(sg.suggestions) === JSON.stringify(['يناسبني', 'أي وقت يناسبك؟', 'خلني أتأكد']), 'AI hook present → still rules (meet words)', JSON.stringify(sg));
+for (const text of ['خلصت؟', 'شكراً', 'هلا', 'السلام عليكم', 'بكم الكيلو؟']) {
+  sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: [{ mine: true, text: 'مرحبا' }, { mine: false, text }] }, expect: 200 });
+  check(sg.source === 'rules' && JSON.stringify(sg.suggestions) === JSON.stringify(rulesFor([{ mine: false, text }])), `AI hook present → rules for «${text}»`);
+}
+check(prompts.length === 0, 'no chat text ever reaches the AI hook', JSON.stringify(prompts).slice(0, 200));
+// حتى لو كان النموذج يرمي أو يعيد كلاماً: لا فرق لأنه لا يُستدعى
 let asked = 0;
-globalThis.naslifeAskClaude = async () => { asked++; return '["a","b","c"]'; };
+globalThis.naslifeAskClaude = async () => { asked++; throw new Error('must not be called'); };
+sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: [{ mine: false, text: 'شكراً' }] }, expect: 200 });
+check(asked === 0 && sg.source === 'rules' && sg.suggestions[0] === 'العفو', 'throwing AI hook is never touched');
 sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: [{ mine: true, text: '' }, { mine: false, text: '   ' }] }, expect: 200 });
-check(asked === 0 && sg.source === 'rules', 'blank-only history never calls the model');
-const st2 = await call('GET', '/chat/live/status', { user: null, expect: 200 }); check(st2.suggest.ai === true, 'status reports the AI hook once present');
+check(asked === 0 && sg.source === 'rules' && sg.suggestions[0] === 'تمام', 'blank-only history → default rules');
+const st2 = await call('GET', '/chat/live/status', { user: null, expect: 200 });
+check(st2.suggest.ai === false && st2.suggest.paused === 'consent-required', 'status reports AI paused even with the hook present', JSON.stringify(st2.suggest));
+check(!/naslifeAskClaude\s*\(|\bask\s*\(/.test(fs.readFileSync(new URL('../chat_live.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '')), 'chat_live.js source has no AI call left');
 
 // ---- حدّ المعدّل: 20 في الدقيقة لكل مستخدم (المستخدم الثالث لم يطلب شيئاً بعد)
 let okCount = 0, limited = null;

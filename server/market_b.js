@@ -324,6 +324,10 @@ async function setup(app, opts) {
     const c = PAY(); if (!c.enabled) return bad(reply, 503, "payments-disabled");
     const amount = Math.round(Number(req.body?.amount) || 0);
     if (amount < c.min || amount > c.max) return bad(reply, 400, "bad-amount", { min: c.min, max: c.max });
+    // إقرار 18+ قبل أول عملية مالية (legal_pages.js)؛ غياب المساعد أو خطؤه لا يحجب الشحن
+    let adultMissing = false;
+    try { const f = globalThis.naslifeAdultOk; adultMissing = typeof f === "function" ? !(await f(uid)) : false; } catch { adultMissing = false; }
+    if (adultMissing) return bad(reply, 403, "adult-required");
     const id = crypto.randomUUID(), nonce = crypto.randomBytes(12).toString("hex");
     const description = `شحن محفظة ناس لايف ${sar(amount)}`;
     if (process.env.PAY_EMBED === "1") {
