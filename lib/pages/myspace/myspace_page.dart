@@ -810,7 +810,8 @@ class _WalletCard extends ConsumerWidget {
               if (!ios) ...[btn('شحن', Icons.add_rounded, open, key: const Key('wallet-topup')), const SizedBox(width: 8)],
               if (!ios && ref.watch(walletTransfersEnabledProvider)) ...[btn('تحويل', Icons.swap_horiz_rounded, open, key: const Key('wallet-transfer')), const SizedBox(width: 8)],
               btn('تذاكري', Icons.confirmation_number_outlined, () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage())), key: const Key('wallet-tickets')),
-              if (ios) ...[const SizedBox(width: 8), btn('المشتريات', Icons.receipt_long_outlined, () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 0))))],
+              // «المشتريات» = تبويب الطلبات (1)، لا «عروضي» (0) التي تخص البائع
+              if (ios) ...[const SizedBox(width: 8), btn('المشتريات', Icons.receipt_long_outlined, () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 1))), key: const Key('wallet-orders'))],
             ]),
           ]),
         ),

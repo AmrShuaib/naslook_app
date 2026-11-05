@@ -68,7 +68,9 @@ final compareProvider = StateProvider<List<Listing>>((_) => const []);
 void invalidateMarket(WidgetRef ref) { ref.invalidate(marketHomeProvider); ref.invalidate(marketListProvider); ref.invalidate(myListingsProvider); ref.invalidate(rowProvider); }
 
 class MarketPage extends ConsumerStatefulWidget {
-  const MarketPage({super.key});
+  /// أفعال تُلحق بآخر الشريط العلوي: البحث والجرس حين تكون الصفحة قسماً في الشريط السفلي (HomeShell).
+  final List<Widget> barActions;
+  const MarketPage({super.key, this.barActions = const []});
   @override
   ConsumerState<MarketPage> createState() => _MarketPageState();
 }
@@ -85,16 +87,24 @@ class _MarketPageState extends ConsumerState<MarketPage> {
     final list = ref.watch(marketListProvider(mq));
     final compare = ref.watch(compareProvider);
     final h = home.valueOrNull;
+    // في الشريط السفلي يُلحق البحث والجرس، فتنتقل «عروضي وطلباتي» إلى «المزيد» حتى يبقى للعنوان متسع على جوال 360
+    final inShell = widget.barActions.isNotEmpty;
+    void openMine() {
+      if (requireAccount(context)) Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 1)));
+    }
+
     return Scaffold(
       backgroundColor: Joy.bg,
       appBar: AppBar(
         title: const Text('السوق'),
         actions: [
           IconButton(key: const Key('market-wanted'), tooltip: 'طلبات المشترين', icon: Badge(isLabelVisible: (h?.wantedOpen ?? 0) > 0, label: Text('${h?.wantedOpen ?? 0}'), child: const Icon(Icons.campaign_outlined)), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WantedPage()))),
-          IconButton(key: const Key('market-mine'), tooltip: 'عروضي وطلباتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: () { if (requireAccount(context)) Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage(initialTab: 1))); }),
+          if (!inShell) IconButton(key: const Key('market-mine'), tooltip: 'عروضي وطلباتي', icon: const Icon(Icons.receipt_long_outlined), onPressed: openMine),
           PopupMenuButton<String>(
+            key: const Key('market-more'),
             tooltip: 'المزيد',
             onSelected: (v) {
+              if (v == 'mine') return openMine();
               // لوحة البائع والتنبيهات خاصة بالحساب؛ المقارنة محلية تعمل للزائر
               if ((v == 'seller' || v == 'alerts') && !requireAccount(context)) return;
               if (v == 'seller') Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SellerDashboardPage()));
@@ -102,11 +112,13 @@ class _MarketPageState extends ConsumerState<MarketPage> {
               if (v == 'compare') Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ComparePage()));
             },
             itemBuilder: (_) => [
+              if (inShell) const PopupMenuItem(key: Key('market-mine'), value: 'mine', child: ListTile(leading: Icon(Icons.receipt_long_outlined), title: Text('عروضي وطلباتي'))),
               const PopupMenuItem(value: 'seller', child: ListTile(leading: Icon(Icons.insights_outlined), title: Text('لوحة البائع'))),
               const PopupMenuItem(value: 'alerts', child: ListTile(leading: Icon(Icons.notifications_active_outlined), title: Text('تنبيهات العروض الجديدة'))),
               PopupMenuItem(value: 'compare', child: ListTile(leading: const Icon(Icons.compare_arrows_rounded), title: Text('مقارنة${compare.isEmpty ? '' : ' (${compare.length})'}'))),
             ],
           ),
+          ...widget.barActions,
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(key: const Key('market-sell'), onPressed: () => createListing(context, ref), backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: const Text('اعرض للبيع')),

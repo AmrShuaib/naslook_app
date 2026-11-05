@@ -551,7 +551,7 @@ class _PostsTab extends ConsumerWidget {
           TextButton(
             onPressed: () {
               Navigator.of(context).popUntil((r) => r.isFirst);
-              ref.read(navIndexProvider.notifier).state = 0;
+              openNavTab(ref, 'home');
             },
             child: const Text('عرض على الخريطة'),
           ),

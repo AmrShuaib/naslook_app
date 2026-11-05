@@ -31,7 +31,9 @@ String when(DateTime? t) {
 }
 
 class EventsPage extends ConsumerStatefulWidget {
-  const EventsPage({super.key});
+  /// أفعال تُلحق بآخر الشريط العلوي: البحث والجرس حين تكون الصفحة قسماً في الشريط السفلي (HomeShell).
+  final List<Widget> barActions;
+  const EventsPage({super.key, this.barActions = const []});
   @override
   ConsumerState<EventsPage> createState() => _EventsPageState();
 }
@@ -51,6 +53,7 @@ class _EventsPageState extends ConsumerState<EventsPage> {
           // التذاكر تخص الحساب: الزائر يُدعى للدخول بدل صفحة خطأ
           if (requireAccount(context)) Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()));
         }),
+        ...widget.barActions,
       ]),
       floatingActionButton: FloatingActionButton.extended(key: const Key('events-create'), onPressed: _create, backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: const Text('فعالية')),
       body: Column(children: [
