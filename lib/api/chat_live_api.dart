@@ -47,6 +47,8 @@ extension ChatLiveApi on ApiClient {
   Future<void> livePush(String id, double lat, double lng, {double? accuracy}) => put('/chat/live/$id', {'lat': lat, 'lng': lng, if (accuracy != null) 'accuracy': accuracy});
   Future<LiveSession> liveGet(String id) async => LiveSession.fromJson(await get('/chat/live/$id'));
   Future<void> liveStop(String id) => delete('/chat/live/$id');
+  /// يوقف كل مشاركاتي النشطة (من أي جهاز) ويمسح مواقعها؛ يستدعيه تسجيل الخروج. يعيد عدد ما أُوقف.
+  Future<int> liveStopAll() async => ((await post('/chat/live/stop-all', const {}, prompt: false))['stopped'] as num?)?.toInt() ?? 0;
   /// آخر ثماني رسائل (الأحدث أخيراً) → ثلاثة ردود مقترحة.
   Future<ReplySuggestions> suggestReplies(String peerId, List<SuggestTurn> turns) async => ReplySuggestions.fromJson(await post('/chat/suggest', {
         'peerId': peerId,

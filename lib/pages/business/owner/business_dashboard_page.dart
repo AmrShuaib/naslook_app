@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/biz_api.dart';
 import '../../../api/biz_models.dart';
+import '../../../api/client.dart' show ApiException;
 import '../../../api/commerce_models.dart';
 import '../../../core/app_theme.dart';
 import '../../../core/location.dart';
@@ -190,8 +191,8 @@ class OverviewTab extends ConsumerWidget {
         const SizedBox(height: 4),
         const SectionTitle('إجراءات سريعة'),
         Wrap(spacing: 8, runSpacing: 8, children: [
-          // «أنا هنا اليوم» للكل: المتنقلة أساساً، والثابتة حين تشارك في بازار خارج مقرها
-          _Action(key: const Key('here-today'), icon: Icons.where_to_vote_outlined, label: biz.hereActive ? 'أنت هنا حتى ${clockLabel(biz.here!.until)}' : 'أنا هنا اليوم', onTap: () => showHereTodaySheet(context, biz)),
+          // «أنا هنا اليوم» للدائرة المتنقلة فقط: الخادم يرفض الدبوس للثابتة (409 not-mobile)، فلا نعرض زراً ينتهي بخطأ
+          if (biz.isMobile) _Action(key: const Key('here-today'), icon: Icons.where_to_vote_outlined, label: biz.hereActive ? 'أنت هنا حتى ${clockLabel(biz.here!.until)}' : 'أنا هنا اليوم', onTap: () => showHereTodaySheet(context, biz)),
           _Action(icon: Icons.qr_code_scanner_rounded, label: 'تأكيد استلام برمز', onTap: () => checkinByCode(context, ref, biz)),
           if (biz.canManage) _Action(key: const Key('verify-entry'), icon: Icons.verified_user_outlined, label: biz.verified ? 'التوثيق ✓' : 'التوثيق', onTap: () => openVerifyCircle(context, biz.id, initial: biz)),
           if (biz.canManage) _Action(icon: Icons.add_box_outlined, label: 'إضافة ${_itemNoun(biz.category)}', onTap: () => openItemEditor(context, biz)),
@@ -324,6 +325,14 @@ class _Check extends StatelessWidget {
 
 const hereTodayHours = [2, 4, 6, 8, 12];
 
+/// نص خطأ دبوس «هنا اليوم»: شبكة أمان إن وصل الطلب لدائرة ثابتة (تغيّر حضورها أو لوحة قديمة) فيرد الخادم 409 not-mobile
+String hereErrText(Object e) {
+  if (e is ApiException && e.statusCode == 409 && e.body?['error'] == 'not-mobile') {
+    return '«أنا هنا اليوم» للدوائر المتنقلة فقط، ودائرتك مسجّلة بموقع ثابت يظهر على الخريطة دائماً';
+  }
+  return ownerErrText(e);
+}
+
 /// ورقة «أنا هنا اليوم»: اختيار المدة ثم موقع الجهاز ثم دبوس مؤقت؛ وأثناء سريانه تعرض «أنت هنا حتى …» مع «إنهاء».
 Future<void> showHereTodaySheet(BuildContext context, Biz biz) => showModalBottomSheet<void>(
       context: context,
@@ -351,7 +360,7 @@ class _HereSheetState extends ConsumerState<_HereSheet> {
       child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         const Text('أنا هنا اليوم', style: TextStyle(fontFamily: AppTheme.displayFont, fontWeight: FontWeight.w700, fontSize: 20)),
         const SizedBox(height: 4),
-        Text(b.isMobile ? 'يضع دبوساً مؤقتاً في مكانك الحالي فيجدك من حولك على الخريطة وفي الصف.' : 'في بازار أو فعالية خارج مقرك؟ ضع دبوساً مؤقتاً في مكانك الحالي.', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.5)),
+        const Text('يضع دبوساً مؤقتاً في مكانك الحالي فيجدك من حولك على الخريطة وفي الصف.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.5)),
         const SizedBox(height: 14),
         if (b.hereActive) ...[
           Container(
@@ -395,7 +404,7 @@ class _HereSheetState extends ConsumerState<_HereSheet> {
       Navigator.of(context).pop();
       toast(context, 'وُضع دبوسك حتى ${clockLabel(pin.until)}');
     } catch (e) {
-      if (mounted) toast(context, ownerErrText(e), error: true);
+      if (mounted) toast(context, hereErrText(e), error: true);
     } finally {
       if (mounted) setState(() => busy = false);
     }

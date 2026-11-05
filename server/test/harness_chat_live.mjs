@@ -170,6 +170,37 @@ check((await globalThis.naslifeChatLive.sweep()) === 0, 'nothing left to sweep')
 const open = (await pool.query('SELECT count(*)::int AS n FROM chat_live WHERE stopped_at IS NOT NULL AND (lat IS NOT NULL OR lng IS NOT NULL OR accuracy IS NOT NULL OR updated_at IS NOT NULL)')).rows[0].n;
 check(open === 0, 'no ended row keeps a position', String(open));
 
+// ---- إنهاء كل مشاركاتي (قبل تسجيل الخروج): POST /chat/live/stop-all
+await call('POST', '/chat/live/stop-all', { user: null, expect: 401 });
+const a1 = await call('POST', '/chat/live', { body: { peerId: 'SA0000001', minutes: 60 }, user: 'SA0000002', expect: 200 });
+const a2 = await call('POST', '/chat/live', { body: { peerId: 'SA0000003', minutes: 15 }, user: 'SA0000002', expect: 200 });
+const a3 = await call('POST', '/chat/live', { body: { peerId: 'SA0000001', minutes: 480 }, user: 'SA0000002', expect: 200 }); // يوقف a1 (جلسة واحدة لكل زوج)
+const keep = await call('POST', '/chat/live', { body: { peerId: 'SA0000002', minutes: 60 }, user: 'SA0000003', expect: 200 }); // مشاركة غيري لا تُمس
+const exp = await call('POST', '/chat/live', { body: { peerId: 'SA0000004', minutes: 15 }, user: 'SA0000002', expect: 200 });
+for (const s of [a2, a3, keep, exp]) await call('PUT', `/chat/live/${s.id}`, { body: { lat: 21.5, lng: 39.2, accuracy: 9 }, user: s.from, expect: 200 });
+await pool.query("UPDATE chat_live SET until = now() - interval '1 second' WHERE id=$1", [exp.id]); // منقضية لم يمرّ عليها الكنس
+const a1Stopped = (await pool.query('SELECT stopped_at FROM chat_live WHERE id=$1', [a1.id])).rows[0].stopped_at;
+let sa = await call('POST', '/chat/live/stop-all', { user: 'SA0000002', expect: 200 });
+check(sa.ok === true && sa.stopped === 2, 'stop-all closes the caller\'s two active shares (the expired one is not counted)', JSON.stringify(sa));
+for (const s of [a2, a3, exp]) check(wiped(await posOf(s.id)), `stop-all wiped the coordinates of ${s === exp ? 'the expired' : 'an active'} share exactly like DELETE`);
+const rows = (await pool.query('SELECT id, stopped_at, until FROM chat_live WHERE id = ANY($1::uuid[])', [[a1.id, a2.id, a3.id, exp.id]])).rows;
+const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+check(rows.every((r) => r.stopped_at != null), 'every share of the caller now has stopped_at');
+check(new Date(byId[exp.id].stopped_at).getTime() === new Date(byId[exp.id].until).getTime(), 'the expired share is closed at its until (as the sweep would)');
+check(new Date(byId[a1.id].stopped_at).getTime() === new Date(a1Stopped).getTime(), 'an already-stopped share keeps its first stopped_at');
+check(Date.now() - new Date(byId[a3.id].stopped_at).getTime() < 5000, 'an active share is stopped now');
+g = await call('GET', `/chat/live/${a3.id}`, { user: 'SA0000001', expect: 200 });
+check(g.active === false && g.lat === null && g.lng === null && g.at === null, 'the peer reads the stopped share as ended without a position', JSON.stringify(g));
+await call('PUT', `/chat/live/${a2.id}`, { body: { lat: 21, lng: 39 }, user: 'SA0000002', expect: 409 });
+g = await call('GET', `/chat/live/${keep.id}`, { user: 'SA0000002', expect: 200 });
+check(g.active === true && g.lat === 21.5 && !wiped(await posOf(keep.id)), 'another user\'s share (shared with the caller) stays active with its position');
+sa = await call('POST', '/chat/live/stop-all', { user: 'SA0000002', expect: 200 });
+check(sa.ok === true && sa.stopped === 0, 'stop-all is idempotent (nothing left to stop)');
+sa = await call('POST', '/chat/live/stop-all', { user: 'SA0000009', expect: 200 });
+check(sa.stopped === 0, 'stop-all with no shares at all is harmless');
+await call('GET', '/chat/live/stop-all', { user: 'SA0000002', expect: 404 }); // لا يصطدم بقراءة جلسة بمعرّفها
+await call('DELETE', `/chat/live/${keep.id}`, { user: 'SA0000003', expect: 200 });
+
 // ---- الاقتراحات: قواعد بلا مفتاح
 let sg = await call('POST', '/chat/suggest', { body: { peerId: 'SA0000002', messages: [{ mine: false, text: 'السلام عليكم' }] }, expect: 200 });
 check(sg.source === 'rules' && sg.suggestions.length === 3 && sg.suggestions[0] === 'وعليكم السلام ورحمة الله', 'no key → rules, greeting', JSON.stringify(sg));

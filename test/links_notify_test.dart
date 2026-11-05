@@ -1,0 +1,265 @@
+// روابط ووجهات كانت تفتح خطأً أو لا شيء: زر «قدّم» في بطاقة الوظيفة يفتح الوظيفة بمعرّفها (لا بمعرّف الدائرة)، رابط مشاركة
+// العرض /l/<id> و#/l/<id> يفتح صفحة العرض (مسجّلاً وزائراً)، إشعارات السوق والمحفظة والترقية تفتح شاشتها من حمولتها
+// والنوع المجهول لا يفعل شيئاً، وتسجيل الخروج يوقف مشاركات الموقع المباشر على الخادم أولاً بمهلة قصيرة.
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:naslook/api/client.dart';
+import 'package:naslook/api/notify_api.dart';
+import 'package:naslook/api/row_api.dart';
+import 'package:naslook/api/session.dart';
+import 'package:naslook/app/app.dart';
+import 'package:naslook/core/notify_open.dart';
+import 'package:naslook/core/share/share_links.dart';
+import 'package:naslook/pages/admin/admin_shell.dart';
+import 'package:naslook/pages/business/owner/business_dashboard_page.dart';
+import 'package:naslook/pages/home/row_open.dart';
+import 'package:naslook/pages/jobs/job_page.dart';
+import 'package:naslook/pages/market/market_page.dart';
+import 'package:naslook/pages/market/wanted_page.dart';
+import 'package:naslook/pages/wallet/wallet_page.dart';
+import 'package:naslook/state/app_state.dart';
+import 'package:naslook/state/notify_providers.dart';
+import 'package:naslook/state/providers.dart';
+
+class _SignedIn extends AppStateNotifier {
+  _SignedIn(super.api, super.store) {
+    state = const AppState(status: AuthStatus.signedIn, session: Session(token: 't', user: SessionUser(id: 'SA0000001', nickname: 'amr')));
+  }
+}
+
+class _SignedOut extends AppStateNotifier {
+  _SignedOut(super.api, super.store) {
+    state = const AppState(status: AuthStatus.signedOut);
+  }
+}
+
+const _job = '11111111-1111-4111-8111-111111111101';
+const _lid = '22222222-2222-4222-8222-222222222202';
+const _order = '33333333-3333-4333-8333-333333333303';
+
+Map<String, dynamic> _jobJson() => {
+      'id': _job, 'bizId': 'biz-brew92', 'title': 'باريستا', 'titleEn': '', 'department': '', 'description': 'تحضير القهوة', 'descriptionEn': '', 'requirements': {'must': [], 'nice': []}, 'skills': [],
+      'city': 'جدة', 'district': 'الروضة', 'type': 'shift', 'experienceMin': 0, 'education': 'any', 'salaryMin': null, 'salaryMax': null, 'salaryVisible': false, 'openings': 1, 'deadline': null,
+      'status': 'open', 'public': true, 'views': 3, 'publishedAt': '2026-11-01T08:00:00Z', 'closedAt': null, 'createdAt': '2026-11-01T08:00:00Z', 'updatedAt': '2026-11-01T08:00:00Z',
+      'biz': {'id': 'biz-brew92', 'name': 'Brew92', 'nameAr': 'برو 92', 'category': 'cafe', 'address': 'جدة', 'city': 'جدة', 'logoUrl': null, 'verified': true}, 'mine': null,
+    };
+
+Map<String, dynamic> _listingJson() => {
+      'id': _lid, 'seller': {'id': 'SA0000002', 'nickname': 'sara', 'avatarUrl': null}, 'kind': 'product', 'category': 'food', 'subcategory': 'sweets', 'title': 'كيك الليمون', 'description': 'طازج',
+      'price': 4500, 'imageUrl': null, 'images': [], 'status': 'active', 'lat': 21.5, 'lng': 39.1, 'mine': false, 'createdAt': '2026-11-01T08:00:00Z',
+    };
+
+class _Srv {
+  final calls = <String>[];
+  /// تحجز ردّ إيقاف المشاركات (خادم بطيء) حتى تُفتح
+  Completer<void>? stopGate;
+  int stopped = 1;
+  http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
+  Future<http.Response> handle(http.Request req) async {
+    final path = req.url.path;
+    final key = '${req.method} $path';
+    calls.add(key);
+    switch (key) {
+      case 'GET /jobs/$_job':
+        return _json(_jobJson());
+      case 'GET /market/$_lid':
+        return _json(_listingJson());
+      case 'GET /market/$_lid/questions':
+      case 'GET /market/$_lid/reviews':
+        return _json([]);
+      case 'POST /chat/live/stop-all':
+        if (stopGate != null) await stopGate!.future;
+        return _json({'ok': true, 'stopped': stopped});
+      case 'POST /logout':
+        return _json({'ok': true});
+    }
+    if (path.startsWith('/presence/')) return _json({'online': false});
+    if (path.startsWith('/wishlist')) return _json({'items': []});
+    if (req.method == 'POST') return _json({'ok': true});
+    return _json({'error': 'not-found'}, 404);
+  }
+}
+
+Future<_Srv> _pump(WidgetTester tester, Widget home, {bool signedIn = true}) async {
+  tester.view.physicalSize = const Size(600, 1400);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final srv = _Srv();
+  final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle));
+  if (signedIn) api.token = 't';
+  await tester.pumpWidget(ProviderScope(
+    overrides: [
+      apiClientProvider.overrideWithValue(api),
+      socketProvider.overrideWithValue(null),
+      appStateProvider.overrideWith((ref) => signedIn ? _SignedIn(api, SessionStore()) : _SignedOut(api, SessionStore())),
+      notifyPollIntervalProvider.overrideWithValue(null),
+    ],
+    child: MaterialApp(locale: const Locale('ar'), home: home),
+  ));
+  await _settle(tester);
+  return srv;
+}
+
+Future<void> _settle(WidgetTester tester, [int n = 4]) async {
+  for (var i = 0; i < n; i++) {
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+}
+
+AppNotification _n(String kind, [Map<String, dynamic> data = const {}]) => AppNotification(id: 'n-$kind', kind: kind, title: kind, data: data);
+
+void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  group('row job card', () {
+    testWidgets('«قدّم» opens the job by its id, not by the circle (refId)', (tester) async {
+      // كما يبنيها server/row.js: id الوظيفة وrefId الدائرة صاحبتها
+      final it = RowItem.fromJson({'kind': 'job', 'id': _job, 'refId': 'biz-brew92', 'title': 'باريستا', 'who': 'برو 92', 'lat': 21.5, 'lng': 39.2});
+      expect(it.act, 'قدّم');
+      expect(it.refId, 'biz-brew92', reason: 'refId يبقى الدائرة لبقية الاستعمالات');
+      final srv = await _pump(tester, Scaffold(body: Builder(builder: (ctx) => TextButton(key: const Key('open-job'), onPressed: () => openRowItem(ctx, it), child: const Text('قدّم')))));
+      await tester.tap(find.byKey(const Key('open-job')));
+      await _settle(tester);
+      expect(tester.widget<JobPage>(find.byType(JobPage)).id, _job);
+      expect(srv.calls, contains('GET /jobs/$_job'));
+      expect(srv.calls.where((c) => c.contains('/jobs/biz-brew92')), isEmpty, reason: 'لا طلب بمعرّف الدائرة (كان يفتح صفحة خطأ)');
+      expect(find.text('باريستا'), findsWidgets);
+    });
+  });
+
+  group('listing share links', () {
+    test('parsePendingLink reads /l/<uuid> from the path or the #/l/ fragment the server redirects to', () {
+      expect(parsePendingLink(Uri.parse('https://naslife.app/l/$_lid'))?.toString(), 'listing:$_lid');
+      expect(parsePendingLink(Uri.parse('https://naslife.app/#/l/$_lid'))?.toString(), 'listing:$_lid');
+      expect(parsePendingLink(Uri.parse('https://naslife.app/#/l/${_lid.toUpperCase()}'))?.value, _lid, reason: 'المعرّف بأحرف صغيرة');
+      expect(parsePendingLink(Uri.parse('https://naslife.app/l/$_lid/'))?.isListing, isTrue);
+      expect(parsePendingLink(Uri.parse('https://naslife.app/#/l/not-a-uuid')), isNull);
+      expect(parsePendingLink(Uri.parse('https://naslife.app/l/')), isNull);
+      // بقية الروابط كما هي
+      expect(parsePendingLink(Uri.parse('https://naslife.app/#/m/$_lid'))?.isMoment, isTrue);
+      expect(parsePendingLink(Uri.parse('https://naslife.app/c/biz-brew92'))?.isCircle, isTrue);
+      expect(parsePendingLink(Uri.parse('https://naslife.app/u/sara'))?.kind, 'user');
+    });
+
+    test('pendingLinkPage maps a listing link to the listing page', () {
+      final page = pendingLinkPage(const PendingLink('listing', _lid));
+      expect(page, isA<ListingPage>().having((p) => p.id, 'id', _lid));
+      expect(pendingLinkPage(const PendingLink('user', 'sara')).runtimeType.toString(), 'PublicProfilePage');
+    });
+
+    testWidgets('a guest opening a shared listing link sees the listing with the sign-in bar', (tester) async {
+      final srv = await _pump(tester, const GuestShell(link: PendingLink('listing', _lid)), signedIn: false);
+      expect(find.byType(ListingPage), findsOneWidget);
+      expect(find.byKey(const Key('guest-bar')), findsOneWidget);
+      expect(srv.calls, contains('GET /market/$_lid'));
+      expect(find.text('كيك الليمون'), findsOneWidget);
+    });
+  });
+
+  group('market notifications', () {
+    test('each market, wallet and upgrade kind opens its screen from the payload', () {
+      final listing = {'listingId': _lid};
+      for (final k in ['market_new', 'market_alert', 'market_question', 'market_spotlight', 'market_review_result']) {
+        expect(notificationTarget(_n(k, listing)), isA<ListingPage>().having((p) => p.id, 'id', _lid), reason: k);
+      }
+      // التقييم: للبائع (طلب وعرض) وللمشتري حين يرد البائع (عرض فقط) → صفحة العرض حيث التقييمات
+      expect(notificationTarget(_n('market_review', {'orderId': _order, 'listingId': _lid})), isA<ListingPage>());
+      expect(notificationTarget(_n('market_review', {'orderId': _order})), isA<OrderPage>().having((p) => p.id, 'id', _order));
+      for (final k in ['market_order', 'market_status', 'market_courier', 'market_dispute']) {
+        expect(notificationTarget(_n(k, {'orderId': _order, 'status': 'completed'})), isA<OrderPage>().having((p) => p.id, 'id', _order), reason: k);
+        expect(notificationTarget(_n(k)), isA<OrdersPage>(), reason: '$k بلا طلب → عروضي وطلباتي');
+      }
+      expect(notificationTarget(_n('market_pending', listing)), isA<AdminShell>().having((s) => s.initialSection, 'section', adminSections.indexWhere((s) => s.$1 == 'market')));
+      expect(notificationTarget(_n('market_wanted', {'wantedId': 'w-1'})), isA<WantedDetailPage>().having((p) => p.id, 'id', 'w-1'));
+      expect(notificationTarget(_n('market_wanted')), isA<WantedPage>());
+      expect(notificationTarget(_n('market_bazaar', {'bazaarId': 'bz-1'})), isA<BazaarPage>().having((p) => p.id, 'id', 'bz-1'));
+      expect(notificationTarget(_n('market_bazaar')), isA<MarketPage>());
+      expect(notificationTarget(_n('wallet', {'paymentId': 'p-1'})), isA<WalletPage>());
+      expect(notificationTarget(_n('biz', {'bizId': 'biz-new'})), isA<BusinessDashboardPage>().having((p) => p.id, 'id', 'biz-new'));
+      expect(notificationTarget(_n('biz')), isNull, reason: 'بلا دائرة لا وجهة');
+      // الأنواع القائمة لم تتغير
+      expect(notificationTarget(_n('listing_hidden', listing)), isA<OrdersPage>().having((p) => p.initialTab, 'tab', 0));
+      expect(notificationTarget(_n('transfer_in')), isA<WalletPage>());
+    });
+
+    test('unknown kinds have no target, and market kinds get their own icon', () {
+      expect(notificationTarget(_n('something_new', {'listingId': _lid})), isNull);
+      expect(notificationTarget(_n('product', {'listingId': _lid})), isNull);
+      final generic = notificationStyle('something_new').icon;
+      for (final k in ['market_new', 'market_alert', 'market_question', 'market_courier', 'market_dispute', 'market_review', 'market_review_result', 'market_pending', 'market_wanted', 'market_bazaar', 'market_spotlight', 'wallet', 'biz']) {
+        expect(notificationStyle(k).icon, isNot(generic), reason: k);
+      }
+    });
+
+    testWidgets('tapping a market question opens the listing; an unknown kind opens nothing', (tester) async {
+      late WidgetRef r;
+      late BuildContext c;
+      final srv = await _pump(tester, Consumer(builder: (ctx, ref, _) { r = ref; c = ctx; return const Scaffold(body: SizedBox()); }));
+      expect(await openNotification(c, r, _n('unknown_kind', {'listingId': _lid})), isFalse);
+      await _settle(tester);
+      expect(find.byType(ListingPage), findsNothing);
+      unawaited(openNotification(c, r, _n('market_question', {'listingId': _lid, 'questionId': 'q1'})));
+      await _settle(tester);
+      expect(find.byType(ListingPage), findsOneWidget);
+      expect(srv.calls, contains('GET /market/$_lid'));
+    });
+  });
+
+  group('logout ends live location shares', () {
+    test('logout asks the server to stop every live share before ending the session', () async {
+      final srv = _Srv();
+      final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle))..token = 'tok';
+      final n = _SignedIn(api, SessionStore());
+      await n.logout();
+      expect(srv.calls, containsAllInOrder(['POST /chat/live/stop-all', 'POST /logout']));
+      expect(srv.calls.indexOf('POST /chat/live/stop-all'), lessThan(srv.calls.indexOf('POST /logout')), reason: 'بالرمز الصالح قبل إبطاله');
+      expect(n.state.status, AuthStatus.signedOut);
+      expect(api.token, isNull);
+    });
+
+    test('a failing stop-all (old server) never blocks the logout', () async {
+      final calls = <String>[];
+      final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient((req) async {
+        calls.add('${req.method} ${req.url.path}');
+        return http.Response(jsonEncode({'error': 'not-found'}), 404, headers: {'content-type': 'application/json'});
+      }))..token = 'tok';
+      final n = _SignedIn(api, SessionStore());
+      await n.logout();
+      expect(calls, ['POST /chat/live/stop-all', 'POST /logout']);
+      expect(n.state.status, AuthStatus.signedOut);
+    });
+
+    testWidgets('a slow server: logout waits at most the short timeout, then proceeds', (tester) async {
+      final srv = _Srv()..stopGate = Completer<void>();
+      final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle))..token = 'tok';
+      final n = _SignedIn(api, SessionStore());
+      var done = false;
+      unawaited(n.logout().then((_) => done = true));
+      await tester.pump(const Duration(seconds: 1));
+      expect(done, isFalse);
+      expect(srv.calls, ['POST /chat/live/stop-all']);
+      await tester.pump(AppStateNotifier.liveStopTimeout);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(done, isTrue);
+      expect(srv.calls, contains('POST /logout'));
+      expect(n.state.status, AuthStatus.signedOut);
+      srv.stopGate!.complete();
+    });
+
+    test('without a session token there is nothing to stop', () async {
+      final srv = _Srv();
+      final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle));
+      final n = _SignedOut(api, SessionStore());
+      await n.logout();
+      expect(srv.calls, isNot(contains('POST /chat/live/stop-all')));
+    });
+  });
+}

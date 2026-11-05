@@ -17,6 +17,7 @@ import '../pages/events/events_page.dart';
 import '../pages/jobs/job_offer_page.dart';
 import '../pages/jobs/job_offers_page.dart';
 import '../pages/market/market_page.dart';
+import '../pages/market/wanted_page.dart';
 import '../pages/myspace/wishlist_page.dart';
 import '../pages/posts/moment_actions.dart';
 import '../pages/posts/my_posts_page.dart';
@@ -48,6 +49,7 @@ Widget? notificationTarget(AppNotification n) {
   // التوظيف من جهة الدائرة: الإشعارات الموسومة manage تفتح المرشح نفسه إن عُرف، وإلا لوحة مرشحي العرض.
   // الأنواع نفسها بلا manage تخص الباحث عن عمل وتُعالج في switch أدناه.
   final job = n.str('jobId'), match = n.str('matchId');
+  final listing = n.str('listingId'), order = n.str('orderId');
   if (n.data['manage'] == true && biz != null && job != null && const {'job_accept', 'job_answers', 'job_apply', 'job_stage', 'job_interview'}.contains(n.kind)) {
     return match != null ? JobCandidatePage(bizId: biz, jobId: job, matchId: match) : JobCandidatesPage(bizId: biz, jobId: job);
   }
@@ -82,13 +84,40 @@ Widget? notificationTarget(AppNotification n) {
     case 'ticket_sale':
     case 'event_cancelled':
       return event == null ? const EventsPage() : EventDetailPage(eventId: event);
+    // السوق (commerce.js وmarket_plus.js وmarket_b.js): كل نوع إلى شاشته من حمولته، والاحتياط «عروضي وطلباتي» حين تغيب
+    // الطلب: طلب جديد للبائع، مراحل الطلب، تكليف المندوب أو إلغاؤه، النزاع وحسمه (المدير يرى الطلب أيضاً)
     case 'market_order':
     case 'market_status':
-      return const OrdersPage();
+    case 'market_courier':
+    case 'market_dispute':
+      return order == null ? const OrdersPage() : OrderPage(order);
+    // العرض: جديد من بائع أتابعه، تنبيه يطابق، سؤال أو جواب، سبوت لايت ممنوح، قرار المراجعة، والتقييم أو الرد عليه
+    case 'market_new':
+    case 'market_alert':
+    case 'market_question':
+    case 'market_spotlight':
+    case 'market_review_result':
+    case 'market_review':
+      return listing != null ? ListingPage(listing) : order != null ? OrderPage(order) : const OrdersPage(initialTab: 0);
+    // عرض بانتظار المراجعة (للمديرين): قسم السوق في الإدارة حيث القبول والرفض
+    case 'market_pending':
+      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'market').clamp(0, adminSections.length - 1));
+    // «أبحث عن»: طلب مشترٍ يطابق ما أقدّمه، أو عرض وصل على طلبي
+    case 'market_wanted':
+      final wanted = n.str('wantedId');
+      return wanted == null ? const WantedPage() : WantedDetailPage(wanted);
+    case 'market_bazaar':
+      final bazaar = n.str('bazaarId');
+      return bazaar == null ? const MarketPage() : BazaarPage(bazaar);
+    // ترقية البائع إلى دائرة أعمال (market_b.js): لوحة الدائرة الجديدة لإكمال ملفها
+    case 'biz':
+      return biz == null ? null : BusinessDashboardPage(id: biz);
     case 'listing_hidden':
       return const OrdersPage(initialTab: 0);
     case 'transfer_in':
     case 'wallet_credit':
+    // شحن المحفظة بالبطاقة (market_b.js)
+    case 'wallet':
       return const WalletPage();
     case 'biz_claim':
       return const AdminShell(standalone: false, initialSection: 3);
@@ -153,6 +182,29 @@ Widget? notificationTarget(AppNotification n) {
     case 'market_status':
     case 'order_cancelled':
       return (icon: Icons.receipt_long_outlined, color: Joy.accent);
+    case 'market_new':
+    case 'market_alert':
+    case 'market_bazaar':
+      return (icon: Icons.storefront_outlined, color: Joy.primary);
+    case 'market_question':
+      return (icon: Icons.question_answer_outlined, color: Joy.primary);
+    case 'market_courier':
+      return (icon: Icons.delivery_dining_outlined, color: Joy.accent);
+    case 'market_dispute':
+      return (icon: Icons.gavel_rounded, color: Joy.danger);
+    case 'market_review':
+      return (icon: Icons.star_outline_rounded, color: Joy.sunText);
+    case 'market_review_result':
+    case 'market_pending':
+      return (icon: Icons.fact_check_outlined, color: Joy.sunText);
+    case 'market_spotlight':
+      return (icon: Icons.auto_awesome_outlined, color: Joy.sunText);
+    case 'market_wanted':
+      return (icon: Icons.campaign_outlined, color: Joy.accent);
+    case 'biz':
+      return (icon: Icons.add_business_outlined, color: Joy.primary);
+    case 'wallet':
+      return (icon: Icons.account_balance_wallet_outlined, color: Joy.primary);
     case 'biz_review':
     case 'review_reply':
       return (icon: Icons.star_outline_rounded, color: Joy.sunText);

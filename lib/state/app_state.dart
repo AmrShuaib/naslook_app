@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/chat_live_api.dart';
 import '../api/client.dart';
 import '../api/naslife_api.dart';
 import '../api/session.dart';
@@ -305,9 +306,21 @@ class AppStateNotifier extends StateNotifier<AppState> {
     }
   }
 
+  /// مهلة إيقاف مشاركات الموقع المباشر قبل الخروج: قصيرة حتى لا يتأخر الخروج إن كان الخادم بطيئاً.
+  static const liveStopTimeout = Duration(seconds: 3);
+
   Future<void> logout() async {
     _clearPending();
     state = state.copyWith(busy: true, clearError: true);
+    // مشاركة موقع مباشر نشطة لا تبقى بعد مغادرة الحساب: تُوقف على الخادم ما دام رمز الجلسة صالحاً (بعده يرفضها الخادم)،
+    // بأفضل جهد ومهلة قصيرة؛ والمؤقّت المحلي يتوقف وحده عند أول دفع مرفوض (409/401)
+    if (_api.token != null) {
+      try {
+        await _api.liveStopAll().timeout(liveStopTimeout);
+      } catch (_) {
+        // شبكة أو خادم قديم بلا المسار: الخروج يمضي، والجلسة تنتهي عند until على أي حال
+      }
+    }
     try {
       await _api.logout();
       await _store.clear();

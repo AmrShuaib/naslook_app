@@ -33,7 +33,8 @@ void openRowItem(BuildContext context, RowItem it, {List<RowItem> moments = cons
     case 'event':
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: it.refId)));
     case 'job':
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => JobPage(id: it.refId)));
+      // الوظيفة تُفتح بمعرّفها (id)؛ refId للوظيفة هو الدائرة صاحبتها (للدبوس والتجميع) لا الوظيفة
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => JobPage(id: it.id)));
     case 'listing':
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(it.refId)));
     case 'circle':
