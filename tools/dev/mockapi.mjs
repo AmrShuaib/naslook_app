@@ -1004,7 +1004,7 @@ function pv2Profile(id, viewer) {
   const showCity = isMe || ext.showCity, showFriends = isMe || ext.showFriends;
   const sample = id === 'SA0000001' ? { posts: 12, circles: 4, ratingAvg: 4.8, ratingCount: 23, completedOrders: 41, friends: 18 } : { posts: 2, circles: 1, ratingAvg: null, ratingCount: 0, completedOrders: 0, friends: 3 };
   return {
-    ...head, bio: id === 'SA0000001' ? 'مصوّر وصانع محتوى من جدة، أوثّق الأماكن والناس.' : 'أحب القهوة والبحر', accountType: id === 'SA0000001' ? 'pro' : 'personal', jobTitle: ext.jobTitle,
+    ...head, bio: id === 'SA0000001' ? 'مصوّر وصانع محتوى من جدة، أوثّق الأماكن والناس.' : 'أحب القهوة والبحر', accountType: ext.accountType ?? (id === 'SA0000001' ? 'pro' : 'personal'), jobTitle: ext.jobTitle,
     city: showCity ? ext.city : '', district: showCity ? ext.district : '', links: ext.links.map((l) => ({ ...l, url: pv2LinkUrl(l.kind, l.value) })),
     intro: ext.intro && (isMe || ext.introVisibility === 'all' || isFriend) ? ext.intro : null,
     stats: { ...sample, followers, following, friends: showFriends ? sample.friends : 0 },
@@ -1035,6 +1035,7 @@ function profileV2Route(req, res, url, key) {
     for (const f of ['displayName', 'jobTitle', 'city', 'district']) if (b[f] !== undefined) { if (typeof b[f] !== 'string' || b[f].trim().length > 40) return json(400, { error: 'bad-field', field: f }); next[f] = b[f].trim(); }
     if (b.coverUrl !== undefined) { if (b.coverUrl === null || b.coverUrl === '') next.coverUrl = null; else { const a = abs(b.coverUrl); if (!a) return json(400, { error: 'bad-field', field: 'coverUrl' }); next.coverUrl = a; } }
     if (b.links !== undefined) { if (!Array.isArray(b.links) || b.links.length > 3) return json(400, { error: 'bad-field', field: 'links' }); const ls = b.links.map(pv2Link); if (ls.some((l) => !l)) return json(400, { error: 'bad-field', field: 'links' }); next.links = ls; }
+    if (b.accountType !== undefined) { if (!['personal', 'pro'].includes(b.accountType)) return json(400, { error: 'bad-field', field: 'accountType' }); next.accountType = b.accountType; }
     if (b.msgPolicy !== undefined) { if (!['all', 'friends', 'none'].includes(b.msgPolicy)) return json(400, { error: 'bad-field', field: 'msgPolicy' }); next.msgPolicy = b.msgPolicy; }
     if (b.introVisibility !== undefined) { if (!['all', 'friends'].includes(b.introVisibility)) return json(400, { error: 'bad-field', field: 'introVisibility' }); next.introVisibility = b.introVisibility; }
     for (const f of ['showOnline', 'showCity', 'showFriends']) if (b[f] !== undefined) { if (typeof b[f] !== 'boolean') return json(400, { error: 'bad-field', field: f }); next[f] = b[f]; }

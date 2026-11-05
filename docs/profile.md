@@ -35,7 +35,7 @@ profile_events (id BIGSERIAL, user_id, actor_id, kind, created_at)              
 | `GET /profile/v2/status` | عام | `{ok:true, ...}` مع الجداول المكتشفة |
 | `GET /profiles/:id/v2` | اختياري | ملف المستخدم كما يراه الزائر؛ `:id` معرّف (`SA0000002`) أو اسم مستخدم بلا حساسية للحالة (يُقبل `@` في أوله). زائر مسجّل غير المالك يُسجَّل في `profile_views` مرة في اليوم. مجهول → 404 |
 | `GET /me/profile/v2` | مطلوب | الكائن نفسه للمالك + `settings` + `completion` |
-| `PUT /me/profile/v2` | مطلوب | تعديل أي من `displayName, jobTitle, city, district, coverUrl, links, msgPolicy, showOnline, showCity, showFriends, introVisibility`؛ يعيد كائن `GET /me/profile/v2` |
+| `PUT /me/profile/v2` | مطلوب | تعديل أي من `displayName, accountType (personal|pro), jobTitle, city, district, coverUrl, links, msgPolicy, showOnline, showCity, showFriends, introVisibility`؛ يعيد كائن `GET /me/profile/v2` |
 | `PUT /me/profile/intro` | مطلوب | `{kind:'voice'|'video', url, sec}` → `{ok, intro}`؛ يضبط `intro_at=now()` ويحذف الملف القديم عبر `naslifeMediaDelete` إن توفّر |
 | `DELETE /me/profile/intro` | مطلوب | يمسح التعريف → `{ok:true}` |
 | `POST /profiles/:id/follow` / `DELETE` | مطلوب | `{ok, following, followers}`؛ متابعة النفس → 400 `self`؛ متكرر بلا أثر |
@@ -128,7 +128,7 @@ profile_events (id BIGSERIAL, user_id, actor_id, kind, created_at)              
 - الاسم المعروض (`edit-name`)، اسم المستخدم (`edit-handle`، فحص `GET /handles/check` بعد 400ms، النتيجة في `handle-status`: «متاح» أو السبب؛ عند الحفظ يُرسل `PATCH /me` إن كان متاحاً وإن رفضته النواة تظهر رسالة لطيفة ويكمل الحفظ)، النبذة (`edit-bio`، عدّاد 160).
 - «عرّف بنفسك»: بطاقتا نمط (`intro-voice`/`intro-video`). الصوت: `intro-record` يبدأ `VoiceRecordSession` بمؤقّت حي (`intro-timer`) يتوقف عند 60 ثانية، `intro-stop`، ثم معاينة `intro-preview-play` و«إعادة التسجيل» (`intro-rerecord`) و«اعتماد» (`intro-use`: `uploadMedia` ثم `PUT /me/profile/intro`). الفيديو: `intro-video-camera`/`intro-video-gallery` عبر `pickVideo` (حتى 30 ثانية؛ المدة المجهولة تُمرَّر 30 ويتحقق الخادم). التعريف المحفوظ يظهر ببطاقته مع «إعادة التسجيل/التصوير» (`intro-replace`) و«حذف» (`intro-delete`).
 - نوع الحساب (`acct-personal`/`acct-pro`) والمسمى المهني (`edit-job`) للمحترف؛ المدينة والحي (`edit-city`/`edit-district` من `profileCities`)؛ المهارات رقائق مع حذف و«+ إضافة» (`skill-add`، حتى 8)؛ الروابط حتى 3 (`link-kind-N`، `link-value-N`، `link-remove-N`، `link-add`)؛ الرقم SA ثابت.
-- الحفظ: `PUT /me/profile` (bio, skills, hobbies, lookingFor, accountType) ثم `PUT /me/profile/v2` (displayName, jobTitle, city, district, coverUrl, links)؛ 404 من v2 لا يُفشل الحفظ.
+- الحفظ: `PUT /me/profile` (bio, skills, hobbies, lookingFor) ثم `PUT /me/profile/v2` (displayName, accountType, jobTitle, city, district, coverUrl, links)؛ 404 من v2 لا يُفشل الحفظ. نوع الحساب في `profile_ext.account_type` لا في النواة (5 نوفمبر 2026): `PUT /me/profile` في النواة يرفض `pro` بالخطأ `bad-account-type` فكان الحفظ المهني يفشل كله؛ القراءة تقدّم قيمة `profile_ext` ثم عمود النواة.
 
 #### ٤ التوثيق والتحكم (`PrivacyControlPage`)
 درجة التوثيق (البريد من `trust.emailVerified`، الجوال والهوية «قريباً»)؛ من يراسلني (`msg-policy` مقسّم: الجميع/الأصدقاء/لا أحد → `msgPolicy`)؛ ما يظهر في ملفي (`show-online`، `show-city`، `intro-visibility` all↔friends، `show-friends`، والرقم SA للأصدقاء دائماً، و`profile-public` عبر `updateProfile({'isPublic'})` في النواة)؛ الأمان (`safety-blocked` و`safety-muted` إلى `SafetyPage` بعدد كل منهما، والأجهزة «قريباً»). التغييرات متفائلة وتُعاد عند الخطأ.

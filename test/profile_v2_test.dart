@@ -76,6 +76,7 @@ class _Srv {
   final puts = <Map<String, dynamic>>[];
   bool following = false, canMessage = true, private = false, v2 = true;
   int followers = 1212;
+  String accountType = 'personal';
   Map<String, dynamic>? intro = {'kind': 'voice', 'url': 'https://test.local/chat/media/intro.m4a', 'sec': 42, 'at': '2026-09-20T10:00:00Z'};
   Map<String, dynamic> settings = {'msgPolicy': 'all', 'showOnline': true, 'showCity': true, 'showFriends': false, 'introVisibility': 'all'};
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
@@ -92,7 +93,7 @@ class _Srv {
       };
   Map<String, dynamic> _privateVisitor() => {'id': 'SA0000002', 'nickname': 'fahad.shots', 'displayName': 'فهد الغامدي', 'avatarUrl': null, 'coverUrl': null, 'flags': {'isPrivate': true, 'isMe': false, 'isFriend': false, 'canMessage': true}, 'stats': {}};
   Map<String, dynamic> _mine() => {
-        'id': 'SA0000001', 'nickname': 'amr', 'displayName': 'عمرو', 'avatarUrl': null, 'coverUrl': null, 'bio': 'نبذة', 'accountType': 'personal', 'jobTitle': '', 'city': 'جدة', 'district': 'الروضة',
+        'id': 'SA0000001', 'nickname': 'amr', 'displayName': 'عمرو', 'avatarUrl': null, 'coverUrl': null, 'bio': 'نبذة', 'accountType': accountType, 'jobTitle': '', 'city': 'جدة', 'district': 'الروضة',
         'links': [], 'intro': intro, 'stats': {'posts': 3, 'followers': 10, 'following': 4, 'circles': 2, 'ratingAvg': null, 'ratingCount': 0, 'completedOrders': 0, 'friends': 1},
         'trust': {'emailVerified': true, 'phoneVerified': false, 'memberSince': '2025-03-05T00:00:00Z', 'respondsFast': null},
         'flags': {'isMe': true, 'isFollowing': false, 'isFriend': false, 'canMessage': true, 'online': true, 'isPrivate': false, 'blocked': false},
@@ -145,6 +146,7 @@ class _Srv {
         return _json(_mine());
       case 'PUT /me/profile/v2':
         puts.add(body!);
+        if (body['accountType'] is String) accountType = body['accountType'] as String;
         for (final k in ['msgPolicy', 'showOnline', 'showCity', 'showFriends', 'introVisibility']) {
           if (body.containsKey(k)) settings[k] = body[k];
         }
@@ -166,6 +168,8 @@ class _Srv {
       case 'GET /me/profile':
         return _json({'id': 'SA0000001', 'nickname': 'amr', 'bio': 'نبذة', 'skills': ['مونتاج'], 'hobbies': ['قهوة'], 'lookingFor': [], 'accountType': 'personal', 'isPublic': true});
       case 'PUT /me/profile':
+        // كما في النواة الحية: «pro» مرفوض
+        if (body?['accountType'] == 'pro') return _json({'error': 'bad-account-type'}, 400);
         return _json({'id': 'SA0000001', 'nickname': 'amr', ...?body});
       case 'PATCH /me':
         return _json({'ok': true});
@@ -400,15 +404,30 @@ void main() {
       await _settle(tester);
       final core = srv.bodies['PUT /me/profile']!;
       expect(core['bio'], 'أبني ناس لايف');
-      expect(core['accountType'], 'pro');
+      expect(core.containsKey('accountType'), isFalse, reason: 'النواة ترفض pro؛ النوع يُحفظ في v2');
       expect(core['skills'], ['مونتاج']);
       final v2 = srv.puts.single;
+      expect(v2['accountType'], 'pro');
       expect(v2['displayName'], 'عمرو شعيب');
       expect(v2['jobTitle'], 'مؤسس');
       expect(v2['city'], 'جدة');
       expect(v2['district'], 'الروضة');
       expect(v2['links'], [{'kind': 'instagram', 'value': '@amr'}]);
       expect(find.byType(EditProfilePage), findsNothing, reason: 'يُغلق بعد الحفظ');
+    });
+
+    testWidgets('a saved pro account loads as pro and can switch back to personal', (tester) async {
+      final srv = _Srv()..accountType = 'pro';
+      await _pump(tester, const EditProfilePage(), srv: srv, height: 2200);
+      expect(find.byKey(const Key('edit-job')), findsOneWidget, reason: 'النوع من v2 لا من النواة');
+      await tester.tap(find.byKey(const Key('acct-personal')));
+      await tester.pump();
+      expect(find.byKey(const Key('edit-job')), findsNothing);
+      await tester.tap(find.byKey(const Key('edit-save')));
+      await _settle(tester);
+      expect(srv.puts.single['accountType'], 'personal');
+      expect(srv.puts.single['jobTitle'], '');
+      expect(find.byType(EditProfilePage), findsNothing, reason: 'حُفظ وأُغلق');
     });
 
     testWidgets('handle availability is checked after a 400ms debounce', (tester) async {

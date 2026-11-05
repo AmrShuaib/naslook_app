@@ -117,7 +117,7 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     _coverUrl = p.coverUrl;
     _intro = p.intro;
     _links.addAll([for (final l in p.links) _Link(l.kind, l.value)]);
-    if (p.accountType == 'pro') _accountType = 'pro';
+    _accountType = p.isPro ? 'pro' : 'personal';
   }
 
   @override
@@ -576,10 +576,12 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     setState(() => _saving = true);
     final api = ref.read(apiClientProvider);
     try {
-      await api.updateProfile({'bio': _bio.text.trim(), 'skills': _skills, 'hobbies': _hobbies, 'lookingFor': _lookingFor, 'accountType': _accountType});
+      // نوع الحساب يُحفظ في v2 فقط: النواة ترفض «pro» (bad-account-type) فيفشل الحفظ كله
+      await api.updateProfile({'bio': _bio.text.trim(), 'skills': _skills, 'hobbies': _hobbies, 'lookingFor': _lookingFor});
       try {
         await api.updateProfileV2({
           'displayName': _name.text.trim(),
+          'accountType': _accountType,
           'jobTitle': _accountType == 'pro' ? _job.text.trim() : '',
           'city': _city ?? '',
           'district': _city == null ? '' : (_district ?? ''),

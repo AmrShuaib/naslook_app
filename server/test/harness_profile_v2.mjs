@@ -125,6 +125,18 @@ m = await call('PUT', '/me/profile/v2', { body: { coverUrl: null }, expect: 200 
 check(m.coverUrl === null, 'null clears the cover');
 await call('PUT', '/me/profile/v2', { body: { coverUrl: '/chat/media/cover-1.jpg' }, expect: 200 });
 
+// ---- نوع الحساب في profile_ext (النواة الحية ترفض «pro» بالخطأ bad-account-type)
+check(m.accountType === 'personal', 'account type defaults to personal', m.accountType);
+m = await call('PUT', '/me/profile/v2', { body: { accountType: 'pro' }, expect: 200 });
+check(m.accountType === 'pro' && m.jobTitle === 'مخرج', 'pro saved in profile_ext and other fields kept', JSON.stringify([m.accountType, m.jobTitle]));
+p = await call('GET', `/profiles/${FAHAD}/v2`, { user: SARA, expect: 200 });
+check(p.accountType === 'pro', 'visitors see the pro account type', p.accountType);
+await badField({ accountType: 'business' }, 'accountType', 'unknown account type rejected');
+await badField({ accountType: null }, 'accountType', 'null account type rejected');
+m = await call('PUT', '/me/profile/v2', { body: { accountType: 'personal' }, expect: 200 });
+check(m.accountType === 'personal', 'switching back to personal', m.accountType);
+await call('PUT', '/me/profile/v2', { body: { accountType: 'pro' }, expect: 200 });
+
 // ---- المدينة تُخفى عن الآخرين عند show_city=false والأصدقاء يُعدّون عند show_friends=true
 p = await call('GET', `/profiles/${FAHAD}/v2`, { user: SARA, expect: 200 });
 check(p.city === '' && p.district === '' && p.displayName === 'فهد العتيبي' && p.coverUrl === 'https://naslife.app/chat/media/cover-1.jpg', 'city hidden for visitors when show_city is off', JSON.stringify([p.city, p.district]));

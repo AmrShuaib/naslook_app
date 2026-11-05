@@ -10,7 +10,7 @@ export const HANDLE_RE = /^[a-z0-9._]{3,20}$/;
 const MEDIA_RE = /^(?:https?:\/\/[^/]+)?(\/chat\/media\/[A-Za-z0-9._-]{1,120})$/;
 const SOCIAL_VALUE_RE = /^[A-Za-z0-9._-]{1,120}$/;
 const MAX_LINKS = 3, MAX_SHORT = 40, MAX_LINK = 120, INTRO_VOICE_SEC = 60, INTRO_VIDEO_SEC = 30;
-const MSG_POLICIES = ["all", "friends", "none"], VISIBILITIES = ["all", "friends"], EVENT_KINDS = ["message", "share", "link"];
+const MSG_POLICIES = ["all", "friends", "none"], VISIBILITIES = ["all", "friends"], ACCOUNT_TYPES = ["personal", "pro"], EVENT_KINDS = ["message", "share", "link"];
 const ID_RE = /^[A-Z]{2}\d{7}$/;
 const COMPLETION_LABELS = { avatar: "صورة الحساب", cover: "صورة الغلاف", bio: "النبذة", links: "روابط التواصل", intro: "تعريف صوتي أو مرئي", email: "تأكيد البريد", skills: "المهارات" };
 
@@ -65,6 +65,8 @@ export default async function profileV2(app, opts) {
     CREATE INDEX IF NOT EXISTS profile_views_user_day ON profile_views(user_id, day);
     CREATE TABLE IF NOT EXISTS profile_events (id BIGSERIAL PRIMARY KEY, user_id TEXT NOT NULL, actor_id TEXT, kind TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS profile_events_user_at ON profile_events(user_id, created_at DESC);
+    -- نوع الحساب هنا لا في النواة: PUT /me/profile في النواة يرفض «pro» (bad-account-type) ففشل حفظ الملف المهني كله
+    ALTER TABLE profile_ext ADD COLUMN IF NOT EXISTS account_type TEXT;
   `);
 
   // ---- اكتشاف جداول النواة وأعمدتها (كما في profile.js وadmin.js) حتى لا نفترض أسماءً غير موجودة
@@ -172,7 +174,7 @@ export default async function profileV2(app, opts) {
   const isFriend = async (a, b) => (a && b && a !== b && C ? exists(`SELECT 1 FROM ${q(C.table)} WHERE (${q(C.a)}=$1 AND ${q(C.b)}=$2) OR (${q(C.a)}=$2 AND ${q(C.b)}=$1) LIMIT 1`, [a, b]) : false);
   const isOnline = async (id) => (PR ? exists(`SELECT 1 FROM ${q(PR.table)} WHERE ${q(PR.key)}=$1 AND ${q(PR.at)} > now() - interval '5 minutes' LIMIT 1`, [id]) : null);
   const loadExt = async (id) => { try { return (await pool.query("SELECT * FROM profile_ext WHERE user_id=$1", [id])).rows[0] ?? null; } catch { return null; } };
-  const EXT_DEFAULTS = { cover_url: null, display_name: "", job_title: "", city: "", district: "", links: [], intro_kind: null, intro_url: null, intro_sec: null, intro_at: null, intro_visibility: "all", msg_policy: "all", show_online: true, show_city: true, show_friends: false };
+  const EXT_DEFAULTS = { cover_url: null, display_name: "", job_title: "", city: "", district: "", links: [], intro_kind: null, intro_url: null, intro_sec: null, intro_at: null, intro_visibility: "all", msg_policy: "all", show_online: true, show_city: true, show_friends: false, account_type: null };
   const followersOf = (id) => count("SELECT count(*)::int AS n FROM user_follows WHERE user_id=$1", [id]);
   const stats = async (id) => {
     const [posts, followers, following, circles, friends, completedOrders] = await Promise.all([
@@ -206,7 +208,7 @@ export default async function profileV2(app, opts) {
     const st = await stats(id);
     const memberSince = iso(u.createdAt);
     return {
-      ...head, bio: core.bio, accountType: core.accountType, jobTitle: ext.job_title, city: showCity ? ext.city : "", district: showCity ? ext.district : "", links,
+      ...head, bio: core.bio, accountType: ACCOUNT_TYPES.includes(ext.account_type) ? ext.account_type : core.accountType, jobTitle: ext.job_title, city: showCity ? ext.city : "", district: showCity ? ext.district : "", links,
       intro: introVisible ? { kind: ext.intro_kind, url: ext.intro_url, sec: ext.intro_sec, at: iso(ext.intro_at) } : null,
       stats: { ...st, friends: showFriends ? st.friends : 0 },
       trust: { emailVerified: u.emailVerified === true, phoneVerified: false, memberSince, respondsFast: null },
@@ -269,6 +271,7 @@ export default async function profileV2(app, opts) {
       if (links.some((l) => !l)) return bad(reply, 400, "bad-field", { field: "links" });
       set.links = JSON.stringify(links);
     }
+    if (b.accountType !== undefined) { if (!ACCOUNT_TYPES.includes(b.accountType)) return bad(reply, 400, "bad-field", { field: "accountType" }); set.account_type = b.accountType; }
     if (b.msgPolicy !== undefined) { if (!MSG_POLICIES.includes(b.msgPolicy)) return bad(reply, 400, "bad-field", { field: "msgPolicy" }); set.msg_policy = b.msgPolicy; }
     if (b.introVisibility !== undefined) { if (!VISIBILITIES.includes(b.introVisibility)) return bad(reply, 400, "bad-field", { field: "introVisibility" }); set.intro_visibility = b.introVisibility; }
     for (const [field, col] of [["showOnline", "show_online"], ["showCity", "show_city"], ["showFriends", "show_friends"]]) {
