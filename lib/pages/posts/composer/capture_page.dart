@@ -198,6 +198,9 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
         data: ThemeData(brightness: Brightness.dark, useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: Joy.primary, brightness: Brightness.dark), fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily),
         child: Scaffold(
           backgroundColor: const Color(0xFF0F1114),
+          // لوحة «نص» تقرأ إزاحة لوحة المفاتيح بنفسها فتطوي صفوفها وتمدّ البطاقة؛ لو قلّصها Scaffold لانضغطت البطاقة بين
+          // الصفوف وقُصّ النص (ولا لوحة مفاتيح في نمطي الكاميرا)
+          resizeToAvoidBottomInset: false,
           body: mode == 'text'
               ? TextBoardStage(draft: widget.draft, onClose: () => Navigator.pop(context), onNext: _finishText, modeStrip: _modeStrip())
               : _cameraStage(),

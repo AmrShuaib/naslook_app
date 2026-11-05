@@ -8,7 +8,7 @@ import '../../../core/media/filters.dart';
 import '../overlay_canvas.dart';
 import '../post_media.dart';
 import 'composer_draft.dart';
-import 'text_board.dart' show contrastTextColor;
+import 'text_board.dart' show contrastTextColor, kBoardMaxChars;
 import 'voice_layer.dart';
 
 const _textColors = ['#FFFFFF', '#111111', '#FFD66B', '#0A6E78', '#BF3A1E', '#1FA35A'];
@@ -234,7 +234,7 @@ class _EditPageState extends State<EditPage> {
                       Positioned(
                         left: 0, right: 0, top: 0, bottom: kb,
                         child: Column(children: [
-                          Expanded(child: Center(child: KeyedSubtree(key: _editorKey, child: _inlineEditor(w)))),
+                          Expanded(child: Center(child: KeyedSubtree(key: _editorKey, child: _inlineEditor(context, w, box.maxHeight - 12)))),
                           _tray(),
                         ]),
                       ),
@@ -280,9 +280,13 @@ class _EditPageState extends State<EditPage> {
     );
   }
 
-  Widget _inlineEditor(double w) {
+  /// حقل تعديل الطبقة [editing] بخطها على قماش [w]×[h] كما يرسمها القماش نفسه ([context] تحت الـScaffold فيُقاس
+  /// بنمط النص الافتراضي نفسه)، فلا يقفز حجمها عند «تم».
+  /// نص لوحة المنشور النصي يصل إلى [kBoardMaxChars] بأسطر متعددة كما كُتب على اللوحة؛ لو بقي الحد 140 لقصّ
+  /// `LengthLimitingTextInputFormatter` النص الأطول عند أول حرف
+  Widget _inlineEditor(BuildContext context, double w, double h) {
     final o = overlays[editing!];
-    final size = w * 0.065 * o.scale;
+    final size = overlayFontSize(context, o, w, h);
     final color = colorFromHex(o.color);
     final bgc = o.bg == null ? null : colorFromHex(o.bg);
     final style = TextStyle(color: color, fontSize: size, height: 1.25, fontWeight: FontWeight.w800, fontFamily: o.font == 'serif' ? 'serif' : null, shadows: bgc == null && !d.isText ? [const Shadow(color: Color(0x99000000), blurRadius: 6, offset: Offset(0, 1))] : null);
@@ -290,8 +294,8 @@ class _EditPageState extends State<EditPage> {
       constraints: BoxConstraints(maxWidth: w * .85, minWidth: size * 3),
       child: IntrinsicWidth(
         child: TextField(
-          key: const Key('inline-text'), controller: _inline, focusNode: _inlineFocus, autofocus: true, maxLines: null, maxLength: 140,
-          buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null, textInputAction: TextInputAction.done, textAlign: TextAlign.center, style: style, cursorColor: color,
+          key: const Key('inline-text'), controller: _inline, focusNode: _inlineFocus, autofocus: true, maxLines: null, maxLength: d.isText ? kBoardMaxChars : 140,
+          buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null, textInputAction: d.isText ? TextInputAction.newline : TextInputAction.done, textAlign: TextAlign.center, style: style, cursorColor: color,
           decoration: InputDecoration.collapsed(hintText: 'اكتب هنا…', hintStyle: style.copyWith(color: color.withValues(alpha: .45))),
           onChanged: (v) => setState(() => overlays[editing!] = overlays[editing!].copyWith(text: v)),
           onSubmitted: (_) => _commitText(),
