@@ -198,7 +198,8 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
                               height: 50,
                               alignment: Alignment.center,
                               decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(999)),
-                              child: const Text('لا يستقبل رسائل من غير الأصدقاء', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+                              child: Text(switch (p2?.flags.messageReason) { 'nobody' => 'لا يستقبل رسائل جديدة', 'blocked' => 'المراسلة غير متاحة', _ => 'لا يستقبل رسائل من غير الأصدقاء' },
+                                  style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
                             ),
                     ),
                     if (p2 != null) ...[

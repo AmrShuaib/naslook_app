@@ -1,7 +1,7 @@
 // الملف الشخصي v2 (server/profile_ext.js): الحالة، ملف بلا صف امتداد ومع صف، تسجيل الزيارات وإحصاءات سبعة أيام، فحص الحقول
 // وتطبيع الروابط وقاعدة الغلاف، التعريف الصوتي/المرئي وظهوره حسب الصداقة، سياسة المراسلة، إخفاء المدينة، الملف الخاص،
-// المتابعة وقوائمها وإشعار مرة واحدة، الأحداث، فحص الأسماء، اكتمال الملف، ومساعد الحذف.
-// النواة وهمية: users/profiles/contacts/map_posts/market_reviews/market_orders بأعمدة دنيا كما يكتشفها الخادم.
+// فحص «من يراسلني» المسبق (GET /profiles/:id/can-message)، المتابعة وقوائمها وإشعار مرة واحدة، الأحداث، فحص الأسماء،
+// اكتمال الملف، ومساعد الحذف. النواة وهمية: users/profiles/contacts/messages/map_posts/market_reviews/market_orders بأعمدة دنيا كما يكتشفها الخادم.
 import Fastify from 'fastify';
 import pg from 'pg';
 import { normaliseLink, linkUrl, handleShape, LINK_KINDS } from '../profile_ext.js';
@@ -26,10 +26,11 @@ check(LINK_KINDS.length === 6, 'six link kinds');
 // ---- التجهيز: نواة وهمية بأعمدة دنيا
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query('DROP TABLE IF EXISTS profile_ext, user_follows, profile_views, profile_events CASCADE');
-await pool.query('DROP TABLE IF EXISTS users, profiles, contacts, map_posts, market_reviews, market_orders CASCADE');
+await pool.query('DROP TABLE IF EXISTS users, profiles, contacts, messages, map_posts, market_reviews, market_orders CASCADE');
 await pool.query(`CREATE TABLE users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, login_email TEXT, login_verified BOOLEAN DEFAULT false, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now());
   CREATE TABLE profiles (user_id TEXT PRIMARY KEY, bio TEXT NOT NULL DEFAULT '', skills TEXT[] DEFAULT '{}', is_public BOOLEAN DEFAULT true);
   CREATE TABLE contacts (user_id TEXT NOT NULL, contact_id TEXT NOT NULL);
+  CREATE TABLE messages (id UUID PRIMARY KEY, sender_id TEXT NOT NULL, recipient_id TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ DEFAULT now());
   CREATE TABLE map_posts (id UUID PRIMARY KEY, user_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ DEFAULT now());
   CREATE TABLE market_reviews (order_id UUID PRIMARY KEY, seller_id TEXT NOT NULL, buyer_id TEXT NOT NULL, rating INT NOT NULL);
   CREATE TABLE market_orders (id UUID PRIMARY KEY, buyer_id TEXT NOT NULL, seller_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'paid');`);
@@ -61,14 +62,14 @@ const call = async (method, url, { body = {}, user = FAHAD, expect } = {}) => {
 
 // ---- الحالة والاكتشاف
 const st = await call('GET', '/profile/v2/status', { user: null, expect: 200 });
-check(st.ok === true && st.users === true && st.profiles === 'profiles' && st.contacts === 'contacts(user_id,contact_id)' && st.posts === true && st.reviews === true && st.orders === true, 'status reports detected core tables', JSON.stringify(st));
+check(st.ok === true && st.users === true && st.profiles === 'profiles' && st.contacts === 'contacts(user_id,contact_id)' && st.messages === 'messages(sender_id,recipient_id)' && st.posts === true && st.reviews === true && st.orders === true, 'status reports detected core tables', JSON.stringify(st));
 
 // ---- ملف بلا صف امتداد (زائر ضيف) ومع الإحصاءات من النواة
 let p = await call('GET', `/profiles/${FAHAD}/v2`, { user: null, expect: 200 });
 check(p.id === FAHAD && p.nickname === 'Fahad' && p.displayName === '' && p.avatarUrl === 'https://naslife.app/chat/media/av1.jpg' && p.coverUrl === null && p.bio === 'مصوّر في جدة' && p.accountType === 'personal' && p.jobTitle === '' && p.city === '' && same(p.links, []) && p.intro === null, 'profile without ext row uses defaults', JSON.stringify(p));
 check(same(p.stats, { posts: 2, followers: 0, following: 0, circles: 0, ratingAvg: 4.5, ratingCount: 2, completedOrders: 3, friends: 0 }), 'stats from core tables (friends hidden by default)', JSON.stringify(p.stats));
 check(p.trust.emailVerified === true && p.trust.phoneVerified === false && p.trust.memberSince === '2025-03-01T00:00:00.000Z' && p.trust.respondsFast === null && p.memberSince === p.trust.memberSince, 'trust block', JSON.stringify(p.trust));
-check(same(p.flags, { isMe: false, isFollowing: false, isFriend: false, isPrivate: false, blocked: false, canMessage: true, online: null, showFriends: false }), 'guest flags', JSON.stringify(p.flags));
+check(same(p.flags, { isMe: false, isFollowing: false, isFriend: false, isPrivate: false, blocked: false, canMessage: true, messageReason: null, online: null, showFriends: false }), 'guest flags', JSON.stringify(p.flags));
 p = await call('GET', '/profiles/fahad/v2', { user: SARA, expect: 200 });
 check(p.id === FAHAD && p.flags.isFriend === true && p.flags.isMe === false, 'resolved by nickname case-insensitively, friend flag set');
 p = await call('GET', '/profiles/@FAHAD/v2', { user: null, expect: 200 });
@@ -154,6 +155,47 @@ p = await call('GET', `/profiles/${FAHAD}/v2`, { user: SARA, expect: 200 }); che
 m = await call('GET', '/me/profile/v2', { expect: 200 }); check(m.flags.canMessage === true, 'none policy: owner still true');
 await call('PUT', '/me/profile/v2', { body: { msgPolicy: 'all' }, expect: 200 });
 p = await call('GET', `/profiles/${FAHAD}/v2`, { user: KHALID, expect: 200 }); check(p.flags.canMessage === true, 'all policy: stranger can message');
+
+// ---- الفحص المسبق قبل أول رسالة (النواة تملك POST /messages فلا تحرسه الإضافة): GET /profiles/:id/can-message
+const can = async (target, user, expect = 200) => call('GET', `/profiles/${target}/can-message`, { user, expect });
+check(same(await can(FAHAD, KHALID), { ok: true, reason: null }), 'gate: all policy lets a stranger write');
+await can(FAHAD, null, 401);
+await can('nobody', KHALID, 404);
+check(same(await can(FAHAD, FAHAD), { ok: true, reason: null }), 'gate: writing to yourself is fine');
+await call('PUT', '/me/profile/v2', { body: { msgPolicy: 'friends' }, expect: 200 });
+check(same(await can(FAHAD, SARA), { ok: true, reason: null }), 'gate friends: a contact of the owner may write');
+check(same(await can('fahad', KHALID), { ok: false, reason: 'friends-only' }), 'gate friends: stranger blocked (by nickname too)');
+// طلب صداقة من طرف واحد (الغريب أضاف صاحب الحساب) لا يفتح المراسلة: الصداقة هنا من أضافه صاحب الحساب
+await pool.query('INSERT INTO contacts(user_id, contact_id) VALUES ($1, $2)', [KHALID, FAHAD]);
+check(same(await can(FAHAD, KHALID), { ok: false, reason: 'friends-only' }), 'gate friends: a one-sided friend request does not unlock');
+p = await call('GET', `/profiles/${FAHAD}/v2`, { user: KHALID, expect: 200 });
+check(p.flags.canMessage === false && p.flags.messageReason === 'friends-only', 'profile flags follow the gate', JSON.stringify(p.flags));
+await pool.query('DELETE FROM contacts WHERE user_id=$1 AND contact_id=$2', [KHALID, FAHAD]);
+// صاحب الحساب كتب أولاً: الرد مسموح أياً كانت السياسة، والعكس (رسالتي إليه) لا يفتح شيئاً
+await pool.query('INSERT INTO messages(id, sender_id, recipient_id, content) VALUES ($1, $2, $3, $4)', [uuid(31), KHALID, FAHAD, 'مرحبا']);
+check(same(await can(FAHAD, KHALID), { ok: false, reason: 'friends-only' }), 'gate: my own earlier message does not unlock');
+await pool.query('INSERT INTO messages(id, sender_id, recipient_id, content) VALUES ($1, $2, $3, $4)', [uuid(32), FAHAD, KHALID, 'أهلاً']);
+check(same(await can(FAHAD, KHALID), { ok: true, reason: null }), 'gate friends: replying to someone who wrote first is allowed');
+p = await call('GET', `/profiles/${FAHAD}/v2`, { user: KHALID, expect: 200 });
+check(p.flags.canMessage === true && p.flags.messageReason === null, 'profile flags allow the reply too');
+await call('PUT', '/me/profile/v2', { body: { msgPolicy: 'none' }, expect: 200 });
+check(same(await can(FAHAD, SARA), { ok: false, reason: 'nobody' }), 'gate none: even a contact cannot start a chat');
+check(same(await can(FAHAD, KHALID), { ok: true, reason: null }), 'gate none: a reply to the owner still goes through');
+p = await call('GET', `/profiles/${FAHAD}/v2`, { user: SARA, expect: 200 });
+check(p.flags.canMessage === false && p.flags.messageReason === 'nobody', 'profile flags carry the nobody reason');
+// الحظر يمنع في كل الحالات حتى مع «الجميع» أو بعد رسالة سابقة
+await call('PUT', '/me/profile/v2', { body: { msgPolicy: 'all' }, expect: 200 });
+globalThis.naslifeIsBlocked = async (a, b) => [a, b].sort().join() === [FAHAD, KHALID].sort().join();
+check(same(await can(FAHAD, KHALID), { ok: false, reason: 'blocked' }), 'gate: a blocked pair cannot write even under all');
+check(same(await can(KHALID, FAHAD), { ok: false, reason: 'blocked' }), 'gate: blocking works both ways');
+check(same(await can(FAHAD, SARA), { ok: true, reason: null }), 'gate: others unaffected by the block');
+p = await call('GET', `/profiles/${FAHAD}/v2`, { user: KHALID, expect: 200 });
+check(p.flags.canMessage === false && p.flags.messageReason === 'blocked', 'profile flags carry the blocked reason');
+check(same(await globalThis.naslifeCanMessage(KHALID, FAHAD), { ok: false, reason: 'blocked' }) && same(await globalThis.naslifeCanMessage(SARA, FAHAD), { ok: true, reason: null }), 'naslifeCanMessage helper for other plugins');
+globalThis.naslifeIsBlocked = async () => { throw new Error('safety down'); };
+check(same(await can(FAHAD, KHALID), { ok: true, reason: null }), 'gate: a failing block check does not lock everyone out');
+delete globalThis.naslifeIsBlocked;
+await pool.query('DELETE FROM messages');
 
 // ---- التعريف الصوتي/المرئي
 await call('PUT', '/me/profile/intro', { body: { kind: 'voice', url: '/chat/media/v.weba', sec: 42 }, user: null, expect: 401 });
@@ -277,13 +319,18 @@ p = await call('GET', `/profiles/${FAHAD}/v2`, { user: SARA, expect: 200 });
 check(p.displayName === '' && p.intro === null && p.stats.followers === 0 && p.flags.isFollowing === false, 'profile back to defaults after wipe');
 
 // ---- بلا جداول نواة: الإضافة تعمل وتعيد أصفاراً
-await pool.query('DROP TABLE IF EXISTS profiles, contacts, map_posts, market_reviews, market_orders CASCADE');
+await pool.query('DROP TABLE IF EXISTS profiles, contacts, messages, map_posts, market_reviews, market_orders CASCADE');
 const app2 = Fastify();
 app2.register((await import('../profile_ext.js')).default, { pool, auth });
 await app2.ready();
 const r2 = await app2.inject({ method: 'GET', url: `/profiles/${SARA}/v2`, headers: { 'x-user': KHALID } });
 const p2 = r2.json();
 check(r2.statusCode === 200 && same(p2.stats, { posts: 0, followers: 0, following: 0, circles: 0, ratingAvg: null, ratingCount: 0, completedOrders: 0, friends: 0 }) && p2.bio === '' && p2.flags.isPrivate === false, 'works without core profile tables', JSON.stringify(p2.stats));
+const g2 = await app2.inject({ method: 'GET', url: `/profiles/${SARA}/can-message`, headers: { 'x-user': KHALID } });
+check(g2.statusCode === 200 && same(g2.json(), { ok: true, reason: null }), 'gate works without core contacts/messages tables', g2.body);
+await pool.query("INSERT INTO profile_ext(user_id, msg_policy) VALUES ($1, 'friends') ON CONFLICT (user_id) DO UPDATE SET msg_policy='friends'", [SARA]);
+const g3 = await app2.inject({ method: 'GET', url: `/profiles/${SARA}/can-message`, headers: { 'x-user': KHALID } });
+check(g3.statusCode === 200 && same(g3.json(), { ok: false, reason: 'friends-only' }), 'gate without core tables: friends-only still refuses strangers', g3.body);
 await app2.close();
 
 await app.close(); await pool.end();

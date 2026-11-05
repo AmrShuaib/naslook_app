@@ -85,11 +85,33 @@ class ProfileTrust {
 class ProfileFlags {
   final bool isMe, isFollowing, isFriend, canMessage, isPrivate, blocked;
   final bool? online;
-  const ProfileFlags({this.isMe = false, this.isFollowing = false, this.isFriend = false, this.canMessage = true, this.online, this.isPrivate = false, this.blocked = false});
+  /// سبب منع المراسلة حين canMessage=false: friends-only | nobody | blocked (انظر [MessageGate]).
+  final String? messageReason;
+  const ProfileFlags({this.isMe = false, this.isFollowing = false, this.isFriend = false, this.canMessage = true, this.online, this.isPrivate = false, this.blocked = false, this.messageReason});
   factory ProfileFlags.fromJson(Map m) => ProfileFlags(
-        isMe: _b(m, 'isMe'), isFollowing: _b(m, 'isFollowing'), isFriend: _b(m, 'isFriend'), canMessage: _b(m, 'canMessage', true), online: _bn(m, 'online'), isPrivate: _b(m, 'isPrivate'), blocked: _b(m, 'blocked'));
-  ProfileFlags copyWith({bool? isFollowing}) => ProfileFlags(isMe: isMe, isFollowing: isFollowing ?? this.isFollowing, isFriend: isFriend, canMessage: canMessage, online: online, isPrivate: isPrivate, blocked: blocked);
+        isMe: _b(m, 'isMe'), isFollowing: _b(m, 'isFollowing'), isFriend: _b(m, 'isFriend'), canMessage: _b(m, 'canMessage', true), online: _bn(m, 'online'), isPrivate: _b(m, 'isPrivate'), blocked: _b(m, 'blocked'),
+        messageReason: _sn(m, 'messageReason'));
+  ProfileFlags copyWith({bool? isFollowing}) => ProfileFlags(isMe: isMe, isFollowing: isFollowing ?? this.isFollowing, isFriend: isFriend, canMessage: canMessage, online: online, isPrivate: isPrivate, blocked: blocked, messageReason: messageReason);
 }
+
+/// نتيجة «من يراسلني» قبل أول رسالة (GET /profiles/:id/can-message). النواة تملك POST /messages ولا تمر عليه الإضافات،
+/// فالضمان في هذا الفحص وفي التطبيق. غياب `ok` يُقرأ سماحاً حتى لا تُقفل محادثة بالخطأ.
+class MessageGate {
+  final bool ok;
+  /// friends-only | nobody | blocked
+  final String? reason;
+  const MessageGate({this.ok = true, this.reason});
+  factory MessageGate.fromJson(Map m) => MessageGate(ok: m['ok'] != false, reason: _sn(m, 'reason'));
+  bool get friendsOnly => reason == 'friends-only';
+  String get notice => messageGateNotice(reason);
+}
+
+/// نص المنع للزائر بحسب السبب (المحادثة والملف الشخصي).
+String messageGateNotice(String? reason) => switch (reason) {
+      'nobody' => 'هذا الشخص لا يستقبل رسائل جديدة',
+      'blocked' => 'المراسلة غير متاحة بينكما بسبب الحظر',
+      _ => 'هذا الشخص يستقبل الرسائل من أصدقائه فقط',
+    };
 
 /// إعدادات التحكم (لصاحب الحساب فقط).
 class ProfileSettings {

@@ -21,6 +21,8 @@ import '../../api/community_api.dart';
 import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/posts_api.dart';
+import '../../api/profile_v2_api.dart';
+import '../../api/profile_v2_models.dart';
 import '../../api/safety_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
@@ -52,6 +54,7 @@ import 'widgets/audio_bubble.dart';
 import 'widgets/bubble.dart';
 import 'widgets/composer.dart';
 import 'widgets/jump_to_latest.dart';
+import 'widgets/message_gate_notice.dart';
 import 'widgets/reaction_bar.dart';
 import 'widgets/suggestion_chips.dart';
 import 'widgets/typing_indicator.dart';
@@ -102,7 +105,9 @@ class ChatThreadPage extends ConsumerStatefulWidget {
   final String? initialMessageId;
   /// نص يملأ المؤلّف عند الفتح ولا يُرسل تلقائياً (رمز `#job/…` بعد الإجابة على أسئلة التوظيف مثلاً).
   final String? initialText;
-  const ChatThreadPage({super.key, required this.peer, this.initialMessageId, this.initialText});
+  /// فحص «من يراسلني» أُجري قبل الفتح («محادثة جديدة») فلا يُعاد.
+  final MessageGate? gate;
+  const ChatThreadPage({super.key, required this.peer, this.initialMessageId, this.initialText, this.gate});
   @override
   ConsumerState<ChatThreadPage> createState() => _ChatThreadPageState();
 }
@@ -171,10 +176,19 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   Timer? _typingTimer, _presenceTimer;
   // صندوق الصادر المحفوظ محلياً (آخر نسخة كُتبت حتى لا نكرر الكتابة)
   String? _outboxSaved;
+  /// «من يراسلني» عند الطرف الآخر: يُفحص قبل أول رسالة ما لم يكتب لي هو. النواة تملك POST /messages ولا تفحص
+  /// السياسة، فالضمان في هذا الفحص المسبق وفي إخفاء المؤلّف.
+  MessageGate? _gate;
+  Future<void>? _gateCheck;
+  bool _friendBusy = false, _friendRequested = false;
 
   String get myId => ref.read(appStateProvider).user?.id ?? '';
   /// رسالتي أم رسالة الطرف الآخر؟ (لا تعتمد على اسم حقل المرسل في النواة؛ انظر [Message.isMine])
   bool _mine(Message m) => m.isMine(myId: myId, peerId: _peerId);
+  /// كتب لي الطرف الآخر في هذه المحادثة؟ الرد عليه لا يُمنع أبداً مهما كانت سياسته.
+  bool get _peerWrote => _messages.any((m) => !_mine(m));
+  /// المؤلّف مقفل: رفض من الفحص ولم يكتب لي الطرف الآخر بعد.
+  bool get _gated => _gate != null && !_gate!.ok && !_peerWrote;
   String get myName => ref.read(appStateProvider).user?.nickname ?? '';
   ApiClient get _api => ref.read(apiClientProvider);
   String get _peerId => widget.peer.id;
@@ -201,6 +215,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     _positions.itemPositions.addListener(_onPositions);
     final draft = widget.initialText;
     if (draft != null && draft.trim().isNotEmpty) _text.text = draft;
+    _gate = widget.gate;
     _load();
     final s = ref.read(socketProvider);
     _sub = s?.events.listen(_onEvent);
@@ -454,6 +469,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         _error = null;
         _hasMore = list.length >= pageSize;
       });
+      if (_gate == null && !_peerWrote) _gateCheck = _checkGate();
       _jumpToBottom(animate: false);
       _markRead();
       final target = widget.initialMessageId;
@@ -461,6 +477,41 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       _restoreOutbox();
     } catch (e) {
       if (mounted) setState(() { _error = e; _loading = false; });
+    }
+  }
+
+  Future<void> _checkGate() async {
+    final g = await _api.canMessage(_peerId);
+    if (mounted) setState(() => _gate = g);
+    _gateCheck = null;
+  }
+
+  /// هل يلزم المرور على [_gateAllows]؟ (بلا فحص جارٍ ولا منع يبقى الإرسال متزامناً كما كان)
+  bool get _gateMatters => _gateCheck != null || _gated;
+
+  /// هل يُسمح بالإرسال الآن؟ ينتظر الفحص إن كان جارياً (أول رسالة بعد الفتح مباشرة) ويعرض السبب إن مُنع.
+  Future<bool> _gateAllows({bool quiet = false}) async {
+    final pending = _gateCheck;
+    if (pending != null) await pending;
+    if (!_gated) return true;
+    if (mounted && !quiet) toast(context, _gate!.notice, error: true);
+    return false;
+  }
+
+  /// «إضافة صديق» من إشعار المنع: طلب صداقة يفتح المراسلة حين يقبله الطرف الآخر.
+  Future<void> _addFriend() async {
+    setState(() => _friendBusy = true);
+    try {
+      await _api.addContact(_peerId);
+      ref.invalidate(contactsProvider);
+      ref.invalidate(requestsProvider);
+      if (!mounted) return;
+      setState(() => _friendRequested = true);
+      toast(context, 'أُرسل طلب الصداقة إلى ${widget.peer.nickname}');
+    } catch (e) {
+      if (mounted) toast(context, errText(e), error: true);
+    } finally {
+      if (mounted) setState(() => _friendBusy = false);
     }
   }
 
@@ -726,6 +777,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       toast(context, 'الرسالة تحتوي كلمة غير مسموحة: «$banned»', error: true);
       return;
     }
+    // قبل مسح الحقل: رسالة مرفوضة بسياسة الطرف الآخر لا تضيع من المؤلّف
+    if (_gateMatters && (!await _gateAllows() || !mounted)) return;
     if (t.startsWith('/')) {
       final prepared = await _prepareCommand(t);
       if (prepared == null || !mounted) return;
@@ -979,6 +1032,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     Future<void> Function(String serverId)? onSent,
     bool quiet = false,
   }) async {
+    if (_gateMatters && (!await _gateAllows(quiet: quiet) || !mounted)) return;
     final quote = retry?.quote ?? (_replyTo == null ? null : MessageQuote(id: _replyTo!.key, senderId: _replyTo!.senderId, senderName: _mine(_replyTo!) ? 'أنت' : widget.peer.nickname, type: _replyTo!.mediaKind, content: _replyTo!.mediaKind == 'text' ? _replyTo!.content : ''));
     final local = retry?.copyWith(status: MessageStatus.sending) ??
         Message(id: '', localId: 'local-${DateTime.now().microsecondsSinceEpoch}', senderId: myId, type: type, content: content, sentAt: DateTime.now(),
@@ -1125,6 +1179,13 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       builder: (ctx) => _PeoplePicker(people: people.values.toList(), title: 'إعادة التوجيه إلى'),
     );
     if (target == null || !mounted) return;
+    // «من يراسلني» عند المستلم (النواة لا تفحصه)؛ الطرف الحالي يُحكم بفحص هذه المحادثة
+    final gate = target.id == _peerId ? (_gated ? _gate : null) : await _api.canMessage(target.id);
+    if (!mounted) return;
+    if (gate != null && !gate.ok) {
+      toast(context, gate.notice, error: true);
+      return;
+    }
     final from = _mine(m) ? myName : widget.peer.nickname;
     // النسخة المعاد توجيهها رسالة جديدة: لا تحمل clientId الأصل
     final extra = {...m.extra}..remove('clientId');
@@ -1400,15 +1461,25 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
           alignment: Alignment.topCenter,
           child: _peerTyping ? Padding(padding: const EdgeInsets.fromLTRB(14, 0, 14, 8), child: TypingIndicator(peer: widget.peer)) : const SizedBox(width: double.infinity),
         ),
-        _composer(),
+        if (_gated) _gateNotice() else _composer(),
       ]),
     );
+  }
+
+  Widget _gateNotice() {
+    final g = _gate!;
+    final inContacts = g.friendsOnly && (ref.watch(contactsProvider).valueOrNull ?? const <Person>[]).any((p) => p.id == _peerId);
+    return MessageGateNotice(gate: g, requested: _friendRequested || inContacts, busy: _friendBusy, onAddFriend: g.friendsOnly ? _addFriend : null);
   }
 
   Widget _list() {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return ErrorState(_error!, onRetry: _load);
-    if (_messages.isEmpty) return EmptyState(icon: Icons.waving_hand_rounded, title: 'قل مرحباً لـ ${widget.peer.nickname}');
+    if (_messages.isEmpty) {
+      return _gated
+          ? const EmptyState(icon: Icons.lock_outline_rounded, title: 'لا رسائل بينكما بعد')
+          : EmptyState(icon: Icons.waving_hand_rounded, title: 'قل مرحباً لـ ${widget.peer.nickname}');
+    }
     final q = _searching ? _searchCtl.text.trim() : '';
     return ScrollablePositionedList.builder(
       itemScrollController: _itemScroll,
