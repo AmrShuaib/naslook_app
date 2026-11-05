@@ -85,7 +85,7 @@ class ProfileTrust {
 class ProfileFlags {
   final bool isMe, isFollowing, isFriend, canMessage, isPrivate, blocked;
   final bool? online;
-  /// سبب منع المراسلة حين canMessage=false: friends-only | nobody | blocked (انظر [MessageGate]).
+  /// سبب منع المراسلة حين canMessage=false: friends-only | nobody | blocked (انظر [MessageGate]؛ blocked لمن حظر فقط).
   final String? messageReason;
   const ProfileFlags({this.isMe = false, this.isFollowing = false, this.isFriend = false, this.canMessage = true, this.online, this.isPrivate = false, this.blocked = false, this.messageReason});
   factory ProfileFlags.fromJson(Map m) => ProfileFlags(
@@ -98,7 +98,7 @@ class ProfileFlags {
 /// فالضمان في هذا الفحص وفي التطبيق. غياب `ok` يُقرأ سماحاً حتى لا تُقفل محادثة بالخطأ.
 class MessageGate {
   final bool ok;
-  /// friends-only | nobody | blocked
+  /// friends-only | nobody | blocked. «blocked» يصل لمن حظر الطرف الآخر فقط؛ المحظور يصله «nobody» فلا يعرف بالحظر.
   final String? reason;
   const MessageGate({this.ok = true, this.reason});
   factory MessageGate.fromJson(Map m) => MessageGate(ok: m['ok'] != false, reason: _sn(m, 'reason'));
@@ -109,7 +109,7 @@ class MessageGate {
 /// نص المنع للزائر بحسب السبب (المحادثة والملف الشخصي).
 String messageGateNotice(String? reason) => switch (reason) {
       'nobody' => 'هذا الشخص لا يستقبل رسائل جديدة',
-      'blocked' => 'المراسلة غير متاحة بينكما بسبب الحظر',
+      'blocked' => 'حظرت هذا الشخص؛ ألغِ الحظر لتراسله',
       _ => 'هذا الشخص يستقبل الرسائل من أصدقائه فقط',
     };
 

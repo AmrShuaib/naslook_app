@@ -185,16 +185,36 @@ p = await call('GET', `/profiles/${FAHAD}/v2`, { user: SARA, expect: 200 });
 check(p.flags.canMessage === false && p.flags.messageReason === 'nobody', 'profile flags carry the nobody reason');
 // الحظر يمنع في كل الحالات حتى مع «الجميع» أو بعد رسالة سابقة
 await call('PUT', '/me/profile/v2', { body: { msgPolicy: 'all' }, expect: 200 });
+// fahad حظر khalid: الحاظر يرى «blocked»، والمحظور يرى «nobody» كأي حساب مغلق فلا يعرف أنه حُظر
 globalThis.naslifeIsBlocked = async (a, b) => [a, b].sort().join() === [FAHAD, KHALID].sort().join();
-check(same(await can(FAHAD, KHALID), { ok: false, reason: 'blocked' }), 'gate: a blocked pair cannot write even under all');
-check(same(await can(KHALID, FAHAD), { ok: false, reason: 'blocked' }), 'gate: blocking works both ways');
+globalThis.naslifeHasBlocked = async (a, b) => a === FAHAD && b === KHALID;
+check(same(await can(FAHAD, KHALID), { ok: false, reason: 'nobody' }), 'gate: the blocked person cannot write even under all, and is not told about the block');
+check(same(await can(KHALID, FAHAD), { ok: false, reason: 'blocked' }), 'gate: the blocker is told why');
 check(same(await can(FAHAD, SARA), { ok: true, reason: null }), 'gate: others unaffected by the block');
 p = await call('GET', `/profiles/${FAHAD}/v2`, { user: KHALID, expect: 200 });
-check(p.flags.canMessage === false && p.flags.messageReason === 'blocked', 'profile flags carry the blocked reason');
-check(same(await globalThis.naslifeCanMessage(KHALID, FAHAD), { ok: false, reason: 'blocked' }) && same(await globalThis.naslifeCanMessage(SARA, FAHAD), { ok: true, reason: null }), 'naslifeCanMessage helper for other plugins');
+check(p.flags.canMessage === false && p.flags.messageReason === 'nobody' && p.flags.blocked === false, 'profile flags hide the block from the blocked person', JSON.stringify(p.flags));
+p = await call('GET', `/profiles/${KHALID}/v2`, { user: FAHAD, expect: 200 });
+check(p.flags.canMessage === false && p.flags.messageReason === 'blocked', 'profile flags carry the blocked reason for the blocker');
+check(same(await globalThis.naslifeCanMessage(KHALID, FAHAD), { ok: false, reason: 'nobody' }) && same(await globalThis.naslifeCanMessage(FAHAD, KHALID), { ok: false, reason: 'blocked' }) && same(await globalThis.naslifeCanMessage(SARA, FAHAD), { ok: true, reason: null }), 'naslifeCanMessage helper for other plugins');
+delete globalThis.naslifeHasBlocked;
+check(same(await can(KHALID, FAHAD), { ok: false, reason: 'nobody' }), 'gate: without the directional helper nobody is told about a block');
 globalThis.naslifeIsBlocked = async () => { throw new Error('safety down'); };
 check(same(await can(FAHAD, KHALID), { ok: true, reason: null }), 'gate: a failing block check does not lock everyone out');
 delete globalThis.naslifeIsBlocked;
+// علاقات المنصة (التوظيف، الطلبات) تفتح المراسلة أياً كانت السياسة: تسجّلها الإضافات المالكة في naslifeMessageAllow
+await call('PUT', '/me/profile/v2', { body: { msgPolicy: 'none' }, expect: 200 });
+check(same(await can(FAHAD, NOURA), { ok: false, reason: 'nobody' }), 'gate none: no relation yet');
+const prevAllow = globalThis.naslifeMessageAllow;
+globalThis.naslifeMessageAllow = new Map([['broken', async () => { throw new Error('down'); }], ['orders', async (a, b) => [a, b].sort().join() === [FAHAD, NOURA].sort().join()]]);
+check(same(await can(FAHAD, NOURA), { ok: true, reason: null }), 'gate: a registered relation (order, hiring) unlocks despite none, past a failing check');
+check(same(await can(FAHAD, SARA), { ok: false, reason: 'nobody' }), 'gate: the relation is for that pair only');
+p = await call('GET', `/profiles/${FAHAD}/v2`, { user: NOURA, expect: 200 });
+check(p.flags.canMessage === true && p.flags.messageReason === null, 'profile flags follow the relation');
+globalThis.naslifeIsBlocked = async (a, b) => [a, b].sort().join() === [FAHAD, NOURA].sort().join();
+check(same(await can(FAHAD, NOURA), { ok: false, reason: 'nobody' }), 'gate: a block still wins over a relation');
+delete globalThis.naslifeIsBlocked;
+globalThis.naslifeMessageAllow = prevAllow;
+await call('PUT', '/me/profile/v2', { body: { msgPolicy: 'all' }, expect: 200 });
 await pool.query('DELETE FROM messages');
 
 // ---- التعريف الصوتي/المرئي

@@ -117,6 +117,10 @@ list = await call('GET', '/mapposts', { expect: 200 });
 check(!list.some((p) => p.id === p3.id) && list.some((p) => p.id === okPost.id), 'blocked user\'s post hidden from blocker');
 check(!(await call('GET', '/mapposts', { user: 'SA0000003', expect: 200 })).some((p) => p.user.id === 'SA0000001'), 'blocker hidden from the blocked too');
 check((await call('GET', '/mapposts', { user: null, expect: 200 })).some((p) => p.id === p3.id), 'anonymous sees everything');
+// اتجاه الحظر لـ«من يراسلني»: الحاظر وحده يُخبر بالحظر
+check(await globalThis.naslifeHasBlocked('SA0000001', 'SA0000003') === true && await globalThis.naslifeHasBlocked('SA0000003', 'SA0000001') === false && await globalThis.naslifeHasBlocked('SA0000001', 'SA0000001') === false,
+  'naslifeHasBlocked is directional (blocker only)');
+check(await globalThis.naslifeIsBlocked('SA0000003', 'SA0000001') === true, 'naslifeIsBlocked stays symmetric');
 // الرابط المباشر لمنشور: 404 بين طرفين بينهما حظر، وظاهر لصاحبه وللآخرين
 await call('GET', `/mapposts/${p3.id}`, { user: 'SA0000001', expect: 404 });
 await call('GET', `/mapposts/${p3.id}`, { user: 'SA0000003', expect: 200 });

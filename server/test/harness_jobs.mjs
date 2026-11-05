@@ -134,6 +134,8 @@ await call('PATCH', `/biz/${B}/manage/jobs/${J}/candidates/${M}`, { body: { stag
 await call('POST', `/jobs/offers/${M}/later`, { user: KHALID, expect: 200 });
 inbox = await call('GET', '/jobs/inbox', { user: KHALID, expect: 200 });
 check(inbox.pending === 0 && inbox.items.length === 1 && inbox.items[0].status === 'later', 'later keeps the card but not pending');
+const allow = (a, b) => globalThis.naslifeMessageAllow.get('jobs')(a, b);
+check(await allow(KHALID, SARA) === false, 'message allow: no hiring relation before answering (candidate still anonymous)');
 let acc = await call('POST', `/jobs/offers/${M}/accept`, { user: KHALID, expect: 200 });
 check(acc.status === 'accepted' && acc.questions.length === 4 && acc.chatWith === null, 'accept returns the screening questions');
 check((await notes('job_accept', SARA)).length === 1 && (await notes('job_accept', OWNER)).length === 1 && (await notes('job_accept', SARA))[0].body.includes('مرشح #1'), 'assignee and owner notified anonymously on accept');
@@ -142,6 +144,9 @@ await call('POST', `/jobs/offers/${M}/answers`, { body: { answers: [{ id: 'start
 await call('POST', `/jobs/offers/${M}/answers`, { body: { answers: [{ id: 'start', value: 'غداً' }, { id: 'yrs', value: 2 }] }, user: KHALID, expect: 400 });
 let ans = await call('POST', `/jobs/offers/${M}/answers`, { body: { answers: [{ id: 'start', value: 'فوراً' }, { id: 'yrs', value: '2' }, { id: 'night', value: 'yes' }, { id: 'about', value: 'أحب القهوة' }] }, user: KHALID, expect: 200 });
 check(ans.ok === true && ans.chatWith.id === SARA, 'answers accepted and chat partner is the hr assignee');
+// «من يراسلني» لا يقفل التواصل الذي تطلبه المنصة: المرشح ↔ المسؤول والمالك، بالاتجاهين
+check(await allow(KHALID, SARA) && await allow(SARA, KHALID) && await allow(KHALID, OWNER) && await allow(OWNER, KHALID), 'message allow: answered candidate and the hiring team, both ways');
+check(await allow(KHALID, MAJED) === false && await allow(MAJED, SARA) === false, 'message allow: outsiders get nothing');
 check((await notes('job_answers', SARA)).length === 1, 'assignee notified with answers');
 await call('POST', `/jobs/offers/${M}/answers`, { body: { answers: [] }, user: KHALID, expect: 409 });
 cands = await call('GET', `/biz/${B}/manage/jobs/${J}/candidates`, { user: SARA, expect: 200 });
@@ -204,7 +209,9 @@ check(jl.items.find((j) => j.id === J).status === 'filled', 'job auto-filled whe
 mine = await call('GET', '/jobs/mine', { user: KHALID, expect: 200 });
 check(mine.history.length === 1 && mine.history[0].stage === 'hired' && mine.active.length === 0, 'hired application moves to history');
 await call('POST', `/jobs/offers/${M}/withdraw`, { user: KHALID, expect: 409 });
+check(await allow(NORA, SARA) === true, 'message allow: an applicant who answered reaches hr');
 await call('POST', `/jobs/offers/${ap.matchId}/withdraw`, { user: NORA, expect: 200 });
+check(await allow(NORA, SARA) === false && await allow(SARA, NORA) === false, 'message allow: withdrawal ends the relation');
 check((await notes('job_stage', SARA)).length === 1, 'withdrawal notifies the team');
 
 // ---- الحد الأسبوعي، الرفض، الإغلاق

@@ -51,6 +51,13 @@ const afterD = await call('GET', `/market/orders/${O.id}`, { user: BUYER, expect
 await call('POST', `/market/orders/${O.id}/courier`, { body: { nickname: 'rider' }, user: SELLER, expect: 409 }); // بعد التسليم
 await call('POST', `/market/orders/${O.id}/confirm`, { body: {}, user: BUYER, expect: 200 });
 await call('DELETE', `/market/orders/${O.id}/courier`, { user: RIDER, expect: 403 });
+// «من يراسلني» (profile_ext.js) لا يقفل أطراف الطلب: المشتري والبائع والمندوب يتراسلون، ويبقى ذلك 14 يوماً بعد الإغلاق
+const allowOrder = (a, b) => globalThis.naslifeMessageAllow.get('market-orders')(a, b);
+check(await allowOrder(BUYER, SELLER) && await allowOrder(SELLER, BUYER) && await allowOrder(BUYER, RIDER) && await allowOrder(RIDER, BUYER) && await allowOrder(SELLER, RIDER), 'message allow: buyer, seller and courier of an order, both ways');
+check(await allowOrder(BUYER, 'SA0000077') === false && await allowOrder(BUYER, BUYER) === false, 'message allow: nobody else');
+await pool.query("UPDATE market_orders SET updated_at=now() - interval '30 days' WHERE id=$1", [O.id]);
+check(await allowOrder(BUYER, SELLER) === false, 'message allow: a closed order older than 14 days no longer unlocks');
+await pool.query('UPDATE market_orders SET updated_at=now() WHERE id=$1', [O.id]);
 
 // ---------- البازارات ----------
 await call('POST', '/adminapi/market/bazaars', { body: { title: 'بازار', endsAt: new Date(Date.now() + 5 * 86400000).toISOString() }, user: SELLER, expect: 403 });

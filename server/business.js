@@ -434,6 +434,11 @@ export default async function business(app, opts) {
   globalThis.naslifeBizCreate = async (uid, body, extra = {}) => { const id = await createBiz(uid, body, extra); return { id, row: await loadFull(id, uid) }; };
   globalThis.naslifeBizLoadFull = loadFull;
   globalThis.naslifeBizOut = bizOut;
+  // «من يراسلني» (profile_ext.js): صاحب الحجز/الطلب وفريق الدائرة (المالك وأي عضو في biz_staff) يتراسلون أياً كانت سياستهم
+  // ما دام الحجز مؤكداً أو تغيّر خلال 14 يوماً
+  const orderPair = async (customer, member) => (await pool.query(`SELECT 1 FROM biz_orders o JOIN biz b ON b.id=o.biz_id
+    WHERE o.user_id=$1 AND (o.status='confirmed' OR o.updated_at > now() - interval '14 days') AND (b.owner_id=$2 OR EXISTS (SELECT 1 FROM biz_staff s WHERE s.biz_id=o.biz_id AND s.user_id=$2)) LIMIT 1`, [customer, member])).rowCount > 0;
+  (globalThis.naslifeMessageAllow ??= new Map()).set("biz-orders", async (a, b) => !!a && !!b && a !== b && ((await orderPair(a, b)) || (await orderPair(b, a))));
   globalThis.naslifeBizHelpers = { verStatus, verOf, hereOf, tierOf, isComplete, hoursOk, serviceAreaOf, canManage, canOperate, canOwn, roleFor, isAdmin, isSuspended, CATEGORY_AR };
 
   // ---- القائمة (عامة) مع تصفية بالفئة والحدود الجغرافية والبحث

@@ -180,6 +180,10 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   /// السياسة، فالضمان في هذا الفحص المسبق وفي إخفاء المؤلّف.
   MessageGate? _gate;
   Future<void>? _gateCheck;
+  /// أول تحميل للسجل (نجح أو فشل): الإرسال قبله ينتظره ليعرف هل كتب لي الطرف الآخر، فلا يفلت إرسال من الفحص.
+  final _firstLoad = Completer<void>();
+  /// إرسال نص ينتظر الفحص (أو تحضير رمز): ضغطة ثانية لا تُرسل النص نفسه مرتين.
+  bool _preparingSend = false;
   bool _friendBusy = false, _friendRequested = false;
 
   String get myId => ref.read(appStateProvider).user?.id ?? '';
@@ -205,8 +209,14 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
 
   /// نقطة توسعة للمدمج: إجراءات إضافية في قائمة المرفقات (مثل «مشاركة موقعي الحي» عبر showLiveShareSheet).
   List<AttachAction> get _extraAttachActions => [
-        AttachAction(key: const Key('attach-live'), icon: Icons.my_location_rounded, label: 'موقعي الحي', onTap: () => showLiveShareSheet(context, ref, _peerId)),
+        AttachAction(key: const Key('attach-live'), icon: Icons.my_location_rounded, label: 'موقعي الحي', onTap: _shareLive),
       ];
+
+  /// «موقعي الحي» يرسل رسالة `/live` بنفسه (live_share.dart)، فيمر على «من يراسلني» قبل فتح الورقة.
+  Future<void> _shareLive() async {
+    if (_gateMatters && (!await _gateAllows() || !mounted)) return;
+    await showLiveShareSheet(context, ref, _peerId);
+  }
 
   @override
   void initState() {
@@ -469,32 +479,53 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
         _error = null;
         _hasMore = list.length >= pageSize;
       });
-      if (_gate == null && !_peerWrote) _gateCheck = _checkGate();
+      if (!_peerWrote) _startGateCheck();
       _jumpToBottom(animate: false);
       _markRead();
       final target = widget.initialMessageId;
       if (target != null) WidgetsBinding.instance.addPostFrameCallback((_) => _revealMessage(target));
       _restoreOutbox();
     } catch (e) {
-      if (mounted) setState(() { _error = e; _loading = false; });
+      if (!mounted) return;
+      setState(() { _error = e; _loading = false; });
+      // تعذّر السجل فلا نعرف هل كتب لي: الفحص يقرّر (الخادم يستثني الرد على من كتب أولاً)، ونجاح «إعادة المحاولة» يفتح الرد
+      _startGateCheck();
+    } finally {
+      if (!_firstLoad.isCompleted) _firstLoad.complete();
     }
   }
 
+  /// يبدأ فحص «من يراسلني» مرة واحدة ما لم تصل نتيجته (من «محادثة جديدة» أو فحص سابق).
+  void _startGateCheck() {
+    if (_gate == null) _gateCheck ??= _checkGate();
+  }
+
   Future<void> _checkGate() async {
-    final g = await _api.canMessage(_peerId);
-    if (mounted) setState(() => _gate = g);
+    // تعذّر الفحص أو خادم قديم (null) = مسموح كما كان، ويُحفظ نتيجةً حتى لا يُعاد مع كل رسالة
+    final g = await _api.canMessage(_peerId) ?? const MessageGate();
+    if (mounted) {
+      setState(() => _gate = g);
+    } else {
+      _gate = g;
+    }
     _gateCheck = null;
   }
 
-  /// هل يلزم المرور على [_gateAllows]؟ (بلا فحص جارٍ ولا منع يبقى الإرسال متزامناً كما كان)
-  bool get _gateMatters => _gateCheck != null || _gated;
+  /// هل يلزم المرور على [_gateAllows]؟ نعم ما دام السجل لم يحسم أن الطرف الآخر كتب لي ولم تصل نتيجة الفحص (أثناء
+  /// التحميل، بعد خطئه، أو والفحص جارٍ)، أو حين يكون المنع قائماً. غير ذلك يبقى الإرسال متزامناً كما كان.
+  bool get _gateMatters => _gated || _gateCheck != null || (_gate == null && !_peerWrote);
 
-  /// هل يُسمح بالإرسال الآن؟ ينتظر الفحص إن كان جارياً (أول رسالة بعد الفتح مباشرة) ويعرض السبب إن مُنع.
+  /// هل يُسمح بالإرسال الآن؟ ينتظر أول تحميل للسجل ثم الفحص إن لزم (إرسال فور الفتح، أو مع نص مُعبّأ مسبقاً)،
+  /// ويعرض السبب إن مُنع.
   Future<bool> _gateAllows({bool quiet = false}) async {
+    if (!_firstLoad.isCompleted) await _firstLoad.future;
+    if (!mounted) return false;
+    if (!_peerWrote) _startGateCheck();
     final pending = _gateCheck;
     if (pending != null) await pending;
+    if (!mounted) return false;
     if (!_gated) return true;
-    if (mounted && !quiet) toast(context, _gate!.notice, error: true);
+    if (!quiet) toast(context, _gate!.notice, error: true);
     return false;
   }
 
@@ -769,6 +800,8 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
   // ---------------------------------------------------------------------------
 
   Future<void> _sendText() async {
+    // النص ما زال في الحقل أثناء الانتظار: ضغطة ثانية عليه لا تُطلق إرسالاً ثانياً
+    if (_preparingSend) return;
     var t = _text.text.trim();
     if (t.isEmpty) return;
     // تحقق مسبق من الكلمات المحظورة (رسائل النواة لا تمر بفلتر الخادم)
@@ -777,12 +810,17 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
       toast(context, 'الرسالة تحتوي كلمة غير مسموحة: «$banned»', error: true);
       return;
     }
-    // قبل مسح الحقل: رسالة مرفوضة بسياسة الطرف الآخر لا تضيع من المؤلّف
-    if (_gateMatters && (!await _gateAllows() || !mounted)) return;
-    if (t.startsWith('/')) {
-      final prepared = await _prepareCommand(t);
-      if (prepared == null || !mounted) return;
-      t = prepared;
+    _preparingSend = true;
+    try {
+      // قبل مسح الحقل: رسالة مرفوضة بسياسة الطرف الآخر لا تضيع من المؤلّف
+      if (_gateMatters && (!await _gateAllows() || !mounted)) return;
+      if (t.startsWith('/')) {
+        final prepared = await _prepareCommand(t);
+        if (prepared == null || !mounted) return;
+        t = prepared;
+      }
+    } finally {
+      _preparingSend = false;
     }
     _text.clear();
     final cmd = parseCommand(t);

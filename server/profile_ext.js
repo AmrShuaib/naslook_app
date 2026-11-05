@@ -186,12 +186,26 @@ export default async function profileV2(app, opts) {
   const hasContact = async (owner, other) => (owner && other && owner !== other && C ? exists(`SELECT 1 FROM ${q(C.table)} WHERE ${q(C.a)}=$1 AND ${q(C.b)}=$2 LIMIT 1`, [owner, other]) : false);
   const wroteTo = async (from, to) => (MS && from && to ? exists(`SELECT 1 FROM ${q(MS.table)} WHERE ${q(MS.from)}=$1 AND ${q(MS.to)}=$2 LIMIT 1`, [from, to]) : false);
   const blockedPair = async (a, b) => { try { const f = globalThis.naslifeIsBlocked; return f ? !!(await f(a, b)) : false; } catch { return false; } };
+  // اتجاه الحظر: «blocked» لمن حظر فقط؛ المحظور يرى «nobody» كأي حساب لا يستقبل رسائل حتى لا يعرف أنه حُظر
+  const hasBlocked = async (a, b) => { try { const f = globalThis.naslifeHasBlocked; return f ? !!(await f(a, b)) : false; } catch { return false; } };
+  // علاقات على المنصة تستلزم التواصل (المرشح وفريق التوظيف، أطراف طلب قائم): تسجّلها الإضافة المالكة لجداولها في
+  // globalThis.naslifeMessageAllow (اسم → async (caller, target) => bool) فتفتح المراسلة أياً كانت سياسة الطرفين.
+  // الخريطة مشتركة فلا يهم ترتيب التحميل، وفحص يرمي لا يفتح شيئاً ولا يُسقط الفحص كله.
+  const relationAllows = async (a, b) => {
+    const reg = globalThis.naslifeMessageAllow;
+    if (!a || !b || a === b || !(reg instanceof Map)) return false;
+    for (const fn of reg.values()) {
+      try { if (await fn(a, b)) return true; } catch { /* فحص معطّل = لا علاقة */ }
+    }
+    return false;
+  };
   async function messageGate(caller, target, policy) {
     if (caller && caller === target) return { ok: true, reason: null };
-    if (caller && (await blockedPair(caller, target))) return { ok: false, reason: "blocked" };
+    if (caller && (await blockedPair(caller, target))) return { ok: false, reason: (await hasBlocked(caller, target)) ? "blocked" : "nobody" };
     if (policy !== "friends" && policy !== "none") return { ok: true, reason: null };
     if (caller && (await wroteTo(target, caller))) return { ok: true, reason: null };
     if (policy === "friends" && (await hasContact(target, caller))) return { ok: true, reason: null };
+    if (caller && (await relationAllows(caller, target))) return { ok: true, reason: null };
     return { ok: false, reason: policy === "friends" ? "friends-only" : "nobody" };
   }
   const isOnline = async (id) => (PR ? exists(`SELECT 1 FROM ${q(PR.table)} WHERE ${q(PR.key)}=$1 AND ${q(PR.at)} > now() - interval '5 minutes' LIMIT 1`, [id]) : null);

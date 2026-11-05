@@ -588,6 +588,11 @@ export default async function commerce(app, opts) {
     reviewed: o.reviewed === true, codeLocked: Number(o.code_fails ?? 0) >= CODE_MAX_FAILS, createdAt: o.created_at, updatedAt: o.updated_at,
   });
   globalThis.naslifeMarketOrderOut = orderOut;
+  // «من يراسلني» (profile_ext.js): أطراف طلب السوق (المشتري والبائع والمندوب) يتراسلون أياً كانت سياستهم ما دام الطلب
+  // قائماً، أو تغيّر خلال 14 يوماً (متابعة التسليم والتقييم والنزاع)
+  (globalThis.naslifeMessageAllow ??= new Map()).set("market-orders", async (a, b) => !!a && !!b && a !== b && (await pool.query(
+    `SELECT 1 FROM market_orders WHERE (status IN ('paid','preparing','on_the_way','delivered','disputed') OR updated_at > now() - interval '14 days')
+       AND ((buyer_id=$1 AND (seller_id=$2 OR courier_id=$2)) OR (buyer_id=$2 AND (seller_id=$1 OR courier_id=$1)) OR (seller_id=$1 AND courier_id=$2) OR (seller_id=$2 AND courier_id=$1)) LIMIT 1`, [a, b])).rowCount > 0);
   const ORDER_SQL = "SELECT o.*, l.title, l.image_url, l.kind, (r.order_id IS NOT NULL) AS reviewed FROM market_orders o JOIN market_listings l ON l.id=o.listing_id LEFT JOIN market_reviews r ON r.order_id=o.id";
   app.get("/market/orders", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);

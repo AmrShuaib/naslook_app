@@ -114,6 +114,13 @@ export default async function safety(app, opts) {
     } catch { return []; }
   }
   const isBlocked = async (a, b) => !!a && !!b && a !== b && (await blockedIds(a)).includes(b);
+  // اتجاه الحظر: هل حظر a الطرفَ b؟ («من يراسلني» في profile_ext.js يخبر الحاظر بالحظر ولا يخبر المحظور به)
+  async function hasBlocked(a, b) {
+    if (!a || !b || a === b) return false;
+    if (!blocksOk && Date.now() - blocksCheckedAt > 60000) { try { await discoverBlocks(); } catch { /* ignore */ } }
+    if (!blocksOk) return false;
+    try { return (await pool.query(`SELECT 1 FROM ${q(blocksTable)} WHERE ${q(BC.user)}=$1 AND ${q(BC.blocked)}=$2 LIMIT 1`, [a, b])).rowCount > 0; } catch { return false; }
+  }
   const words = () => parseWords(globalThis.naslifeSettings?.bannedWords);
   const defaultsOn = () => globalThis.naslifeSettings?.bannedWordsDefault !== false;
   const checkText = (...texts) => findBanned(words(), ...texts) ?? (defaultsOn() ? findDefaultBanned(...texts) : null);
@@ -121,6 +128,7 @@ export default async function safety(app, opts) {
   globalThis.naslifeCheckText = checkText;
   globalThis.naslifeBlockedIds = blockedIds;
   globalThis.naslifeIsBlocked = isBlocked;
+  globalThis.naslifeHasBlocked = hasBlocked;
   globalThis.naslifeSafetyStatus = () => ({ blocks: blocksOk, blocksTable });
   const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch { /* ignore */ } };
   const notifyAdmins = async (payload) => { try { await globalThis.naslifeNotifyAdmins?.(payload); } catch { /* ignore */ } };
