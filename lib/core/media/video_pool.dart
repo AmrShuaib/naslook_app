@@ -13,6 +13,7 @@ class MediaSlot<E> {
   /// شُغّل داخل لمسة فرُفع عنه قيد الصوت
   bool blessed = false;
   /// فُتح فتحاً مبدئياً ([MediaSlotPool.prime]) بلا تأكد أنه داخل لمسة: يُفضَّل على المغلق، وتفتحه اللمسة الحقيقية التالية
+  /// ما دام حراً (المشغول لا يُلمس)
   bool primed = false;
   MediaSlot(this.id, this.element);
 }
@@ -63,7 +64,9 @@ class MediaSlotPool<E> {
   void userGesture() => _openFree(sure: true);
 
   /// فتح مبدئي من مكان يُرجّح أنه داخل لمسة ولا يُضمن (فتح العارض قد يأتي بعد انتظار): يفتح الحر غير المفتوح ويعلّمه
-  /// [MediaSlot.primed] لا [MediaSlot.blessed]، فلا تتجاوزه اللمسة الحقيقية التالية بل تفتحه من جديد.
+  /// [MediaSlot.primed] لا [MediaSlot.blessed]، فلا تتجاوزه اللمسة الحقيقية التالية بل تفتحه من جديد ما دام حراً. أما إن
+  /// أخذه مشغّل قبلها فلا تلمسه اللمسات (حتى لا يتوقف ما يعرضه)، ولا يُفتح إلا بتشغيله هو داخل لمسة (رقاقة رفع الكتم)؛
+  /// لذلك يُنشأ المجمّع في main() فيفتح pointerup اللمسة التي تفتح العارض عنصراً حراً قبل أي انتظار.
   void prime() => _openFree(sure: false);
 
   void _openFree({required bool sure}) {

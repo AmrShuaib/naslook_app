@@ -32,10 +32,10 @@ class _SignedIn extends AppStateNotifier {
 String _pid(int i) => 'bbbbbbbb-0000-4000-8000-${i.toString().padLeft(12, '0')}';
 String _audio(int i) => 'https://test.local/chat/media/voice$i.m4a';
 
-Map<String, dynamic> _post(int i, {String kind = 'text', String caption = '', int? audioSec}) => {
-      'id': _pid(i), 'user': {'id': 'SA000000${i + 1}', 'nickname': 'user$i'}, 'kind': kind, 'caption': caption.isEmpty ? 'لحظة $i' : caption,
+Map<String, dynamic> _post(int i, {String kind = 'text', String caption = '', int? audioSec, bool mine = false}) => {
+      'id': _pid(i), 'user': {'id': mine ? 'SA0000001' : 'SA000000${i + 1}', 'nickname': mine ? 'amr' : 'user$i'}, 'kind': kind, 'caption': caption.isEmpty ? 'لحظة $i' : caption,
       'mediaUrl': kind == 'image' ? 'https://test.local/chat/media/p$i.jpg' : null, 'bg': kind == 'text' ? '#37474F' : null,
-      'overlays': [], 'tag': 'moment', 'lat': 21.5, 'lng': 39.2, 'status': 'active', 'views': 1, 'likes': 0, 'liked': false, 'mine': false, 'expired': false,
+      'overlays': [], 'tag': 'moment', 'lat': 21.5, 'lng': 39.2, 'status': 'active', 'views': 1, 'likes': 0, 'liked': false, 'mine': mine, 'expired': false,
       if (audioSec != null) 'audioUrl': _audio(i),
       if (audioSec != null) 'audioSec': audioSec,
       'createdAt': DateTime.now().subtract(const Duration(minutes: 3)).toUtc().toIso8601String(),
@@ -47,9 +47,18 @@ class _FakeVoice extends VoicePlayerBase {
   final calls = <String>[];
   /// رفض التشغيل: NotAllowedError (سفاري بلا لمسة) أو خطأ تحميل
   Object? refuse;
-  /// التشغيل لا يبدأ أبداً (شبكة بطيئة جداً)
+  /// التشغيل لا يبدأ أبداً ولا يبلّغ شيئاً (تحميل just_audio لا يكتمل)
   bool hang = false;
+  /// كعنصر <audio> على شبكة متوقفة: play() يبلّغ playing فوراً قبل أي بيانات، وloading باقٍ ولا موضع
+  bool webStall = false;
+  /// مصادر لا يكتمل تحميلها؛ مصدر جديد يقاطعها فيرمي تشغيلها المعلّق «Loading interrupted» ويبلّغه في حالة المصدر
+  /// الجديد، كما كان مشغّل just_audio يفعل
+  final interruptible = <String>{};
+  /// كالأصلي: يُحمَّل هذه المدة (loading) ثم يبدأ
+  Duration? loadDelay;
   bool disposed = false;
+  String? _url;
+  Completer<void>? _pending;
   _FakeVoice() {
     created.add(this);
   }
@@ -57,7 +66,18 @@ class _FakeVoice extends VoicePlayerBase {
   @override
   void setSource({String? url, Uint8List? bytes, String? mime}) {
     calls.add('src:$url');
+    _url = url;
+    final pending = _pending;
+    _pending = null;
     emit(const VoiceState());
+    if (pending != null) {
+      // يصل خطأ التحميل القديم بعد أن يبدأ تشغيل المصدر الجديد
+      scheduleMicrotask(() {
+        final e = Exception('Loading interrupted');
+        emit(state.copyWith(loading: false, playing: false, error: e));
+        pending.completeError(e);
+      });
+    }
   }
 
   @override
@@ -69,7 +89,20 @@ class _FakeVoice extends VoicePlayerBase {
       throw r;
     }
     if (hang) return Completer<void>().future;
-    emit(state.copyWith(playing: true, ended: false, clearError: true));
+    if (webStall) {
+      emit(state.copyWith(playing: true, loading: true, ended: false, clearError: true));
+      return Completer<void>().future;
+    }
+    if (interruptible.contains(_url)) {
+      emit(state.copyWith(loading: true, ended: false, clearError: true));
+      return (_pending = Completer<void>()).future;
+    }
+    final d = loadDelay;
+    if (d != null) {
+      emit(state.copyWith(loading: true, ended: false, clearError: true));
+      await Future<void>.delayed(d);
+    }
+    emit(state.copyWith(playing: true, loading: false, ended: false, clearError: true));
   }
 
   @override
@@ -94,9 +127,12 @@ class _FakeVoice extends VoicePlayerBase {
 }
 
 class _Srv {
+  /// ما يعيده حفظ التعديل (PATCH /mapposts/:id)
+  Map<String, dynamic>? patched;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
 
   Future<http.Response> handle(http.Request req) async {
+    if (req.method == 'PATCH' && req.url.path.startsWith('/mapposts/') && patched != null) return _json(patched!);
     if (req.method == 'POST' && req.url.path.endsWith('/view')) return _json({'ok': true, 'views': 2});
     if (req.url.path == '/live/wait') return _json({'seq': 0, 'events': [], 'reset': false});
     if (req.url.path == '/notify/unread') return _json({'unread': 0});
@@ -105,7 +141,7 @@ class _Srv {
   }
 }
 
-Future<void> _viewer(WidgetTester tester, List<Map<String, dynamic>> posts, {int initial = 0}) async {
+Future<_Srv> _viewer(WidgetTester tester, List<Map<String, dynamic>> posts, {int initial = 0}) async {
   SharedPreferences.setMockInitialValues({});
   tester.view.physicalSize = const Size(420, 900);
   tester.view.devicePixelRatio = 1;
@@ -122,6 +158,7 @@ Future<void> _viewer(WidgetTester tester, List<Map<String, dynamic>> posts, {int
   ));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
+  return srv;
 }
 
 /// عرض شريط تقدّم اللحظة [i]
@@ -353,6 +390,114 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     expect(v.calls.last, 'play');
     expect(find.text('▶ اضغط للمتابعة'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('web: an <audio> that reports playing before any data (stalled network) still falls back after the load wait, and the bar does not run ahead', (tester) async {
+    VoicePlayer.factoryOverride = () => _FakeVoice()..webStall = true;
+    await _viewer(tester, [_post(1, audioSec: 12), _post(2, kind: 'image', caption: 'التالية')]);
+    final v = _voice;
+    expect(v.state.playing && v.state.loading, isTrue, reason: 'كعنصر <audio>: play يسبق البيانات');
+    await _frames(tester, 7800);
+    expect(_progress(tester), 0, reason: 'الشريط ينتظر التحميل ولا يقدّر ما لم يُسمع');
+    expect(v.calls.last, 'play');
+    expect(find.text('التالية'), findsNothing);
+    await _frames(tester, 300);
+    expect(v.calls.last, 'pause', reason: 'بعد مهلة التحميل يُوقف حتى لا يبدأ صوت متأخر فوق ما بعدها');
+    await _frames(tester, 7400);
+    expect(find.text('التالية'), findsOneWidget, reason: 'تعود اللحظة إلى سبع ثوانٍ');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a network drop mid-play holds the bar where the audio stopped, then falls back to the rest of the normal 7 s', (tester) async {
+    await _viewer(tester, [_post(1, audioSec: 12), _post(2, kind: 'image', caption: 'التالية')]);
+    final v = _voice;
+    await _play(tester, v, 0, 2000, duration: 12000);
+    // waiting: الشبكة انقطعت والتسجيل لم ينتهِ، والموضع واقف
+    v.emit(v.state.copyWith(loading: true));
+    await tester.pump();
+    final held = _progress(tester);
+    expect(held, closeTo(2250 / 12000, .01));
+    await _frames(tester, 3000);
+    expect(_progress(tester), held, reason: 'لا يسبق الشريط صوتاً متوقفاً');
+    await _frames(tester, 4800);
+    expect(v.calls.last, 'play');
+    await _frames(tester, 300);
+    expect(v.calls.last, 'pause', reason: 'بعد ثماني ثوانٍ بلا حركة');
+    // ما مضى (2.25 ث) يُحتسب من السبع: يبقى نحو 4.75 ث
+    expect(_progress(tester), closeTo(2250 / 7000, .03));
+    await _frames(tester, 4000);
+    expect(find.text('التالية'), findsNothing);
+    await _frames(tester, 1200);
+    expect(find.text('التالية'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a native load interrupted by the next voiced moment does not fail that moment', (tester) async {
+    VoicePlayer.factoryOverride = () => _FakeVoice()
+      ..interruptible.add(_audio(1))
+      ..loadDelay = const Duration(milliseconds: 150);
+    await _viewer(tester, [_post(1, audioSec: 12), _post(2, audioSec: 12, caption: 'الثانية')]);
+    final v = _voice;
+    expect(v.state.loading, isTrue, reason: 'تسجيل الأولى ما زال يُحمَّل');
+    // التالية قبل أن يكتمل التحميل: just_audio يقاطع التحميل القديم فيرمي «Loading interrupted» بعد بدء الجديد
+    await tester.tapAt(const Offset(380, 200));
+    await tester.pump();
+    await _frames(tester, 600);
+    expect(find.text('الثانية'), findsOneWidget);
+    expect(v.calls.sublist(v.calls.indexOf('src:${_audio(2)}')), ['src:${_audio(2)}', 'play'], reason: 'لا إيقاف من خطأ يخص المصدر السابق');
+    expect(v.state.playing, isTrue);
+    // ويحدد مدتها: لا انتقال عند سبع ثوانٍ
+    await _play(tester, v, 0, 9000, duration: 12000);
+    expect(_progress(tester, 1), closeTo(.75, .03));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('editing the shown moment to drop its voice layer stops the old recording; the moment goes back to 7 s', (tester) async {
+    final srv = await _viewer(tester, [_post(1, audioSec: 12, mine: true), _post(2, kind: 'image', caption: 'التالية')]);
+    final v = _voice;
+    await _play(tester, v, 0, 1000, duration: 12000);
+    srv.patched = _post(1, mine: true, caption: 'بلا صوت');
+    await tester.tap(find.byTooltip('خيارات').first);
+    await _frames(tester, 500);
+    await tester.tap(find.byKey(const Key('moment-edit')));
+    await _frames(tester, 800);
+    expect(v.calls.last, 'pause', reason: 'المحرّر فوق العارض');
+    final plays = v.calls.where((c) => c == 'play').length;
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _frames(tester, 800);
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await tester.pump();
+    await _frames(tester, 800);
+    await _frames(tester, 400);
+    expect(find.text('بلا صوت'), findsOneWidget);
+    expect(find.byKey(const Key('voice-chip')), findsNothing);
+    expect(v.calls.where((c) => c == 'play'), hasLength(plays), reason: 'التسجيل القديم لا يعود بعد إغلاق المحرّر');
+    // اللحظة تُعرض من جديد بعد الحفظ: سبع ثوانٍ من هناك لا طول التسجيل المحذوف
+    await _frames(tester, 4400);
+    expect(find.text('التالية'), findsNothing);
+    await _frames(tester, 2400);
+    expect(find.text('التالية'), findsOneWidget, reason: 'مدة اللحظة سبع ثوانٍ لا طول التسجيل المحذوف');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('editing the shown moment to add a voice layer plays it once the editor closes', (tester) async {
+    final srv = await _viewer(tester, [_post(1, mine: true), _post(2, kind: 'image')]);
+    expect(_FakeVoice.created, isEmpty);
+    srv.patched = _post(1, mine: true, audioSec: 12, caption: 'بصوت');
+    await tester.tap(find.byTooltip('خيارات').first);
+    await _frames(tester, 500);
+    await tester.tap(find.byKey(const Key('moment-edit')));
+    await _frames(tester, 800);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _frames(tester, 800);
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await tester.pump();
+    await _frames(tester, 800);
+    await _frames(tester, 200);
+    expect(find.text('بصوت'), findsOneWidget);
+    expect(_voice.calls, ['src:${_audio(1)}', 'play']);
+    expect(find.descendant(of: find.byKey(const Key('voice-chip')), matching: find.byIcon(Icons.pause_rounded)), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 

@@ -78,8 +78,9 @@ class PostViewerPage extends ConsumerStatefulWidget {
     return Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => PostViewerPage(posts: posts, initial: index.clamp(0, posts.length - 1))));
   }
 
-  /// يُستدعى داخل اللمسة التي تفتح العارض وقبل أي انتظار (يستدعيه [open]): يفتح عنصر الصوت وعناصر الفيديو الآن، لأن سفاري
-  /// iOS لا يقبل التشغيل بالصوت بلا لمسة إلا لعنصر شُغّل داخل لمسة، فتبدأ أول لحظة بصوتها. بلا أثر خارج الويب.
+  /// يستدعيه [open]: يفتح فتحاً مبدئياً عنصر الصوت وعناصر الفيديو الحرة التي لم تفتحها لمسة بعد (عارض يُفتح بلا لمسة، من
+  /// رابط)، لأن سفاري iOS لا يقبل التشغيل بالصوت بلا لمسة إلا لعنصر شُغّل داخل لمسة. الفتح المؤكد من pointerup اللمسة
+  /// نفسها (المجمّعان يُنشآن في main())، فيصح ولو فُتح العارض بعد انتظار. بلا أثر خارج الويب.
   static void primeSound() {
     VoicePlayer.prepareSound(primeNow: true);
     VideoView.prepareSound(primeNow: true);
@@ -156,13 +157,14 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   int _voiceGen = 0;
   /// أوقفناه نحن (أو لم نبدأه) لأن العارض مغطّى أو مضغوط: يعود حين يزول السبب
   bool _voiceHeld = false;
-  /// ما انتظرناه من التحميل والعارض ظاهر، وما توقف فيه التشغيل بلا سبب منّا
+  /// ما انتظرناه من التحميل (قبل البدء أو أثناء التشغيل والموضع واقف) والعارض ظاهر، وما توقف فيه التشغيل بلا سبب منّا
   int _voiceWaited = 0, _voiceStalled = 0;
   /// المدة التي يُقاس عليها الشريط الآن: مدة التسجيل وسبع ثوانٍ على الأقل
   int _voiceTotal = _autoMs;
   VoiceState _voiceLast = const VoiceState();
-  /// منذ آخر تبليغ بالموضع: المتصفح يبلّغ نحو أربع مرات في الثانية، فنقدّر ما بينها حتى يتحرك الشريط بسلاسة
-  final _voiceClock = Stopwatch();
+  /// م.ث منذ آخر تبليغ بالموضع بعدّ نبضات المؤقّت لا بساعة حقيقية (حتمي في الاختبار ولا يسبق المؤقّت): المتصفح يبلّغ نحو
+  /// أربع مرات في الثانية، فنقدّر ما بينها حتى يتحرك الشريط بسلاسة
+  int _voiceSince = 0;
   final _voiceView = ValueNotifier<MomentVoice?>(null);
 
   /// مسار أو ورقة أو حوار فوق العارض (ومنها دعوة دخول الزائر)، أو فعل مفتوح منه، أو التطبيق مخفي
@@ -312,7 +314,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     final v = _voice ??= _newVoice();
     _voiceFor = p.id;
     _vphase = MomentVoicePhase.loading;
-    _voiceWaited = _voiceStalled = 0;
+    _voiceWaited = _voiceStalled = _voiceSince = 0;
     _voiceTotal = _autoMs;
     _voiceLast = const VoiceState();
     v.setSource(url: mediaUrl(p.audioUrl!));
@@ -342,8 +344,8 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     }, onError: (Object e) {
       if (!mounted || gen != _voiceGen) return;
       final why = '$e';
-      // إيقاف منّا قبل أن يبدأ، أو مصدر جديد: ليس رفضاً
-      if (why.contains('AbortError')) return;
+      // إيقاف منّا قبل أن يبدأ، أو مصدر جديد قاطع التحميل: ليس رفضاً
+      if (why.contains('AbortError') || why.contains('Loading interrupted')) return;
       if (why.contains('NotAllowedError')) {
         // المتصفح يرفض الصوت بلا لمسة: اللحظة تنتظر لمسة الرقاقة بدل أن تمضي صامتة قبل أن يُسمع التسجيل
         _vphase = MomentVoicePhase.blocked;
@@ -354,23 +356,29 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     });
   }
 
-  /// رفض الصوت بلا لمسة أو إيقاف قبل البدء: ليسا تعذّراً
-  static bool _refusal(Object? e) => '$e'.contains('NotAllowedError') || '$e'.contains('AbortError');
+  /// رفض الصوت بلا لمسة، أو إيقاف قبل البدء، أو تحميل سابق قاطعه مصدر جديد (just_audio): ليست تعذّراً
+  static bool _refusal(Object? e) => '$e'.contains('NotAllowedError') || '$e'.contains('AbortError') || '$e'.contains('Loading interrupted');
+
+  /// بدأ يُسمع فعلاً: عنصر <audio> يبلّغ playing عند استدعاء play() قبل وصول أي بيانات (loading باقٍ)، فلا نعدّه
+  /// بدءاً حتى يزول التحميل أو يتحرك الموضع، وإلا تجاوزت اللحظة مهلة التحميل وعلقت إلى الأبد مع شبكة متوقفة
+  static bool _voiceStarted(VoiceState s) => s.playing && (!s.loading || s.position > Duration.zero);
 
   void _onVoice(VoiceState s) {
     if (!mounted || _voiceFor == null) return;
-    if (s.position != _voiceLast.position || s.playing != _voiceLast.playing) {
-      _voiceClock
-        ..reset()
-        ..start();
-    }
+    final last = _voiceLast;
+    if (s.position != last.position || s.playing != last.playing || s.loading != last.loading) _voiceSince = 0;
+    // الموضع تحرّك: ليس تحميلاً عالقاً
+    if (s.position != last.position) _voiceWaited = 0;
     _voiceLast = s;
     switch (_vphase) {
       case MomentVoicePhase.loading || MomentVoicePhase.blocked || MomentVoicePhase.playing:
         if (s.ended) {
           _voiceEnded();
-        } else if (s.playing) {
-          _vphase = MomentVoicePhase.playing;
+        } else if (_voiceStarted(s)) {
+          if (_vphase != MomentVoicePhase.playing) {
+            _vphase = MomentVoicePhase.playing;
+            _voiceWaited = 0;
+          }
         } else if (s.error != null && !_refusal(s.error)) {
           _voiceFail();
         }
@@ -428,11 +436,23 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
         final s = _voice?.state;
         if (s == null) return;
         final wasStalled = _voiceStalled >= _voiceStallMs;
-        _voiceStalled = !s.playing && !_frozen ? _voiceStalled + 50 : 0;
+        // التحميل أثناء التشغيل (شبكة ضعيفة) انتظار له مهلة، لا إيقاف من المتصفح
+        _voiceStalled = !s.playing && !s.loading && !_frozen ? _voiceStalled + 50 : 0;
         if (wasStalled != (_voiceStalled >= _voiceStallMs)) _publishVoice();
+        if (!s.loading) {
+          _voiceWaited = 0;
+        } else if (!_frozen) {
+          // انقطعت الشبكة أثناء التشغيل والموضع واقف (يُصفَّر عند كل حركة): بعد المهلة تكمل اللحظة مدتها العادية
+          _voiceWaited += 50;
+          if (_voiceWaited >= _voiceLoadMs) return _voiceFail();
+        }
         _voiceTotal = math.max(_autoMs, _voiceLength(s));
         var pos = s.position.inMilliseconds;
-        if (s.playing) pos += _voiceClock.elapsedMilliseconds.clamp(0, 1500);
+        // التقدير بين التبليغات والتسجيل يُسمع فقط: أثناء التحميل يقف الشريط مع الصوت
+        if (s.playing && !s.loading) {
+          _voiceSince += 50;
+          pos += math.min(_voiceSince, 1500);
+        }
         // لا يمتلئ قبل الانتهاء (المدة قد تكون أطول مما بُلّغ)، ولا يرجع بتصحيح التقدير
         final f = math.min(pos / _voiceTotal, .995);
         if (f > progress + .001) setState(() => progress = f);
@@ -641,7 +661,12 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
           }
           if (choice == 'edit') {
             final updated = await PostComposerPage.open(context, lat: p.lat, lng: p.lng, placeName: p.placeName, edit: p);
-            if (updated != null && mounted) _replace(p.id, (_) => updated);
+            if (updated != null && mounted) {
+              _replace(p.id, (_) => updated);
+              // التعديل غيّر الطبقة الصوتية أو النوع للحظة المعروضة: تُعرض من جديد، فلا يبقى التسجيل القديم يعمل ويحدد
+              // مدتها، ولا تبقى شريحة جديدة بلا مشغّل
+              if (posts[index].id == p.id && (updated.kind != p.kind || updated.audioUrl != p.audioUrl)) _onShown();
+            }
           } else if (choice == 'toggle') {
             if (p.status == 'blocked') {
               toast(context, 'أخفته الإدارة؛ تواصل مع الدعم', error: true);
