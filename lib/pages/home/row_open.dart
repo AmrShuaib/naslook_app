@@ -27,7 +27,8 @@ void openRowItem(BuildContext context, RowItem it, {List<RowItem> moments = cons
         }
       }
       if (posts.isEmpty) return;
-      Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => PostViewerPage(posts: posts, initial: initial.clamp(0, posts.length - 1))));
+      // عبر open: يفتح عناصر الصوت داخل هذه اللمسة فتبدأ اللحظة الأولى بصوتها على سفاري iOS
+      PostViewerPage.open(context, posts, index: initial);
     case 'offer':
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleOffersPage(bizId: it.refId, title: it.who.isEmpty ? null : it.who)));
     case 'event':

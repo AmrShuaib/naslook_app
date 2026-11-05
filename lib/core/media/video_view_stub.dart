@@ -19,4 +19,4 @@ Widget createControlledVideo(String url, VideoViewController controller, {bool a
     createVideo(url, autoplay: autoplay, loop: loop, muted: muted, controls: !loop, poster: poster);
 
 /// عناصر الصوت المفتوحة تخص سفاري على الويب فقط.
-void prepareSoundVideos() {}
+void prepareSoundVideos({bool primeNow = false}) {}

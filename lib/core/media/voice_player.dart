@@ -6,14 +6,18 @@ import 'voice_player_native.dart' if (dart.library.js_interop) 'voice_player_web
 /// لقطة من حالة مشغّل الصوت.
 class VoiceState {
   final bool playing, loading;
+  /// بلغ التسجيل آخره (المشغّل يعيد موضعه إلى البداية)؛ يُمسح عند التشغيل التالي أو مصدر جديد.
+  /// عارض اللحظات يميّز به الانتهاء عن الإيقاف فينتقل بعده
+  final bool ended;
   final Duration position;
   final Duration? duration;
   final Object? error;
-  const VoiceState({this.playing = false, this.loading = false, this.position = Duration.zero, this.duration, this.error});
+  const VoiceState({this.playing = false, this.loading = false, this.ended = false, this.position = Duration.zero, this.duration, this.error});
 
-  VoiceState copyWith({bool? playing, bool? loading, Duration? position, Duration? duration, Object? error, bool clearError = false}) => VoiceState(
+  VoiceState copyWith({bool? playing, bool? loading, bool? ended, Duration? position, Duration? duration, Object? error, bool clearError = false}) => VoiceState(
         playing: playing ?? this.playing,
         loading: loading ?? this.loading,
+        ended: ended ?? this.ended,
         position: position ?? this.position,
         duration: duration ?? this.duration,
         error: clearError ? null : (error ?? this.error),
@@ -29,6 +33,16 @@ abstract class VoicePlayer {
   /// بديل للاختبارات: يُستدعى بدل المشغّل الحقيقي إن عُيّن.
   static VoicePlayer Function()? factoryOverride;
   factory VoicePlayer() => factoryOverride?.call() ?? impl.createPlayer();
+
+  /// مشغّل عارض اللحظات: واحد لجلسة العارض كلها يُغيَّر مصدره لكل لحظة. على الويب يأخذ عنصر <audio> من مجمّع يُعاد
+  /// استعماله وتفتحه اللمسات ([prepareSound])، فتبدأ الطبقة الصوتية للحظات التالية وحدها بلا لمسة. يحرّر عنصره عند [dispose].
+  factory VoicePlayer.moment() => factoryOverride?.call() ?? impl.createMomentPlayer();
+
+  /// الويب: يجهّز عناصر <audio> يُعاد استعمالها لعارض اللحظات وتُفتح داخل كل pointerup، لأن سفاري iOS لا يقبل التشغيل
+  /// بالصوت بلا لمسة إلا لعنصر شُغّل داخل لمسة. يُستدعى في main() فتفتح أول لمسة عنصراً حراً، ومنها اللمسة التي تفتح العارض
+  /// ولو بعد انتظار. [primeNow] من فتح العارض: يفتح الحر غير المفتوح الآن فتحاً مبدئياً (المستدعي قد لا يكون داخل لمسة،
+  /// والعنصر الذي يأخذه العارض بعدها لا تعيد اللمسات فتحه؛ تفتحه لمسة رقاقة الصوت). بلا أثر خارج الويب.
+  static void prepareSound({bool primeNow = false}) => impl.prepareSoundAudio(primeNow: primeNow);
 
   VoiceState get state;
   Stream<VoiceState> get changes;
