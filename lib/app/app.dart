@@ -383,11 +383,18 @@ class _GuestShellState extends ConsumerState<GuestShell> {
   void initState() {
     super.initState();
     ApiClient.onUnauthorized = _promptSignIn;
-    // رابط لحظة: العارض فوق تبويبات الزائر، فإغلاقه يعيد إلى الخريطة لا إلى صفحة فارغة
+    // رابط لحظة أو عرض في السوق: الوجهة فوق تبويبات الزائر، فإغلاقها يعيد إلى الخريطة أو السوق لا إلى صفحة بلا مخرج
     final l = widget.link;
-    if (l != null && l.isMoment) {
+    if (l != null && (l.isMoment || l.isListing)) {
+      if (l.isListing) {
+        // تحت العرض تبويب السوق وحده، فلا تُطلب الخريطة قبل أن يعود إليها الزائر
+        _tab = 2;
+        _visited
+          ..clear()
+          ..add(2);
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => pendingLinkPage(l)));
+        if (mounted) Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: l.isMoment, builder: (_) => pendingLinkPage(l)));
       });
     }
   }
@@ -431,7 +438,7 @@ class _GuestShellState extends ConsumerState<GuestShell> {
   Widget build(BuildContext context) {
     // «على الخريطة» في صفحة الدائرة يضبط موضع الخريطة؛ واجهة الزائر لا تستمع لـ navIndexProvider فننتقل لتبويب الخريطة هنا
     final link = widget.link;
-    final inLink = link != null && !link.isMoment && !_linkClosed;
+    final inLink = link != null && !link.isMoment && !link.isListing && !_linkClosed;
     ref.listen(mapFocusProvider, (_, n) {
       if (n == null) return;
       // صفحة الرابط لا خريطة فيها: نتركها إلى تبويبات الزائر، والخريطة تلتقط التركيز حين تجهز (MapPage.onMapReady)

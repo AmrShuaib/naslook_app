@@ -170,12 +170,20 @@ void main() {
       expect(pendingLinkPage(const PendingLink('user', 'sara')).runtimeType.toString(), 'PublicProfilePage');
     });
 
-    testWidgets('a guest opening a shared listing link sees the listing with the sign-in bar', (tester) async {
+    testWidgets('a guest opening a shared listing link sees the listing over the guest tabs and can leave it', (tester) async {
       final srv = await _pump(tester, const GuestShell(link: PendingLink('listing', _lid)), signedIn: false);
       expect(find.byType(ListingPage), findsOneWidget);
-      expect(find.byKey(const Key('guest-bar')), findsOneWidget);
       expect(srv.calls, contains('GET /market/$_lid'));
       expect(find.text('كيك الليمون'), findsOneWidget);
+      // العرض فوق تبويبات الزائر: الرجوع يفتح السوق لا صفحة بلا مخرج
+      Navigator.of(tester.element(find.byType(ListingPage))).pop();
+      await _settle(tester);
+      expect(find.byType(ListingPage), findsNothing);
+      expect(find.byKey(const Key('guest-shell')), findsOneWidget);
+      final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
+      expect(bar.selectedIndex, 2);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 30));
     });
   });
 

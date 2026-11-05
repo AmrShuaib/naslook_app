@@ -396,7 +396,7 @@ void main() {
   });
 
   testWidgets('editing an existing post skips the camera and saves through PATCH', (tester) async {
-    final post = MapPost.fromJson({'id': _pid, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'kind': 'image', 'mediaUrl': '/chat/media/old.jpg', 'caption': 'قديم', 'overlays': [], 'tag': 'offer', 'title': 'عرض', 'price': 1500, 'lat': 21.5, 'lng': 39.2, 'status': 'active', 'mine': true});
+    final post = MapPost.fromJson({'id': _pid, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'kind': 'image', 'mediaUrl': '/chat/media/old.jpg', 'caption': 'قديم', 'overlays': [], 'tag': 'offer', 'title': 'عرض', 'price': 1500, 'lat': 21.5, 'lng': 39.2, 'status': 'active', 'mine': true, 'audioUrl': '/chat/media/old.weba', 'audioSec': 9});
     final srv = await _pump(tester, edit: post);
     expect(find.byKey(const Key('shutter')), findsNothing);
     expect(find.byKey(const Key('tool-filter')), findsNothing, reason: 'لا فلاتر على صورة قائمة');
@@ -416,6 +416,9 @@ void main() {
     expect(body['tag'], 'offer');
     expect(body['price'], 1500);
     expect(body.containsKey('mediaUrl'), isFalse, reason: 'لم تتغير الصورة');
+    // بلا تسجيل جديد لا يُرسل الصوت فيبقى تسجيل اللحظة (كان null يحذفه في الخادم)
+    expect(body.containsKey('audioUrl'), isFalse);
+    expect(body.containsKey('audioSec'), isFalse);
   });
 
   test('the bake clamps the long side to 2048 and encodes JPEG', () async {

@@ -125,7 +125,8 @@ class _PublishPageState extends ConsumerState<PublishPage> {
             'caption': d.caption, 'overlays': [for (final o in d.overlays) o.toJson()], 'bg': d.board, 'placeName': d.placeName, 'ttlHours': d.ttlHours,
             'tag': d.tag, 'title': d.title, 'price': d.price.isEmpty ? null : ((double.tryParse(d.price.replaceAll('،', '.')) ?? 0) * 100).round(),
             'cta': d.ctaType == null || (d.ctaType != 'chat' && d.ctaValue.isEmpty) ? null : {'type': d.ctaType, 'value': d.ctaValue, 'label': d.ctaLabel},
-            'audioUrl': audioUrl ?? (v == null ? null : d.editing?.audioUrl), 'audioSec': v?.duration.inSeconds ?? (v == null ? null : d.editing?.audioSec),
+            // التعديل بلا تسجيل جديد لا يرسل الصوت أصلاً فيبقى تسجيل اللحظة كما هو؛ مسودة التعديل لا تحمل التسجيل القديم فإرسال null كان يحذفه
+            if (v != null || !editingExisting) ...{'audioUrl': audioUrl, 'audioSec': v?.duration.inSeconds},
           };
           final MapPost post;
           if (editingExisting) {
