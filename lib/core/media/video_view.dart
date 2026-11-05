@@ -18,8 +18,8 @@ class VideoView extends StatefulWidget {
   static Widget Function(String url, VideoViewController controller, {bool autoplay, bool loop, bool muted, String? poster})? controlledFactoryOverride;
 
   /// الويب: يجهّز عناصر <video> يُعاد استعمالها لمشغّل الصوت (العارض) وتُفتح عند كل لمسة، لأن سفاري iOS لا يقبل الصوت
-  /// إلا لعنصر شُغّل داخل لمسة. بلا أثر خارج الويب.
-  static void prepareSound() => impl.prepareSoundVideos();
+  /// إلا لعنصر شُغّل داخل لمسة. [primeNow] من داخل اللمسة التي تفتح العارض يفتح عناصر حرة الآن. بلا أثر خارج الويب.
+  static void prepareSound({bool primeNow = false}) => impl.prepareSoundVideos(primeNow: primeNow);
 
   final String url;
   final bool autoplay, loop, muted, controls;

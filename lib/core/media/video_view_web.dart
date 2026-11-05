@@ -65,7 +65,11 @@ void _onPointer(PointerEvent e) {
 }
 
 /// يجهّز المجمّع مبكراً (يُستدعى عند فتح العارض) حتى تفتح اللمسات التالية عناصره قبل أن تحتاجها اللحظات.
-void prepareSoundVideos() => _soundPool();
+/// [primeNow] من داخل اللمسة التي تفتح العارض: تلك اللمسة سبقت المجمّع فلم تفتح شيئاً، فنفتح الحر الآن مبدئياً.
+void prepareSoundVideos({bool primeNow = false}) {
+  final pool = _soundPool();
+  if (primeNow) pool.prime();
+}
 
 web.HTMLVideoElement _newPooledVideo() {
   final v = web.HTMLVideoElement();

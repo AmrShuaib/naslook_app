@@ -229,12 +229,16 @@ class _Wave extends StatelessWidget {
 }
 
 /// شريحة الطبقة الصوتية كما تظهر على اللوحة أو الصورة في المحرّر والعارض: زر تشغيل وموجة ومدة.
+/// مع [state] يقودها مشغّل خارجي (عارض اللحظات يشغّل الطبقة وحده حين تظهر اللحظة): تعرض حالته فقط بلا مشغّل خاص،
+/// واللمسة تُبلَّغ إلى [onTap].
 class VoiceChip extends StatefulWidget {
   final String? url;
   final VoiceLayer? layer;
   final int? seconds;
   final bool light;
-  const VoiceChip({super.key, this.url, this.layer, this.seconds, this.light = false});
+  final VoiceState? state;
+  final VoidCallback? onTap;
+  const VoiceChip({super.key, this.url, this.layer, this.seconds, this.light = false, this.state, this.onTap});
   @override
   State<VoiceChip> createState() => _VoiceChipState();
 }
@@ -252,6 +256,7 @@ class _VoiceChipState extends State<VoiceChip> {
   }
 
   void _toggle() {
+    if (widget.state != null) return widget.onTap?.call();
     var p = _player;
     if (p == null) {
       final l = widget.layer;
@@ -265,8 +270,9 @@ class _VoiceChipState extends State<VoiceChip> {
 
   @override
   Widget build(BuildContext context) {
+    final ps = widget.state ?? _ps;
     final sec = widget.layer?.duration.inSeconds ?? widget.seconds ?? 0;
-    final known = _ps.duration?.inMilliseconds ?? 0;
+    final known = ps.duration?.inMilliseconds ?? 0;
     final total = (known > 0 ? known : sec * 1000).toDouble();
     final fg = widget.light ? Colors.black : Colors.white;
     return Material(
@@ -279,9 +285,9 @@ class _VoiceChipState extends State<VoiceChip> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(6, 6, 12, 6),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(width: 34, height: 34, decoration: const BoxDecoration(shape: BoxShape.circle, color: Joy.primary), child: Icon(_ps.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 20)),
+            Container(width: 34, height: 34, decoration: const BoxDecoration(shape: BoxShape.circle, color: Joy.primary), child: Icon(ps.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 20)),
             const SizedBox(width: 8),
-            SizedBox(width: 110, child: _Wave(seed: sec * 1000 + (widget.url?.hashCode ?? 0) % 997, progress: total == 0 ? 0 : (_ps.position.inMilliseconds / total).clamp(0, 1))),
+            SizedBox(width: 110, child: _Wave(seed: sec * 1000 + (widget.url?.hashCode ?? 0) % 997, progress: total == 0 ? 0 : (ps.position.inMilliseconds / total).clamp(0, 1))),
             const SizedBox(width: 8),
             Text('${sec ~/ 60}:${(sec % 60).toString().padLeft(2, '0')}', style: TextStyle(color: fg, fontSize: 12.5, fontWeight: FontWeight.w700)),
           ]),

@@ -8,6 +8,11 @@ import 'voice_player.dart';
 
 VoicePlayer createPlayer() => _NativeVoicePlayer();
 
+/// خارج الويب لا قيد على الصوت بلا لمسة: مشغّل عادي
+VoicePlayer createMomentPlayer() => _NativeVoicePlayer();
+
+void prepareSoundAudio({bool primeNow = false}) {}
+
 /// مشغّل just_audio (iOS/Android/سطح المكتب).
 class _NativeVoicePlayer extends VoicePlayerBase {
   final AudioPlayer _p = AudioPlayer();
@@ -23,7 +28,7 @@ class _NativeVoicePlayer extends VoicePlayerBase {
       if (s.processingState == ProcessingState.completed) {
         _p.seek(Duration.zero);
         _p.pause();
-        emit(state.copyWith(playing: false, loading: false, position: Duration.zero));
+        emit(state.copyWith(playing: false, loading: false, ended: true, position: Duration.zero));
         return;
       }
       emit(state.copyWith(playing: s.playing, loading: s.processingState == ProcessingState.loading || s.processingState == ProcessingState.buffering));
@@ -57,7 +62,7 @@ class _NativeVoicePlayer extends VoicePlayerBase {
 
   @override
   Future<void> play() async {
-    emit(state.copyWith(loading: true, clearError: true));
+    emit(state.copyWith(loading: true, ended: false, clearError: true));
     try {
       await _loaded;
       // play() في just_audio لا يكتمل إلا بانتهاء التشغيل أو إيقافه، فلا ننتظره

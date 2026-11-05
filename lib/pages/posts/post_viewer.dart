@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -10,6 +12,7 @@ import '../../api/posts_api.dart';
 import '../../api/naslife_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/media/video_view.dart' show VideoSuspend, VideoView, VideoViewController;
+import '../../core/media/voice_player.dart';
 import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/posts_providers.dart';
@@ -28,6 +31,9 @@ import 'post_stats.dart';
 import 'post_media.dart';
 
 String _msg(Object e) => e is ApiException ? e.message : e.toString();
+
+/// صوت يقوده العارض: طبقة صوتية على صورة أو نص (الفيديو له صوته)
+bool _drivesVoice(MapPost p) => (p.kind == 'image' || p.kind == 'text') && (p.audioUrl ?? '').isNotEmpty;
 
 /// ينفّذ زر الإجراء في المنشور: رابط، واتساب، اتصال، دائرة تجارية، عرض في السوق، مراسلة صاحب المنشور.
 Future<void> runPostCta(BuildContext context, MapPost p) async {
@@ -68,11 +74,44 @@ class PostViewerPage extends ConsumerStatefulWidget {
 
   static Future<void> open(BuildContext context, List<MapPost> posts, {int index = 0}) {
     if (posts.isEmpty) return Future.value();
+    primeSound();
     return Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => PostViewerPage(posts: posts, initial: index.clamp(0, posts.length - 1))));
+  }
+
+  /// يُستدعى داخل اللمسة التي تفتح العارض وقبل أي انتظار (يستدعيه [open]): يفتح عنصر الصوت وعناصر الفيديو الآن، لأن سفاري
+  /// iOS لا يقبل التشغيل بالصوت بلا لمسة إلا لعنصر شُغّل داخل لمسة، فتبدأ أول لحظة بصوتها. بلا أثر خارج الويب.
+  static void primeSound() {
+    VoicePlayer.prepareSound(primeNow: true);
+    VideoView.prepareSound(primeNow: true);
   }
 
   @override
   ConsumerState<PostViewerPage> createState() => _PostViewerPageState();
+}
+
+/// حال الطبقة الصوتية (تعليق صوتي على صورة أو نص) في اللحظة المعروضة.
+enum MomentVoicePhase {
+  /// طُلب التشغيل ولم يبدأ (يُحمَّل): الشريط ينتظر، وبعد مهلة التحميل تعود اللحظة إلى مدتها العادية
+  loading,
+  /// يعمل (أو موقوف مؤقتاً لأن العارض مغطّى أو مضغوط): الشريط يتبع موضعه
+  playing,
+  /// أوقفه المستخدم بلمسة الشريحة: اللحظة تنتظر حتى يلمسها ثانية
+  paused,
+  /// رفض المتصفح التشغيل بلا لمسة: رقاقة «اضغط لتشغيل الصوت» واللحظة تنتظر
+  blocked,
+  /// انتهى التسجيل؛ الأقصر من سبع ثوانٍ تكمل لحظته مدتها العادية
+  ended,
+  /// تعذّر التحميل أو التشغيل: اللحظة تكمل مدتها العادية (7 ث)
+  failed,
+}
+
+/// ما تعرضه اللحظة النشطة من طبقتها الصوتية: الحال، وحالة المشغّل (الموجة والزر)، و[stalled] حين أوقفه المتصفح بنفسه.
+@immutable
+class MomentVoice {
+  final MomentVoicePhase phase;
+  final VoiceState state;
+  final bool stalled;
+  const MomentVoice({required this.phase, this.state = const VoiceState(), this.stalled = false});
 }
 
 class _PostViewerPageState extends ConsumerState<PostViewerPage> {
@@ -102,6 +141,30 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   /// انتهت اللحظة والعارض مغطّى: ننتقل حين يظهر بدل أن ننتقل أو نُغلق خلف ما فوقه
   bool _pendingNext = false;
 
+  // --- الطبقة الصوتية لصورة أو نص: تبدأ وحدها حين تظهر اللحظة، ومدة اللحظة مدة التسجيل (سبع ثوانٍ على الأقل) ---
+  /// أقصى انتظار لبدء التسجيل والعارض ظاهر، ثم تعود اللحظة إلى مدتها العادية
+  static const _voiceLoadMs = 8000;
+  /// توقف التشغيل بلا سبب منّا هذه المدة: المتصفح أوقفه (مكالمة، فصل السماعة) فتظهر «اضغط للمتابعة»
+  static const _voiceStallMs = 1000;
+  /// مشغّل واحد لجلسة العارض كلها يُغيَّر مصدره لكل لحظة: على الويب عنصر <audio> واحد يبقى مفتوحاً بعد أول لمسة
+  VoicePlayer? _voice;
+  StreamSubscription<VoiceState>? _voiceSub;
+  /// اللحظة التي يتبعها المشغّل؛ null حين لا طبقة صوتية للحظة المعروضة
+  String? _voiceFor;
+  MomentVoicePhase _vphase = MomentVoicePhase.loading;
+  /// يُزاد مع كل لحظة: نتيجة تشغيل متأخرة للحظة سابقة لا تغيّر الحالية
+  int _voiceGen = 0;
+  /// أوقفناه نحن (أو لم نبدأه) لأن العارض مغطّى أو مضغوط: يعود حين يزول السبب
+  bool _voiceHeld = false;
+  /// ما انتظرناه من التحميل والعارض ظاهر، وما توقف فيه التشغيل بلا سبب منّا
+  int _voiceWaited = 0, _voiceStalled = 0;
+  /// المدة التي يُقاس عليها الشريط الآن: مدة التسجيل وسبع ثوانٍ على الأقل
+  int _voiceTotal = _autoMs;
+  VoiceState _voiceLast = const VoiceState();
+  /// منذ آخر تبليغ بالموضع: المتصفح يبلّغ نحو أربع مرات في الثانية، فنقدّر ما بينها حتى يتحرك الشريط بسلاسة
+  final _voiceClock = Stopwatch();
+  final _voiceView = ValueNotifier<MomentVoice?>(null);
+
   /// مسار أو ورقة أو حوار فوق العارض (ومنها دعوة دخول الزائر)، أو فعل مفتوح منه، أو التطبيق مخفي
   bool get _covered => _holds > 0 || _hidden || !(_route?.isCurrent ?? true);
   bool get _frozen => _covered || _pressed;
@@ -111,6 +174,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     if (!mounted) return;
     final covered = _covered;
     _video?.setSuspended(covered, reason: VideoSuspend.viewer);
+    _syncVoice();
     if (!covered && _pendingNext) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _covered || !_pendingNext) return;
@@ -148,6 +212,8 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     super.initState();
     _life = AppLifecycleListener(onStateChange: _onLifecycle);
     VideoView.prepareSound();
+    // مجمّع عناصر الصوت من الآن: لمسات التنقل قبل أول لحظة بتسجيل تفتح عنصرها (العارض قد يُفتح بلا لمسة، من رابط)
+    VoicePlayer.prepareSound();
     _onShown();
   }
 
@@ -163,6 +229,10 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     _life.dispose();
     _auto?.cancel();
     _releaseVideo();
+    _voiceGen++;
+    _voiceSub?.cancel();
+    _voice?.dispose();
+    _voiceView.dispose();
     _ctl.dispose();
     super.dispose();
   }
@@ -181,11 +251,14 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     _pendingNext = false;
     progress = 0;
     final p = posts[index];
+    // تسجيل اللحظة السابقة يتوقف، وتسجيل هذه (إن وُجد) يبدأ وحده
+    final voiced = _voiceShow(p);
     if (p.kind == 'image' || p.kind == 'text') {
       _auto = Timer.periodic(const Duration(milliseconds: 50), (_) {
         if (!mounted) return;
         // كل نبضة تعيد قراءة التغطية فلا يفوتنا تغيّر لم يصلنا خبره
         _syncCovered();
+        if (voiced) return _voiceTick();
         if (_frozen) return;
         _timedStep();
       });
@@ -221,6 +294,189 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     if (progress < 1) return;
     _auto?.cancel();
     _next(auto: true);
+  }
+
+  // --- الطبقة الصوتية ---
+
+  /// يبدأ تسجيل اللحظة المعروضة بالمشغّل نفسه، أو يوقف تسجيل السابقة إن لم يكن لها تسجيل. يعيد هل للحظة تسجيل يقودها.
+  bool _voiceShow(MapPost p) {
+    _voiceGen++;
+    if (!_drivesVoice(p)) {
+      if (_voiceFor != null) {
+        _voiceFor = null;
+        _voice?.pause();
+        _voiceView.value = null;
+      }
+      return false;
+    }
+    final v = _voice ??= _newVoice();
+    _voiceFor = p.id;
+    _vphase = MomentVoicePhase.loading;
+    _voiceWaited = _voiceStalled = 0;
+    _voiceTotal = _autoMs;
+    _voiceLast = const VoiceState();
+    v.setSource(url: mediaUrl(p.audioUrl!));
+    // لحظة تُعرض والعارض مغطّى (حُذفت سابقتها من قائمة مفتوحة): تبدأ حين يظهر
+    _voiceHeld = _frozen;
+    if (!_voiceHeld) _voicePlay();
+    _publishVoice();
+    return true;
+  }
+
+  VoicePlayer _newVoice() {
+    final v = VoicePlayer.moment();
+    _voiceSub = v.changes.listen(_onVoice);
+    return v;
+  }
+
+  /// يشغّل التسجيل. play() يُستدعى قبل أي انتظار فيُحتسب داخل اللمسة إن جاء منها (رقاقة الصوت).
+  void _voicePlay() {
+    final v = _voice;
+    if (v == null || _voiceFor == null) return;
+    final gen = _voiceGen;
+    _voiceStalled = 0;
+    Future<void>.sync(v.play).then((_) {
+      if (!mounted || gen != _voiceGen) return;
+      // بدأ بعد أن غُطّي العارض أو ضُغط أو أوقفه المستخدم أو تعذّر: لا يُسمع خلف ما فوقه ولا فوق ما بعده
+      if (_voiceHeld || _vphase == MomentVoicePhase.paused || _vphase == MomentVoicePhase.failed) v.pause();
+    }, onError: (Object e) {
+      if (!mounted || gen != _voiceGen) return;
+      final why = '$e';
+      // إيقاف منّا قبل أن يبدأ، أو مصدر جديد: ليس رفضاً
+      if (why.contains('AbortError')) return;
+      if (why.contains('NotAllowedError')) {
+        // المتصفح يرفض الصوت بلا لمسة: اللحظة تنتظر لمسة الرقاقة بدل أن تمضي صامتة قبل أن يُسمع التسجيل
+        _vphase = MomentVoicePhase.blocked;
+        _publishVoice();
+      } else {
+        _voiceFail();
+      }
+    });
+  }
+
+  /// رفض الصوت بلا لمسة أو إيقاف قبل البدء: ليسا تعذّراً
+  static bool _refusal(Object? e) => '$e'.contains('NotAllowedError') || '$e'.contains('AbortError');
+
+  void _onVoice(VoiceState s) {
+    if (!mounted || _voiceFor == null) return;
+    if (s.position != _voiceLast.position || s.playing != _voiceLast.playing) {
+      _voiceClock
+        ..reset()
+        ..start();
+    }
+    _voiceLast = s;
+    switch (_vphase) {
+      case MomentVoicePhase.loading || MomentVoicePhase.blocked || MomentVoicePhase.playing:
+        if (s.ended) {
+          _voiceEnded();
+        } else if (s.playing) {
+          _vphase = MomentVoicePhase.playing;
+        } else if (s.error != null && !_refusal(s.error)) {
+          _voiceFail();
+        }
+      case MomentVoicePhase.paused || MomentVoicePhase.ended || MomentVoicePhase.failed:
+        break;
+    }
+    _publishVoice();
+  }
+
+  /// من الشريط المقاس على التسجيل إلى مدة اللحظة العادية: ما مضى من اللحظة يبقى كما هو بالمللي ثانية ([heard] على الأقل)
+  void _voiceToTimed({int heard = 0}) {
+    final at = math.max(progress * _voiceTotal, heard.toDouble());
+    _voiceTotal = _autoMs;
+    progress = (at / _autoMs).clamp(0.0, 1.0);
+  }
+
+  /// طول التسجيل كما بلّغه المشغّل، وإلا كما حُفظ مع اللحظة
+  int _voiceLength(VoiceState? s) {
+    final known = s?.duration?.inMilliseconds ?? 0;
+    return known > 0 ? known : (posts[index].audioSec ?? 0) * 1000;
+  }
+
+  /// انتهى التسجيل: إن مضت سبع ثوانٍ على الأقل ينتقل العارض الآن، وإلا تكمل اللحظة ما بقي من مدتها العادية.
+  /// ما سُمع هو طول التسجيل كله ولو فاتتنا تبليغات الموضع.
+  void _voiceEnded() {
+    _vphase = MomentVoicePhase.ended;
+    _voiceToTimed(heard: _voiceLength(_voice?.state));
+    if (progress < .98) return;
+    _auto?.cancel();
+    setState(() => progress = 1);
+    _next(auto: true);
+  }
+
+  /// تعذّر التسجيل: اللحظة تكمل مدتها العادية من حيث هي، ولا يبدأ صوت متأخر فوق ما بعدها.
+  void _voiceFail() {
+    if (_vphase == MomentVoicePhase.failed || _vphase == MomentVoicePhase.ended) return;
+    _vphase = MomentVoicePhase.failed;
+    _voiceToTimed();
+    _voice?.pause();
+    _publishVoice();
+  }
+
+  /// نبضة لحظة لها تسجيل: الشريط يتبع موضع التسجيل ولا يمتلئ قبل انتهائه؛ وبعد انتهائه أو تعذّره كالصورة.
+  void _voiceTick() {
+    switch (_vphase) {
+      case MomentVoicePhase.ended || MomentVoicePhase.failed:
+        if (!_frozen) _timedStep();
+      case MomentVoicePhase.blocked || MomentVoicePhase.paused:
+        break;
+      case MomentVoicePhase.loading:
+        if (_frozen) return;
+        _voiceWaited += 50;
+        if (_voiceWaited >= _voiceLoadMs) _voiceFail();
+      case MomentVoicePhase.playing:
+        final s = _voice?.state;
+        if (s == null) return;
+        final wasStalled = _voiceStalled >= _voiceStallMs;
+        _voiceStalled = !s.playing && !_frozen ? _voiceStalled + 50 : 0;
+        if (wasStalled != (_voiceStalled >= _voiceStallMs)) _publishVoice();
+        _voiceTotal = math.max(_autoMs, _voiceLength(s));
+        var pos = s.position.inMilliseconds;
+        if (s.playing) pos += _voiceClock.elapsedMilliseconds.clamp(0, 1500);
+        // لا يمتلئ قبل الانتهاء (المدة قد تكون أطول مما بُلّغ)، ولا يرجع بتصحيح التقدير
+        final f = math.min(pos / _voiceTotal, .995);
+        if (f > progress + .001) setState(() => progress = f);
+    }
+  }
+
+  /// يوقف التسجيل حين يُغطّى العارض أو يُضغط أو يختفي التطبيق، ويعيده حين يزول آخر سبب.
+  void _syncVoice() {
+    final v = _voice;
+    if (v == null || _voiceFor == null) return;
+    final hold = _frozen;
+    if (hold == _voiceHeld) return;
+    _voiceHeld = hold;
+    if (hold) {
+      v.pause();
+    } else if (_vphase == MomentVoicePhase.loading || _vphase == MomentVoicePhase.playing) {
+      _voicePlay();
+    }
+  }
+
+  /// لمسة شريحة الصوت أو رقاقته (داخل اللمسة): يشغّل المتوقف (رفض المتصفح، مقاطعة، إيقاف المستخدم)، ويوقف ما يعمل.
+  void _voiceTap() {
+    final v = _voice;
+    if (v == null || _voiceFor == null || _vphase == MomentVoicePhase.ended || _vphase == MomentVoicePhase.failed) return;
+    if (v.state.playing) {
+      _vphase = MomentVoicePhase.paused;
+      v.pause();
+    } else {
+      if (_vphase == MomentVoicePhase.blocked) {
+        _vphase = MomentVoicePhase.loading;
+        _voiceWaited = 0;
+      } else if (_vphase == MomentVoicePhase.paused) {
+        _vphase = MomentVoicePhase.playing;
+      }
+      _voicePlay();
+    }
+    _publishVoice();
+  }
+
+  void _publishVoice() {
+    if (!mounted) return;
+    _voiceView.value = _voiceFor == null
+        ? null
+        : MomentVoice(phase: _vphase, state: _voice?.state ?? const VoiceState(), stalled: _vphase == MomentVoicePhase.playing && _voiceStalled >= _voiceStallMs);
   }
 
   void _warmNext() {
@@ -444,6 +700,8 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
                   _syncCovered();
                 },
                 onHold: _hold,
+                voice: i == index ? _voiceView : null,
+                onVoiceTap: _voiceTap,
               ),
             )),
           ),
@@ -463,13 +721,18 @@ class PostView extends ConsumerWidget {
   final ValueChanged<bool>? onPress;
   /// فعل من عمود الأفعال بدأ أو انتهى (true ثم false دائماً بأزواج)
   final ValueChanged<bool>? onHold;
-  const PostView({super.key, required this.post, required this.active, required this.progress, required this.total, required this.position, required this.onPrev, required this.onNext, required this.onLike, this.onMenu, this.onPress, this.onHold});
+  /// الطبقة الصوتية للحظة النشطة كما يشغّلها العارض (null لغير النشطة): الشريحة تعرضها ولا تحتاج لمسة لتبدأ
+  final ValueListenable<MomentVoice?>? voice;
+  /// لمسة شريحة الصوت أو رقاقة «اضغط لتشغيل الصوت»
+  final VoidCallback? onVoiceTap;
+  const PostView({super.key, required this.post, required this.active, required this.progress, required this.total, required this.position, required this.onPrev, required this.onNext, required this.onLike, this.onMenu, this.onPress, this.onHold, this.voice, this.onVoiceTap});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final p = post;
     final rtl = Directionality.of(context) == TextDirection.rtl;
     final me = ref.watch(appStateProvider.select((s) => s.user?.id));
+    final voiced = _drivesVoice(p);
     return LayoutBuilder(builder: (context, box) {
       final w = (box.maxHeight * 9 / 16).clamp(200.0, box.maxWidth);
       return Stack(fit: StackFit.expand, children: [
@@ -482,8 +745,8 @@ class PostView extends ConsumerWidget {
               child: Stack(fit: StackFit.expand, children: [
                 PostMedia(kind: p.kind, url: p.mediaUrl, bg: p.bg, durationSec: p.durationSec, play: active),
                 IgnorePointer(child: OverlayCanvas(overlays: p.overlays, shadow: p.kind != 'text')),
-                // الطبقة الصوتية: تعليق صوتي على الصورة أو لوحة النص
-                if (p.audioUrl != null && p.audioUrl!.isNotEmpty) Positioned(bottom: 96, left: 0, right: 0, child: Center(child: VoiceChip(url: mediaUrl(p.audioUrl!), seconds: p.audioSec, light: p.kind == 'text' && colorFromHex(p.bg, Colors.white).computeLuminance() > .5))),
+                // الطبقة الصوتية: تعليق صوتي على الصورة أو لوحة النص، يشغّله العارض وحده والشريحة تعرض موجته وتقدّمه
+                if (p.audioUrl != null && p.audioUrl!.isNotEmpty) Positioned(bottom: 96, left: 0, right: 0, child: Center(child: _voiceChip(p))),
                 // مناطق النقر للتنقل (النصف الأعلى فقط حتى تبقى أدوات الفيديو والأزرار متاحة)
                 if (p.kind != 'video')
                   Positioned(
@@ -497,6 +760,8 @@ class PostView extends ConsumerWidget {
                 // اليسار الفعلي للسابقة واليمين للتالية)، والضغط المطوّل يسرّع أو يرجّع أو يوقف
                 else if (active)
                   Positioned.fill(child: MomentVideoGestures(controller: MomentPlayback.maybeOf(context), onLeftTap: onPrev, onRightTap: onNext)),
+                // المتصفح رفض الصوت بلا لمسة (اللحظة تنتظر)، أو أوقفه بنفسه: لمسة تشغّله داخل حدث اللمس
+                if (voiced && voice != null) Positioned(top: 76, left: 12, right: 12, child: _voicePrompt(context, voice!)),
               ]),
             ),
           ),
@@ -591,6 +856,46 @@ class PostView extends ConsumerWidget {
         ),
       ]);
     });
+  }
+
+  Widget _voiceChip(MapPost p) {
+    final url = mediaUrl(p.audioUrl!);
+    final light = p.kind == 'text' && colorFromHex(p.bg, Colors.white).computeLuminance() > .5;
+    // الفيديو بطبقة صوتية (نادر): الشريحة بمشغّلها الخاص كما كانت
+    if (!_drivesVoice(p)) return VoiceChip(url: url, seconds: p.audioSec, light: light);
+    final v = voice;
+    if (v == null) return VoiceChip(url: url, seconds: p.audioSec, light: light, state: const VoiceState());
+    return ValueListenableBuilder<MomentVoice?>(
+      valueListenable: v,
+      builder: (_, m, __) => VoiceChip(url: url, seconds: p.audioSec, light: light, state: m?.state ?? const VoiceState(), onTap: onVoiceTap),
+    );
+  }
+
+  Widget _voicePrompt(BuildContext context, ValueListenable<MomentVoice?> voice) {
+    final fade = (MediaQuery.maybeDisableAnimationsOf(context) ?? false) ? Duration.zero : const Duration(milliseconds: 160);
+    Widget chip(String text, Key key) => Center(
+          key: key,
+          child: Material(
+            color: Colors.black54,
+            shape: const StadiumBorder(),
+            child: InkWell(
+              customBorder: const StadiumBorder(),
+              onTap: onVoiceTap,
+              child: Padding(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7), child: Text(text, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5))),
+            ),
+          ),
+        );
+    return ValueListenableBuilder<MomentVoice?>(
+      valueListenable: voice,
+      builder: (_, m, __) => AnimatedSwitcher(
+        duration: fade,
+        child: m?.phase == MomentVoicePhase.blocked
+            ? chip('🔇 اضغط لتشغيل الصوت', const Key('moment-voice-unmute'))
+            : m != null && m.stalled
+                ? chip('▶ اضغط للمتابعة', const Key('moment-voice-resume'))
+                : const SizedBox.shrink(),
+      ),
+    );
   }
 
   static IconData _ctaIcon(String t) => switch (t) { 'whatsapp' => Icons.chat_rounded, 'call' => Icons.call_rounded, 'biz' => Icons.storefront_rounded, 'market' => Icons.shopping_bag_rounded, 'chat' => Icons.chat_bubble_outline_rounded, _ => Icons.open_in_new_rounded };

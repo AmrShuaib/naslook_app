@@ -248,4 +248,4 @@ class _NativeVideoState extends State<_NativeVideo> {
 }
 
 /// عناصر الصوت المفتوحة تخص سفاري على الويب فقط.
-void prepareSoundVideos() {}
+void prepareSoundVideos({bool primeNow = false}) {}
