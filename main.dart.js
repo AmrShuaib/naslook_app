@@ -194736,7 +194736,7 @@ n.k2=a.Q
 s=A.a([],t.CI)
 for(r=a.z,q=r.length,p=0;p<r.length;r.length===q||(0,A.I)(r),++p){o=r[p]
 s.push(new A.N4(o.a,new A.al(new A.b_(o.b,B.Z,B.T),$.af())))}B.d.I(n.CW,s)
-if(a.e==="pro")n.Q="pro"},
+n.Q=a.e==="pro"?"pro":"personal"},
 u(b1){var s,r,q,p,o,n,m,l,k,j,i,h,g,f,e,d,c,b,a,a0,a1,a2,a3,a4,a5=this,a6=null,a7="\u062c\u0627\u0631\u064d \u0627\u0644\u0631\u0641\u0639\u2026",a8=a5.gv(),a9=a8.H($.xx(),t.OA),b0=a8.H($.xv(),t.rz)
 if(!a5.db&&a9.gmb()){s=a9.gq()
 s.toString
@@ -195235,8 +195235,8 @@ break}if(B.d.k(p.ax,o)||p.ax.length>=8){s=1
 break}p.n(new A.bGa(p,o))
 case 1:return A.j(q,r)}})
 return A.k($async$LS,r)},
-xi(){var s=0,r=A.l(t.H),q,p=2,o=[],n=[],m=this,l,k,j,i,h,g,f,e,d,c,b,a,a0,a1,a2,a3,a4,a5,a6,a7,a8,a9
-var $async$xi=A.h(function(b0,b1){if(b0===1){o.push(b1)
+xi(){var s=0,r=A.l(t.H),q,p=2,o=[],n=[],m=this,l,k,j,i,h,g,f,e,d,c,b,a,a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,b0
+var $async$xi=A.h(function(b1,b2){if(b1===1){o.push(b2)
 s=p}for(;;)switch(s){case 0:m.n(new A.bGF(m))
 e=m.gv()
 l=e.C($.K(),t.L)
@@ -195244,28 +195244,29 @@ p=4
 d=t.N
 c=t.z
 s=7
-return A.c(A.Uo(l,A.a6(["bio",B.b.J(m.y.a.a),"skills",m.ax,"hobbies",m.ay,"lookingFor",m.ch,"accountType",m.Q],d,c)),$async$xi)
+return A.c(A.Uo(l,A.a6(["bio",B.b.J(m.y.a.a),"skills",m.ax,"hobbies",m.ay,"lookingFor",m.ch],d,c)),$async$xi)
 case 7:p=9
 b=B.b.J(m.w.a.a)
-a=m.Q==="pro"?B.b.J(m.z.a.a):""
-a0=m.as
-a1=a0==null
-if(a1)a0=""
-if(a1)a1=""
-else{a1=m.at
-if(a1==null)a1=""}a2=m.cx
+a=m.Q
+a0=a==="pro"?B.b.J(m.z.a.a):""
+a1=m.as
+a2=a1==null
+if(a2)a1=""
+if(a2)a2=""
+else{a2=m.at
+if(a2==null)a2=""}a3=m.cx
 k=A.a([],t.m0)
-for(a3=m.CW,a4=a3.length,a5=0;a5<a3.length;a3.length===a4||(0,A.I)(a3),++a5){j=a3[a5]
+for(a4=m.CW,a5=a4.length,a6=0;a6<a4.length;a4.length===a5||(0,A.I)(a4),++a6){j=a4[a6]
 if(B.b.J(j.b.a.a).length!==0)J.dJ(k,A.a6(["kind",j.a,"value",B.b.J(j.b.a.a)],d,d))}s=12
-return A.c(A.ajw(l,A.a6(["displayName",b,"jobTitle",a,"city",a0,"district",a1,"coverUrl",a2,"links",k],d,c)),$async$xi)
+return A.c(A.ajw(l,A.a6(["displayName",b,"accountType",a,"jobTitle",a0,"city",a1,"district",a2,"coverUrl",a3,"links",k],d,c)),$async$xi)
 case 12:p=4
 s=11
 break
 case 9:p=8
-a7=o.pop()
-k=A.U(a7)
+a8=o.pop()
+k=A.U(a8)
 if(k instanceof A.cx){i=k
-if(i.a!==404)throw a7}else throw a7
+if(i.a!==404)throw a8}else throw a8
 s=11
 break
 case 8:s=4
@@ -195290,7 +195291,7 @@ case 22:case 21:p=4
 s=18
 break
 case 16:p=15
-a8=o.pop()
+a9=o.pop()
 k=m.c
 if(k!=null)A.B(k,"\u062d\u064f\u0641\u0638 \u0627\u0644\u0645\u0644\u0641\u060c \u0644\u0643\u0646 \u062a\u063a\u064a\u064a\u0631 \u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645 \u063a\u064a\u0631 \u0645\u062a\u0627\u062d \u062d\u0627\u0644\u064a\u0627\u064b",!1)
 s=18
@@ -195314,8 +195315,8 @@ n.push(6)
 s=5
 break
 case 4:p=3
-a9=o.pop()
-f=A.U(a9)
+b0=o.pop()
+f=A.U(b0)
 k=m.c
 if(k!=null){if(f instanceof A.cx){e=f.c
 e=J.m(e==null?null:e.h(0,"error"),"bad-field")}else e=!1
