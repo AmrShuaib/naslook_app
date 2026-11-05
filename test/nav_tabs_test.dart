@@ -25,6 +25,7 @@ import 'package:naslook/core/nav_provider.dart';
 import 'package:naslook/core/platform.dart';
 import 'package:naslook/pages/chat/chats_page.dart';
 import 'package:naslook/pages/events/events_page.dart';
+import 'package:naslook/pages/home/row_deck.dart';
 import 'package:naslook/pages/map/map_page.dart';
 import 'package:naslook/pages/market/market_page.dart';
 import 'package:naslook/pages/myspace/myspace_page.dart';
@@ -62,6 +63,16 @@ Future<void> _loadAppFont() async {
   _fontLoaded = true;
 }
 
+var _displayLoaded = false;
+
+/// خط العناوين (شريط التطبيق) لقياس اتساع عنوان القسم كما على الجوال.
+Future<void> _loadDisplayFont() async {
+  if (_displayLoaded) return;
+  final bytes = File('fonts/BalooBhaijaan2-Bold.ttf').readAsBytesSync();
+  await (FontLoader(AppTheme.displayFont)..addFont(Future.value(ByteData.view(Uint8List.fromList(bytes).buffer)))).load();
+  _displayLoaded = true;
+}
+
 class _Srv {
   final calls = <String>[];
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
@@ -95,7 +106,8 @@ class _Srv {
 }
 
 /// [appTheme]: ثيم التطبيق بخطه الحقيقي (بعد [_loadAppFont]) لقياس الصفحات على عرض جوال فعلي.
-Future<(_Srv, ProviderContainer)> _pump(WidgetTester tester, {Widget home = const AuthGate(), bool signedIn = true, Size size = const Size(390, 844), bool appTheme = false}) async {
+/// [textScale]: التكبير الفعلي (بعد معامل MainApp وسقفه)؛ الافتراضي 1.25 مع ثيم التطبيق و1 بدونه.
+Future<(_Srv, ProviderContainer)> _pump(WidgetTester tester, {Widget home = const AuthGate(), bool signedIn = true, Size size = const Size(390, 844), bool appTheme = false, double? textScale}) async {
   SharedPreferences.setMockInitialValues({});
   DeviceLocation.override = () async => const LatLng(21.5433, 39.1728);
   addTearDown(() => DeviceLocation.override = null);
@@ -117,7 +129,7 @@ Future<(_Srv, ProviderContainer)> _pump(WidgetTester tester, {Widget home = cons
       theme: appTheme ? AppTheme.light : null,
       locale: const Locale('ar'),
       builder: (ctx, child) => MediaQuery(
-        data: MediaQuery.of(ctx).copyWith(textScaler: TextScaler.linear(appTheme ? 1.25 : 1)),
+        data: MediaQuery.of(ctx).copyWith(textScaler: TextScaler.linear(textScale ?? (appTheme ? 1.25 : 1))),
         child: Directionality(textDirection: TextDirection.rtl, child: child!),
       ),
       home: home,
@@ -246,6 +258,56 @@ void main() {
     await _tab(tester, 'market');
     expect(find.byType(MarketPage), findsOneWidget);
     expect(srv.calls.where((c) => c == 'GET /market/home').length, homes);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('with a home indicator (iOS 34 px) the FABs, the page ends and the map deck stay above the capsule', (tester) async {
+    await _loadAppFont();
+    // حافة الجهاز: Scaffold الغلاف يزيلها من viewPadding جسمه، فالحجز يُقرأ من سياق الغلاف لا من داخل القسم
+    tester.view.padding = tester.view.viewPadding = const FakeViewPadding(bottom: 34);
+    addTearDown(tester.view.reset);
+    await _pump(tester, appTheme: true, size: const Size(390, 844));
+    final capsuleTop = 844 - JoyNavBar.inset(tester.element(find.byType(HomeShell)));
+    expect(capsuleTop, 844 - JoyNavBar.height - JoyNavBar.margin - 34);
+    expect(tester.getRect(find.byType(JoyNavBar)).top, closeTo(capsuleTop, 0.5), reason: 'الشريط يُرسم بالمسافة نفسها');
+    // بطاقة الصف فوق الكبسولة بفراغها (6)
+    expect(tester.getRect(find.byType(RowDeck)).bottom, closeTo(capsuleTop - 6, 1), reason: 'بطاقة الخريطة');
+
+    await _tab(tester, 'market');
+    expect(tester.getRect(find.byType(MarketPage)).bottom, lessThanOrEqualTo(capsuleTop + 0.5));
+    expect(tester.getRect(find.byKey(const Key('market-sell'))).bottom, closeTo(capsuleTop - 16, 1));
+    await _tab(tester, 'events');
+    expect(tester.getRect(find.byType(EventsPage)).bottom, lessThanOrEqualTo(capsuleTop + 0.5));
+    expect(tester.getRect(find.byKey(const Key('events-create'))).bottom, closeTo(capsuleTop - 16, 1));
+    await _tab(tester, 'circles');
+    expect(tester.getRect(find.byKey(const Key('circles-fab'))).bottom, closeTo(capsuleTop - 16, 1));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the market bar in the shell keeps its full title at 360 px and 1.6x text («عروضي وطلباتي» moves into «المزيد»)', (tester) async {
+    await _loadAppFont();
+    await _loadDisplayFont();
+    await _pump(tester, appTheme: true, size: const Size(360, 844), textScale: 1.6);
+    await _tab(tester, 'market');
+    final title = find.descendant(of: find.byType(AppBar), matching: find.text('السوق'));
+    final p = tester.renderObject<RenderParagraph>(title);
+    // AppBar يحدّ تكبير العنوان عند 1.34؛ قبل النقل كان يأخذ المتاح كله (74 من 74) بلا أي هامش
+    final need = p.getMaxIntrinsicWidth(double.infinity);
+    expect(p.size.width, greaterThanOrEqualTo(need - 0.5), reason: 'العنوان كاملاً بلا نقاط قصّ');
+    expect(p.constraints.maxWidth, greaterThanOrEqualTo(need + 24), reason: 'متسع للعنوان لا يُستنفد بفرق قياس صغير');
+    expect(find.byKey(const Key('market-mine')), findsNothing, reason: 'في «المزيد» داخل الغلاف');
+    await tester.tap(find.byKey(const Key('market-more')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('market-mine')));
+    await _settle(tester);
+    final tabs = DefaultTabController.of(tester.element(find.byType(TabBarView)));
+    expect(tabs.index, 1, reason: 'عروضي وطلباتي على تبويب الطلبات كما كان الزر');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('outside the shell the market keeps «عروضي وطلباتي» as an icon', (tester) async {
+    await _pump(tester, home: const MarketPage(), size: const Size(900, 1400));
+    expect(find.byKey(const Key('market-mine')).hitTestable(), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 

@@ -288,10 +288,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     // الشارتان تُراقبان هنا لا في صفحاتهما، فتبقى مزوّداتهما حيّة ولو لم يُبنَ قسم المحادثات بعد
     final badge = ref.watch(unreadCountProvider);
     ref.watch(notifyUnreadProvider);
+    // مسافة الكبسولة من سياق الغلاف (فوق Scaffold) لأن جسمه فقد حافة الجهاز من viewPadding؛ تصل الأقسام عبر JoyNavInset
+    final navInset = JoyNavBar.inset(context);
     return Scaffold(
       extendBody: true,
       appBar: HomeShell.ownBar(current) ? null : AppBar(title: Text(navTabMeta(current)?.label ?? ''), actions: const [ShellBarActions()]),
-      body: IndexedStack(index: i, children: [
+      body: JoyNavInset(value: navInset, child: IndexedStack(index: i, children: [
         for (var x = 0; x < tabs.length; x++)
           if (!_visited.contains(x))
             const SizedBox.shrink()
@@ -302,10 +304,10 @@ class _HomeShellState extends ConsumerState<HomeShell> {
               enabled: x == i,
               child: TickerMode(
                 enabled: x == i,
-                child: tabs[x] == 'home' ? HomeShell.pageOf(tabs[x]) : _padded(tabs[x]),
+                child: tabs[x] == 'home' ? HomeShell.pageOf(tabs[x]) : _padded(tabs[x], navInset),
               ),
             ),
-      ]),
+      ])),
       bottomNavigationBar: JoyNavBar(
         tabs: tabs,
         index: i,
@@ -316,12 +318,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     );
   }
 
-  /// الصفحات غير الخريطة تُحجز أسفلها مساحة الكبسولة العائمة حتى لا يختفي محتواها خلفها. وتُزال حشوة الأسفل من
-  /// MediaQuery (سياق الجسم، لا سياق الغلاف حتى تبقى إزالة حشوة الأعلى تحت الشريط) لأن الحجز يشمل حافة الجهاز،
-  /// وإلا ارتفع الزر العائم فوق الكبسولة بقدرها مرة ثانية.
-  Widget _padded(String tab) => Builder(
+  /// الصفحات غير الخريطة تُحجز أسفلها مساحة الكبسولة العائمة [inset] (من سياق الغلاف، بحافة الجهاز) حتى لا يختفي
+  /// محتواها خلفها. وتُزال حشوة الأسفل من MediaQuery سياق الجسم (لا سياق الغلاف حتى تبقى إزالة حشوة الأعلى تحت
+  /// الشريط): Scaffold مع extendBody يجعلها ارتفاع الشريط، فكانت القوائم تُحشى به مرة ثانية فوق الحجز.
+  Widget _padded(String tab, double inset) => Builder(
         builder: (ctx) => Padding(
-          padding: EdgeInsets.only(bottom: JoyNavBar.inset(ctx)),
+          padding: EdgeInsets.only(bottom: inset),
           child: MediaQuery.removePadding(context: ctx, removeBottom: true, child: HomeShell.pageOf(tab)),
         ),
       );

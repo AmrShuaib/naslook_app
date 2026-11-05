@@ -32,7 +32,10 @@ class JoyNavBar extends StatelessWidget {
 
   /// المسافة التي تحجزها الكبسولة أسفل الصفحات حتى لا يختفي محتواها خلفها. نقرأ viewPadding لا padding لأن Scaffold
   /// مع extendBody يضيف ارتفاع الشريط إلى padding الجسم، فكان الصف يرتفع فوق الكبسولة بفراغ يظهر فيه نص الخريطة.
-  static double inset(BuildContext context) => height + margin + MediaQuery.viewPaddingOf(context).bottom;
+  /// داخل جسم الغلاف تُقرأ من [JoyNavInset]: Scaffold ذو الشريط السفلي يزيل حافة الجهاز من viewPadding جسمه، فكان
+  /// الحجز داخل الأقسام ينقص بقدرها (34 على آيفون) فيختفي الزر العائم وبطاقة الصف جزئياً خلف الكبسولة.
+  static double inset(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<JoyNavInset>()?.value ?? height + margin + MediaQuery.viewPaddingOf(context).bottom;
 
   @override
   Widget build(BuildContext context) {
@@ -100,6 +103,15 @@ class JoyNavBar extends StatelessWidget {
     }
     return (widths: widths, scale: scale);
   }
+}
+
+/// مسافة الكبسولة كما يحسبها الغلاف من سياقه فوق Scaffold (بحافة الجهاز)، يضعها حول أقسامه فيقرؤها
+/// [JoyNavBar.inset] في أي قسم بالقيمة نفسها التي يُرسم بها الشريط.
+class JoyNavInset extends InheritedWidget {
+  final double value;
+  const JoyNavInset({super.key, required this.value, required super.child});
+  @override
+  bool updateShouldNotify(JoyNavInset oldWidget) => oldWidget.value != value;
 }
 
 class _Item extends StatelessWidget {
