@@ -265,7 +265,7 @@ async function setup(app, opts) {
     if (r.kind !== "meet") return bad(reply, 400, "not-acceptable");
     if (requestOut(r).status !== "pending") return bad(reply, 409, "not-pending", { status: requestOut(r).status });
     const done = await finish(r.message_id, "accepted");
-    await notify(r.from_id, { kind: "meet_accepted", title: "وافق على الموعد", body: `${await nickOf(uid)} وافق على اللقاء ${r.when_text}${r.place ? " في " + r.place : ""}`, data: { peerId: uid, messageId: r.message_id } });
+    await notify(r.from_id, { kind: "meet_accepted", title: "وافق على الموعد", body: `${await nickOf(uid)} وافق على اللقاء ${r.when_text}${r.place ? " في " + r.place : ""}`, data: { peerId: uid, peerNickname: await nickOf(uid), messageId: r.message_id } });
     return { ok: true, request: requestOut(done) };
   });
 

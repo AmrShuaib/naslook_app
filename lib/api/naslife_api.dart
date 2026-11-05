@@ -9,8 +9,10 @@ class LoginEmailInfo {
   /// بوابة الدخول مفعّلة على الخادم (لا دخول قبل التأكيد)؟
   final bool required;
   final String? sendError;
-  const LoginEmailInfo({this.email, this.verified = false, this.mailConfigured = false, this.codePending = false, this.codeSent = false, this.required = false, this.sendError});
-  factory LoginEmailInfo.fromJson(Map m) => LoginEmailInfo(email: m['email']?.toString(), verified: m['verified'] == true, mailConfigured: m['mailConfigured'] == true, codePending: m['codePending'] == true, codeSent: m['codeSent'] == true, required: m['required'] == true, sendError: m['sendError']?.toString());
+  /// رمز جلسة جديد أصدرته النواة عند التحقق من كلمة السر (يُعتمد بدل القديم الذي أُلغي).
+  final String? token;
+  const LoginEmailInfo({this.email, this.verified = false, this.mailConfigured = false, this.codePending = false, this.codeSent = false, this.required = false, this.sendError, this.token});
+  factory LoginEmailInfo.fromJson(Map m) => LoginEmailInfo(email: m['email']?.toString(), verified: m['verified'] == true, mailConfigured: m['mailConfigured'] == true, codePending: m['codePending'] == true, codeSent: m['codeSent'] == true, required: m['required'] == true, sendError: m['sendError']?.toString(), token: (m['token']?.toString() ?? '').isEmpty ? null : m['token'].toString());
 }
 
 /// حالة الاستعادة بالبريد لحساب المستخدم (server/auth_alias.js).
@@ -39,8 +41,19 @@ extension NaslifeApi on ApiClient {
   /// بريد الدخول البديل (server/auth_alias.js): يُستخدم في شاشة الدخول بدل النك نيم بكلمة السر نفسها،
   /// ويُؤكَّد برمز من 6 أرقام يصل بالبريد عندما تكون خدمة البريد مفعّلة.
   Future<LoginEmailInfo> loginEmail() async => LoginEmailInfo.fromJson(await get('/me/login-email'));
-  Future<LoginEmailInfo> setLoginEmail(String email) async => LoginEmailInfo.fromJson(await put('/me/login-email', {'email': email.trim()}));
-  Future<void> clearLoginEmail() => delete('/me/login-email');
+  /// تغيير البريد المؤكد أو إضافة أول بريد يتطلب [password] (كلمة السر الحالية)؛ يُعتمد رمز الجلسة الجديد إن عاد.
+  Future<LoginEmailInfo> setLoginEmail(String email, {String? password}) async {
+    final i = LoginEmailInfo.fromJson(await put('/me/login-email', {'email': email.trim(), if (password != null) 'password': password}));
+    if (i.token != null) token = i.token;
+    return i;
+  }
+  /// إزالة البريد المؤكد تتطلب [password]؛ يعيد رمز الجلسة الجديد إن أصدرته النواة.
+  Future<String?> clearLoginEmail({String? password}) async {
+    final r = await delete('/me/login-email', body: {if (password != null) 'password': password});
+    final t = r['token']?.toString();
+    if (t != null && t.isNotEmpty) token = t;
+    return (t == null || t.isEmpty) ? null : t;
+  }
   /// يطلب (أو يعيد) إرسال رمز التأكيد؛ يعيد صلاحيته بالثواني.
   Future<int> sendLoginEmailCode() async { final r = await post('/me/login-email/send-code', const {}); return r['expiresIn'] is num ? (r['expiresIn'] as num).toInt() : 900; }
   Future<LoginEmailInfo> verifyLoginEmail(String code) async => LoginEmailInfo.fromJson(await post('/me/login-email/verify', {'code': code.trim()}));

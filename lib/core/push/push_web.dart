@@ -92,3 +92,59 @@ Future<void> pushResubscribeIfGranted(ApiClient api) async {
     if (sub != null) await api.pushSubscribe(_toMap(sub));
   } catch (_) {}
 }
+
+/// الاشتراك الحالي دون تسجيل عامل الخدمة ولا انتظار جاهزيته (serviceWorker.ready لا يعود أبداً إن لم يُسجَّل عامل):
+/// للخروج، حيث لا نريد تسجيل شيء ولا تعليق الخروج.
+Future<web.PushSubscription?> _existing() async {
+  if (!pushSupported()) return null;
+  final reg = await web.window.navigator.serviceWorker.getRegistration().toDart;
+  if (reg == null) return null;
+  return reg.pushManager.getSubscription().toDart;
+}
+
+/// الخروج أو تبديل الحساب: الاشتراك يخص المتصفح لا الحساب، فلو بقي لوصلت إشعارات الحساب السابق لمن يدخل بعده.
+/// يُلغى محلياً أولاً (الضمان: خدمة الدفع ترد 410 على أي إرسال لاحق فيحذفه الخادم بنفسه)، ثم يُحذف من الخادم برمز الجلسة
+/// ما دام صالحاً، بمهلة قصيرة وبأفضل جهد.
+Future<void> pushSignOut(ApiClient? api, {required Duration serverTimeout}) async {
+  web.PushSubscription? sub;
+  try {
+    sub = await _existing();
+  } catch (_) {
+    return;
+  }
+  if (sub == null) return;
+  final endpoint = sub.endpoint;
+  try {
+    await sub.unsubscribe().toDart;
+  } catch (_) {}
+  if (api == null || api.token == null) return;
+  try {
+    await api.pushUnsubscribe(endpoint).timeout(serverTimeout);
+  } catch (_) {}
+}
+
+var _listening = false;
+
+/// نقرة إشعار والتطبيق مفتوح: عامل الخدمة يرسل الرابط برسالة (وينتظر تأكيداً عبر المنفذ وإلا يعيد تحميل التبويب على الرابط)،
+/// وتغيّر الجزء إلى `#/n/<id>` (عامل خدمة أقدم ما زال يغيّر الرابط فقط) يُعامل بالطريقة نفسها. [onOpen] يعيد true إن عرف الرابط.
+void pushListenOpens(bool Function(String url) onOpen) {
+  if (_listening) return;
+  _listening = true;
+  try {
+    if (web.window.navigator.has('serviceWorker')) {
+      final sw = web.window.navigator.serviceWorker;
+      sw.addEventListener(
+          'message',
+          ((web.MessageEvent e) {
+            final d = e.data.dartify();
+            if (d is! Map || d['type'] != 'naslife:open') return;
+            final ok = onOpen(d['url']?.toString() ?? '');
+            final ports = e.ports.toDart;
+            if (ok && ports.isNotEmpty) ports.first.postMessage('ok'.toJS);
+          }).toJS);
+      // الرسائل من عامل الخدمة تنتظر في طابور حتى يبدأ استقبالها
+      sw.startMessages();
+    }
+    web.window.addEventListener('hashchange', ((web.Event _) { onOpen(web.window.location.href); }).toJS);
+  } catch (_) {}
+}

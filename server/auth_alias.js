@@ -10,6 +10,8 @@
 //   POST /auth/change-password {current, password}     تغيير كلمة السر (مسجَّل دخول) ويعيد جلسة جديدة
 //   GET/PUT /me/recovery                               حالة الاستعادة بالبريد وتفعيلها للحسابات القديمة بعبارتها وكلمة سرها
 //   GET/PUT/DELETE /me/login-email، POST /me/login-email/send-code، POST /me/login-email/verify، GET /auth/alias/status
+//   PUT/DELETE /me/login-email تطلب {password} (كلمة السر الحالية) متى كان للحساب بريد مؤكد أو لا بريد له أصلاً، وتصل البريدَ
+//   القديم المؤكد رسالةُ تنبيه بعد التغيير أو الإزالة (docs/email-verification.md «حماية تغيير بريد الدخول»).
 // التشفير بمفتاح في OPS/auth-key (يُنشأ عند أول إقلاع) أو NASLIFE_AUTH_KEY. الرموز 6 أرقام صالحة 15 دقيقة بخمس محاولات.
 // التسجيل: await app.register((await import("./auth_alias.js")).default, { pool, auth });
 import crypto from "node:crypto";
@@ -450,6 +452,57 @@ export default async function authAlias(app, opts = {}) {
     const uid = await me(req, reply); if (!uid) return;
     return info(await rowOf(uid));
   });
+  // ---- حماية بريد الدخول: بريد الدخول قناة استعادة كلمة السر (/auth/forgot يرسل الرمز إليه)، فمن يغيّره يملك الحساب.
+  // لذلك تغييره أو إزالته يتطلب كلمة السر الحالية، لا الجلسة وحدها (جوال مفتوح بيد غيرك). نتحقق منها عبر /login في النواة
+  // كما يفعل تغيير كلمة السر وحذف الحساب؛ ولا نستخدم رمزاً إلى البريد القديم لأن كلمة السر متاحة لكل حساب والنواة تتحقق منها.
+  // الاستثناء الوحيد: استبدال بريد **غير مؤكد** والبوابة مفعّلة (شاشة التأكيد بعد التسجيل تصحح بريداً خاطئاً بجلسة محفوظة
+  // ولا تملك كلمة السر)؛ البريد غير المؤكد لم يثبت ملكيته أحد فلا شيء يُحمى بعد، والحساب محجوب بالبوابة حتى يُؤكَّد.
+  const needsProof = (row) => !(row && !row.verified && gateOn());
+  const tokenOf = (req) => { const t = req.headers["x-token"]; if (t) return String(t); const a = String(req.headers.authorization ?? ""); return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : null; };
+  /// يتحقق من كلمة السر الحالية. النواة تصدر جلسة عند النجاح: نسلّمها للتطبيق ليعتمدها ونلغي جلسة الطلب القديمة، فيبقى
+  /// للجهاز جلسة واحدة صالحة أياً كان سلوك النواة مع الجلسات الأخرى (لو ألغينا الجديدة ونواة بجلسة واحدة لخرج المستخدم).
+  async function provePassword(req, uid, password) {
+    if (!password) return { code: 403, error: "password-required" };
+    if (limited("lemail:" + uid, 10, 15 * 60000) || limited("lemail-ip:" + ipOf(req), 30, 15 * 60000)) return { code: 429, error: "too-many-attempts" };
+    const nickname = await nickOf(uid);
+    if (!nickname) return { code: 404, error: "not-found" };
+    const l = await coreLogin(req, nickname, password);
+    if (l.statusCode !== 200) return { code: 403, error: "bad-password" };
+    const fresh = parseBody(l).token ?? null;
+    const old = tokenOf(req);
+    if (fresh && old && old !== fresh) await coreLogout(old);
+    return { ok: true, token: fresh };
+  }
+  const maskEmail = (e) => {
+    const [local = "", domain = ""] = String(e ?? "").split("@");
+    const dot = domain.lastIndexOf(".");
+    const host = dot > 0 ? domain.slice(0, dot) : domain, tld = dot > 0 ? domain.slice(dot) : "";
+    return `${local.slice(0, Math.min(2, Math.max(1, local.length - 1)))}***@${host.slice(0, 1)}***${tld}`;
+  };
+  const supportEmail = () => { const e = String(globalThis.naslifeSettings?.supportEmail ?? "").trim(); return EMAIL_RE.test(e.toLowerCase()) ? e : "support@naslife.app"; };
+  /// تنبيه إلى البريد القديم المؤكد بعد تغييره أو إزالته: إن لم يكن صاحبه من فعل ذلك يعرف فوراً ويتواصل مع الدعم.
+  /// لا يُرسل لبريد غير مؤكد (قد يكون بريد شخص آخر كُتب خطأً). فشل الإرسال لا يُفشل التغيير.
+  async function noticeOldEmail(oldRow, newEmail, nickname) {
+    if (!oldRow?.verified || !oldRow.alias || !mailOn()) return false;
+    try {
+      const svc = mailSvc();
+      let when; try { when = new Date().toLocaleString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh", dateStyle: "medium", timeStyle: "short" }); } catch { when = new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC"; }
+      const changed = !!newEmail;
+      const t = svc.template({
+        title: changed ? "تغيّر بريد الدخول لحسابك" : "أُزيل بريد الدخول من حسابك",
+        preheader: changed ? "لم يعد هذا البريد بريد الدخول لحسابك في ناس لايف." : "لم يعد لحسابك في ناس لايف بريد دخول.",
+        greeting: changed
+          ? `غُيّر بريد الدخول لحساب «${nickname}» من هذا البريد إلى ${maskEmail(newEmail)}. من الآن تصل رموز استعادة كلمة السر إلى البريد الجديد.`
+          : `أُزيل هذا البريد من حساب «${nickname}»، فلن تصل إليه رموز استعادة كلمة السر بعد الآن.`,
+        sections: [{ heading: "تفاصيل التغيير", rows: [["الحساب", nickname], ...(changed ? [["البريد الجديد", maskEmail(newEmail)]] : []), ["الوقت", when]] }],
+        note: `إن لم تكن أنت من فعل ذلك فراسلنا فوراً على ${supportEmail()} من هذا البريد، ولا تشارك كلمة سرك مع أحد. التغيير تطلّب كلمة سر الحساب، فغيّرها أيضاً إن استطعت الدخول.`,
+        reason: "وصلتك هذه الرسالة لأن هذا البريد كان بريد الدخول المؤكد لحساب في ناس لايف.",
+      });
+      await svc.send({ to: oldRow.alias, subject: changed ? "تنبيه: تغيّر بريد الدخول · ناس لايف" : "تنبيه: أُزيل بريد الدخول · ناس لايف", ...t, tag: "email-changed" });
+      return true;
+    } catch (e) { try { app.log.warn({ err: String(e?.message ?? e) }, "auth_alias: old-email notice failed"); } catch { /* ignore */ } return false; }
+  }
+
   app.put("/me/login-email", async (req, reply) => {
     const uid = await me(req, reply); if (!uid) return;
     const email = normEmail(req.body?.email);
@@ -458,19 +511,35 @@ export default async function authAlias(app, opts = {}) {
     if (taken && taken.user_id !== uid) return bad(reply, 409, "email-taken");
     const current = await rowOf(uid);
     if (current?.alias === email) return { ...info(current), codeSent: false };
+    let token = null;
+    if (needsProof(current)) {
+      const p = await provePassword(req, uid, String(req.body?.password ?? "").trim());
+      if (!p.ok) return bad(reply, p.code, p.error);
+      token = p.token;
+    }
     const nickname = (await nickOf(uid)) ?? "";
     await pool.query("DELETE FROM login_aliases WHERE user_id=$1", [uid]);
     await pool.query("INSERT INTO login_aliases(alias, user_id, nickname) VALUES($1,$2,$3)", [email, uid, nickname]);
+    const noticeSent = await noticeOldEmail(current, email, nickname || current?.nickname || "");
     let codeSent = false, sendError = null;
     if (mailOn()) { try { await sendVerifyCode(email); codeSent = true; } catch (e) { sendError = String(e?.message ?? e).slice(0, 200); } }
-    return { ...info(await rowOf(uid)), codeSent, ...(sendError ? { sendError } : {}) };
+    return { ...info(await rowOf(uid)), codeSent, noticeSent, ...(token ? { token } : {}), ...(sendError ? { sendError } : {}) };
   });
   app.delete("/me/login-email", async (req, reply) => {
     const uid = await me(req, reply); if (!uid) return;
+    const row = await rowOf(uid);
     // جلسة قائمة لحساب غير مؤكد لا تحذف بريدها لتصبح حساباً «قديماً» بلا بوابة
-    if (gateOn()) { const row = await rowOf(uid); if (row && !row.verified) return bad(reply, 403, "email-unverified"); }
+    if (gateOn() && row && !row.verified) return bad(reply, 403, "email-unverified");
+    if (!row) return { ok: true };
+    let token = null;
+    if (row.verified) {
+      const p = await provePassword(req, uid, String(req.body?.password ?? "").trim());
+      if (!p.ok) return bad(reply, p.code, p.error);
+      token = p.token;
+    }
     await pool.query("DELETE FROM login_aliases WHERE user_id=$1", [uid]);
-    return { ok: true };
+    const noticeSent = await noticeOldEmail(row, null, (await nickOf(uid)) ?? row.nickname ?? "");
+    return { ok: true, noticeSent, ...(token ? { token } : {}) };
   });
   /// إرسال رمز التأكيد (أو إعادته): مرة كل 60 ثانية.
   app.post("/me/login-email/send-code", async (req, reply) => {

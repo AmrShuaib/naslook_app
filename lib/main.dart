@@ -8,6 +8,7 @@ import 'app/app.dart';
 import 'core/media/audio_setup.dart';
 import 'core/media/video_view.dart';
 import 'core/media/voice_player.dart';
+import 'core/push/push_service.dart';
 import 'core/share/share_links.dart';
 import 'state/admin_providers.dart';
 import 'state/notify_providers.dart';
@@ -18,6 +19,9 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   captureAdminMode();
   capturePendingNotification();
+  // نقرة إشعار والتطبيق مفتوح (رسالة عامل الخدمة أو #/n/<id>): تُحفظ لتُفتح بعد الدخول، وHomeShell يفتحها فوراً إن كان ظاهراً
+  PushService.openRequests.listen((id) => pendingNotificationId = id);
+  PushService.listenForOpens();
   capturePendingLink();
   // جلسة الصوت على iOS/Android فقط (لا تعمل على الويب)؛ لا ننتظرها حتى لا تؤخر أول إطار
   unawaited(configureAudioSession());

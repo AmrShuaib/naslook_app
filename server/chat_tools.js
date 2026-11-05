@@ -5,6 +5,8 @@
 //   await app.register((await import("./chat_tools.js")).default, { pool, auth });
 // الملفات تُحفظ في CHAT_MEDIA_DIR (الافتراضي /opt/naslife/media/chat) بأسماء عشوائية غير قابلة للتخمين،
 // وتُقدَّم بلا مصادقة حتى تعمل في <img> و<audio> مباشرة؛ الحد الأقصى 30 ميغابايت.
+// خصوصية الوسائط (docs/chat.md «خصوصية الوسائط»): الصور تُنظَّف من Exif/XMP/GPS قبل الكتابة (server/media_meta.js)، وكل مسار
+// ffmpeg يحمل -map_metadata -1، والملفات القديمة يمشّطها تمشيط خلفي مرة واحدة (NASLIFE_MEDIA_SWEEP=0 يوقفه).
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { createReadStream, constants as fsConstants } from "node:fs";
@@ -236,14 +238,16 @@ async function setup(app, opts) {
     const audio = !a || a.codec_name === "aac" ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", LIGHT_VIDEO.audio];
     // HEVC في MP4 يحتاج الوسم hvc1 حتى يشغّله سفاري
     const tag = probe?.video?.codec_name === "hevc" ? ["-tag:v", "hvc1"] : [];
-    const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-c:v", "copy", ...tag, ...audio, "-movflags", "+faststart", out];
+    // -map_metadata -1: بلا وسوم الحاوية (الموقع ©xyz وISO6709 والعنوان)؛ التدوير يبقى لأنه بيانات جانبية للمسار في ffmpeg 6
+    const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "-1", "-sn", "-dn", "-c:v", "copy", ...tag, ...audio, "-movflags", "+faststart", out];
     try { await execFileP("ffmpeg", args, { timeout: 30000 }); }
     catch (e) { await fs.unlink(out).catch(() => {}); throw e; }
     await fs.unlink(inFile).catch(() => {});
     return out;
   }
-  async function fastPath(inFile, ext, probe, why) {
-    if (ext === "mp4" && await moovFirst(inFile)) { logger(`chat_tools: video kept as uploaded (${why})`); return inFile; }
+  // located: في الحاوية موقع (videoHasLocation)، فلا يبقى الملف كما رُفع بل يُعاد تغليفه بلا وسوم
+  async function fastPath(inFile, ext, probe, why, located = false) {
+    if (ext === "mp4" && !located && await moovFirst(inFile)) { logger(`chat_tools: video kept as uploaded (${why})`); return inFile; }
     try {
       const out = await remux(inFile, probe);
       logger(`chat_tools: video remuxed ${path.basename(out)} (${why})`);
@@ -253,37 +257,47 @@ async function setup(app, opts) {
       return inFile;
     }
   }
-  async function normalizeVideo(inFile, ext) {
+  async function normalizeVideo(inFile, ext, located = false) {
     const probe = await probeStreams(inFile);
     if (!probe.video) throw new Error("no video stream");
     const plan = videoArgs(probe, ext);
     if (plan.keep) {
-      if (await moovFirst(inFile)) return inFile;
-      return fastPath(inFile, ext, probe, "faststart");
+      if (!located && await moovFirst(inFile)) return inFile;
+      return fastPath(inFile, ext, probe, located ? "location" : "faststart", located);
     }
-    if (plan.copy) return fastPath(inFile, ext, probe, "copy");
+    if (plan.copy) return fastPath(inFile, ext, probe, "copy", located);
     // طابور ممتلئ: لا ننتظر حتى لا تتكدس ملفات 30 م.ب في الذاكرة ويتجاوز الطلب مهلة التطبيق
-    if (transcodeSlots.full && transcodeSlots.waiting >= ENC.queue) return fastPath(inFile, ext, probe, "queue-full");
+    if (transcodeSlots.full && transcodeSlots.waiting >= ENC.queue) return fastPath(inFile, ext, probe, "queue-full", located);
     const release = await transcodeSlots.acquire(ENC.waitMs);
-    if (!release) return fastPath(inFile, ext, probe, "queue-wait");
+    if (!release) return fastPath(inFile, ext, probe, "queue-wait", located);
     const out = newMp4(inFile);
     let ok = false;
     try {
-      const args = ["-y", "-hide_banner", "-loglevel", "error", ...threadArgs, "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", ...plan.args, ...threadArgs, "-movflags", "+faststart", out];
+      const args = ["-y", "-hide_banner", "-loglevel", "error", ...threadArgs, "-i", inFile, "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "-1", "-sn", "-dn", ...plan.args, ...threadArgs, "-movflags", "+faststart", out];
       await heavy(args, ENC.timeoutMs);
       ok = true;
     } catch (e) {
       await fs.unlink(out).catch(() => {});
       logger(`chat_tools: light video encode ${e?.killed ? "timed out" : "failed"}: ${e?.message || e}`);
     } finally { release(); }
-    if (!ok) return fastPath(inFile, ext, probe, "encode-failed");
+    if (!ok) return fastPath(inFile, ext, probe, "encode-failed", located);
     logger(`chat_tools: light video ${path.basename(out)} (${plan.reasons.join(",")})`);
     await fs.unlink(inFile).catch(() => {});
     return out;
   }
   async function transcodeAudio(inFile) {
     const out = inFile.replace(/\.[a-z0-9]+$/, ".m4a");
-    await execFileP("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-vn", "-ac", "1", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", out], { timeout: 120000 });
+    await execFileP("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-vn", "-map_metadata", "-1", "-ac", "1", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", out], { timeout: 120000 });
+    await fs.unlink(inFile).catch(() => {});
+    return out;
+  }
+  /// m4a وmp3 لا يُعاد ترميزهما، لكن وسومهما قد تحمل مكاناً (تطبيق المذكرات الصوتية في الآيفون يسمّي التسجيل باسم الشارع):
+  /// نسخ المسار الصوتي بلا ترميز وبلا وسوم (وبلا غلاف الألبوم). الفشل يُبقي الأصل.
+  async function stripAudioMeta(inFile, ext) {
+    const out = path.join(path.dirname(inFile), `${Date.now().toString(36)}-${crypto.randomBytes(12).toString("hex")}.${ext}`);
+    try {
+      await execFileP("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-i", inFile, "-map", "0:a:0", "-map_metadata", "-1", "-c:a", "copy", ...(ext === "m4a" ? ["-movflags", "+faststart"] : []), out], { timeout: 30000 });
+    } catch (e) { await fs.unlink(out).catch(() => {}); throw e; }
     await fs.unlink(inFile).catch(() => {});
     return out;
   }
@@ -331,6 +345,36 @@ async function setup(app, opts) {
     return job;
   }
   logger(MEDIA_DIR ? `chat_tools: media dir ${MEDIA_DIR}` : `chat_tools: NO writable media dir (${mediaErrors.join("; ")})`);
+  if (!ffmpeg) logger("chat_tools: without ffmpeg video and audio are stored as uploaded, metadata (location) included");
+
+  // ---- خصوصية الوسائط: منظّف الصور (جافاسكربت خالص). الاستيراد ديناميكي حتى لا يعطّل غيابُه الرفعَ كله.
+  let meta = null;
+  try { meta = await import("./media_meta.js"); globalThis.naslifeStripImageMeta = meta.stripImageMeta; }
+  catch (e) { logger(`chat_tools: media_meta unavailable, images stored with their metadata: ${e?.message || e}`); }
+  // تمشيط الصور الأقدم من هذا الإقلاع مرة واحدة: دفعات صغيرة بتوقف بينها، بعد دقيقتين من الإقلاع، والتقدّم في ملف حالة
+  const SW = opts.metaSweep ?? {};
+  const sweep = {
+    enabled: !!meta && !!MEDIA_DIR && process.env.NASLIFE_MEDIA_SWEEP !== "0" && SW.enabled !== false,
+    delayMs: intOpt(SW.delayMs ?? process.env.NASLIFE_MEDIA_SWEEP_DELAY_MS, 120000, 0),
+    batch: intOpt(SW.batch ?? process.env.NASLIFE_MEDIA_SWEEP_BATCH, 25, 1),
+    pauseMs: intOpt(SW.pauseMs ?? process.env.NASLIFE_MEDIA_SWEEP_PAUSE_MS, 2000, 0),
+    running: false, result: null, error: null,
+  };
+  if (sweep.enabled) {
+    const before = Date.now().toString(36); // ما رُفع بعد هذا الإقلاع نُظّف عند الرفع
+    const ac = new AbortController();
+    const timer = setTimeout(async () => {
+      sweep.running = true;
+      try {
+        const r = await meta.sweepMediaMeta({ dir: MEDIA_DIR, nameRe: NAME_RE, batch: sweep.batch, pauseMs: sweep.pauseMs, before, log: logger, signal: ac.signal });
+        sweep.result = r;
+        if (!r.skipped) logger(`chat_tools: media sweep ${r.done ? "done" : "paused"}: scanned ${r.scanned}, with location ${r.located}, stripped ${r.stripped}, failed ${r.failed}`);
+      } catch (e) { sweep.error = String(e?.message || e); logger(`chat_tools: media sweep failed: ${sweep.error}`); }
+      finally { sweep.running = false; }
+    }, sweep.delayMs);
+    timer.unref?.();
+    app.addHook("onClose", async () => { clearTimeout(timer); ac.abort(); });
+  }
 
   // ---- المصغّرات: نسخة JPEG بحد 480 بكسل للصور، وإطار من الثانية الأولى للفيديو. تُولَّد عند الرفع وعند أول طلب
   // (فتشمل الملفات القديمة)، وتُخزَّن في MEDIA_DIR/thumbs. إن تعذّر التوليد يُقدَّم الملف الأصلي.
@@ -353,7 +397,7 @@ async function setup(app, opts) {
       if (type.startsWith("video/")) args.push("-ss", "0.5");
       args.push("-i", src);
       if (type.startsWith("video/")) args.push("-frames:v", "1");
-      args.push("-vf", `scale='min(${THUMB_MAX},iw)':'min(${THUMB_MAX},ih)':force_original_aspect_ratio=decrease`, "-c:v", "mjpeg", "-q:v", "5", "-f", "image2", tmp);
+      args.push("-map_metadata", "-1", "-vf", `scale='min(${THUMB_MAX},iw)':'min(${THUMB_MAX},ih)':force_original_aspect_ratio=decrease`, "-c:v", "mjpeg", "-q:v", "5", "-f", "image2", tmp);
       try {
         await execFileP("ffmpeg", args, { timeout: 30000 });
         await fs.rename(tmp, out);
@@ -453,7 +497,7 @@ async function setup(app, opts) {
         if (!probe.video) throw new Error("no video stream");
         const problem = previewInputProblem(probe);
         if (problem) throw new Error(`input rejected: ${problem}`);
-        await heavy(["-y", "-hide_banner", "-loglevel", "error", ...threadArgs, "-i", src, "-map", "0:v:0", ...previewArgs(probe), ...threadArgs, tmp], PV.timeoutMs);
+        await heavy(["-y", "-hide_banner", "-loglevel", "error", ...threadArgs, "-i", src, "-map", "0:v:0", "-map_metadata", "-1", ...previewArgs(probe), ...threadArgs, tmp], PV.timeoutMs);
         await fs.rename(tmp, out);
         return { file: out };
       } catch (e) {
@@ -493,6 +537,8 @@ async function setup(app, opts) {
     return true;
   };
   app.get("/chat/status", async () => ({ ok: true, media: !!MEDIA_DIR, durable: !!MEDIA_DIR && !MEDIA_DIR.startsWith(os.tmpdir()), transcode: ffmpeg, thumbs: !!MEDIA_DIR && ffmpeg, peaks: !!MEDIA_DIR && ffmpeg, vpreview: !!MEDIA_DIR && ffmpeg, maxBytes: MAX_BYTES,
+    // خصوصية الوسائط: منظّف الصور وحالة تمشيط الملفات القديمة
+    metaStrip: !!meta, metaSweep: { enabled: sweep.enabled, running: sweep.running, error: sweep.error, ...(sweep.result ?? {}) },
     // حالة طابوري الترميز (للتحقق الحي من الضغط): الجاري والمنتظر والحدود
     encode: { running: transcodeSlots.running, waiting: transcodeSlots.waiting, slots: ENC.slots, queue: ENC.queue, timeoutMs: ENC.timeoutMs, nice: niceOk },
     previews: { running: previewSlots.running, waiting: previewSlots.waiting, slots: PV.slots, queue: PV.queue } }));
@@ -534,18 +580,32 @@ async function setup(app, opts) {
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) return bad(reply, 400, "empty");
     let name = `${Date.now().toString(36)}-${crypto.randomBytes(12).toString("hex")}.${ext}`;
     let file = path.join(MEDIA_DIR, name);
-    await fs.writeFile(file, req.body);
-    let size = req.body.length;
+    let body = req.body;
+    // الصور تُكتب بلا Exif/XMP/GPS (الصورة الصغيرة على الويب لا يُعاد ترميزها فتبقى إحداثيات الجهاز فيها)؛ الشك = الأصل مع سجل
+    if (meta && ct.startsWith("image/")) {
+      const r = meta.stripImageMeta(body);
+      if (r.error) logger(`chat_tools: image metadata kept for ${name} (${r.error})`);
+      else if (r.changed) body = r.buf;
+    }
+    // موقع في حاوية الفيديو: لا يبقى الملف كما رُفع حتى لو كان «خفيفاً»
+    const located = !!meta && ct.startsWith("video/") && meta.videoHasLocation(body);
+    await fs.writeFile(file, body);
+    let size = body.length;
     // الملف صار على القرص: نفلت الجسم (حتى 30 م.ب) فلا يبقى في الذاكرة طوال الانتظار في طابور الترميز
-    req.body = null;
+    req.body = null; body = null;
     if (ffmpeg && ct.startsWith("audio/") && ext !== "m4a" && ext !== "mp3") {
       try {
         file = await transcodeAudio(file);
         name = path.basename(file); ct = "audio/mp4"; size = (await fs.stat(file)).size;
       } catch (e) { logger(`chat_tools: transcode failed, keeping original: ${e?.message || e}`); }
+    } else if (ffmpeg && ct.startsWith("audio/")) {
+      try {
+        file = await stripAudioMeta(file, ext);
+        name = path.basename(file); size = (await fs.stat(file)).size;
+      } catch (e) { logger(`chat_tools: audio metadata strip failed, keeping original: ${e?.message || e}`); }
     } else if (ffmpeg && ct.startsWith("video/")) {
       try {
-        file = await normalizeVideo(file, ext);
+        file = await normalizeVideo(file, ext, located);
         // الطريق السريع قد يُبقي الأصل بامتداده (.mov أو .webm) حين تتعذر إعادة التغليف، فالنوع من الامتداد
         name = path.basename(file); ct = EXT_TYPE[name.split(".").pop()] || ct; size = (await fs.stat(file)).size;
       } catch (e) { logger(`chat_tools: video normalize failed, keeping original: ${e?.message || e}`); }
