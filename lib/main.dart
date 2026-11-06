@@ -22,6 +22,8 @@ void main() {
   // نقرة إشعار والتطبيق مفتوح (رسالة عامل الخدمة أو #/n/<id>): تُحفظ لتُفتح بعد الدخول، وHomeShell يفتحها فوراً إن كان ظاهراً
   PushService.openRequests.listen((id) => pendingNotificationId = id);
   PushService.listenForOpens();
+  // جلسة أُبطلت في مكان آخر يكتشفها الإقلاع: يُلغى اشتراك إشعارات ذلك الحساب على هذا المتصفح
+  PushService.watchSignOut();
   capturePendingLink();
   // جلسة الصوت على iOS/Android فقط (لا تعمل على الويب)؛ لا ننتظرها حتى لا تؤخر أول إطار
   unawaited(configureAudioSession());

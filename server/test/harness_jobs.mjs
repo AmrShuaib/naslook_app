@@ -285,10 +285,24 @@ const M5 = (await call('GET', '/jobs/inbox', { user: KHALID, expect: 200 })).ite
 check(!!M5, 'job card in the seeker inbox');
 const rep5 = (user, expect) => call('POST', '/safety/report', { body: { targetType: 'job', targetId: job5.id, reason: 'احتيال أو نصب: يطلب رسوم تسجيل' }, user, expect });
 check((await rep5(OWNER, 400)).error === 'own-content', 'the circle owner cannot report their own job');
+// فريق الدائرة: علامة team تخفي البلاغ في التطبيق، والخادم يرفض بلاغ عضو الفريق فلا يُحتسب في حد الإخفاء
+check((await call('GET', `/jobs/${job5.id}`, { user: OWNER, expect: 200 })).team === true && (await call('GET', `/jobs/${job5.id}`, { user: SARA, expect: 200 })).team === true, 'owner and hr member get team:true on the job');
+check((await call('GET', `/jobs/${job5.id}`, { user: NORA, expect: 200 })).team === undefined, 'an outsider gets no team flag');
+check((await rep5(SARA, 400)).error === 'own-content', 'an hr member cannot report their own circle job');
 check((await rep5(NORA, 200)).hidden === false && (await rep5(MAJED, 200)).hidden === false, 'two reports keep the job visible');
 const r3 = await rep5(KHALID, 200);
 check(r3.hidden === true && r3.reports === 3, 'third reporter auto-hides the job', JSON.stringify(r3));
 const hn = (await notes('job_review', OWNER)).filter((n) => n.data?.targetType === 'job');
+// مشرف البلاغات من فريق المنصة (reports.view) يفتح الوظيفة المخفية للقراءة فقط بلا عدّ مشاهدة؛ وبلا الصلاحية 404
+const savedTeamCan = globalThis.naslifeTeamCan;
+globalThis.naslifeTeamCan = async (u, perm) => u === MAJED && perm === 'reports.view';
+const views0 = (await pool.query('SELECT views FROM jobs WHERE id=$1', [job5.id])).rows[0].views;
+const modView = await call('GET', `/jobs/${job5.id}`, { user: MAJED, expect: 200 });
+await new Promise((r) => setTimeout(r, 50));
+check(modView.status === 'blocked' && Array.isArray(modView.questions) && modView.team === undefined, 'a team moderator with reports.view opens the hidden job', JSON.stringify([modView.status, modView.team]));
+check((await pool.query('SELECT views FROM jobs WHERE id=$1', [job5.id])).rows[0].views === views0, 'the moderator view is not counted');
+globalThis.naslifeTeamCan = savedTeamCan;
+await call('GET', `/jobs/${job5.id}`, { user: MAJED, expect: 404 });
 check(hn.length === 1 && hn[0].data.jobId === job5.id && hn[0].data.bizId === B && hn[0].data.manage === true && hn[0].title.includes('عرض وظيفي'), 'circle owner notified with a route to the jobs tab', JSON.stringify(hn[0]));
 check(!(await call('GET', '/jobs', { user: null, expect: 200 })).items.some((x) => x.id === job5.id), 'hidden job leaves the public list');
 check(!(await call('GET', `/biz/${B}/jobs`, { user: null, expect: 200 })).items.some((x) => x.id === job5.id), 'hidden job leaves the circle jobs list');
@@ -315,6 +329,26 @@ check(hd.changed === true && hd.status === 'hidden', 'admin can hide a job direc
 await call('POST', `/biz/${B}/manage/jobs/${job5.id}/pause`, { user: OWNER, expect: 409 });
 // إغلاق إداري لعرض مخفي يحوّله «مغلقاً» قابلاً لإعادة النشر، فيُرفض ويبقى القرار في طابور البلاغات
 await call('POST', `/adminapi/jobs/${job5.id}/close`, { user: ADMIN, expect: 409 });
+
+// ---- الدائرة المخفية بالإشراف (safety.js: hidden=true وactive=false): وظائفها خارج العام والمطابقة والصندوق حتى تُعاد
+const hb = await call('POST', `/adminapi/moderation/biz/${B}`, { body: { action: 'hide', note: 'دائرة وهمية' }, user: ADMIN, expect: 200 });
+check(hb.changed === true, 'admin hides the circle', JSON.stringify(hb));
+const job6 = await call('POST', `/biz/${B}/manage/jobs`, { body: { title: 'باريستا', description: 'باريستا لفرع الروضة بدوام كامل، خبرة في القهوة المختصة وخدمة الزبائن.', skills: ['قهوة مختصة', 'لاتيه آرت'], type: 'full', publish: true }, expect: 200 });
+check(job6.status === 'open' && job6.matched.sent === 0 && job6.matched.skipped === 'biz-hidden', 'a hidden circle publishes without matching', JSON.stringify(job6.matched));
+check(!(await call('GET', '/jobs', { user: null, expect: 200 })).items.some((x) => x.id === job6.id), 'jobs of a hidden circle leave the public list');
+check(!(await call('GET', `/biz/${B}/jobs`, { user: null, expect: 200 })).items.some((x) => x.id === job6.id), 'jobs of a hidden circle leave its jobs list');
+check(!(await call('GET', '/jobs/hiring', { user: null, expect: 200 })).items.some((x) => x.bizId === B), 'a hidden circle leaves the hiring chip');
+await call('GET', `/jobs/${job6.id}`, { user: NORA, expect: 404 });
+check((await call('GET', `/jobs/${job6.id}`, { user: OWNER, expect: 200 })).status === 'open', 'the hiring team still opens its job');
+await call('POST', `/jobs/${job6.id}/apply`, { user: NORA, expect: 404 });
+check((await call('POST', '/adminapi/jobs/sweep', { user: ADMIN, expect: 200 })).matched === 0, 'sweep does not match jobs of a hidden circle');
+await call('POST', `/adminapi/moderation/biz/${B}`, { body: { action: 'restore' }, user: ADMIN, expect: 200 });
+const sw6 = await call('POST', '/adminapi/jobs/sweep', { user: ADMIN, expect: 200 });
+check(sw6.matched >= 1 && (await call('GET', '/jobs', { user: null, expect: 200 })).items.some((x) => x.id === job6.id), 'restoring the circle brings its jobs back and the sweep matches them', JSON.stringify(sw6));
+check((await call('GET', '/jobs/inbox', { user: KHALID, expect: 200 })).items.some((i) => i.jobId === job6.id), 'card of the restored circle in the seeker inbox');
+await call('POST', `/adminapi/moderation/biz/${B}`, { body: { action: 'hide' }, user: ADMIN, expect: 200 });
+check(!(await call('GET', '/jobs/inbox', { user: KHALID, expect: 200 })).items.some((i) => i.jobId === job6.id), 'hiding the circle again removes its card from the inbox');
+await call('POST', `/adminapi/moderation/biz/${B}`, { body: { action: 'restore' }, user: ADMIN, expect: 200 });
 
 globalThis.naslifeSettings.jobsEnabled = false;
 await call('PUT', '/jobs/profile', { body: { titles: ['x'] }, user: MAJED, expect: 403 });

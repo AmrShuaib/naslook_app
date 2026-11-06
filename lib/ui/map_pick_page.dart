@@ -9,7 +9,7 @@ import '../state/app_state.dart';
 import 'widgets.dart';
 
 /// اختيار نقطة على الخريطة بملء الشاشة: ضغطة تضع الدبوس، و«موقعي» ينقله إلى موقع الجهاز، و«تأكيد الموقع» يعيده.
-/// نسخة عامة من منتقي معالج تسجيل الدوائر (register_circle_page.dart) لتستعمله الفعاليات وغيرها.
+/// منتقٍ واحد مشترك: معالج تسجيل الدوائر (register_circle_page.dart) وإنشاء الفعالية (event_create_page.dart)، حتى لا تتباعد نسختان.
 class MapPickPage extends ConsumerStatefulWidget {
   final LatLng initial;
   final String title;

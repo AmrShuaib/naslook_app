@@ -10,7 +10,7 @@
 //   POST /auth/change-password {current, password}     تغيير كلمة السر (مسجَّل دخول) ويعيد جلسة جديدة
 //   GET/PUT /me/recovery                               حالة الاستعادة بالبريد وتفعيلها للحسابات القديمة بعبارتها وكلمة سرها
 //   GET/PUT/DELETE /me/login-email، POST /me/login-email/send-code، POST /me/login-email/verify، GET /auth/alias/status
-//   PUT/DELETE /me/login-email تطلب {password} (كلمة السر الحالية) متى كان للحساب بريد مؤكد أو لا بريد له أصلاً، وتصل البريدَ
+//   PUT /me/login-email يتطلب {password} (كلمة السر الحالية) لأي تغيير في العنوان، وDELETE يتطلبها لإزالة بريد مؤكد، وتصل البريدَ
 //   القديم المؤكد رسالةُ تنبيه بعد التغيير أو الإزالة (docs/email-verification.md «حماية تغيير بريد الدخول»).
 // التشفير بمفتاح في OPS/auth-key (يُنشأ عند أول إقلاع) أو NASLIFE_AUTH_KEY. الرموز 6 أرقام صالحة 15 دقيقة بخمس محاولات.
 // التسجيل: await app.register((await import("./auth_alias.js")).default, { pool, auth });
@@ -455,9 +455,8 @@ export default async function authAlias(app, opts = {}) {
   // ---- حماية بريد الدخول: بريد الدخول قناة استعادة كلمة السر (/auth/forgot يرسل الرمز إليه)، فمن يغيّره يملك الحساب.
   // لذلك تغييره أو إزالته يتطلب كلمة السر الحالية، لا الجلسة وحدها (جوال مفتوح بيد غيرك). نتحقق منها عبر /login في النواة
   // كما يفعل تغيير كلمة السر وحذف الحساب؛ ولا نستخدم رمزاً إلى البريد القديم لأن كلمة السر متاحة لكل حساب والنواة تتحقق منها.
-  // الاستثناء الوحيد: استبدال بريد **غير مؤكد** والبوابة مفعّلة (شاشة التأكيد بعد التسجيل تصحح بريداً خاطئاً بجلسة محفوظة
-  // ولا تملك كلمة السر)؛ البريد غير المؤكد لم يثبت ملكيته أحد فلا شيء يُحمى بعد، والحساب محجوب بالبوابة حتى يُؤكَّد.
-  const needsProof = (row) => !(row && !row.verified && gateOn());
+  // بلا استثناء للبريد غير المؤكد: الجلسة تبقى صالحة على الخادم بعد تغيير صحيح (البوابة تحجب الدخول لا الجلسات القائمة)،
+  // و/auth/forgot يرسل رمز الاستعادة لأي بريد مسجّل مؤكداً كان أم لا، فاستبداله بالجلسة وحدها كان يكفي للاستيلاء على الحساب.
   const tokenOf = (req) => { const t = req.headers["x-token"]; if (t) return String(t); const a = String(req.headers.authorization ?? ""); return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : null; };
   /// يتحقق من كلمة السر الحالية عبر /login في النواة. النواة تصدر جلسة عند النجاح: تُسلَّم للتطبيق ليعتمدها وتُلغى جلسة الطلب
   /// القديمة **بعد** نجاح التغيير (withProof)، فيبقى للجهاز جلسة واحدة صالحة أياً كان سلوك النواة مع الجلسات الأخرى
@@ -530,19 +529,16 @@ export default async function authAlias(app, opts = {}) {
     if (taken && taken.user_id !== uid) return bad(reply, 409, "email-taken");
     const current = await rowOf(uid);
     if (current?.alias === email) return { ...info(current), codeSent: false };
-    let proof = null;
-    if (needsProof(current)) {
-      // كلمة السر تُقص كما يفعل التطبيق عند الدخول (lib/api/client.dart)، فالتي تُدخل بها هي التي تُقبل هنا
-      proof = await provePassword(req, uid, String(req.body?.password ?? "").trim());
-      if (!proof.ok) return bad(reply, proof.code, proof.error);
-    }
+    // كلمة السر تُقص كما يفعل التطبيق عند الدخول (lib/api/client.dart)، فالتي تُدخل بها هي التي تُقبل هنا
+    const proof = await provePassword(req, uid, String(req.body?.password ?? "").trim());
+    if (!proof.ok) return bad(reply, proof.code, proof.error);
     const nickname = (await nickOf(uid)) ?? current?.nickname ?? "";
     try { await withProof(proof, () => replaceAlias(uid, email, nickname)); }
     catch (e) { if (e?.code === "23505") return bad(reply, 409, "email-taken"); throw e; }
     const noticeSent = await noticeOldEmail(current, email, nickname);
     let codeSent = false, sendError = null;
     if (mailOn()) { try { await sendVerifyCode(email); codeSent = true; } catch (e) { sendError = String(e?.message ?? e).slice(0, 200); } }
-    return { ...info(await rowOf(uid)), codeSent, noticeSent, ...(proof?.token ? { token: proof.token } : {}), ...(sendError ? { sendError } : {}) };
+    return { ...info(await rowOf(uid)), codeSent, noticeSent, ...(proof.token ? { token: proof.token } : {}), ...(sendError ? { sendError } : {}) };
   });
   app.delete("/me/login-email", async (req, reply) => {
     const uid = await me(req, reply); if (!uid) return;

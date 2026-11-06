@@ -6,7 +6,7 @@
 // الملفات تُحفظ في CHAT_MEDIA_DIR (الافتراضي /opt/naslife/media/chat) بأسماء عشوائية غير قابلة للتخمين،
 // وتُقدَّم بلا مصادقة حتى تعمل في <img> و<audio> مباشرة؛ الحد الأقصى 30 ميغابايت.
 // خصوصية الوسائط (docs/chat.md «خصوصية الوسائط»): الصور تُنظَّف من Exif/XMP/GPS قبل الكتابة (server/media_meta.js)، وكل مسار
-// ffmpeg يحمل -map_metadata -1، والملفات القديمة يمشّطها تمشيط خلفي مرة واحدة (NASLIFE_MEDIA_SWEEP=0 يوقفه).
+// ffmpeg يحمل -map_metadata -1، والملفات القديمة (صور، ومع ffmpeg فيديو وصوت) يمشّطها تمشيط خلفي مرة واحدة (NASLIFE_MEDIA_SWEEP=0 يوقفه).
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { createReadStream, constants as fsConstants } from "node:fs";
@@ -351,7 +351,8 @@ async function setup(app, opts) {
   let meta = null;
   try { meta = await import("./media_meta.js"); globalThis.naslifeStripImageMeta = meta.stripImageMeta; }
   catch (e) { logger(`chat_tools: media_meta unavailable, images stored with their metadata: ${e?.message || e}`); }
-  // تمشيط الصور الأقدم من هذا الإقلاع مرة واحدة: دفعات صغيرة بتوقف بينها، بعد دقيقتين من الإقلاع، والتقدّم في ملف حالة
+  // تمشيط الوسائط الأقدم من هذا الإقلاع مرة واحدة (الصور، ومع ffmpeg الفيديو والصوت): دفعات صغيرة بتوقف بينها، بعد دقيقتين
+  // من الإقلاع، والتقدّم في ملف حالة
   const SW = opts.metaSweep ?? {};
   const sweep = {
     enabled: !!meta && !!MEDIA_DIR && process.env.NASLIFE_MEDIA_SWEEP !== "0" && SW.enabled !== false,
@@ -360,21 +361,7 @@ async function setup(app, opts) {
     pauseMs: intOpt(SW.pauseMs ?? process.env.NASLIFE_MEDIA_SWEEP_PAUSE_MS, 2000, 0),
     running: false, result: null, error: null,
   };
-  if (sweep.enabled) {
-    const before = Date.now().toString(36); // ما رُفع بعد هذا الإقلاع نُظّف عند الرفع
-    const ac = new AbortController();
-    const timer = setTimeout(async () => {
-      sweep.running = true;
-      try {
-        const r = await meta.sweepMediaMeta({ dir: MEDIA_DIR, nameRe: NAME_RE, batch: sweep.batch, pauseMs: sweep.pauseMs, before, log: logger, signal: ac.signal });
-        sweep.result = r;
-        if (!r.skipped) logger(`chat_tools: media sweep ${r.done ? "done" : "paused"}: scanned ${r.scanned}, with location ${r.located}, stripped ${r.stripped}, failed ${r.failed}`);
-      } catch (e) { sweep.error = String(e?.message || e); logger(`chat_tools: media sweep failed: ${sweep.error}`); }
-      finally { sweep.running = false; }
-    }, sweep.delayMs);
-    timer.unref?.();
-    app.addHook("onClose", async () => { clearTimeout(timer); ac.abort(); });
-  }
+  // الجدولة بعد قسم المعاينات (أدناه): تمشيط الفيديو يمحو معاينته المخزّنة
 
   // ---- المصغّرات: نسخة JPEG بحد 480 بكسل للصور، وإطار من الثانية الأولى للفيديو. تُولَّد عند الرفع وعند أول طلب
   // (فتشمل الملفات القديمة)، وتُخزَّن في MEDIA_DIR/thumbs. إن تعذّر التوليد يُقدَّم الملف الأصلي.
@@ -521,6 +508,52 @@ async function setup(app, opts) {
     if (!r.file) return reply.code(404).header("cache-control", "public, max-age=3600").send({ error: "not-found" });
     return serveRange(req, reply, r.file, "video/mp4");
   });
+
+  // ---- تمشيط الفيديو والصوت القديمين: قبل -map_metadata -1 كان ffmpeg ينسخ وسوم الحاوية، والفيديو الخفيف والـ m4a/mp3 تبقى كما
+  // رُفعت. الفيديو يُعاد تغليفه (-c copy) متى حمل موقعاً كما عند الرفع، والصوت متى حمل أي وسم غير تقني (العنوان قد يكون اسم الشارع).
+  const AV_VIDEO = new Set(["mp4", "mov", "m4v", "3gp"]);
+  const AV_FORMAT = { mp4: "mp4", m4v: "mp4", mov: "mov", "3gp": "3gp", m4a: "ipod", mp3: "mp3" };
+  const TECH_TAGS = new Set(["major_brand", "minor_version", "compatible_brands", "encoder", "handler_name", "vendor_id", "language"]);
+  const avSweep = {
+    async located(file, ext) {
+      if (AV_VIDEO.has(ext)) return meta.videoHasLocation(await fs.readFile(file));
+      const { stdout } = await execFileP("ffprobe", ["-v", "error", "-show_entries", "format_tags:stream_tags", "-of", "json", file], { timeout: 20000 });
+      const j = JSON.parse(stdout || "{}");
+      return [...Object.keys(j.format?.tags ?? {}), ...(j.streams ?? []).flatMap((x) => Object.keys(x.tags ?? {}))].some((k) => !TECH_TAGS.has(k.toLowerCase()));
+    },
+    // الاسم المؤقت بلا امتداد، فالحاوية تُسمّى بـ -f؛ الحاوية نفسها تبقى (الرابط والنوع لا يتغيران)
+    async strip(src, dst, ext) {
+      if (AV_VIDEO.has(ext)) {
+        const probe = await probeStreams(src);
+        if (!probe.video) throw new Error("no video stream");
+        const tag = probe.video.codec_name === "hevc" && ext !== "3gp" ? ["-tag:v", "hvc1"] : [];
+        await heavy(["-y", "-hide_banner", "-loglevel", "error", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "-1", "-sn", "-dn", "-c", "copy", ...tag, "-movflags", "+faststart", "-f", AV_FORMAT[ext], dst], 60000);
+      } else {
+        await heavy(["-y", "-hide_banner", "-loglevel", "error", "-i", src, "-map", "0:a:0", "-map_metadata", "-1", "-c:a", "copy", ...(ext === "m4a" ? ["-movflags", "+faststart"] : []), "-f", AV_FORMAT[ext], dst], 60000);
+      }
+    },
+    async forget(name) {
+      if (!PREVIEW_DIR) return;
+      await fs.unlink(previewPath(name)).catch(() => {});
+      await fs.unlink(failPath(name)).catch(() => {});
+      previewFailedAt.delete(name);
+    },
+  };
+  if (sweep.enabled) {
+    const before = Date.now().toString(36); // ما رُفع بعد هذا الإقلاع نُظّف عند الرفع
+    const ac = new AbortController();
+    const timer = setTimeout(async () => {
+      sweep.running = true;
+      try {
+        const r = await meta.sweepMediaMeta({ dir: MEDIA_DIR, nameRe: NAME_RE, batch: sweep.batch, pauseMs: sweep.pauseMs, before, log: logger, signal: ac.signal, av: ffmpeg ? avSweep : null });
+        sweep.result = r;
+        if (!r.skipped) logger(`chat_tools: media sweep ${r.done ? "done" : "paused"}: scanned ${r.scanned}, with location ${r.located}, stripped ${r.stripped}, failed ${r.failed}`);
+      } catch (e) { sweep.error = String(e?.message || e); logger(`chat_tools: media sweep failed: ${sweep.error}`); }
+      finally { sweep.running = false; }
+    }, sweep.delayMs);
+    timer.unref?.();
+    app.addHook("onClose", async () => { clearTimeout(timer); ac.abort(); });
+  }
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error) => reply.code(code).send({ error });

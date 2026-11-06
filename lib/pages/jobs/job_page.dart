@@ -100,8 +100,9 @@ class _JobPageState extends ConsumerState<JobPage> {
         title: const Text('الوظيفة'),
         actions: [
           if (job != null) IconButton(key: const Key('job-share'), tooltip: 'مشاركة', icon: const Icon(Icons.ios_share_rounded), onPressed: () => _share(job)),
-          // البلاغ (نوع job في server/safety.js): عند بلوغ الحد تُخفى الوظيفة من القوائم والمطابقة حتى تراجعها الإدارة
-          if (job != null)
+          // البلاغ (نوع job في server/safety.js): عند بلوغ الحد تُخفى الوظيفة من القوائم والمطابقة حتى تراجعها الإدارة؛
+          // ولا يظهر لفريق الدائرة (الخادم يرفض بلاغه عن عرض دائرته)
+          if (job != null && !job.team)
             ReportMenuButton(
               type: 'job', id: job.id, keyPrefix: 'job-report', reportLabel: 'إبلاغ عن الوظيفة', iconSize: 22, color: Joy.text,
               onReported: (r) { if (r.hidden) invalidatePublicJobs(ref, jobId: job.id, bizId: job.bizId); },

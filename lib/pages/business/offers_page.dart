@@ -17,7 +17,7 @@ import 'business_page.dart' show dayLabel, shortDate, bizErrText, openBusiness;
 /// مستويات تنبيه العضو: كل العروض (الافتراضي) أو بلا تنبيهات. تنبيهات القرب مؤجلة، فالمستوى القديم «near» يُعرض «كل العروض»
 /// لأن الخادم يرسل له كل العروض (server/offers.js).
 const notifyLevels = [
-  ('all', 'كل العروض', 'يصلك تنبيه بكل عرض أو خبر جديد من هذه الدائرة، تنبيه واحد في اليوم على الأكثر', Icons.notifications_active_outlined),
+  ('all', 'كل العروض', 'يصلك تنبيه بالعروض والأخبار الجديدة من هذه الدائرة، تنبيه واحد في اليوم على الأكثر', Icons.notifications_active_outlined),
   ('none', 'بلا تنبيهات', 'تشاهد العروض بنفسك في الدائرة ومحفظتك', Icons.notifications_off_outlined),
 ];
 

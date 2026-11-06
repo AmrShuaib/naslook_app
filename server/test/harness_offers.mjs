@@ -9,7 +9,7 @@ const check = (c, l, extra = '') => { if (!c) fails++; console.log((c ? 'OK  ' :
 check(TEMPLATES.length === 6 && TEMPLATES.some((t) => t.id === 'here_now' && t.kind === 'checkin'), 'templates exported');
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
-await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara'),('SA0000003','khalid'),('SA0000004','nora'),('SA0000005','layla'),('SA0000006','omar') ON CONFLICT DO NOTHING");
+await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara'),('SA0000003','khalid'),('SA0000004','nora'),('SA0000005','fahad'),('SA0000006','lina') ON CONFLICT DO NOTHING");
 for (const sql of ['DROP TABLE IF EXISTS biz_offers, biz_offer_uses, biz_offer_grants, biz_member_prefs, biz_offer_views', "DELETE FROM biz_orders WHERE biz_id LIKE 'off-%'", "DELETE FROM biz_items WHERE biz_id LIKE 'off-%'", "DELETE FROM biz_follows WHERE biz_id LIKE 'off-%'", "DELETE FROM biz_posts WHERE biz_id LIKE 'off-%'", "DELETE FROM biz WHERE id LIKE 'off-%'", 'DELETE FROM app_notifications', "UPDATE wallet_accounts SET balance=0 WHERE user_id IN ('SA0000002','SA0000003','SA0000004')"]) { try { await pool.query(sql); } catch { /* first run */ } }
 // جدول التفضيلات بمخطط ما قبل نوفمبر 2026 (الافتراضي near): الإضافة تغيّر الافتراضي إلى all عند الإقلاع
 await pool.query("CREATE TABLE biz_member_prefs (biz_id TEXT NOT NULL, user_id TEXT NOT NULL, notify TEXT NOT NULL DEFAULT 'near', last_notified_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (biz_id, user_id))");
@@ -28,7 +28,7 @@ const call = async (method, url, { body = {}, user = 'SA0000001', expect } = {})
   return j;
 };
 const notes = async (kind, user) => (await pool.query("SELECT user_id, title, body, data FROM app_notifications WHERE kind=$1 AND user_id=$2 ORDER BY created_at", [kind, user])).rows;
-const OWNER = 'SA0000001', SARA = 'SA0000002', KHALID = 'SA0000003', NORA = 'SA0000004', LAYLA = 'SA0000005', OMAR = 'SA0000006';
+const OWNER = 'SA0000001', SARA = 'SA0000002', KHALID = 'SA0000003', NORA = 'SA0000004', FAHAD = 'SA0000005', LINA = 'SA0000006';
 const h = (n) => new Date(Date.now() + n * 3600000).toISOString();
 
 // ---- الدائرة والمنتجات والمحافظ
@@ -47,14 +47,15 @@ await call('PUT', `/biz/${B}/notify`, { body: { notify: 'weird' }, user: SARA, e
 await call('PUT', `/biz/${B}/notify`, { body: { notify: 'all' }, user: NORA, expect: 409 });
 let pf = await call('GET', `/biz/${B}/notify`, { user: KHALID, expect: 200 });
 check(pf.member === true && pf.notify === 'all', 'default notify level is all (no row)', JSON.stringify(pf));
-// ليلى على المستوى القديم «القريبة فقط» (يُعامل كـ all حتى تُبنى تنبيهات القرب)، وعمر اختار «بلا تنبيهات»
-await call('POST', `/biz/${B}/follow`, { user: LAYLA, expect: 200 });
-await call('POST', `/biz/${B}/follow`, { user: OMAR, expect: 200 });
-pf = await call('PUT', `/biz/${B}/notify`, { body: { notify: 'near' }, user: LAYLA, expect: 200 });
-check(pf.notify === 'all' && (await pool.query("SELECT notify FROM biz_member_prefs WHERE biz_id=$1 AND user_id=$2", [B, LAYLA])).rows[0]?.notify === 'near', 'legacy near is stored as sent and reported as all');
-check((await call('GET', `/biz/${B}/notify`, { user: LAYLA, expect: 200 })).notify === 'all', 'legacy near reads back as all');
-await call('PUT', `/biz/${B}/notify`, { body: { notify: 'none' }, user: OMAR, expect: 200 });
-check((await call('GET', `/biz/${B}/notify`, { user: OMAR, expect: 200 })).notify === 'none', 'none stays none');
+// فهد على المستوى القديم «القريبة فقط» (يُعامل كـ all حتى تُبنى تنبيهات القرب)، ولينا اختارت «بلا تنبيهات»
+// (الأسماء نفسها في حزم inbox وtasks وteam: الصفوف تُدرج بلا تحديث فتتشارك القاعدة)
+await call('POST', `/biz/${B}/follow`, { user: FAHAD, expect: 200 });
+await call('POST', `/biz/${B}/follow`, { user: LINA, expect: 200 });
+pf = await call('PUT', `/biz/${B}/notify`, { body: { notify: 'near' }, user: FAHAD, expect: 200 });
+check(pf.notify === 'all' && (await pool.query("SELECT notify FROM biz_member_prefs WHERE biz_id=$1 AND user_id=$2", [B, FAHAD])).rows[0]?.notify === 'near', 'legacy near is stored as sent and reported as all');
+check((await call('GET', `/biz/${B}/notify`, { user: FAHAD, expect: 200 })).notify === 'all', 'legacy near reads back as all');
+await call('PUT', `/biz/${B}/notify`, { body: { notify: 'none' }, user: LINA, expect: 200 });
+check((await call('GET', `/biz/${B}/notify`, { user: LINA, expect: 200 })).notify === 'none', 'none stays none');
 check((await pool.query("SELECT column_default FROM information_schema.columns WHERE table_name='biz_member_prefs' AND column_name='notify'")).rows[0]?.column_default?.includes("'all'"), 'old notify column default (near) altered to all at boot');
 
 // ---- الإدارة: التحقق
@@ -69,7 +70,7 @@ await call('POST', `/biz/${B}/manage/offers`, { body: { kind: 'coupon', title: '
 // ---- عرض عام: كورتادو بـ 10 بدل 14 (للجميع)
 const deal = await call('POST', `/biz/${B}/manage/offers`, { body: { kind: 'deal', title: 'كورتادو بـ 10', value: { type: 'price', amount: 1000 }, itemId: cortado.id, endsAt: h(5), template: 'product_week' }, expect: 200 });
 check(deal.kind === 'deal' && deal.membersOnly === false && deal.state === 'active' && deal.itemTitle === 'كورتادو' && deal.notified === 3, 'deal created, public, notified every member except "none"', JSON.stringify([deal.membersOnly, deal.state, deal.notified]));
-check((await notes('biz_offer', SARA)).length === 1 && (await notes('biz_offer', KHALID)).length === 1 && (await notes('biz_offer', LAYLA)).length === 1 && (await notes('biz_offer', OMAR)).length === 0 && (await notes('biz_offer', NORA)).length === 0,
+check((await notes('biz_offer', SARA)).length === 1 && (await notes('biz_offer', KHALID)).length === 1 && (await notes('biz_offer', FAHAD)).length === 1 && (await notes('biz_offer', LINA)).length === 0 && (await notes('biz_offer', NORA)).length === 0,
   'explicit all, no row (default) and legacy near get the offer; none and non-members do not');
 check((await pool.query("SELECT notify FROM biz_member_prefs WHERE biz_id=$1 AND user_id=$2", [B, KHALID])).rows[0]?.notify === 'all', 'cap row created for a member without prefs keeps level all');
 let d = await call('GET', `/biz/${B}`, { user: NORA, expect: 200 });
@@ -225,7 +226,7 @@ await call('DELETE', `/biz/${B}/manage/offers/${dup.id}`, { expect: 404 });
 // تحديث (منشور) يُشعر الأعضاء عدا «بلا تنبيهات» بسقف يومي
 await pool.query("UPDATE biz_member_prefs SET last_notified_at=NULL WHERE biz_id=$1", [B]);
 await call('POST', `/biz/${B}/posts`, { body: { kind: 'update', title: 'منيو جديد', body: 'أضفنا الكولد برو' }, expect: 200 });
-check((await notes('biz_update', SARA)).length === 1 && (await notes('biz_update', KHALID)).length === 1 && (await notes('biz_update', LAYLA)).length === 1 && (await notes('biz_update', OMAR)).length === 0, 'update post notifies every member except none');
+check((await notes('biz_update', SARA)).length === 1 && (await notes('biz_update', KHALID)).length === 1 && (await notes('biz_update', FAHAD)).length === 1 && (await notes('biz_update', LINA)).length === 0, 'update post notifies every member except none');
 await call('POST', `/biz/${B}/posts`, { body: { kind: 'update', title: 'ثانٍ', body: 'x' }, expect: 200 });
 check((await notes('biz_update', SARA)).length === 1, 'daily cap: second update the same day is silent');
 // ---- طبقة الخريطة و«عروض اليوم»: عرض نشط جديد يظهر ضمن الحدود وبالقرب، ولا يظهر خارجها ولا بعد انتهائه
@@ -245,6 +246,15 @@ check(nr.located === false && nr.items.some((o) => o.id === mapOffer.id), 'near 
 await pool.query("UPDATE biz_offers SET ends_at=now() - interval '1 minute' WHERE id=$1", [mapOffer.id]);
 mp = await call('GET', '/offers/map?minLat=21.5&minLng=39.1&maxLat=21.6&maxLng=39.2', { user: null, expect: 200 });
 check(!mp.items.some((o) => o.id === mapOffer.id), 'ended offers leave the map layer');
+// ---- المغادرة ثم الانضمام من جديد: يعود الافتراضي «كل العروض» كما يقول التطبيق، لا «بلا تنبيهات» القديم صامتاً
+check((await call('GET', `/biz/${B}/notify`, { user: LINA, expect: 200 })).notify === 'none', 'before leaving: none');
+await call('DELETE', `/biz/${B}/follow`, { user: LINA, expect: 200 });
+await call('POST', `/biz/${B}/follow`, { user: LINA, expect: 200 });
+pf = await call('GET', `/biz/${B}/notify`, { user: LINA, expect: 200 });
+check(pf.member === true && pf.notify === 'all', 'rejoining resets an old «none» to the default all', JSON.stringify(pf));
+await call('PUT', `/biz/${B}/notify`, { body: { notify: 'none' }, user: LINA, expect: 200 });
+await call('POST', `/biz/${B}/follow`, { user: LINA, expect: 200 });
+check((await call('GET', `/biz/${B}/notify`, { user: LINA, expect: 200 })).notify === 'none', 'a repeated join while already a member keeps the chosen level');
 await app.close(); await pool.end();
 console.log(fails ? `\n${fails} FAILED` : '\nALL OFFERS TESTS PASSED');
 process.exit(fails ? 1 : 0);

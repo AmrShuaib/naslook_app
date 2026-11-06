@@ -188,6 +188,8 @@ class _JobEditorPageState extends ConsumerState<JobEditorPage> {
   Widget build(BuildContext context) {
     final b = board;
     final editing = i != null;
+    // العرض المخفي بالإشراف: تُحفظ تعديلاته، ولا يُعرض «نشر الآن» لأن الخادم يرفض نشره حتى تعيده الإدارة
+    final blocked = editing && i!.status == 'blocked';
     return Scaffold(
       backgroundColor: Joy.bg,
       appBar: AppBar(title: Text(editing ? 'تعديل العرض' : 'عرض وظيفي جديد')),
@@ -265,18 +267,31 @@ class _JobEditorPageState extends ConsumerState<JobEditorPage> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-          child: Row(children: [
-            Expanded(child: OutlinedButton(key: const Key('job-save'), onPressed: saving ? null : () => _save(publish: false), child: Text(!editing || i!.status == 'draft' ? 'حفظ كمسودة' : 'حفظ'))),
-            const SizedBox(width: 10),
-            Expanded(
-              flex: 2,
-              child: FilledButton.icon(
-                key: const Key('job-publish'),
-                onPressed: saving ? null : () => _save(publish: true),
-                icon: saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Joy.primaryOn)) : const Icon(Icons.rocket_launch_outlined, size: 18),
-                label: Text(editing && i!.isOpen ? 'حفظ التعديلات' : 'نشر الآن'),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (blocked)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Row(children: [
+                  Icon(Icons.visibility_off_outlined, size: 18, color: Joy.accent),
+                  SizedBox(width: 6),
+                  Expanded(child: Text(jobBlockedText, key: Key('job-blocked-note'), style: TextStyle(color: Joy.accent, fontWeight: FontWeight.w600, fontSize: 12.5))),
+                ]),
               ),
-            ),
+            Row(children: [
+              Expanded(child: OutlinedButton(key: const Key('job-save'), onPressed: saving ? null : () => _save(publish: false), child: Text(!editing || i!.status == 'draft' ? 'حفظ كمسودة' : 'حفظ'))),
+              if (!blocked) ...[
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton.icon(
+                    key: const Key('job-publish'),
+                    onPressed: saving ? null : () => _save(publish: true),
+                    icon: saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Joy.primaryOn)) : const Icon(Icons.rocket_launch_outlined, size: 18),
+                    label: Text(editing && i!.isOpen ? 'حفظ التعديلات' : 'نشر الآن'),
+                  ),
+                ),
+              ],
+            ]),
           ]),
         ),
       ),

@@ -40,9 +40,13 @@ String jobPublishedText(Job job) {
   return 'وصل العرض إلى ${m.sent} مرشحاً';
 }
 
-/// رسالة خطأ التوظيف: الرمز مترجم في العميل، ونضيف توضيحاً عند حد الباقة.
+/// العرض المخفي بالإشراف (الحالة blocked في server/safety.js): لا ينشره أو يكرره أو يغلقه فريق الدائرة.
+const jobBlockedText = 'العرض مخفي بالإشراف؛ تعيده الإدارة بعد المراجعة';
+
+/// رسالة خطأ التوظيف: الرمز مترجم في العميل، ونضيف توضيحاً عند حد الباقة وعند رفض إجراء على عرض مخفي بالإشراف.
 String jobErrText(Object e) {
   if (e is ApiException && e.body?['error'] == 'plan-limit') return e.message;
+  if (e is ApiException && e.body?['error'] == 'bad-state' && e.body?['status'] == 'blocked') return jobBlockedText;
   return ownerErrText(e);
 }
 

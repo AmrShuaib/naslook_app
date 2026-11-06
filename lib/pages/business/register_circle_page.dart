@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -17,6 +16,7 @@ import '../../core/media/pick_image.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
+import '../../ui/map_pick_page.dart';
 import '../../ui/widgets.dart';
 import 'owner/business_dashboard_page.dart';
 import 'owner/verify_circle_page.dart';
@@ -186,7 +186,8 @@ class _RegisterCirclePageState extends ConsumerState<RegisterCirclePage> {
   }
 
   Future<void> _pickOnMap() async {
-    final p = await Navigator.of(context).push<LatLng>(MaterialPageRoute(builder: (_) => _MapPickPage(initial: point ?? DeviceLocation.lastBrowse ?? DeviceLocation.jeddah)));
+    // المنتقي المشترك نفسه الذي تستعمله الفعاليات (lib/ui/map_pick_page.dart) حتى لا تتباعد نسختان
+    final p = await MapPickPage.open(context, initial: point);
     if (p != null && mounted) setState(() { point = p; locError = null; });
   }
 
@@ -499,37 +500,6 @@ class _PickCard extends StatelessWidget {
           ]),
         ),
       );
-}
-
-/// اختيار النقطة على الخريطة (يُبنى عند الطلب فقط).
-class _MapPickPage extends ConsumerStatefulWidget {
-  final LatLng initial;
-  const _MapPickPage({required this.initial});
-  @override
-  ConsumerState<_MapPickPage> createState() => _MapPickPageState();
-}
-
-class _MapPickPageState extends ConsumerState<_MapPickPage> {
-  late LatLng point = widget.initial;
-  final _map = MapController();
-  @override
-  Widget build(BuildContext context) {
-    final base = ref.read(apiClientProvider).baseUrl;
-    return Scaffold(
-      appBar: AppBar(title: const Text('حدّد الموقع'), actions: [
-        TextButton.icon(onPressed: () async { final g = await DeviceLocation.current(); if (g == null) { if (context.mounted) toast(context, 'لم يُسمح بالوصول إلى الموقع'); return; } setState(() => point = g); _map.move(g, 16); }, icon: const Icon(Icons.my_location_rounded, size: 18), label: const Text('موقعي')),
-      ]),
-      body: FlutterMap(
-        mapController: _map,
-        options: MapOptions(initialCenter: point, initialZoom: 15, onTap: (_, p) => setState(() => point = p), interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate)),
-        children: [
-          TileLayer(urlTemplate: '$base/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
-          MarkerLayer(markers: [Marker(point: point, width: 40, height: 40, child: const Icon(Icons.location_on_rounded, color: Joy.accent, size: 40))]),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(onPressed: () => Navigator.of(context).pop(point), backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.check_rounded), label: const Text('تأكيد الموقع')),
-    );
-  }
 }
 
 /// «دائرتك جاهزة»: الرابط ورمز QR وثلاثة مخارج.

@@ -143,6 +143,15 @@ check(inlineHtml('a <b>x</b> **مهم** [رابط](https://naslife.app/c/x) http
 check(inlineHtml('[x](javascript:alert(1))') === '[x](javascript:alert(1))', 'javascript: links are not linkified');
 check(markupHtml('## فرعي\n\nسطر أول\nسطر ثانٍ\n\n1. أ\n2. ب\n\n- ج\n> اقتباس\n---\n![صورة](https://naslife.app/x.png)') === '<h3>فرعي</h3>\n<p>سطر أول<br>سطر ثانٍ</p>\n<ol><li>أ</li><li>ب</li></ol>\n<ul><li>ج</li></ul>\n<blockquote>اقتباس</blockquote>\n<hr>\n<figure><img src="https://naslife.app/x.png" alt="صورة" loading="lazy"><figcaption>صورة</figcaption></figure>', 'block markup');
 check(slugify('Hello World, 2026!') === 'hello-world-2026' && /^\d{8}-[0-9a-f]{4}$/.test(slugify('عنوان عربي')), 'slugify');
+// ---- تصحيح نصي لمنشور بُذر قبلاً: الجملة القديمة بحرفها تُستبدل عند الإقلاع، وما عداها يبقى كما عدّله المدير
+const OLD_NEAR = 'عند الانضمام تختار: كل العروض، أو **القريبة فقط** (الافتراضي)، أو بلا تنبيهات. وتغيّر اختيارك في أي وقت من صفحة العروض.';
+await pool.query("UPDATE blog_posts SET body=$1 WHERE slug='circle-offers'", ['مقدمة عدّلها المدير\n\n' + OLD_NEAR]);
+const app2 = Fastify();
+app2.register((await import('../blog.js')).default, { pool, auth });
+await app2.ready();
+const fixed = (await pool.query("SELECT body FROM blog_posts WHERE slug='circle-offers'")).rows[0].body;
+check(!fixed.includes('القريبة فقط') && fixed.includes('**كل العروض** (الافتراضي عند الانضمام)') && fixed.startsWith('مقدمة عدّلها المدير'), 'old «near is the default» sentence corrected in place at boot', fixed.slice(0, 120));
+await app2.close();
 console.log(fails ? `\n${fails} FAILED` : '\nALL BLOG TESTS PASSED');
 await app.close(); await pool.end();
 process.exit(fails ? 1 : 0);

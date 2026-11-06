@@ -43,6 +43,23 @@ r = await call('/mapposts/feed?place=biz:pm-cafe&lat=21.5433&lng=39.1728&radiusK
 check(r.json.items.length === 0, 'a far viewer location with a radius would hide them (why the app sends none)');
 r = await call('/mapposts/feed?place=biz:pm-none');
 check(r.code === 200 && r.json.items.length === 0, 'unknown circle → empty list');
+// الأداء: مع place=biz:<id> يُحصر الاستعلام في صندوق حول الدائرة قبل حساب أقرب دائرة لكل لحظة (لا مسح لكل لحظات المنصة)
+const seen = [];
+const q0 = pool.query.bind(pool);
+pool.query = (sql, params) => { if (typeof sql === 'string' && sql.includes('place_key')) seen.push(params); return q0(sql, params); };
+r = await call('/mapposts/feed?place=biz:pm-cafe&limit=30&radiusKm=200');
+const box = seen.at(-1)?.slice(10, 14) ?? [];
+check(box.length === 4 && box.every((v) => typeof v === 'number') && box[0] < 26.43 && box[1] > 26.43 && box[2] < 50.1 && box[3] > 50.1 && box[1] - box[0] < 0.01,
+  'the circle feed is bounded by a box around the circle', JSON.stringify(box));
+seen.length = 0;
+await call('/mapposts/feed?lat=26.43&lng=50.1&radiusKm=30');
+check(seen.at(-1)?.[10] === null, 'the ordinary feed has no box');
+pool.query = q0;
+// الصندوق لا يقصّ لحظة في حد 250 م شرقاً (درجة الطول أقصر من درجة العرض في الدمام)
+const E = '11111111-1111-4111-8111-aaaaaaaaaaa5';
+await seed(E, 26.4300, 50.10245, 2);   // ~244 م شرق المقهى
+r = await call('/mapposts/feed?place=biz:pm-cafe&limit=30&radiusKm=200');
+check(r.json.items.map((x) => x.id).join() === [E, B, A].join(), 'a moment 244 m east is still attributed to the circle', JSON.stringify(r.json.items.map((x) => x.id)));
 
 await pool.query("DELETE FROM biz WHERE id LIKE 'pm-%'");
 // دوائر حزم أخرى في القاعدة المشتركة (biz_onboard وrow) قد تقع في الدمام قرب هذه النقاط فتسحب نسبة اللحظات إليها: تُطفأ في هذا الصندوق

@@ -1,5 +1,7 @@
 // مكان الفعالية: موقع الجهاز افتراضياً، و«حدد على الخريطة» ينقل النقطة، والمرسل إلى POST /events هو النقطة المختارة مع اسم المكان،
-// وبلا موقع للجهاز ولا حضور على الخريطة لا تُرسل إحداثيات وتُشرح أخطاء الخادم بالعربية.
+// وبلا موقع للجهاز ولا حضور على الخريطة لا تُرسل إحداثيات وتُشرح أخطاء الخادم بالعربية. موقع GPS المتأخر لا يستبدل ما حدده المنشئ،
+// و«إنشاء» أثناء التحديد ينتظر الموقع، والتذكرة المدفوعة تطلب إقرار 18+ قبل الإنشاء.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -31,6 +33,7 @@ class _Srv {
   final calls = <String>[];
   Map<String, dynamic>? created;
   String? failWith;
+  bool adult = false;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   Map<String, dynamic> _event(Map<String, dynamic> b) => {
         'id': 'ev-1', 'host': {'id': 'SA0000001', 'nickname': 'amr'}, 'title': b['title'], 'description': b['description'] ?? '', 'startsAt': b['startsAt'], 'placeName': b['placeName'],
@@ -48,6 +51,11 @@ class _Srv {
     }
     if (key == 'GET /events/ev-1') return _json(_event(created!));
     if (key == 'GET /me/map-presence') return _json({'visible': false});
+    if (key == 'GET /legal/consent') return _json({'needs': false, 'version': '2026-09-25', 'adult': adult});
+    if (key == 'POST /me/adult-attest') {
+      adult = true;
+      return _json({'ok': true, 'adult': true});
+    }
     if (key == 'GET /notify/unread') return _json({'unread': 0});
     return _json({'error': 'not-found'}, 404);
   }
@@ -87,6 +95,24 @@ Future<void> _openForm(WidgetTester tester) async {
 
 String _source(WidgetTester tester) => tester.widget<Text>(find.byKey(const Key('ev-location-source'))).data!;
 
+/// يضغط على الخريطة بعيداً عن مركزها ويؤكد، ويعيد النقطة المتوقعة.
+Future<LatLng> _pickAway(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('ev-pick-map')));
+  await _settle(tester);
+  expect(find.byType(MapPickPage), findsOneWidget);
+  final map = find.byKey(const Key('map-pick-map'));
+  final cam = MapCamera.of(tester.element(find.byType(MarkerLayer).first));
+  final target = tester.getCenter(map) + const Offset(-120, -160);
+  final expected = cam.screenOffsetToLatLng(target - tester.getTopLeft(map));
+  await tester.tapAt(target);
+  // الخريطة تنتظر مهلة النقر المزدوج قبل أن تعدّها ضغطة واحدة
+  await _settle(tester);
+  await tester.tap(find.byKey(const Key('map-pick-confirm')));
+  await _settle(tester);
+  expect(find.byType(MapPickPage), findsNothing);
+  return expected;
+}
+
 void main() {
   tearDown(() {
     DeviceLocation.override = null;
@@ -110,6 +136,7 @@ void main() {
     // بعد الإنشاء تُفتح صفحة الفعالية
     expect(find.text('الفعالية'), findsOneWidget);
     expect(srv.calls, contains('GET /events/ev-1'));
+    expect(srv.calls, isNot(contains('GET /legal/consent')), reason: 'الفعالية المجانية لا تطلب إقرار العمر');
   });
 
   testWidgets('«حدد على الخريطة» moves the point away from the device location', (tester) async {
@@ -151,6 +178,7 @@ void main() {
     expect(_source(tester), 'لم يُحدَّد موقع بعد');
     expect(find.text('حدده على الخريطة ليظهر مكان الفعالية للناس'), findsOneWidget);
     srv.failWith = 'place-required';
+    srv.adult = true; // أقرّ بعمره من قبل: يصل الطلب إلى الخادم
     await tester.enterText(find.byKey(const Key('ev-title')), 'ورشة');
     await tester.enterText(find.byKey(const Key('ev-tier-price')), '50');
     await tester.tap(find.byKey(const Key('ev-create')));
@@ -163,5 +191,81 @@ void main() {
     expect(srv.created!.containsKey('lat'), isFalse);
     expect(srv.created!.containsKey('lng'), isFalse);
     await tester.pump(const Duration(seconds: 4));
+  });
+
+  testWidgets('a late GPS fix never replaces the point the creator picked on the map', (tester) async {
+    final gps = Completer<LatLng?>();
+    DeviceLocation.override = () => gps.future;
+    final srv = await _pump(tester);
+    await _openForm(tester);
+    expect(_source(tester), 'نحدد موقعك…');
+    final expected = await _pickAway(tester);
+    expect(_source(tester), 'نقطة حددتها على الخريطة');
+    // موقع الجهاز يصل بعد الاختيار (إذن متأخر أو تحديد بطيء)
+    gps.complete(_device);
+    await _settle(tester);
+    expect(_source(tester), 'نقطة حددتها على الخريطة');
+    await tester.enterText(find.byKey(const Key('ev-title')), 'سوق ليلي');
+    await tester.tap(find.byKey(const Key('ev-create')));
+    await _settle(tester);
+    expect(srv.created!['lat'], closeTo(expected.latitude, 1e-6));
+    expect(srv.created!['lng'], closeTo(expected.longitude, 1e-6));
+  });
+
+  testWidgets('«إنشاء» while still locating waits for the device point instead of sending none', (tester) async {
+    final gps = Completer<LatLng?>();
+    DeviceLocation.override = () => gps.future;
+    final srv = await _pump(tester);
+    await _openForm(tester);
+    await tester.enterText(find.byKey(const Key('ev-title')), 'أمسية');
+    await tester.tap(find.byKey(const Key('ev-create')));
+    await _settle(tester);
+    expect(srv.calls, isNot(contains('POST /events')), reason: 'ينتظر الموقع الجاري');
+    expect(tester.widget<FilledButton>(find.byKey(const Key('ev-pick-map'))).onPressed, isNull, reason: 'لا منتقي فوق النموذج أثناء الإرسال');
+    gps.complete(_device);
+    await _settle(tester);
+    expect(srv.created!['lat'], _device.latitude);
+    expect(srv.created!['lng'], _device.longitude);
+  });
+
+  testWidgets('«موقعي الحالي» with location denied and no presence keeps the earlier map pick', (tester) async {
+    DeviceLocation.override = () async => null;
+    final srv = await _pump(tester);
+    await _openForm(tester);
+    await _settle(tester);
+    expect(_source(tester), 'لم يُحدَّد موقع بعد');
+    final expected = await _pickAway(tester);
+    await tester.tap(find.byKey(const Key('ev-use-device')));
+    await _settle(tester);
+    expect(_source(tester), 'نقطة حددتها على الخريطة');
+    expect(find.text('تعذّر الوصول إلى موقعك؛ بقيت النقطة السابقة'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('ev-title')), 'ورشة');
+    await tester.tap(find.byKey(const Key('ev-create')));
+    await _settle(tester);
+    expect(srv.created!['lat'], closeTo(expected.latitude, 1e-6));
+    expect(srv.created!['lng'], closeTo(expected.longitude, 1e-6));
+    await tester.pump(const Duration(seconds: 4));
+  });
+
+  testWidgets('paid tickets ask for the 18+ declaration first; declining creates nothing', (tester) async {
+    DeviceLocation.override = () async => _device;
+    final srv = await _pump(tester);
+    await _openForm(tester);
+    await tester.enterText(find.byKey(const Key('ev-title')), 'حفلة');
+    await tester.enterText(find.byKey(const Key('ev-place')), 'المسرح');
+    await tester.enterText(find.byKey(const Key('ev-tier-price')), '50');
+    await tester.tap(find.byKey(const Key('ev-create')));
+    await _settle(tester);
+    expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('adult-cancel')));
+    await _settle(tester);
+    expect(srv.calls, isNot(contains('POST /events')));
+    expect(find.text('فعالية جديدة'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ev-create')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('adult-confirm')));
+    await _settle(tester);
+    expect(srv.calls.indexOf('POST /me/adult-attest'), lessThan(srv.calls.indexOf('POST /events')));
+    expect((srv.created!['tiers'] as List).first['price'], 5000);
   });
 }

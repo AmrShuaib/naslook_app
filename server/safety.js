@@ -386,6 +386,8 @@ export default async function safety(app, opts) {
     const info = await targetInfo(type, id);
     if (!info) return bad(reply, 404, "not-found");
     if (info.owner === uid) return bad(reply, 400, "own-content");
+    // الوظيفة يملكها مالك الدائرة، لكن فريقها (مدير، توظيف، موظف) لا يُبلغ عنها: بلاغه يُحتسب في حد الإخفاء التلقائي لعرض دائرته
+    if (type === "job" && info.biz_id && (await one("SELECT 1 AS x FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [info.biz_id, uid]))) return bad(reply, 400, "own-content");
     await pool.query("INSERT INTO content_reports(id,reporter_id,target_type,target_id,reason) VALUES($1,$2,$3,$4,$5) ON CONFLICT (reporter_id,target_type,target_id) DO UPDATE SET reason=EXCLUDED.reason, created_at=now()", [crypto.randomUUID(), uid, type, id, reason]);
     // بعد «إعادة الإظهار» أو «التجاهل» من الإدارة يبدأ العد من جديد، وإلا يعيد بلاغ واحد إخفاء ما راجعته الإدارة
     const n = (await pool.query(`SELECT count(DISTINCT reporter_id)::int AS n FROM content_reports WHERE target_type=$1 AND target_id=$2

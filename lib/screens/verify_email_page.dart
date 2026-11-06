@@ -20,8 +20,9 @@ class VerifyEmailPage extends ConsumerStatefulWidget {
 
 class _VerifyEmailPageState extends ConsumerState<VerifyEmailPage> {
   final _code = TextEditingController();
-  // متحكم حوار «تغيير البريد» يعيش مع الصفحة: التخلص منه فور إغلاق الحوار يسقط أثناء حركة الإغلاق
+  // متحكما حوار «تغيير البريد» يعيشان مع الصفحة: التخلص منهما فور إغلاق الحوار يسقط أثناء حركة الإغلاق
   final _newEmail = TextEditingController();
+  final _password = TextEditingController();
   Timer? _timer;
   int _wait = 0;
   bool _resending = false;
@@ -45,6 +46,7 @@ class _VerifyEmailPageState extends ConsumerState<VerifyEmailPage> {
     _timer?.cancel();
     _code.dispose();
     _newEmail.dispose();
+    _password.dispose();
     super.dispose();
   }
 
@@ -90,23 +92,39 @@ class _VerifyEmailPageState extends ConsumerState<VerifyEmailPage> {
     }
   }
 
-  /// بريد خاطئ عند التسجيل: يطلب بريداً جديداً فيُستبدل ويصل رمز جديد.
+  /// بريد خاطئ عند التسجيل: يطلب بريداً جديداً فيُستبدل ويصل رمز جديد. بجلسة محفوظة تُطلب كلمة السر أيضاً لأن الخادم لا يغيّر
+  /// بريد الدخول بالجلسة وحدها (docs/email-verification.md «حماية تغيير بريد الدخول»).
   Future<void> _changeEmail() async {
+    final notifier = ref.read(appStateProvider.notifier);
+    final needsPassword = notifier.changePendingEmailNeedsPassword;
     final ctrl = _newEmail..text = ref.read(appStateProvider).pendingEmail ?? '';
+    _password.clear();
     final email = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('تغيير البريد'),
-        content: TextField(key: const Key('verify-new-email'), controller: ctrl, autofocus: true, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'البريد الصحيح', border: OutlineInputBorder())),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(key: const Key('verify-new-email'), controller: ctrl, autofocus: true, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'البريد الصحيح', border: OutlineInputBorder())),
+          if (needsPassword) ...[
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('verify-change-password'), controller: _password, obscureText: true, textDirection: TextDirection.ltr, autocorrect: false, enableSuggestions: false,
+              decoration: const InputDecoration(labelText: 'كلمة السر الحالية', helperText: 'لحماية حسابك: لا يتغير بريد الدخول بدونها', helperMaxLines: 2, border: OutlineInputBorder()),
+            ),
+          ],
+        ]),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('إلغاء')),
           FilledButton(key: const Key('verify-new-email-ok'), onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()), child: const Text('أرسل الرمز')),
         ],
       ),
     );
+    final password = _password.text;
+    _password.clear();
     if (email == null || email.isEmpty || !mounted) return;
     if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) { _toast('صيغة البريد غير صحيحة', error: true); return; }
-    final err = await ref.read(appStateProvider.notifier).changePendingEmail(email);
+    if (needsPassword && password.trim().isEmpty) { _toast('أدخل كلمة السر الحالية لتأكيد أنك صاحب الحساب', error: true); return; }
+    final err = await notifier.changePendingEmail(email, password: needsPassword ? password : null);
     if (!mounted) return;
     if (err != null) { _toast(err, error: true); return; }
     _code.clear();

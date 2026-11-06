@@ -287,7 +287,7 @@ await app.close();
   check(readTiff(jpegSegs(fs.readFileSync(path.join(dir, old.jpg))).find((s) => s.m === 0xe1).data.subarray(6)).orientation === 6, 'sweep: orientation kept on the rewritten jpeg');
   check(!fs.readdirSync(dir).some((n) => n.endsWith('.sweep') || n.endsWith('.tmp')), 'sweep: no temp files left behind');
   const state = JSON.parse(fs.readFileSync(path.join(dir, '.meta-sweep.json'), 'utf8'));
-  check(state.done === true && state.version === 1 && state.stripped === 3, 'sweep: progress saved in .meta-sweep.json');
+  check(state.done === true && state.version === 2 && state.stripped === 3, 'sweep: progress saved in .meta-sweep.json');
   const again = await sweepMediaMeta({ dir, nameRe: NAME_RE, batch: 2, pauseMs: 0, before: (Date.now() + 120000).toString(36) });
   check(again.skipped === true && fs.statSync(path.join(dir, old.jpg)).ino === newIno && hasLocationMeta(fs.readFileSync(path.join(dir, fresh))), 'sweep: never repeats once done (even with a later cutoff)');
   // استئناف بعد توقف: إيقاف عبر signal ثم إكمال من المؤشر
@@ -302,6 +302,38 @@ await app.close();
   check(!part.done && st2.done === false && st2.cursor && st2.cursor < names2[3], 'sweep: stopping early keeps the cursor and done=false', JSON.stringify(st2));
   const rest = await sweepMediaMeta({ dir: dir2, nameRe: NAME_RE, batch: 10, pauseMs: 0, before });
   check(rest.done && rest.stripped === 4 && names2.every((n) => !hasLocationMeta(fs.readFileSync(path.join(dir2, n)))), 'sweep: resumes from the cursor and finishes (no file stripped twice)', JSON.stringify(rest));
+}
+// الفيديو والصوت في دالة التمشيط ببديل لـ ffmpeg: الموسوم يُعاد كتابته باسمه، وما بقي موسوماً بعد الكتابة يبقى الأصل كما هو،
+// والمعاينة المشتقة تُمحى في الحالتين، وبلا av لا يُلمس فيديو ولا صوت. وتمشيط أتمّه الإصدار 1 (الصور وحدها) يُعاد مرة
+{
+  const dir = path.join(tmp, 'media-av'); fs.mkdirSync(dir);
+  const NAME_RE = /^[a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5}$/;
+  const before = Date.now().toString(36);
+  const n = { vid: oldName(1, 'mp4'), stuck: oldName(2, 'mov'), plain: oldName(3, 'mp4'), memo: oldName(4, 'm4a') };
+  fs.writeFileSync(path.join(dir, n.vid), 'moov ©xyz+21.4858+039.1925/ mdat');
+  fs.writeFileSync(path.join(dir, n.stuck), 'moov ©xyz+21.4858+039.1925/ stuck');
+  fs.writeFileSync(path.join(dir, n.plain), 'moov mdat');
+  fs.writeFileSync(path.join(dir, n.memo), 'moov title=street');
+  const tagged = (b) => b.includes('©xyz') || b.includes('title=');
+  const noAv = await sweepMediaMeta({ dir, nameRe: NAME_RE, batch: 10, pauseMs: 0, before, stateFile: path.join(dir, '.noav.json') });
+  check(noAv.done && noAv.scanned === 0 && fs.readFileSync(path.join(dir, n.vid), 'utf8').includes('©xyz'), 'sweep without av (no ffmpeg): video and audio are not touched', JSON.stringify(noAv));
+  // حالة الإصدار 1 المنتهية: تُهمل ويُعاد التمشيط
+  fs.writeFileSync(path.join(dir, '.meta-sweep.json'), JSON.stringify({ version: 1, cursor: 'zzzz', done: true, scanned: 9, located: 0, stripped: 0, failed: 0 }));
+  const forgotten = [];
+  const av = {
+    located: async (file) => tagged(fs.readFileSync(file, 'utf8')),
+    strip: async (src, dst) => { const t = fs.readFileSync(src, 'utf8'); fs.writeFileSync(dst, t.includes('stuck') ? t : t.replace(/©xyz\S*/, '').replace(/title=\S*/, '')); },
+    forget: async (name) => { forgotten.push(name); },
+  };
+  const inoBefore = fs.statSync(path.join(dir, n.vid)).ino;
+  const msgs = [];
+  const r = await sweepMediaMeta({ dir, nameRe: NAME_RE, batch: 2, pauseMs: 0, before, av, log: (m) => msgs.push(m) });
+  check(r.done && r.scanned === 4 && r.located === 3 && r.stripped === 2 && r.failed === 1, 'sweep with av: a v1 state is redone; two tagged files rewritten, one still tagged after the rewrite counted as failed', JSON.stringify(r));
+  check(!tagged(fs.readFileSync(path.join(dir, n.vid), 'utf8')) && !tagged(fs.readFileSync(path.join(dir, n.memo), 'utf8')) && fs.statSync(path.join(dir, n.vid)).ino !== inoBefore, 'sweep with av: the video and the voice memo keep their names, lose their tags, get a new inode');
+  check(fs.readFileSync(path.join(dir, n.stuck), 'utf8').includes('©xyz') && msgs.some((m) => m.includes(`kept ${n.stuck} as is`)), 'sweep with av: a rewrite that is still tagged never replaces the original (logged)');
+  check(fs.readFileSync(path.join(dir, n.plain), 'utf8') === 'moov mdat', 'sweep with av: an untagged video is not rewritten');
+  check([n.vid, n.stuck, n.memo].every((x) => forgotten.includes(x)) && !forgotten.includes(n.plain), 'sweep with av: the cached preview of every tagged file is forgotten (even when the original stays)', JSON.stringify(forgotten));
+  check(!fs.readdirSync(dir).some((x) => x.endsWith('.sweep')), 'sweep with av: no temp files left behind');
 }
 // التمشيط من الإضافة: يعمل بعد المهلة ويظهر في /chat/status، ويتوقف بـ NASLIFE_MEDIA_SWEEP=0
 {
@@ -320,6 +352,54 @@ await app.close();
   a = await makeApp({ metaSweep: { delayMs: 5, pauseMs: 0 } });
   for (let i = 0; i < 50; i++) { s = (await a.inject({ method: 'GET', url: '/chat/status' })).json().metaSweep; if (s.done) break; await new Promise((r) => setTimeout(r, 50)); }
   check(s.enabled === true && s.done === true && s.stripped === 1 && !hasLocationMeta(fs.readFileSync(path.join(dir, n))) && logs.some((l) => l.includes('media sweep done: scanned 1, with location 1, stripped 1')), 'plugin sweep: runs after the delay, strips, logs a summary and reports in /chat/status', JSON.stringify(s));
+  await a.close();
+}
+
+// التمشيط من الإضافة بـ ffmpeg حقيقي: فيديو MP4 وMOV قديمان بموقع وعنوان، m4a وmp3 بعنوان شارع، ومعاينة مخزّنة نُسخت وسومها
+if (ffmpeg) {
+  const dir = path.join(tmp, 'media5'); fs.mkdirSync(path.join(dir, 'vpreviews'), { recursive: true });
+  process.env.CHAT_MEDIA_DIR = dir;
+  const gen = (name, args) => { const f = path.join(tmp, name); execFileSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', ...args, f]); return f; };
+  const probe = (file) => JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=format_name:format_tags:stream_tags:stream_side_data=rotation', '-of', 'json', file]).toString());
+  const lavfi = ['-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=15:duration=1', '-f', 'lavfi', '-i', 'sine=duration=1'];
+  const enc = ['-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest'];
+  const locTags = ['-metadata', 'location=+21.4858+039.1925/', '-metadata', 'com.apple.quicktime.location.ISO6709=+21.4858+039.1925+000.000/', '-metadata', 'title=بيتي في الروضة'];
+  const base = gen('old_base.mp4', [...lavfi, ...enc, ...locTags, '-movflags', '+faststart+use_metadata_tags']);
+  const src = {
+    mp4: gen('old_rot.mp4', ['-display_rotation', '90', '-i', base, '-c', 'copy', '-movflags', '+faststart+use_metadata_tags']),
+    mov: gen('old_loc.mov', [...lavfi, ...enc, ...locTags, '-movflags', '+use_metadata_tags']),
+    plain: gen('old_plain.mp4', [...lavfi, ...enc, '-movflags', '+faststart']),
+    m4a: gen('old_memo.m4a', ['-f', 'lavfi', '-i', 'sine=duration=1', '-c:a', 'aac', '-metadata', 'title=شارع التحلية', '-movflags', '+use_metadata_tags']),
+    mp3: gen('old_memo.mp3', ['-f', 'lavfi', '-i', 'sine=duration=1', '-c:a', 'libmp3lame', '-metadata', 'title=شارع التحلية']),
+  };
+  const nm = { mp4: oldName(1, 'mp4'), mov: oldName(2, 'mov'), plain: oldName(3, 'mp4'), m4a: oldName(4, 'm4a'), mp3: oldName(5, 'mp3') };
+  for (const k of Object.keys(nm)) fs.copyFileSync(src[k], path.join(dir, nm[k]));
+  const pvOf = (name) => path.join(dir, 'vpreviews', name.replace(/\.[a-z0-9]+$/, '') + '.mp4');
+  fs.copyFileSync(src.mp4, pvOf(nm.mp4)); // معاينة قديمة بموقع
+  fs.copyFileSync(src.plain, pvOf(nm.plain));
+  const snap2 = path.join(tmp, 'snapshot2'); fs.mkdirSync(snap2);
+  fs.linkSync(path.join(dir, nm.mp4), path.join(snap2, nm.mp4));
+  const ino = fs.statSync(path.join(dir, nm.mp4)).ino;
+  const text = (f) => JSON.stringify(probe(f));
+  check(text(path.join(dir, nm.mp4)).includes('21.4858') && text(path.join(dir, nm.m4a)).includes('التحلية') && text(path.join(dir, nm.mp3)).includes('التحلية'), 'fixtures: old video with location, voice memos titled with a street');
+  logs.length = 0;
+  const a = await makeApp({ metaSweep: { delayMs: 5, pauseMs: 0 } });
+  let s = {};
+  for (let i = 0; i < 200; i++) { s = (await a.inject({ method: 'GET', url: '/chat/status' })).json().metaSweep; if (s.done) break; await new Promise((r) => setTimeout(r, 50)); }
+  check(s.done === true && s.scanned === 5 && s.located === 4 && s.stripped === 4 && s.failed === 0, 'plugin sweep with ffmpeg: four tagged videos and voice memos rewritten, the untagged video skipped', JSON.stringify(s) + ' ' + logs.filter((l) => String(l).includes('sweep')).join(' | '));
+  const v = probe(path.join(dir, nm.mp4));
+  check(!JSON.stringify(v).includes('21.4858') && !JSON.stringify(v).includes('الروضة') && !videoHasLocation(fs.readFileSync(path.join(dir, nm.mp4))), 'old mp4: same name, no location or title tags');
+  check(v.streams.find((x) => x.side_data_list)?.side_data_list?.[0]?.rotation === 90, 'old mp4: rotation kept');
+  check(fs.statSync(path.join(dir, nm.mp4)).ino !== ino && text(path.join(snap2, nm.mp4)).includes('21.4858'), 'old mp4: new inode, the backup hard link keeps the old copy');
+  const m = probe(path.join(dir, nm.mov));
+  check(!JSON.stringify(m).includes('21.4858') && m.format.tags?.major_brand === 'qt  ', 'old mov: no location and still a QuickTime file (its name and type stay)', JSON.stringify(m.format));
+  check(fs.readFileSync(path.join(dir, nm.plain)).equals(fs.readFileSync(src.plain)), 'old untagged mp4: kept byte for byte');
+  check(!text(path.join(dir, nm.m4a)).includes('التحلية') && !text(path.join(dir, nm.mp3)).includes('التحلية') && probe(path.join(dir, nm.mp3)).format.format_name === 'mp3', 'old m4a and mp3: street title gone, containers kept');
+  check(decodes(fs.readFileSync(path.join(dir, nm.m4a)), 'm4a') && decodes(fs.readFileSync(path.join(dir, nm.mp4)), 'mp4'), 'rewritten files decode');
+  check(!fs.existsSync(pvOf(nm.mp4)) && fs.existsSync(pvOf(nm.plain)), 'the cached preview of the tagged video is deleted; the untagged one stays');
+  const pr = await a.inject({ method: 'GET', url: `/chat/vpreview/${nm.mp4}` });
+  check(pr.statusCode === 200 && fs.existsSync(pvOf(nm.mp4)) && !text(pvOf(nm.mp4)).includes('21.4858'), 'the preview is rebuilt on request, without location tags');
+  check(!fs.readdirSync(dir).some((x) => x.endsWith('.sweep')), 'plugin sweep with ffmpeg: no temp files left behind');
   await a.close();
 }
 

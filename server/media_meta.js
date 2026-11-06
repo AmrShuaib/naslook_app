@@ -2,7 +2,8 @@
 // ليست إضافة Fastify (لا سطر في register.txt): تستوردها server/chat_tools.js، وتُتاح للإضافات عبر globalThis.naslifeStripImageMeta.
 //   stripImageMeta(buf)  → {buf, changed, format, removed, orientation} ؛ أي شك = الأصل كما هو مع error (لا يُكتب ملف تالف أبداً)
 //   hasLocationMeta(buf) → هل في الصورة إحداثيات GPS (Exif أو XMP)؟ للتمشيط فقط
-//   sweepMediaMeta({dir, ...}) → تمشيط مرة واحدة بتقدّم محفوظ: يكتب نسخة نظيفة في ملف مؤقت ثم يعيد التسمية (inode جديد)
+//   sweepMediaMeta({dir, ..., av}) → تمشيط مرة واحدة بتقدّم محفوظ: يكتب نسخة نظيفة في ملف مؤقت ثم يعيد التسمية (inode جديد)؛
+//     الصور هنا، والفيديو والصوت عبر av من chat_tools (ffmpeg)
 // JPEG: تُحذف APP1 (Exif/XMP) وAPP13 (IPTC) وCOM وكل APPn غير APP0/APP2-ICC/APP14 وما بعد EOI (صور MPF الملحقة بـ Exif خاص بها)؛
 //   يبقى ICC وAdobe، والاتجاه (Orientation ≠ 1) يُعاد في APP1 صغير فيه هذا الوسم وحده.
 // PNG: تُحذف eXIf وtEXt وiTXt وzTXt وtIME وما بعد IEND (والاتجاه في eXIf صغير). WebP: تُحذف EXIF وXMP وتُصفّر أعلامهما في VP8X.
@@ -352,11 +353,16 @@ export function hasLocationMeta(buf) {
 }
 
 // ---- تمشيط الملفات القديمة: مرة واحدة، بتقدّم محفوظ في ملف حالة، دفعات صغيرة بينها توقف، وكتابة ذرية.
-export const SWEEP_VERSION = 1;
+// الإصدار 2 يضيف الفيديو والصوت (قبل -map_metadata -1 كان ffmpeg ينسخ وسوم الحاوية، والخفيف يبقى كما رُفع)؛ تمشيط أتمّه
+// الإصدار 1 (الصور وحدها) يُعاد مرة، والصور النظيفة تُقرأ ولا تُكتب.
+export const SWEEP_VERSION = 2;
 const IMAGE_EXT = new Set(["jpg", "jpeg", "png", "webp"]);
-/// {dir, nameRe, stateFile, batch, pauseMs, before, log, signal}. before: لا يُمشَّط إلا ما اسمه أقدم من هذا (ما بعده نُظّف عند الرفع).
+export const AV_EXT = new Set(["mp4", "mov", "m4v", "3gp", "m4a", "mp3"]);
+/// {dir, nameRe, stateFile, batch, pauseMs, before, log, signal, av}. before: لا يُمشَّط إلا ما اسمه أقدم من هذا (ما بعده نُظّف عند الرفع).
+/// av (من chat_tools حين يوجد ffmpeg): {located(file, ext) → bool، strip(src, dst, ext) يكتب نسخة بلا وسوم، forget(name) يمحو
+/// ما اشتُق من الأصل (معاينة الشبكة المخزّنة نُسخت وسومها معه)}. بلاه تُمشَّط الصور وحدها.
 /// يعيد ملخصاً {scanned, located, stripped, failed, skipped, done}. يكمل من آخر اسم عند إعادة التشغيل ولا يكرر بعد done.
-export async function sweepMediaMeta({ dir, nameRe = null, stateFile = null, batch = 25, pauseMs = 2000, before = null, log = () => {}, signal = null } = {}) {
+export async function sweepMediaMeta({ dir, nameRe = null, stateFile = null, batch = 25, pauseMs = 2000, before = null, log = () => {}, signal = null, av = null } = {}) {
   const stPath = stateFile ?? path.join(dir, ".meta-sweep.json");
   let state = { version: SWEEP_VERSION, cursor: "", done: false, scanned: 0, located: 0, stripped: 0, failed: 0 };
   try { const s = JSON.parse(await fs.readFile(stPath, "utf8")); if (s?.version === SWEEP_VERSION) state = { ...state, ...s }; } catch { /* أول تشغيل */ }
@@ -367,9 +373,21 @@ export async function sweepMediaMeta({ dir, nameRe = null, stateFile = null, bat
     await fs.writeFile(tmp, JSON.stringify({ ...state, at: new Date().toISOString() }));
     await fs.rename(tmp, stPath);
   };
-  let names = (await fs.readdir(dir)).filter((n) => (!nameRe || nameRe.test(n)) && IMAGE_EXT.has(n.split(".").pop().toLowerCase()) && n > state.cursor && (!before || n < before));
+  const extOf = (n) => n.split(".").pop().toLowerCase();
+  let names = (await fs.readdir(dir)).filter((n) => (!nameRe || nameRe.test(n)) && (IMAGE_EXT.has(extOf(n)) || (av && AV_EXT.has(extOf(n)))) && n > state.cursor && (!before || n < before));
   names.sort();
   const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); });
+  /// يضع النسخة النظيفة مكان الأصل: ملف مؤقت ثم إعادة تسمية (inode جديد، فالروابط الصلبة في لقطات النسخ الاحتياطي لا تُعدَّل
+  /// في مكانها). حُذف الأصل أو تغيّر أثناء العمل (حذف حساب مثلاً): لا نعيده. write(tmp) يكتب النسخة ويرمي عند الفشل.
+  async function replace(name, file, st, write) {
+    const tmp = path.join(dir, `.${name}.${crypto.randomBytes(4).toString("hex")}.sweep`);
+    try {
+      if ((await write(tmp)) === false) { await fs.unlink(tmp).catch(() => {}); state.failed++; log(`media sweep: kept ${name} as is (still tagged after the rewrite)`); return; }
+      const now = await fs.stat(file).catch(() => null);
+      if (!now || now.ino !== st.ino || now.size !== st.size || now.mtimeMs !== st.mtimeMs) { await fs.unlink(tmp).catch(() => {}); }
+      else { await fs.chmod(tmp, st.mode & 0o777).catch(() => {}); await fs.rename(tmp, file); state.stripped++; }
+    } catch (e) { await fs.unlink(tmp).catch(() => {}); state.failed++; log(`media sweep: write failed for ${name}: ${e?.message ?? e}`); }
+  }
   let inBatch = 0;
   for (const name of names) {
     if (signal?.aborted) break;
@@ -377,22 +395,23 @@ export async function sweepMediaMeta({ dir, nameRe = null, stateFile = null, bat
     try {
       const st = await fs.stat(file);
       if (!st.isFile()) { state.cursor = name; continue; }
-      const buf = await fs.readFile(file);
-      state.scanned++;
-      if (hasLocationMeta(buf)) {
-        state.located++;
-        const r = stripImageMeta(buf);
-        if (!r.changed || r.error || hasLocationMeta(r.buf)) { state.failed++; log(`media sweep: kept ${name} as is (${r.error ?? "not stripped"})`); }
-        else {
-          // ملف مؤقت ثم إعادة تسمية: inode جديد، فالروابط الصلبة في لقطات النسخ الاحتياطي لا تُعدَّل في مكانها
-          const tmp = path.join(dir, `.${name}.${crypto.randomBytes(4).toString("hex")}.sweep`);
-          try {
-            await fs.writeFile(tmp, r.buf, { mode: st.mode & 0o777 });
-            // حُذف الملف أو تغيّر أثناء القراءة (حذف حساب مثلاً): لا نعيده
-            const now = await fs.stat(file).catch(() => null);
-            if (!now || now.ino !== st.ino || now.size !== st.size || now.mtimeMs !== st.mtimeMs) { await fs.unlink(tmp).catch(() => {}); }
-            else { await fs.rename(tmp, file); state.stripped++; }
-          } catch (e) { await fs.unlink(tmp).catch(() => {}); state.failed++; log(`media sweep: write failed for ${name}: ${e?.message ?? e}`); }
+      if (IMAGE_EXT.has(extOf(name))) {
+        const buf = await fs.readFile(file);
+        state.scanned++;
+        if (hasLocationMeta(buf)) {
+          state.located++;
+          const r = stripImageMeta(buf);
+          if (!r.changed || r.error || hasLocationMeta(r.buf)) { state.failed++; log(`media sweep: kept ${name} as is (${r.error ?? "not stripped"})`); }
+          else await replace(name, file, st, (tmp) => fs.writeFile(tmp, r.buf, { mode: st.mode & 0o777 }));
+        }
+      } else {
+        // فيديو أو صوت: ffmpeg يعيد التغليف بلا وسوم (بلا ترميز)، والناتج يُفحص قبل أن يحل محل الأصل
+        state.scanned++;
+        if (await av.located(file, extOf(name))) {
+          state.located++;
+          await replace(name, file, st, async (tmp) => { await av.strip(file, tmp, extOf(name)); return !(await av.located(tmp, extOf(name))); });
+          // المعاينة المخزّنة نُسخت وسومها من الأصل: تُمحى فتُولَّد من جديد بلا وسوم (ولو بقي الأصل كما هو)
+          try { await av.forget?.(name); } catch { /* لا يوقف التمشيط */ }
         }
       }
     } catch (e) { if (e?.code !== "ENOENT") { state.failed++; log(`media sweep: ${name}: ${e?.message ?? e}`); } }

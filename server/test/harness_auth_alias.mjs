@@ -271,10 +271,23 @@ multiSession = false;
   const txt = notice ? plainTextOf(notice.raw) : '';
   check(sent.length === 2 && !!notice && !!code, 'two mails: notice to the old address and a code to the new one', JSON.stringify(sent.map((m) => m.to)));
   check(txt.includes('غُيّر بريد الدخول') && txt.includes('sara') && txt.includes('sa***@e***.com') && !txt.includes('sara.new@example.com') && txt.includes('support@naslife.app') && !/\b\d{6}\b/.test(txt), 'notice in Arabic: names the account, masks the new address, points to support, carries no code', txt.slice(0, 300).replace(/\n/g, ' | ')); }
-// البريد الجديد غير مؤكد والبوابة مفعّلة: استبداله بلا كلمة سر (شاشة التأكيد بعد التسجيل بجلسة محفوظة) يبقى يعمل، ولا تنبيه
+// البريد الجديد غير مؤكد والبوابة مفعّلة، والجلسة ما زالت صالحة: من يمسك الجوال لا يستبدله بلا كلمة سر. كان الاستبدال مسموحاً
+// فيكفي بعده «نسيت كلمة السر» إلى بريده (يُرسل الرمز لأي بريد مسجّل مؤكداً أم لا) ثم إعادة التعيين للاستيلاء على الحساب
+// عبارة sara محفوظة كما يحفظها /auth/register لكل حساب جديد (كلمة سرها القصيرة لا تمر بـ /me/recovery في النواة الوهمية)
+{ const { encrypt } = await import('../auth_alias.js');
+  await pool.query("INSERT INTO account_recovery(user_id, phrase_enc, source) VALUES('SA0000002', $1, 'register') ON CONFLICT (user_id) DO UPDATE SET phrase_enc=EXCLUDED.phrase_enc", [encrypt(Buffer.from(fs.readFileSync(OPS + '/auth-key', 'utf8').trim(), 'hex'), accounts.sara.phrase)]);
+  check((await call('GET', '/me/recovery', SARA)).json.enabled === true, 'sara has email recovery on (as every account registered by email)'); }
 mailsBefore = smtp.messages.length;
-r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara2@example.com' } });
-check(r.code === 200 && r.json.email === 'sara2@example.com' && r.json.codeSent === true && r.json.noticeSent === false && !r.json.token && smtp.messages.length === mailsBefore + 1, 'unverified email with the gate on: replaced without a password (registration verify screen), no notice to an unproven address', JSON.stringify(r.json));
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'attacker@evil.com' } });
+check(r.code === 403 && r.json.error === 'password-required' && smtp.messages.length === mailsBefore, 'unverified email with the gate on: a live session alone cannot replace it (password required, nothing sent)', JSON.stringify(r.json));
+check((await call('GET', '/me/login-email', SARA)).json.email === 'sara.new@example.com', 'the pending address is untouched after the refused replacement');
+r = await call('POST', '/auth/forgot', { body: { email: 'attacker@evil.com' } });
+check(r.code === 200 && smtp.messages.length === mailsBefore, 'takeover chain: forgot for the attacker address sends no reset code');
+r = await call('POST', '/auth/reset', { body: { email: 'attacker@evil.com', code: '123456', password: 'Attacker#2026' } });
+check(r.code === 400 && r.json.error === 'bad-code' && (await call('POST', '/auth/login', { body: { handle: 'sara', password: 'Attacker#2026' } })).code === 401 && accounts.sara.password === 'secret', 'takeover chain: reset for the attacker address fails and the password is unchanged');
+// بكلمة السر يُصحَّح البريد غير المؤكد (شاشة الرمز بجلسة محفوظة تطلبها الآن)، ولا تنبيه لبريد لم تثبت ملكيته
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara2@example.com', password: 'secret' } });
+check(r.code === 200 && r.json.email === 'sara2@example.com' && r.json.codeSent === true && r.json.noticeSent === false && typeof r.json.token === 'string' && smtp.messages.length === mailsBefore + 1, 'unverified email with the gate on: replaced with the password, code to the new address, no notice to an unproven one', JSON.stringify(r.json));
 // البوابة مطفأة: الحساب غير المؤكد يعمل بجلسة كاملة، فالتغيير يتطلب كلمة السر
 globalThis.naslifeSettings = { requireEmailVerification: false };
 r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara3@example.com' } });
@@ -292,6 +305,6 @@ check((await call('POST', '/auth/login', { body: { handle: 'sara@example.com', p
 for (let i = 0; i < 12; i++) r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara9@example.com', password: 'guess' + i } });
 check(r.code === 429 && r.json.error === 'too-many-attempts', 'password guesses on the login email are rate limited');
 r = await call('GET', '/auth/alias/status');
-check(r.json.recoverable === 7, 'status counts recoverable accounts (3 original + third, second2, second3, locker from the gate checks)', JSON.stringify(r.json));
+check(r.json.recoverable === 8, 'status counts recoverable accounts (3 original + third, second2, second3, locker from the gate checks, sara)', JSON.stringify(r.json));
 console.log(fails ? `\n${fails} FAILED` : '\nALL AUTH ALIAS TESTS PASSED');
 await app.close(); await smtp.close(); await pool.end(); process.exit(fails ? 1 : 0);

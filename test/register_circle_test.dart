@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -24,6 +25,7 @@ import 'package:naslook/pages/circles/circles_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
 import 'package:naslook/state/providers.dart';
+import 'package:naslook/ui/map_pick_page.dart';
 
 class _SignedIn extends AppStateNotifier {
   _SignedIn(super.api, super.store) {
@@ -288,6 +290,35 @@ void main() {
     await tester.tap(find.byKey(const Key('reg-done-verify')));
     await tester.pumpAndSettle();
     expect(find.byType(VerifyCirclePage), findsOneWidget);
+  });
+
+  testWidgets('«تعديل على الخريطة» opens the shared MapPickPage and the picked point is posted', (tester) async {
+    final srv = await _pump(tester, const RegisterCirclePage());
+    await _toPresence(tester);
+    await tester.ensureVisible(find.byKey(const Key('reg-map-edit')));
+    await tester.tap(find.byKey(const Key('reg-map-edit')));
+    await tester.pumpAndSettle();
+    // المنتقي المشترك نفسه الذي تستعمله الفعاليات (lib/ui/map_pick_page.dart) بمفاتيحه
+    expect(find.byType(MapPickPage), findsOneWidget);
+    expect(find.text('حدّد الموقع'), findsOneWidget);
+    final map = find.byKey(const Key('map-pick-map'));
+    final cam = MapCamera.of(tester.element(find.byType(MarkerLayer).first));
+    final target = tester.getCenter(map) + const Offset(-100, -120);
+    final expected = cam.screenOffsetToLatLng(target - tester.getTopLeft(map));
+    await tester.tapAt(target);
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.tap(find.byKey(const Key('map-pick-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byType(MapPickPage), findsNothing);
+    expect(find.textContaining('الموقع: ${expected.latitude.toStringAsFixed(4)}'), findsOneWidget);
+    await _next(tester);
+    await tester.enterText(find.byKey(const Key('reg-phone')), '0551234567');
+    await _next(tester);
+    await tester.tap(find.byKey(const Key('reg-submit')));
+    await tester.pumpAndSettle();
+    final body = srv.bodies['POST /biz/register']!;
+    expect(body['lat'] as double, closeTo(expected.latitude, 1e-6));
+    expect(body['lng'] as double, closeTo(expected.longitude, 1e-6));
   });
 
   testWidgets('logo step: cancelling the picker keeps next disabled; no upload happens', (tester) async {

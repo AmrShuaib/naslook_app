@@ -44,10 +44,10 @@ final _now = DateTime.now().toUtc().toIso8601String();
 
 Map<String, dynamic> _bizSummary({bool verified = false}) => {'id': 'biz-x', 'name': 'X Jobs', 'nameAr': 'وظائف إكس', 'category': 'other', 'address': 'جدة', 'city': 'جدة', 'logoUrl': null, 'verified': verified};
 
-Map<String, dynamic> _job({bool verified = false, String status = 'open'}) => {
+Map<String, dynamic> _job({bool verified = false, String status = 'open', bool team = false}) => {
       'id': _jobId, 'bizId': 'biz-x', 'title': 'مدخل بيانات من المنزل', 'department': '', 'description': 'عمل من المنزل بدخل يومي، التواصل عبر المحادثة.', 'requirements': {'must': [], 'nice': []}, 'skills': [],
       'city': 'جدة', 'district': '', 'type': 'remote', 'experienceMin': 0, 'education': 'none', 'salaryVisible': false, 'openings': 1, 'status': status, 'public': true, 'publishedAt': _now,
-      'biz': _bizSummary(verified: verified), 'bizVerified': verified, 'mine': null,
+      'biz': _bizSummary(verified: verified), 'bizVerified': verified, 'mine': null, if (team) 'team': true,
     };
 
 Map<String, dynamic> _match({bool verified = false}) => {
@@ -55,9 +55,9 @@ Map<String, dynamic> _match({bool verified = false}) => {
       'job': _job(verified: verified), 'questions': [], 'assignee': {'id': 'SA0000002', 'nickname': 'sara'}, 'interview': null,
     };
 
-Map<String, dynamic> _bizFull() => {
+Map<String, dynamic> _bizFull({String role = 'owner'}) => {
       'id': 'biz-x', 'name': 'X Jobs', 'nameAr': 'وظائف إكس', 'category': 'other', 'sector': '', 'description': '', 'lat': 21.5, 'lng': 39.2, 'address': 'جدة', 'hours': '', 'color': '#0058A3', 'highlights': [],
-      'verified': false, 'official': false, 'active': true, 'ownerId': 'SA0000001', 'myRole': 'owner', 'views': 0, 'followers': 0, 'items': [], 'reviews': [], 'posts': [], 'myOrders': [],
+      'verified': false, 'official': false, 'active': true, 'ownerId': 'SA0000001', 'myRole': role, 'views': 0, 'followers': 0, 'items': [], 'reviews': [], 'posts': [], 'myOrders': [],
     };
 
 class _Srv {
@@ -65,6 +65,7 @@ class _Srv {
   final bodies = <String, Map<String, dynamic>>{};
   bool verified = false;
   bool reportHides = false;
+  bool team = false;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
 
   Future<http.Response> handle(http.Request req) async {
@@ -75,7 +76,7 @@ class _Srv {
     if (key == 'GET /settings/public') return _json({'jobsEnabled': true});
     if (key == 'GET /jobs/profile') return _json({'profile': {'userId': 'SA0000001', 'active': true, 'titles': ['مدخل بيانات'], 'city': 'جدة'}, 'pending': 1, 'total': 1});
     if (key == 'GET /jobs') return _json({'items': [_job(verified: verified)], 'types': [], 'cities': ['جدة']});
-    if (key == 'GET /jobs/$_jobId') return _json(_job(verified: verified));
+    if (key == 'GET /jobs/$_jobId') return _json(_job(verified: verified, team: team));
     if (key == 'GET /jobs/inbox') return _json({'items': [_match(verified: verified)], 'pending': 1});
     if (key == 'GET /jobs/mine') return _json({'items': [], 'active': [], 'history': []});
     if (key == 'GET /jobs/offers/$_matchId') return _json(_match(verified: verified));
@@ -88,6 +89,7 @@ class _Srv {
         'upcomingInterviews': 0, 'aiAvailable': false, 'verified': verified,
       });
     }
+    if (key == 'PATCH /biz/biz-x/manage/jobs/$_jobId') return _json({..._job(status: 'blocked'), 'createdBy': 'SA0000001'});
     if (key == 'GET /biz/biz-x/manage/jobs/stats') return _json({'open': 0, 'filled': 0, 'candidates': 0, 'answered': 0, 'hired': 0, 'upcomingInterviews': 0, 'plan': {'plan': 'free', 'freeActive': 3}});
     if (key == 'GET /biz/biz-x/orders') return _json([]);
     if (key == 'GET /adminapi/moderation') {
@@ -135,6 +137,11 @@ void main() {
     expect(JobsBoard.fromJson({}).verified, isTrue, reason: 'خادم قديم بلا الحقل: لا لافتة');
     expect(JobPreview.fromJson({'autoMatch': false}).autoMatch, isFalse);
     expect(jobSafetyLine, _safety);
+    // رفض إجراء على عرض مخفي بالإشراف يُقرأ بلغة واضحة لا «رفض الخادم الطلب (bad-state)»
+    expect(jobErrText(const ApiException(409, 'رفض الخادم الطلب (bad-state)', body: {'error': 'bad-state', 'status': 'blocked'})), jobBlockedText);
+    expect(jobErrText(const ApiException(409, 'رفض الخادم الطلب (bad-state)', body: {'error': 'bad-state', 'status': 'open'})), isNot(jobBlockedText));
+    expect(Job.fromJson(_job(team: true)).team, isTrue);
+    expect(Job.fromJson(_job()).team, isFalse);
   });
 
   testWidgets('job page: unverified tag, fixed safety line, and «إبلاغ عن الوظيفة» posts a job report', (tester) async {
@@ -154,6 +161,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(srv.bodies['POST /safety/report'], {'targetType': 'job', 'targetId': _jobId, 'reason': 'احتيال أو نصب'});
     expect(find.text('وصل بلاغك وسنراجعه خلال 24 ساعة'), findsOneWidget);
+  });
+
+  testWidgets('job page for the circle team (team:true): no report menu', (tester) async {
+    final srv = _Srv()..team = true;
+    await _pump(tester, srv, const JobPage(id: _jobId));
+    expect(find.byKey(const Key('job-share')), findsOneWidget);
+    expect(find.byKey(const Key('job-report-menu')), findsNothing);
   });
 
   testWidgets('job page of a verified circle: no unverified tag, safety line stays', (tester) async {
@@ -219,6 +233,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('تكرار كمسودة'), findsNothing);
     expect(find.text('تعديل'), findsOneWidget);
+  });
+
+  testWidgets('hr jobs tab of an unverified circle: banner without the verify button, asks the owner', (tester) async {
+    final srv = _Srv();
+    await _pump(tester, srv, Scaffold(body: JobsTab(biz: Biz.fromJson(_bizFull(role: 'hr')))));
+    expect(find.byKey(const Key('jobs-unverified')), findsOneWidget);
+    expect(find.byKey(const Key('jobs-verify')), findsNothing, reason: 'التوثيق للمالك والمدير فقط');
+    expect(find.byKey(const Key('jobs-verify-ask')), findsOneWidget);
+    expect(find.text('اطلب من مالك الدائرة توثيقها'), findsOneWidget);
+  });
+
+  testWidgets('editing a job hidden by moderation: no «نشر الآن», a moderation note, save only patches', (tester) async {
+    final srv = _Srv();
+    await _pump(tester, srv, Scaffold(body: JobsTab(biz: Biz.fromJson(_bizFull()))));
+    await tester.tap(find.byKey(const Key('job-menu-$_jobId')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تعديل'));
+    await tester.pumpAndSettle();
+    expect(find.text('تعديل العرض'), findsOneWidget);
+    expect(find.byKey(const Key('job-publish')), findsNothing);
+    expect(find.text('نشر الآن'), findsNothing);
+    expect(find.byKey(const Key('job-blocked-note')), findsOneWidget);
+    expect(find.text(jobBlockedText), findsOneWidget);
+    await tester.tap(find.byKey(const Key('job-save')));
+    await tester.pumpAndSettle();
+    expect(srv.calls, contains('PATCH /biz/biz-x/manage/jobs/$_jobId'));
+    expect(srv.calls.where((c) => c.endsWith('/publish')), isEmpty);
+    expect(find.text('حُفظت التعديلات'), findsOneWidget);
   });
 
   testWidgets('owner jobs tab of a verified circle: no banner', (tester) async {

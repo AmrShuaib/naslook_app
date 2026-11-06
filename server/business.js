@@ -650,7 +650,10 @@ export default async function business(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const b = await loadBiz(req.params.id);
     if (!b) return bad(reply, 404, "not-found");
-    await pool.query("INSERT INTO biz_follows(biz_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [b.id, uid]);
+    const joined = await pool.query("INSERT INTO biz_follows(biz_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [b.id, uid]);
+    // انضمام جديد يبدأ بالافتراضي «كل العروض» كما يقول التطبيق: «بلا تنبيهات» من عضوية سابقة لا يبقى صامتاً
+    // (المغادرة لا تمسح biz_member_prefs؛ موعد آخر تنبيه يبقى ليحفظ السقف اليومي). الجدول لـ offers.js وقد يغيب.
+    if (joined.rowCount) await pool.query("UPDATE biz_member_prefs SET notify='all', updated_at=now() WHERE biz_id=$1 AND user_id=$2 AND notify='none'", [b.id, uid]).catch(() => {});
     return { ok: true };
   });
   app.delete("/biz/:id/follow", async (req, reply) => {

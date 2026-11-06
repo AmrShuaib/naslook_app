@@ -19,12 +19,16 @@ class PushService {
   static Future<bool> isSubscribed() => impl.pushIsSubscribed();
 
   /// يطلب الإذن، يسجّل عامل الخدمة الخاص بالإشعارات، ويشترك ويرسل الاشتراك للخادم.
-  static Future<bool> subscribe(ApiClient api) async {
+  /// [userId] الحساب الداخل الآن يُقرأ عند الضغط: تبديل الحساب في المكان (تبويب آخر) لا يعيد بناء HomeShell فلا يحدّثه
+  /// resubscribeIfGranted، وبدونه يُمحى صاحب الاشتراك فلا يُكشف لاحقاً أنه لحساب سابق.
+  static Future<bool> subscribe(ApiClient api, {String? userId}) async {
     _bindSignOut(api);
+    if (userId != null && userId.isNotEmpty) _userId = userId;
     // اشتراك قائم لحساب آخر: يُلغى أولاً فيُنشأ عنوان جديد لا تصله إشعارات ذلك الحساب
     if (await _foreign()) await _dropLocal();
-    final ok = await impl.pushSubscribe(api);
-    if (ok) await _setOwner(_userId);
+    final ok = await (subscribeOverride ?? impl.pushSubscribe)(api);
+    // صاحب مجهول لا يمحو المحفوظ: صاحب قديم يُبقي الكشف ممكناً (يُلغى عند دخول غيره) أما المحو فيجعله «لصاحب الجهاز»
+    if (ok && _userId != null) await _setOwner(_userId);
     return ok;
   }
 
@@ -106,6 +110,11 @@ class PushService {
     AppStateNotifier.signOutHooks.add(_onSignOut);
   }
 
+  /// يُسجَّل الخطّاف من main() قبل أي شاشة: جلسة محفوظة أُبطلت في مكان آخر (إعادة تعيين كلمة السر، حذف الحساب، إجراء إداري)
+  /// يكتشفها الإقلاع (401 من /me) قبل HomeShell، فيُلغى اشتراك الحساب السابق محلياً ولا تظهر إشعاراته على شاشة الدخول.
+  /// بلا عميل بعد: لا طلب إلى الخادم (الرمز مُبطل أصلاً).
+  static void watchSignOut() => AppStateNotifier.signOutHooks.add(_onSignOut);
+
   /// يُلغى محلياً أولاً (الضمان)، ثم يُحذف من الخادم برمز الجلسة ما دام صالحاً، بمهلة قصيرة وبأفضل جهد.
   static Future<void> _onSignOut(bool _) async {
     final leaving = _userId;
@@ -126,10 +135,14 @@ class PushService {
   static Future<Map<String, dynamic>?> Function()? subscriptionOverride;
   @visibleForTesting
   static Future<({String? endpoint, bool dropped})> Function()? dropLocalOverride;
+  /// بديل الاشتراك الجديد (طلب الإذن وعامل الخدمة) في الاختبار.
+  @visibleForTesting
+  static Future<bool> Function(ApiClient api)? subscribeOverride;
   @visibleForTesting
   static void resetForTest() {
     subscriptionOverride = null;
     dropLocalOverride = null;
+    subscribeOverride = null;
     _userId = null;
     _api = null;
   }

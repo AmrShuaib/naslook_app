@@ -92,6 +92,9 @@ class AppStateNotifier extends StateNotifier<AppState> {
   /// هل يمكن تغيير البريد من شاشة التأكيد (بكلمة السر المحفوظة في الذاكرة، أو بالجلسة القائمة)؟
   bool get canChangePendingEmail => _pendingHandle != null || state.session != null;
 
+  /// الجلسة القائمة (فتح التطبيق بجلسة محفوظة) لا تحمل كلمة السر، والخادم لا يغيّر بريد الدخول بالجلسة وحدها: تُطلب في المربع.
+  bool get changePendingEmailNeedsPassword => state.session != null && _pendingPin == null;
+
   /// حساب قائم لم يؤكد بريده (جلسة محفوظة أو دخول قبل تفعيل البوابة): يُطلب الرمز قبل المتابعة. أي خطأ في الفحص
   /// يُعامل كـ«لا بوابة» حتى لا يُقفل التطبيق بسبب عطل عابر.
   Future<String?> _gateEmail() async {
@@ -129,9 +132,11 @@ class AppStateNotifier extends StateNotifier<AppState> {
           : AppState(status: AuthStatus.signedIn, session: session);
     } on ApiException catch (e) {
       if (e.isUnauthorized || e.statusCode == 404) {
-        // الجلسة انتهت أو المسار غير موجود: نمسحها ونطلب الدخول مجدداً.
-        await _store.clear();
+        // الجلسة انتهت أو أُبطلت في مكان آخر: نمسحها ونطلب الدخول مجدداً. وما بقي لها على الجهاز (اشتراك إشعارات المتصفح)
+        // يُلغى محلياً بخطّافات الخروج بلا طلبات (الرمز مُبطل)، حتى لا تظهر إشعارات الحساب السابق على شاشة الدخول
         _api.token = null;
+        await _runSignOutHooks(true);
+        await _store.clear();
         state = const AppState(status: AuthStatus.signedOut);
       } else {
         // خطأ شبكة مؤقت: نُبقي الجلسة المحفوظة ونعمل دون اتصال.
@@ -205,16 +210,36 @@ class AppStateNotifier extends StateNotifier<AppState> {
     }
   }
 
-  /// بريد خاطئ: يستبدل البريد غير المؤكد (بكلمة السر المحفوظة، أو بالجلسة القائمة) ويصل رمز جديد. يعيد نص الخطأ إن فشل.
-  Future<String?> changePendingEmail(String email) async {
+  /// بريد خاطئ: يستبدل البريد غير المؤكد ويصل رمز جديد. يعيد نص الخطأ إن فشل.
+  /// بلا جلسة: بكلمة السر المحفوظة في الذاكرة (/auth/change-email). بجلسة محفوظة: بكلمة السر التي يكتبها المستخدم [password]،
+  /// لأن الجلسة وحدها لا تكفي (من يمسك جوالاً مفتوحاً كان يستبدل البريد ثم يستعيد كلمة السر إليه)، وتُعتمد الجلسة الجديدة.
+  Future<String?> changePendingEmail(String email, {String? password}) async {
     if (state.busy) return null;
+    if (state.session != null) {
+      final p = (password ?? _pendingPin ?? '').trim();
+      if (p.isEmpty) return 'أدخل كلمة السر الحالية لتأكيد أنك صاحب الحساب';
+      state = state.copyWith(busy: true, clearError: true);
+      try {
+        final i = await _api.setLoginEmail(email, password: p);
+        state = state.copyWith(busy: false, pendingEmail: i.email ?? email.trim().toLowerCase(), pendingCodeSent: i.codeSent, pendingRetryIn: 0);
+        // النواة أصدرت جلسة عند التحقق من كلمة السر وأُلغيت القديمة: تُحفظ الجديدة حتى لا يخرج المستخدم بعد التأكيد
+        await adoptToken(i.token);
+        return null;
+      } on ApiException catch (e) {
+        state = state.copyWith(busy: false);
+        return switch (e.body?['error']) {
+          'password-required' => 'أدخل كلمة السر الحالية لتأكيد أنك صاحب الحساب',
+          'bad-password' => 'كلمة السر غير صحيحة',
+          'too-many-attempts' => 'محاولات كثيرة؛ انتظر ربع ساعة ثم حاول مجدداً',
+          _ => e.message,
+        };
+      } catch (_) {
+        state = state.copyWith(busy: false);
+        return 'تعذّر تغيير البريد الآن';
+      }
+    }
     state = state.copyWith(busy: true, clearError: true);
     try {
-      if (state.session != null) {
-        final i = await _api.setLoginEmail(email);
-        state = state.copyWith(busy: false, pendingEmail: i.email ?? email.trim().toLowerCase(), pendingCodeSent: i.codeSent, pendingRetryIn: 0);
-        return null;
-      }
       final h = _pendingHandle, p = _pendingPin;
       if (h == null || p == null) { state = state.copyWith(busy: false); return 'ادخل بكلمة السر أولاً ثم غيّر البريد'; }
       final out = await _api.changePendingEmail(handle: h, password: p, email: email);

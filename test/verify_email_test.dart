@@ -65,6 +65,11 @@ class _Srv {
       case 'POST /auth/change-email':
         if (b['password'] != 'Password1') return _json({'error': 'bad-credentials'}, 401);
         return _json({'pending': true, 'email': b['email'], 'codeSent': true}, 202);
+      case 'PUT /me/login-email':
+        // كخادم auth_alias.js: بريد الدخول لا يتغير بالجلسة وحدها
+        if (b['password'] == null) return _json({'error': 'password-required'}, 403);
+        if (b['password'] != 'Password1') return _json({'error': 'bad-password'}, 403);
+        return _json({'email': (b['email'] as String).toLowerCase(), 'verified': false, 'mailConfigured': true, 'required': gateOn, 'codeSent': true, 'noticeSent': false, 'token': 'tok-new'});
       case 'POST /auth/verify':
         if (b['code'] != '654321') return _json({'error': 'bad-code', 'attemptsLeft': 4}, 400);
         verified = true;
@@ -216,6 +221,7 @@ void main() {
     await _register(tester);
     await tester.tap(find.byKey(const Key('verify-change-email')));
     await _settle(tester);
+    expect(find.byKey(const Key('verify-change-password')), findsNothing, reason: 'كلمة السر في الذاكرة من التسجيل للتو');
     await tester.enterText(find.byKey(const Key('verify-new-email')), 'Fixed@Example.com');
     await tester.tap(find.byKey(const Key('verify-new-email-ok')));
     await _settle(tester, 6);
@@ -240,6 +246,42 @@ void main() {
     final st = ProviderScope.containerOf(tester.element(find.byType(_Gate))).read(appStateProvider);
     expect(st.status, AuthStatus.signedIn);
     expect(st.session?.token, 'tok-old');
+  });
+
+  testWidgets('a saved session changes the wrong email only with the password, and keeps the fresh session', (tester) async {
+    await SessionStore().save(const Session(token: 'tok-old', user: SessionUser(id: 'SA0000009', nickname: 'newuser')));
+    final srv = await _pump(tester);
+    await _settle(tester, 6);
+    expect(find.byType(VerifyEmailPage), findsOneWidget);
+    Future<void> change(String email, String? password) async {
+      await tester.tap(find.byKey(const Key('verify-change-email')));
+      await _settle(tester);
+      expect(find.byKey(const Key('verify-change-password')), findsOneWidget, reason: 'الجلسة المحفوظة لا تحمل كلمة السر والخادم لا يغيّر البريد بدونها');
+      await tester.enterText(find.byKey(const Key('verify-new-email')), email);
+      if (password != null) await tester.enterText(find.byKey(const Key('verify-change-password')), password);
+      await tester.tap(find.byKey(const Key('verify-new-email-ok')));
+      await _settle(tester, 6);
+    }
+    // بلا كلمة سر: لا طلب (كان يكفي جوال مفتوح لاستبدال البريد ثم استعادة كلمة السر إليه)
+    await change('attacker@evil.com', null);
+    expect(srv.calls, isNot(contains('PUT /me/login-email')));
+    expect(find.text('أدخل كلمة السر الحالية لتأكيد أنك صاحب الحساب'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+    // كلمة سر خاطئة: رسالة واضحة والبريد كما هو
+    await change('attacker@evil.com', 'wrong');
+    expect(srv.bodies['PUT /me/login-email'], {'email': 'attacker@evil.com', 'password': 'wrong'});
+    expect(find.text('كلمة السر غير صحيحة'), findsOneWidget);
+    expect(find.textContaining('new@example.com'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+    // الصحيحة: يُستبدل البريد ويُعتمد رمز الجلسة الجديد (أُلغيت القديمة على الخادم)
+    await change('Fixed@Example.com', 'Password1');
+    expect(srv.bodies['PUT /me/login-email'], {'email': 'Fixed@Example.com', 'password': 'Password1'});
+    expect(srv.calls, isNot(contains('POST /auth/change-email')), reason: 'الجلسة القائمة تبقى: /auth/change-email كان سيلغيها');
+    expect(find.textContaining('fixed@example.com'), findsOneWidget);
+    final st = ProviderScope.containerOf(tester.element(find.byType(_Gate))).read(appStateProvider);
+    expect(st.status, AuthStatus.pendingVerification);
+    expect(st.session?.token, 'tok-new');
+    expect((await SessionStore().load())?.token, 'tok-new', reason: 'الجلسة الجديدة محفوظة فلا يخرج المستخدم عند إعادة الفتح');
   });
 
   testWidgets('a saved session with the gate off on the server signs in directly', (tester) async {

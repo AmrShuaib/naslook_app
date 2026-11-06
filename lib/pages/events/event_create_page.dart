@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
@@ -38,10 +36,15 @@ class _EventCreatePageState extends ConsumerState<EventCreatePage> {
   EventPointSource source = EventPointSource.locating;
   bool busy = false;
 
+  /// رقم آخر طلب موقع: طلب أقدم (أو اختيار على الخريطة أثناءه) يجعل نتيجة GPS المتأخرة بلا أثر.
+  int _locateSeq = 0;
+  /// طلب الموقع الجاري، ينتظره «إنشاء» حتى لا تُرسل الفعالية بلا نقطة وموقع الجهاز في الطريق.
+  Future<void>? _locating;
+
   @override
   void initState() {
     super.initState();
-    unawaited(_useDevice());
+    _locating = _useDevice();
   }
 
   @override
@@ -52,11 +55,16 @@ class _EventCreatePageState extends ConsumerState<EventCreatePage> {
     super.dispose();
   }
 
+  void _onUseDevice() => _locating = _useDevice();
+
   /// موقع الجهاز الفعلي (لا مركز جدة الذي يعيده التصفح خارج منطقة الخدمة)، وإلا آخر موقع للمستخدم على الخريطة.
+  /// DeviceLocation قد يتأخر حتى 14 ثانية أو ينتظر حوار الإذن، فالنقطة التي حددها المنشئ على الخريطة في أثناء ذلك لا تُستبدل.
   Future<void> _useDevice() async {
-    setState(() => source = EventPointSource.locating);
+    final seq = ++_locateSeq;
+    final prevPoint = point, prevSource = source;
+    if (source != EventPointSource.locating) setState(() => source = EventPointSource.locating);
     final gps = await DeviceLocation.current();
-    if (!mounted) return;
+    if (!mounted || seq != _locateSeq) return;
     if (gps != null) {
       setState(() { point = gps; source = EventPointSource.device; });
       return;
@@ -66,13 +74,22 @@ class _EventCreatePageState extends ConsumerState<EventCreatePage> {
       final pres = await ref.read(myPresenceProvider.future).timeout(const Duration(seconds: 5));
       if (pres.lat != null && pres.lng != null) fallback = LatLng(pres.lat!, pres.lng!);
     } catch (_) { /* بلا حضور على الخريطة: يبقى بلا نقطة حتى يحددها على الخريطة */ }
-    if (!mounted) return;
+    if (!mounted || seq != _locateSeq) return;
+    if (fallback == null && prevPoint != null) {
+      // تعذّر الموقع: تبقى النقطة السابقة (مثل ما حدده على الخريطة) بدل أن تُمحى
+      setState(() { point = prevPoint; source = prevSource; });
+      toast(context, 'تعذّر الوصول إلى موقعك؛ بقيت النقطة السابقة', error: true);
+      return;
+    }
     setState(() { point = fallback; source = fallback == null ? EventPointSource.none : EventPointSource.presence; });
   }
 
   Future<void> _pickOnMap() async {
     final p = await MapPickPage.open(context, initial: point, title: 'مكان الفعالية');
     if (p == null || !mounted) return;
+    // اختيار المنشئ يلغي أي طلب موقع ما زال في الطريق
+    _locateSeq++;
+    _locating = null;
     setState(() { point = p; source = EventPointSource.map; });
   }
 
@@ -104,6 +121,10 @@ class _EventCreatePageState extends ConsumerState<EventCreatePage> {
     if ((double.tryParse(tierPrice.text) ?? 0) > 0 && (!await requireAdult(context, ref) || !mounted)) return;
     setState(() => busy = true);
     try {
+      // موقع الجهاز هو الافتراضي: إن كان في الطريق ننتظره بدل إرسال فعالية بلا نقطة
+      final pending = _locating;
+      if (source == EventPointSource.locating && pending != null) await pending;
+      if (!mounted) return;
       final p = point;
       final ev = await ref.read(apiClientProvider).createEvent({
         'title': title.text.trim(), 'description': desc.text.trim(), 'placeName': place.text.trim(), 'startsAt': starts.toUtc().toIso8601String(),
@@ -165,9 +186,9 @@ class _EventCreatePageState extends ConsumerState<EventCreatePage> {
             ]),
             const SizedBox(height: 8),
             Wrap(spacing: 8, runSpacing: 6, children: [
-              FilledButton.tonalIcon(key: const Key('ev-pick-map'), onPressed: _pickOnMap, icon: const Icon(Icons.map_outlined, size: 18), label: const Text('حدد على الخريطة')),
+              FilledButton.tonalIcon(key: const Key('ev-pick-map'), onPressed: busy ? null : _pickOnMap, icon: const Icon(Icons.map_outlined, size: 18), label: const Text('حدد على الخريطة')),
               if (source != EventPointSource.device && source != EventPointSource.locating)
-                TextButton.icon(key: const Key('ev-use-device'), onPressed: _useDevice, icon: const Icon(Icons.my_location_rounded, size: 18), label: const Text('موقعي الحالي')),
+                TextButton.icon(key: const Key('ev-use-device'), onPressed: busy ? null : _onUseDevice, icon: const Icon(Icons.my_location_rounded, size: 18), label: const Text('موقعي الحالي')),
             ]),
           ]),
         ),

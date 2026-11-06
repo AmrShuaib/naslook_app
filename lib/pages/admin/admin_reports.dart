@@ -244,7 +244,7 @@ class _ModerationCardState extends ConsumerState<_ModerationCard> {
           if (it.hidden)
             FilledButton.tonalIcon(key: Key('mod-restore-$k'), onPressed: busy ? null : () => _act('restore'), icon: const Icon(Icons.visibility_outlined, size: 18), label: const Text('إعادة الإظهار')),
           FilledButton.tonalIcon(key: Key('mod-dismiss-$k'), onPressed: busy ? null : () => _act('dismiss'), icon: const Icon(Icons.done_rounded, size: 18), label: const Text('تجاهل')),
-          // الوظيفة المبلّغ عنها: صفحتها تُفتح للإدارة حتى وهي مخفية (الخادم يعرضها للمدير)
+          // الوظيفة المبلّغ عنها: صفحتها تُفتح حتى وهي مخفية (GET /jobs/:id يعرضها لمدير النظام ولعضو الفريق بصلاحية reports.view)
           if (it.targetType == 'job' && !it.missing)
             TextButton.icon(key: Key('mod-open-$k'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => JobPage(id: it.jobId ?? it.targetId))), icon: const Icon(Icons.work_outline_rounded, size: 18), label: const Text('فتح الوظيفة')),
           if (it.owner != null && !it.missing) ...[

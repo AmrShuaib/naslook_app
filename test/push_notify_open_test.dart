@@ -3,7 +3,8 @@
 //    ومعها أنواع أخرى بلا وجهة (الإخفاء العام، بلاغات كثيرة، ملاحظات البريد الوارد، استرداد حساب محذوف). والمجهول لا يفتح شيئاً.
 //  - نقرة إشعار والتطبيق مفتوح: رابط #/n/<id> من عامل الخدمة يُحلَّل ويُبث مرة واحدة (بلا تكرار للرسالة وتغيّر الجزء معاً)،
 //    وHomeShell الظاهر يفتح وجهته فوراً.
-//  - خطّاف الخروج من خدمة الإشعارات يُسجَّل مرة واحدة ولا يعطّل الخروج.
+//  - خطّاف الخروج من خدمة الإشعارات يُسجَّل مرة واحدة ولا يعطّل الخروج، ويعمل أيضاً حين يكتشف الإقلاع جلسة أُبطلت في مكان آخر،
+//    وصاحب الاشتراك يُسجَّل للحساب الداخل بعد تبديل في المكان (لا يُمحى).
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -283,6 +284,54 @@ void main() {
       await _SignedIn(s.api, SessionStore()).logout().timeout(const Duration(seconds: 5));
       expect(dropped, 0, reason: 'الاشتراك للحساب الداخل في التبويب الآخر');
       expect(s.calls, isNot(contains('DELETE /push/subscribe')));
+      expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), 'SA0000002');
+    });
+
+    test('a session revoked elsewhere is found at boot: the old account\'s subscription is dropped locally, with no server call', () async {
+      SharedPreferences.setMockInitialValues({PushService.ownerKey: 'SA0000001'});
+      final store = SessionStore();
+      await store.save(const Session(token: 'tok-revoked', user: SessionUser(id: 'SA0000001', nickname: 'amr')));
+      final calls = <String>[];
+      final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient((req) async {
+        calls.add('${req.method} ${req.url.path}');
+        if (req.url.path == '/me') return http.Response(jsonEncode({'error': 'auth'}), 401, headers: {'content-type': 'application/json'});
+        return http.Response(jsonEncode({'ok': true}), 200, headers: {'content-type': 'application/json'});
+      }));
+      var dropped = 0;
+      PushService.dropLocalOverride = () async { dropped++; return (endpoint: endpoint, dropped: true); };
+      // كما يفعل main() قبل أي شاشة: HomeShell لم يُبنَ بعد فلم يربط الخدمة بعميل
+      PushService.watchSignOut();
+      final n = AppStateNotifier(api, store);
+      await n.bootstrap();
+      expect(n.state.status, AuthStatus.signedOut);
+      expect(dropped, 1, reason: 'إشعارات الحساب السابق لا تبقى على شاشة الدخول');
+      expect(calls, isNot(contains('DELETE /push/subscribe')), reason: 'الرمز مُبطل فلا طلب به');
+      expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), isNull);
+      expect(await store.load(), isNull);
+    });
+
+    test('after an in-place account switch, enabling push records the new account as owner (never clears it)', () async {
+      SharedPreferences.setMockInitialValues({PushService.ownerKey: 'SA0000001'});
+      final s = server();
+      var dropped = 0;
+      PushService.subscriptionOverride = () async => {'endpoint': endpoint};
+      PushService.dropLocalOverride = () async { dropped++; return (endpoint: endpoint, dropped: true); };
+      PushService.subscribeOverride = (_) async => true;
+      await PushService.resubscribeIfGranted(s.api, userId: 'SA0000001');
+      // تبويب آخر دخل بحساب آخر: هذا التبويب يتبعه في المكان (HomeShell نفسه، فلا يعاد resubscribeIfGranted)
+      final n = _SignedIn(s.api, SessionStore());
+      await SessionStore().save(const Session(token: 'tok-2', user: SessionUser(id: 'SA0000002', nickname: 'sara')));
+      await n.syncFromStore();
+      expect(n.state.session?.user.id, 'SA0000002');
+      expect(dropped, 1, reason: 'اشتراك الحساب السابق أُلغي عند التبديل');
+      expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), isNull);
+      // من ماي سبيس: الحساب الداخل يُقرأ عند الضغط
+      expect(await PushService.subscribe(s.api, userId: 'SA0000002'), isTrue);
+      expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), 'SA0000002', reason: 'صاحب معروف فيُكشف لاحقاً إن انتهت جلسته بلا خروج');
+      // اشتراك بلا حساب معروف لا يمحو صاحباً محفوظاً
+      PushService.resetForTest();
+      PushService.subscribeOverride = (_) async => true;
+      expect(await PushService.subscribe(s.api), isTrue);
       expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), 'SA0000002');
     });
 

@@ -1,6 +1,6 @@
 // الدخول بالبريد الإلكتروني: شاشة الدخول تقبل بريداً وترسله إلى /auth/login، والتسجيل يرفضه، وبند «بريد الدخول» في ماي سبيس
 // يعرض البريد الحالي وحالة تأكيده، يحفظ بريداً جديداً ويفتح مربع الرمز عند إرساله، ويؤكد البريد بالرمز الصحيح.
-// تغيير البريد المؤكد أو إزالته يتطلب كلمة السر الحالية (أخطاء واضحة داخل المربع) ويُعتمد رمز الجلسة الجديد.
+// تغيير بريد الدخول (مؤكداً أو لا) وإزالة المؤكد يتطلبان كلمة السر الحالية (أخطاء واضحة داخل المربع) ويُعتمد رمز الجلسة الجديد.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -43,14 +43,12 @@ void main() {
     if (key == 'GET /me') return _json({'id': 'SA9954961', 'nickname': 'jeddahh'});
     if (key == 'GET /me/login-email') return _json(info());
     if (key == 'PUT /me/login-email') {
-      // كخادم auth_alias.js: البريد المؤكد لا يتغير بلا كلمة السر الحالية
-      // والاستثناء: بريد غير مؤكد والبوابة مفعّلة يُستبدل بلا كلمة سر (شاشة التأكيد بجلسة محفوظة)
-      final needsProof = !(email != null && !verified && gate);
-      if (needsProof && lastBody!['password'] == null) return _json({'error': 'password-required'}, 403);
+      // كخادم auth_alias.js: بريد الدخول لا يتغير بلا كلمة السر الحالية، مؤكداً كان أم لا والبوابة مفعّلة أم لا
+      if (lastBody!['password'] == null) return _json({'error': 'password-required'}, 403);
       if (lastBody!['password'] == 'rate-limited') return _json({'error': 'too-many-attempts'}, 429);
-      if (verified && lastBody!['password'] != 'Morio@1982') return _json({'error': 'bad-password'}, 403);
+      if (lastBody!['password'] != 'Morio@1982') return _json({'error': 'bad-password'}, 403);
       email = (lastBody!['email'] as String).toLowerCase(); verified = false; codePending = mailConfigured;
-      return _json({...info(codeSent: mailConfigured), if (lastBody!['password'] != null) 'token': 'tok-fresh'});
+      return _json({...info(codeSent: mailConfigured), 'token': 'tok-fresh'});
     }
     if (key == 'DELETE /me/login-email') {
       if (verified && lastBody?['password'] != 'Morio@1982') return _json({'error': lastBody?['password'] == null ? 'password-required' : 'bad-password'}, 403);
@@ -128,6 +126,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(lastBody!['code'], '123456');
     expect(find.byKey(const Key('login-email-verified')), findsOneWidget);
+    // البريد المؤكد بأيقونة بريد لا بشارة التوثيق المستخدمة للدوائر الموثّقة
+    expect(tester.widget<Icon>(find.byKey(const Key('login-email-verified'))).icon, Icons.mark_email_read_outlined);
     expect(find.byKey(const Key('login-email-verify')), findsNothing);
   });
 
@@ -198,7 +198,7 @@ void main() {
     expect(container.read(appStateProvider).session?.token, 'tok-after-remove');
   });
 
-  testWidgets('an unverified email behind the gate is replaced without the password (verification screen case)', (tester) async {
+  testWidgets('an unverified email behind the gate still needs the password (the session stays live after a change)', (tester) async {
     SharedPreferences.setMockInitialValues({});
     email = 'typo@example.con'; verified = false; mailConfigured = true; codePending = false; gate = true;
     addTearDown(() => gate = false);
@@ -206,16 +206,21 @@ void main() {
     await tester.tap(find.byKey(const Key('login-email')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('login-email-notice-hint')), findsNothing, reason: 'لا تنبيه لبريد لم تثبت ملكيته');
-    expect(find.byKey(const Key('login-email-password')), findsNothing, reason: 'لا حقل كلمة سر حين لا يُطلب');
+    expect(find.byKey(const Key('login-email-password')), findsOneWidget, reason: 'حقل كلمة السر ظاهر: لا استثناء للبريد غير المؤكد');
     await tester.enterText(find.byKey(const Key('login-email-field')), 'fixed@example.com');
+    // بلا كلمة سر: لا طلب (كان يُرسل بلا كلمة سر فيستبدل من يمسك الجوال البريد ثم يستعيد كلمة السر إليه)
+    await tester.tap(find.byKey(const Key('login-email-save')));
+    await tester.pumpAndSettle();
+    expect(calls, isNot(contains('PUT /me/login-email')));
+    expect(find.text('أدخل كلمة السر الحالية لتأكيد أنك صاحب الحساب'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('login-email-password')), 'Morio@1982');
     await tester.tap(find.byKey(const Key('login-email-save')));
     await tester.pumpAndSettle();
     expect(calls, contains('PUT /me/login-email'));
-    expect(lastBody!.containsKey('password'), isFalse, reason: 'لا يُطلب حقل كلمة السر هنا');
-    expect(find.text('أدخل كلمة السر الحالية لتأكيد أنك صاحب الحساب'), findsNothing);
+    expect(lastBody!['password'], 'Morio@1982');
     expect(find.byKey(const Key('login-email-code')), findsOneWidget, reason: 'وصل الرمز إلى البريد الجديد فيُفتح مربعه');
     final container = ProviderScope.containerOf(tester.element(find.byType(MySpacePage)));
-    expect(container.read(appStateProvider).session?.token, 't', reason: 'لا جلسة جديدة بلا كلمة سر');
+    expect(container.read(appStateProvider).session?.token, 'tok-fresh', reason: 'تُعتمد الجلسة الجديدة بعد التحقق من كلمة السر');
   });
 
   testWidgets('too many password attempts show a clear wait message', (tester) async {

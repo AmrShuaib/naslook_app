@@ -394,7 +394,7 @@ class _PushTileState extends ConsumerState<_PushTile> {
     final api = ref.read(apiClientProvider);
     try {
       if (v) {
-        final ok = await PushService.subscribe(api);
+        final ok = await PushService.subscribe(api, userId: ref.read(appStateProvider).session?.user.id);
         if (!ok && mounted) toast(context, 'لم يُمنح إذن الإشعارات. فعّله من إعدادات المتصفح ثم أعد المحاولة', error: true);
         if (mounted) setState(() => _on = ok);
       } else {
@@ -510,16 +510,16 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
     return s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
   }
 
-  /// تعديل بريد الدخول أو إزالته. بريد الدخول قناة استعادة كلمة السر، فالخادم يطلب كلمة السر الحالية لتغييره أو إزالته
-  /// متى كان مؤكداً (أو لإضافة أول بريد)، حتى لا يكفي جوال مفتوح لسرقة الحساب (server/auth_alias.js). الطلب يُرسل من داخل
+  /// تعديل بريد الدخول أو إزالته. بريد الدخول قناة استعادة كلمة السر، فالخادم يطلب كلمة السر الحالية لأي تغيير فيه
+  /// (ولإزالته متى كان مؤكداً)، حتى لا يكفي جوال مفتوح لسرقة الحساب (server/auth_alias.js). الطلب يُرسل من داخل
   /// المربع فتظهر الأخطاء تحت الحقل المعني ولا يضيع ما كُتب.
   Future<void> _edit() async {
     final c = TextEditingController(text: _info.email ?? '');
     final pw = TextEditingController();
     final api = ref.read(apiClientProvider);
     final appState = ref.read(appStateProvider.notifier);
-    // الاستثناء الوحيد: بريد غير مؤكد والبوابة مفعّلة يُستبدل بلا كلمة سر (الخادم يقبلها إن أُرسلت)
-    final saveNeedsPassword = !(_info.email != null && !_info.verified && _info.required);
+    // الحفظ يطلبها دائماً ولو كان البريد غير مؤكد: الجلسة تبقى صالحة بعد التغيير، فاستبداله بلا كلمة سر ثم «نسيت كلمة السر»
+    // كان يسرق الحساب. الإزالة تطلبها للمؤكد فقط
     final removeNeedsPassword = _info.verified;
     String? emailError, pwError;
     var busy = false;
@@ -534,7 +534,7 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
             setD(() { emailError = 'صيغة البريد غير صحيحة'; pwError = null; });
             return;
           }
-          if ((remove ? removeNeedsPassword : saveNeedsPassword) && password.trim().isEmpty) {
+          if ((!remove || removeNeedsPassword) && password.trim().isEmpty) {
             setD(() { pwError = 'أدخل كلمة السر الحالية لتأكيد أنك صاحب الحساب'; emailError = null; });
             return;
           }
@@ -576,15 +576,12 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
               Text(_info.mailConfigured ? 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها، وتصلك عليه رموز التأكيد واستعادة كلمة السر.' : 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها.', style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
               const SizedBox(height: 10),
               TextField(key: const Key('login-email-field'), controller: c, autofocus: true, enabled: !busy, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, autocorrect: false, decoration: InputDecoration(hintText: 'name@example.com', errorText: emailError, errorMaxLines: 2)),
-              // بريد غير مؤكد خلف البوابة: لا شيء يُحمى بعد، فلا يُعرض الحقل
-              if (saveNeedsPassword || removeNeedsPassword) ...[
-                const SizedBox(height: 10),
-                TextField(
-                  key: const Key('login-email-password'), controller: pw, obscureText: true, enabled: !busy, textDirection: TextDirection.ltr, autocorrect: false, enableSuggestions: false,
-                  decoration: InputDecoration(labelText: 'كلمة السر الحالية', helperText: 'لحماية حسابك: لا يتغير بريد الدخول بدونها', helperMaxLines: 2, errorText: pwError, errorMaxLines: 2),
-                  onSubmitted: (_) => submit(remove: false),
-                ),
-              ],
+              const SizedBox(height: 10),
+              TextField(
+                key: const Key('login-email-password'), controller: pw, obscureText: true, enabled: !busy, textDirection: TextDirection.ltr, autocorrect: false, enableSuggestions: false,
+                decoration: InputDecoration(labelText: 'كلمة السر الحالية', helperText: 'لحماية حسابك: لا يتغير بريد الدخول بدونها', helperMaxLines: 2, errorText: pwError, errorMaxLines: 2),
+                onSubmitted: (_) => submit(remove: false),
+              ),
               if (_info.verified && _info.mailConfigured) ...[
                 const SizedBox(height: 8),
                 const Text('سنرسل تنبيهاً إلى بريدك الحالي بعد التغيير.', key: Key('login-email-notice-hint'), style: TextStyle(color: Joy.textMuted, fontSize: 12)),
@@ -697,7 +694,7 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
                   : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(mainAxisSize: MainAxisSize.min, children: [
                         Flexible(child: Text(email, textDirection: TextDirection.ltr, textAlign: TextAlign.right, overflow: TextOverflow.ellipsis)),
-                        if (_info.verified) ...[const SizedBox(width: 6), const Icon(Icons.verified_rounded, key: Key('login-email-verified'), size: 16, color: Joy.success)],
+                        if (_info.verified) ...[const SizedBox(width: 6), const Icon(Icons.mark_email_read_outlined, key: Key('login-email-verified'), size: 16, color: Joy.success)], // أيقونة بريد لا شارة توثيق: تأكيد البريد ليس توثيقاً للهوية
                       ]),
                       if (!_info.verified && _info.mailConfigured)
                         const Text('غير مؤكَّد · اضغط «تأكيد» لإدخال الرمز الذي وصلك', key: Key('login-email-unverified'), style: TextStyle(color: Joy.warning, fontSize: 12)),

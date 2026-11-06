@@ -141,11 +141,13 @@ class Job {
   final Person? assignee;
   /// توثيق الدائرة الناشرة (bizVerified من الخادم، وإلا biz.verified)؛ null حين لا يُعرف (إخراج لوحة الدائرة).
   final bool? bizVerified;
+  /// أنا من فريق الدائرة الناشرة (team من GET /jobs/:id): لا يُعرض لي «إبلاغ عن الوظيفة».
+  final bool team;
   const Job({
     required this.id, required this.bizId, required this.title, this.titleEn = '', this.department = '', this.description = '', this.descriptionEn = '', this.city = '', this.district = '', this.type = 'full',
     this.education = 'none', this.status = 'draft', this.must = const [], this.nice = const [], this.skills = const [], this.experienceMin = 0, this.openings = 1, this.views = 0, this.salaryMin, this.salaryMax,
     this.salaryVisible = false, this.public = true, this.deadline, this.publishedAt, this.closedAt, this.createdAt, this.updatedAt, this.questions = const [], this.createdBy, this.assigneeId, this.draftSource,
-    this.bizName, this.plan, this.biz, this.mine, this.counts, this.matched, this.assignee, this.bizVerified,
+    this.bizName, this.plan, this.biz, this.mine, this.counts, this.matched, this.assignee, this.bizVerified, this.team = false,
   });
   factory Job.fromJson(Map m) {
     final req = _m(m['requirements']);
@@ -159,6 +161,7 @@ class Job {
       bizName: m['bizName']?.toString(), plan: m['plan']?.toString(), biz: m['biz'] is Map ? JobBiz.fromJson(_m(m['biz'])) : null, mine: m['mine'] is Map ? JobMine.fromJson(_m(m['mine'])) : null,
       counts: m['counts'] is Map ? JobCounts.fromJson(_m(m['counts'])) : null, matched: m['matched'] is Map ? JobMatched.fromJson(_m(m['matched'])) : null, assignee: m['assignee'] is Map ? Person.fromJson(_m(m['assignee'])) : null,
       bizVerified: m['bizVerified'] is bool ? m['bizVerified'] as bool : (m['biz'] is Map ? _m(m['biz'])['verified'] == true : null),
+      team: m['team'] == true,
     );
   }
   /// تُعرض «دائرة غير موثّقة» على الوظيفة وبطاقتها: لا مطابقة تلقائية لها، والتحذير يسبق التقديم.

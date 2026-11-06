@@ -8,6 +8,12 @@
 import crypto from "node:crypto";
 import { BLOG_POSTS, BLOG_DRAFTS } from "./blog_posts.js";
 
+// «القريبة فقط» لم تُبنَ والافتراضي صار «كل العروض» (6 نوفمبر 2026، docs/offers.md): مسودة circle-offers كانت تعد بغير ذلك
+const TEXT_FIXES = [
+  ["circle-offers", "عند الانضمام تختار: كل العروض، أو **القريبة فقط** (الافتراضي)، أو بلا تنبيهات. وتغيّر اختيارك في أي وقت من صفحة العروض.",
+    "تنبيهات عروض الدائرة: **كل العروض** (الافتراضي عند الانضمام) أو بلا تنبيهات، تنبيه واحد في اليوم على الأكثر. وتغيّر اختيارك في أي وقت من صفحة العروض."],
+];
+
 const SITE = "ناس لايف";
 export const KINDS = {
   update: { label: "تحديث", cls: "k-update", plural: "تحديثات" },
@@ -186,6 +192,8 @@ export default async function blog(app, opts = {}) {
         await pool.query(`INSERT INTO blog_posts(id, slug, kind, title, summary, body, status, created_at, updated_at) VALUES($1,$2,$3,$4,$5,$6,'draft',now(),now()) ON CONFLICT (slug) DO NOTHING`,
           [crypto.randomUUID(), p.slug, KINDS[p.kind] ? p.kind : "update", p.title, p.summary ?? "", p.body ?? ""]);
       }
+      // تصحيحات نصية لمنشورات بُذرت قبلاً (البذرة لا تُعاد كتابتها): الجملة القديمة بحرفها فقط، فما عدّله المدير غيرها يبقى
+      for (const [slug, from, to] of TEXT_FIXES) await pool.query("UPDATE blog_posts SET body=replace(body,$2,$3), updated_at=now() WHERE slug=$1 AND strpos(body,$2) > 0", [slug, from, to]);
       dbOk = true; dbError = null;
     } catch (e) { dbError = String(e?.message ?? e).slice(0, 300); log("error", { err: e }, "blog: table/seed failed; serving static posts"); }
   }

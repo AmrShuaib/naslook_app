@@ -145,6 +145,11 @@ export default async function jobs(app, opts = {}) {
   const bizSummary = (b) => (b ? { id: b.id, name: b.name, nameAr: b.name_ar, category: b.category, logoUrl: b.logo_url ?? null, verified: b.verified === true, address: b.address ?? "", city: cityOfBiz(b), lat: b.lat, lng: b.lng } : null);
   const cityOfBiz = (b) => { const a = String(b?.address ?? ""); return /الدمام|dammam/i.test(a) ? "الدمام" : /جدة|jeddah/i.test(a) ? "جدة" : /الرياض|riyadh/i.test(a) ? "الرياض" : ""; };
   const isAdmin = async (uid) => { try { return !!(await globalThis.naslifeIsAdmin?.(uid)); } catch { return false; } };
+  /// مشرف البلاغات: مدير النظام أو عضو فريق المنصة بصلاحية reports.view (server/team.js) — يفتح الوظيفة المخفية من طابور الإشراف
+  const canModerate = async (uid) => { if (await isAdmin(uid)) return true; try { return !!(await globalThis.naslifeTeamCan?.(uid, "reports.view")); } catch { return false; } };
+  /// دائرة أخفاها الإشراف (safety.js: hidden=true وactive=false) أو أوقفها صاحبها: وظائفها خارج العام والمطابقة كما في row.js
+  const bizOff = (b) => b?.hidden === true || b?.active === false;
+  const bizShown = (a) => `NOT EXISTS (SELECT 1 FROM biz hb WHERE hb.id=${a}.biz_id AND (hb.hidden OR NOT hb.active))`;
   const roleFor = async (uid, b) => { if (!uid || !b) return null; if (b.owner_id === uid) return "owner"; const s = (await pool.query("SELECT role FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0]; if (s) return s.role; return (await isAdmin(uid)) ? "admin" : null; };
   const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch { /* لا تُفشل الطلب */ } };
   const notifyAdmins = async (payload) => { try { await globalThis.naslifeNotifyAdmins?.(payload); } catch { /* ignore */ } };
@@ -214,6 +219,7 @@ export default async function jobs(app, opts = {}) {
   async function matchJob(job, { notifyUsers = true } = {}) {
     if (job.status !== "open") return { sent: 0, considered: 0 };
     const b = await bizRow(job.biz_id); if (!b) return { sent: 0, considered: 0 };
+    if (bizOff(b)) return { sent: 0, considered: 0, skipped: "biz-hidden" };
     if (b.verified !== true) return { sent: 0, considered: 0, skipped: "not-verified" };
     const team = new Set((await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1", [b.id])).rows.map((r) => r.user_id).concat([b.owner_id]).filter(Boolean));
     const already = new Set((await pool.query("SELECT user_id FROM job_matches WHERE job_id=$1", [job.id])).rows.map((r) => r.user_id));
@@ -270,7 +276,7 @@ export default async function jobs(app, opts = {}) {
       st.expired = (await pool.query("UPDATE job_matches SET status='expired', updated_at=now() WHERE status='sent' AND sent_at < now() - interval '21 days'")).rowCount;
       // الموثّقة فقط: عروض دائرة وُثّقت بعد النشر (last_matched_at فارغ) تأتي أولاً، فتصل بطاقاتها خلال دورة واحدة من التوثيق
       // أياً كان من وثّقها (طابور التوثيق أو مفتاح لوحة الإدارة؛ مشغّل biz_verified_mirror يحفظ verified في القاعدة)
-      const open = (await pool.query(`SELECT j.* FROM jobs j JOIN biz b ON b.id=j.biz_id WHERE j.status='open' AND b.verified IS TRUE
+      const open = (await pool.query(`SELECT j.* FROM jobs j JOIN biz b ON b.id=j.biz_id WHERE j.status='open' AND b.verified IS TRUE AND b.active AND NOT b.hidden
         AND (j.last_matched_at IS NULL OR j.last_matched_at < now() - interval '20 minutes') ORDER BY j.last_matched_at NULLS FIRST LIMIT 200`)).rows;
       for (const j of open) { try { st.matched += (await matchJob(j)).sent; } catch { /* عرض واحد لا يوقف الباقي */ } }
       const soon = (await pool.query("SELECT i.*, m.user_id, j.title, j.biz_id, j.assignee_id FROM job_interviews i JOIN job_matches m ON m.id=i.match_id JOIN jobs j ON j.id=i.job_id WHERE i.status='scheduled' AND i.reminded_at IS NULL AND i.at BETWEEN now() AND now() + interval '24 hours'")).rows;
@@ -363,7 +369,7 @@ export default async function jobs(app, opts = {}) {
   }));
   app.get("/jobs/inbox", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
-    const rows = (await pool.query("SELECT m.* FROM job_matches m JOIN jobs j ON j.id=m.job_id WHERE m.user_id=$1 AND m.status IN ('sent','viewed','later') AND j.status='open' ORDER BY m.sent_at DESC LIMIT 50", [uid])).rows;
+    const rows = (await pool.query(`SELECT m.* FROM job_matches m JOIN jobs j ON j.id=m.job_id WHERE m.user_id=$1 AND m.status IN ('sent','viewed','later') AND j.status='open' AND ${bizShown("j")} ORDER BY m.sent_at DESC LIMIT 50`, [uid])).rows;
     const items = await matchRowsOut(rows);
     return { items, pending: items.filter((i) => i.status !== "later").length };
   });
@@ -454,7 +460,7 @@ export default async function jobs(app, opts = {}) {
   });
 
   // ================================================================ العام: قائمة الوظائف، الوظيفة، وظائف دائرة، الدوائر التي توظّف
-  const openFilter = "j.status='open' AND j.public=true";
+  const openFilter = `j.status='open' AND j.public=true AND ${bizShown("j")}`;
   app.get("/jobs", async (req, reply) => {
     const uid = await auth(req).catch(() => null);
     const q = norm(str(req.query?.q, 80)), city = str(req.query?.city, 40), type = TYPES.includes(req.query?.type) ? req.query.type : null, bizId = str(req.query?.bizId, 64);
@@ -485,11 +491,17 @@ export default async function jobs(app, opts = {}) {
     const uid = await auth(req).catch(() => null);
     const b = await bizRow(j.biz_id);
     const role = uid ? await roleFor(uid, b) : null;
-    if (!(j.status === "open" && j.public) && !HIRING_ROLES.has(role)) return bad(reply, 404, "not-found");
-    if (!HIRING_ROLES.has(role)) pool.query("UPDATE jobs SET views=views+1 WHERE id=$1", [id]).catch(() => {});
+    const hiring = HIRING_ROLES.has(role);
+    const visible = j.status === "open" && j.public && !bizOff(b);
+    // غير الظاهر: لفريق التوظيف، ولمشرف البلاغات للقراءة فقط (زر «فتح الوظيفة» في طابور الإشراف) بلا عدّ مشاهدة
+    const moderator = !visible && !hiring && uid ? await canModerate(uid) : false;
+    if (!visible && !hiring && !moderator) return bad(reply, 404, "not-found");
+    if (!hiring && !moderator) pool.query("UPDATE jobs SET views=views+1 WHERE id=$1", [id]).catch(() => {});
     const mine = uid ? (await pool.query("SELECT id, status, stage FROM job_matches WHERE user_id=$1 AND job_id=$2", [uid, id])).rows[0] : null;
     const out = publicJobOut(j, b, { mine: mine ? { matchId: mine.id, status: mine.status, stage: mine.stage } : null });
-    if (mine || HIRING_ROLES.has(role)) out.questions = parseJson(j.questions, []);
+    if (mine || hiring || moderator) out.questions = parseJson(j.questions, []);
+    // team: المالك أو أي عضو في فريق الدائرة؛ التطبيق يخفي عنه «إبلاغ عن الوظيفة» (safety.js يرفض بلاغه)
+    if (role && role !== "admin") out.team = true;
     return out;
   });
   /// التقديم بلا دعوة (المرحلة الثالثة): يحتاج ملف توظيف نشطاً؛ يُعدّ قبولاً مباشراً ثم الأسئلة
@@ -498,7 +510,7 @@ export default async function jobs(app, opts = {}) {
     if (!enabled()) return bad(reply, 403, "unavailable");
     const id = String(req.params.id ?? ""); if (!UUID_RE.test(id)) return bad(reply, 400, "bad-id");
     const j = (await pool.query("SELECT * FROM jobs WHERE id=$1 AND status='open' AND public=true", [id])).rows[0]; if (!j) return bad(reply, 404, "not-found");
-    const b = await bizRow(j.biz_id);
+    const b = await bizRow(j.biz_id); if (bizOff(b)) return bad(reply, 404, "not-found");
     if (HIRING_ROLES.has(await roleFor(uid, b)) || (await pool.query("SELECT 1 FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [j.biz_id, uid])).rowCount) return bad(reply, 400, "own-circle");
     const p = (await pool.query("SELECT * FROM job_profiles WHERE user_id=$1", [uid])).rows[0]; if (!p) return bad(reply, 409, "profile-required");
     const exists = (await pool.query("SELECT * FROM job_matches WHERE job_id=$1 AND user_id=$2", [id, uid])).rows[0];

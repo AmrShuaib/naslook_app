@@ -221,14 +221,27 @@ export default async function posts(app, opts) {
     const authorsRaw = req.query?.authors;
     const authors = authorsRaw == null ? null : String(authorsRaw).split(",").map((v) => v.trim().toUpperCase()).filter((v) => /^[A-Z]{2}\d{7}$/.test(v)).slice(0, 300);
     const blocked = uid ? await (globalThis.naslifeBlockedIds?.(uid) ?? []) : [];
+    // «لحظات هنا» (place=biz:<id>) بلا موقع: بلا هذا الصندوق يُحسب أقرب دائرة لكل لحظة نشطة في المنصة ثم يُصفّى بالمفتاح.
+    // اللحظة تُنسب إلى دائرة ضمن 250 م فقط، فصندوق ±0.003° (أوسع قليلاً) حول الدائرة يحصر الحساب فيما يمكن أن يُنسب إليها
+    let box = null;
+    const placeBiz = hasBiz && place?.startsWith("biz:") ? place.slice(4) : null;
+    if (placeBiz) {
+      try {
+        const c = (await pool.query("SELECT lat, lng FROM biz WHERE id=$1 AND active", [placeBiz])).rows[0];
+        if (!c) return { items: [], nextCursor: null, radiusKm: radius, located: has };
+        const dLat = 0.003, dLng = 0.003 / Math.max(0.2, Math.cos((Number(c.lat) * Math.PI) / 180));
+        box = [Number(c.lat) - dLat, Number(c.lat) + dLat, Number(c.lng) - dLng, Number(c.lng) + dLng];
+      } catch { box = null; /* بلا صندوق: الاستعلام الكامل يبقى صحيحاً */ }
+    }
     const run = () => pool.query(`SELECT * FROM (${SELECT.replace("FROM map_posts p", "")}, (CASE WHEN $2::float8 IS NULL OR $3::float8 IS NULL THEN NULL ELSE ${DIST_P} END) AS dist,
         ${PLACE_KEY} AS place_key, ${PLACE_NAME} AS place_name_r, nb.id AS nb_id, nb.category AS nb_category, nb.logo_url AS nb_logo
         FROM map_posts p ${bizJoin()}
         WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($4::text[])) AND ($5::text IS NULL OR p.tag=$5)
-          AND ($10::text[] IS NULL OR p.user_id = ANY($10::text[])) AND ${momentVisibleSql("p", "$1::text")}) x
+          AND ($10::text[] IS NULL OR p.user_id = ANY($10::text[])) AND ${momentVisibleSql("p", "$1::text")}
+          AND ($11::float8 IS NULL OR (p.lat BETWEEN $11 AND $12 AND p.lng BETWEEN $13 AND $14))) x
       WHERE (x.dist IS NULL OR x.dist <= $6) AND ($7::text IS NULL OR x.place_key = $7)
       ORDER BY (EXTRACT(EPOCH FROM (now() - x.created_at)) / 3600.0) + COALESCE(x.dist, 0) * 1.5 ASC, x.created_at DESC
-      LIMIT $8 OFFSET $9`, [uid, has ? lat : null, has ? lng : null, blocked, tag, radius, place, limit + 1, offset, authors]);
+      LIMIT $8 OFFSET $9`, [uid, has ? lat : null, has ? lng : null, blocked, tag, radius, place, limit + 1, offset, authors, ...(box ?? [null, null, null, null])]);
     let rows;
     try { rows = (await run()).rows; } catch (e) { if (hasBiz) { hasBiz = false; rows = (await run()).rows; } else throw e; }
     const more = rows.length > limit;

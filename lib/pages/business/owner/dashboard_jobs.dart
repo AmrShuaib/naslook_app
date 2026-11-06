@@ -59,8 +59,12 @@ class JobsTab extends ConsumerWidget {
                   child: Row(children: [
                     const Icon(Icons.info_outline_rounded, color: Joy.sunText),
                     const SizedBox(width: 8),
-                    const Expanded(child: Text('دائرتك غير موثّقة: عروضك تظهر في قائمة الوظائف بشارة «دائرة غير موثّقة»، ولا تصل للمرشحين المطابقين إلا بعد التوثيق', style: TextStyle(color: Joy.sunText, fontWeight: FontWeight.w600, fontSize: 12.5))),
-                    TextButton(key: const Key('jobs-verify'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => VerifyCirclePage(bizId: biz.id, initial: biz))), child: const Text('وثّق')),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('دائرتك غير موثّقة: عروضك تظهر في قائمة الوظائف بشارة «دائرة غير موثّقة»، ولا تصل للمرشحين المطابقين إلا بعد التوثيق', style: TextStyle(color: Joy.sunText, fontWeight: FontWeight.w600, fontSize: 12.5)),
+                      // التوثيق للمالك والمدير فقط (server/biz_onboard.js)؛ مسؤول التوظيف يُوجَّه إليهما بدل زر يفتح صفحة ترفضه
+                      if (!biz.canManage) const Text('اطلب من مالك الدائرة توثيقها', key: Key('jobs-verify-ask'), style: TextStyle(color: Joy.sunText, fontSize: 12)),
+                    ])),
+                    if (biz.canManage) TextButton(key: const Key('jobs-verify'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => VerifyCirclePage(bizId: biz.id, initial: biz))), child: const Text('وثّق')),
                   ]),
                 ),
               JobPlanCard(plan: b.plan),
