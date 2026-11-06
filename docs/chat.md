@@ -349,7 +349,7 @@ chat_live(id UUID PK, from_id TEXT, to_id TEXT, lat DOUBLE PRECISION, lng DOUBLE
 ### الصور (`server/media_meta.js`، جافاسكربت خالص)
 
 `POST /chat/upload` يمرّر كل صورة على `stripImageMeta` قبل الكتابة (النوع من البايتات لا من الترويسة، فصورة PNG مسمّاة `image/jpeg` تُنظَّف أيضاً):
-- **JPEG**: يُحذف APP1 (Exif وXMP) وAPP13 (IPTC) وCOM وكل مقطع APPn آخر، وما بعد أول EOI (صور MPF الملحقة، ولكل منها Exif خاص بها). يبقى APP0 (JFIF) وملف الألوان ICC (APP2) وAdobe (APP14، لازم لصور CMYK). إن كان الاتجاه ≠ 1 يُكتب APP1 صغير (32 بايتاً) فيه وسم الاتجاه وحده، بعد APP0 إن وُجد وإلا بعد SOI.
+- **JPEG**: يُحذف APP1 (Exif وXMP) وAPP13 (IPTC) وCOM وكل مقطع APPn آخر، وما بعد أول EOI (صور MPF الملحقة، ولكل منها Exif خاص بها). بعد بيانات المسح لا يُقطع إلا مقطع ترويسته معروفة (Exif أو XMP أو IPTC)، لأن بايتات تالفة هناك قد تبدو مقطعاً وقصّها يفسد الصورة. يبقى APP0 (JFIF) وملف الألوان ICC (APP2) وAdobe (APP14، لازم لصور CMYK). إن كان الاتجاه ≠ 1 يُكتب APP1 صغير (32 بايتاً) فيه وسم الاتجاه وحده، بعد APP0 إن وُجد وإلا بعد SOI.
 - **PNG**: تُحذف `eXIf` و`tEXt` و`iTXt` و`zTXt` و`tIME` وما بعد `IEND`، والاتجاه ≠ 1 يبقى في `eXIf` صغير قبل `IDAT` بـ CRC صحيح.
 - **WebP**: تُحذف قطعتا `EXIF` و`XMP ` وتُصفَّر علامتاهما في `VP8X` ويُعاد حساب حجم RIFF، والاتجاه ≠ 1 يبقى في `EXIF` صغير. **GIF** لا يحمل موقعاً.
 - **الدفاع**: أي شك في البنية (طول مقطع مستحيل، ملف مبتور، ناتج لا يمر بالتحقق البنيوي) يعيد الأصل كما هو مع سطر في السجل (`image metadata kept`)؛ لا يُكتب ملف تالف أبداً. غياب الملف `media_meta.js` نفسه لا يعطّل الرفع (استيراد ديناميكي وسطر في السجل).
@@ -372,7 +372,7 @@ chat_live(id UUID PK, from_id TEXT, to_id TEXT, lat DOUBLE PRECISION, lng DOUBLE
 
 ### الاختبارات
 
-`NASLIFE_TEST_DB=naslife_test_x server/test/run.sh harness_media_meta.mjs` (72 فحصاً): ملفات مصنوعة (JPEG بترتيبي البايت II وMM فيه GPS واتجاه 6 وICC وXMP وIPTC وتعليق وصورة MPF ملحقة؛ PNG فيه eXIf وtEXt وiTXt وzTXt مضغوط بـ «Raw profile type exif» وtIME؛ WebP بـ VP8X وEXIF وXMP)، ثم: لا GPS، الاتجاه وICC باقيان، CRC وحجم RIFF صحيحان، والناتج يُفك بـ ffmpeg. والتالف يعود كما هو. والرفع (الصور الثلاث، صورة مسمّاة خطأً، فيديو خفيف بموقع وتدوير 90، خفيف بلا موقع يبقى بايتاً ببايت، MOV، فيديو يحتاج ترميزاً، m4a بعنوان شارع، webm صوتي). والتمشيط (القديم فقط، inode جديد والرابط الصلب كما هو، لا ملفات مؤقتة، لا تكرار، الاستئناف من المؤشر، المفتاح، والملخص في `/chat/status`).
+`NASLIFE_TEST_DB=naslife_test_x server/test/run.sh harness_media_meta.mjs` (74 فحصاً): ملفات مصنوعة (JPEG بترتيبي البايت II وMM فيه GPS واتجاه 6 وICC وXMP وIPTC وتعليق وصورة MPF ملحقة، وExif بعد بيانات المسح؛ PNG فيه eXIf وtEXt وiTXt وzTXt مضغوط بـ «Raw profile type exif» وtIME؛ WebP بـ VP8X وEXIF وXMP)، ثم: لا GPS، الاتجاه وICC باقيان، CRC وحجم RIFF صحيحان، والناتج يُفك بـ ffmpeg. والتالف يعود كما هو. والرفع (الصور الثلاث، صورة مسمّاة خطأً، فيديو خفيف بموقع وتدوير 90، خفيف بلا موقع يبقى بايتاً ببايت، MOV، فيديو يحتاج ترميزاً، m4a بعنوان شارع، webm صوتي). والتمشيط (القديم فقط، inode جديد والرابط الصلب كما هو، لا ملفات مؤقتة، لا تكرار، الاستئناف من المؤشر، المفتاح، والملخص في `/chat/status`).
 
 ## 4. «من يراسلني» قبل أول رسالة (5 نوفمبر 2026)
 

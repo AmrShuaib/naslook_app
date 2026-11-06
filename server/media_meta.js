@@ -126,6 +126,9 @@ function jpegHasGps(buf) {
 
 // ما يبقى من APPn: JFIF/JFXX (APP0)، ملف ICC (APP2 بترويسة ICC_PROFILE)، وAdobe (APP14: تحويل الألوان لصور CMYK)
 const keepApp = (s) => s.m === 0xe0 || s.m === 0xee || (s.m === 0xe2 && s.data?.subarray(0, 12).equals(ICC_HDR));
+const XMP_HDR = Buffer.from("http://ns.adobe.com/xap/1.0/", "latin1"), PS_HDR = Buffer.from("Photoshop 3.0", "latin1");
+/// مقطع بيانات وصفية معروف الترويسة: APP1 (Exif أو XMP) أو APP13 (IPTC من فوتوشوب).
+const innerMeta = (s) => !!s.data && ((s.m === 0xe1 && (s.data.subarray(0, 6).equals(EXIF_HDR) || s.data.subarray(0, XMP_HDR.length).equals(XMP_HDR))) || (s.m === 0xed && s.data.subarray(0, PS_HDR.length).equals(PS_HDR)));
 
 function stripJpeg(buf) {
   const { segs, scanStart, eoi } = jpegSegments(buf);
@@ -151,11 +154,12 @@ function stripJpeg(buf) {
     parts.push(buf.subarray(s.start, s.end));
   }
   if (!insertedExif) parts.push(exifSeg());
-  // المقاطع داخل منطقة المسح تُنسخ كما هي إلا APPn/COM فيها (نادرة)
+  // المقاطع داخل منطقة المسح تُنسخ كما هي إلا Exif/XMP/IPTC فيها (نادرة): نقطع فقط ما ترويسته معروفة، لأن FF غير محشوة
+  // في بيانات مسح تالفة قد تبدو «APPn» بطول معقول، وقصّها يفسد الصورة دون أن يكشفه التحقق البنيوي
   let q = scanStart;
   for (const s of segs.filter((x) => x.inner)) {
-    const isApp = s.m >= 0xe0 && s.m <= 0xef;
-    if (s.m === 0xfe || (isApp && !keepApp(s))) { parts.push(buf.subarray(q, s.start)); q = s.end; removed.push(s.m === 0xfe ? "COM" : `APP${s.m - 0xe0}`); }
+    if (!innerMeta(s)) continue;
+    parts.push(buf.subarray(q, s.start)); q = s.end; removed.push(`APP${s.m - 0xe0}`);
   }
   parts.push(buf.subarray(q, eoi));
   if (eoi < buf.length) removed.push("trailer");

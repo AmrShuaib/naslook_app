@@ -271,6 +271,21 @@ void main() {
       expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), 'SA0000001');
     });
 
+    test('another tab already subscribed as a different account: this tab signing out leaves that subscription alone', () async {
+      SharedPreferences.setMockInitialValues({PushService.ownerKey: 'SA0000001'});
+      final s = server();
+      var dropped = 0;
+      PushService.subscriptionOverride = () async => {'endpoint': endpoint};
+      PushService.dropLocalOverride = () async { dropped++; return (endpoint: endpoint, dropped: true); };
+      await PushService.resubscribeIfGranted(s.api, userId: 'SA0000001');
+      // تبويب آخر خرج ثم دخل بحساب آخر واشترك: صاحب الاشتراك في التخزين المشترك صار SA0000002
+      SharedPreferences.setMockInitialValues({PushService.ownerKey: 'SA0000002'});
+      await _SignedIn(s.api, SessionStore()).logout().timeout(const Duration(seconds: 5));
+      expect(dropped, 0, reason: 'الاشتراك للحساب الداخل في التبويب الآخر');
+      expect(s.calls, isNot(contains('DELETE /push/subscribe')));
+      expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), 'SA0000002');
+    });
+
     test('the push service registers one sign-out hook, and logout still completes', () async {
       final before = AppStateNotifier.signOutHooks.length;
       final calls = <String>[];

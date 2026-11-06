@@ -94,6 +94,14 @@ for (const be of [false, true]) {
   check(s6[0].m === 0xe0 && s6[1].m === 0xe1 && readTiff(s6[1].data.subarray(6)).orientation === 6, 'jpeg with JFIF: the orientation Exif goes right after APP0');
   const clean = stripImageMeta(BASE_JPEG);
   check(!clean.changed && clean.buf === BASE_JPEG, 'jpeg already clean: returned untouched (same buffer)');
+  // Exif بعد بيانات المسح (بين المسوحات): يُقطع لأن ترويسته معروفة؛ ومقطع بلا ترويسة معروفة هناك لا يُلمس
+  const tail = BASE_JPEG.subarray(0, BASE_JPEG.length - 2), eoi = Buffer.from([0xff, 0xd9]);
+  const inner = Buffer.concat([tail, seg(0xe1, Buffer.concat([EXIF, tiff({ orientation: 1 })])), eoi]);
+  const ri = stripImageMeta(inner);
+  check(hasLocationMeta(inner) && ri.changed && !hasLocationMeta(ri.buf) && ri.buf.equals(BASE_JPEG) && decodes(ri.buf, 'jpg'), 'jpeg: an Exif segment after the scan data is cut out (output equals the clean base)', JSON.stringify(ri.removed));
+  const unknown = Buffer.concat([tail, seg(0xe5, Buffer.from('not metadata', 'latin1')), eoi]);
+  const ru = stripImageMeta(unknown);
+  check(!ru.changed && ru.buf === unknown, 'jpeg: an unrecognised marker inside the scan area is never cut (could be stray bytes)', JSON.stringify(ru.removed));
 }
 // ===================== 2) PNG
 function pngChunk(type, data) { const h = Buffer.alloc(8); h.writeUInt32BE(data.length, 0); h.write(type, 4, 'latin1'); const c = Buffer.alloc(4); c.writeUInt32BE(zlib.crc32(Buffer.concat([h.subarray(4), data])) >>> 0); return Buffer.concat([h, data, c]); }

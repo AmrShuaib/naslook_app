@@ -57,7 +57,10 @@ class PushService {
 
   static Future<String?> _owner() async {
     try {
-      return (await SharedPreferences.getInstance()).getString(ownerKey);
+      final p = await SharedPreferences.getInstance();
+      // التخزين مشترك بين التبويبات والنسخة في الذاكرة لا تتحدّث وحدها: تبويب آخر ربما اشترك بحساب آخر
+      await p.reload();
+      return p.getString(ownerKey);
     } catch (_) {
       return null;
     }
@@ -105,7 +108,11 @@ class PushService {
 
   /// يُلغى محلياً أولاً (الضمان)، ثم يُحذف من الخادم برمز الجلسة ما دام صالحاً، بمهلة قصيرة وبأفضل جهد.
   static Future<void> _onSignOut(bool _) async {
+    final leaving = _userId;
     _userId = null;
+    // الاشتراك صار لحساب آخر (دخل به تبويب آخر واشترك قبل أن يتبعه هذا التبويب): ليس لنا أن نلغيه ولا أن نحذفه برمزنا
+    final owner = await _owner();
+    if (leaving != null && owner != null && owner != leaving) return;
     final endpoint = await _dropLocal();
     final api = _api;
     if (endpoint == null || api == null || api.token == null) return;
