@@ -207,7 +207,7 @@ check(!page.includes('310000000000003') && !page.includes('الروضة') && pag
 
 // ================================================================ سياسة الخصوصية: الذكاء الاصطناعي والعمر
 page = await html('/privacy');
-check(page.includes(`آخر تحديث: ${LEGAL_UPDATED_AR}`) && LEGAL_UPDATED_AR === '5 نوفمبر 2026', 'privacy shows the new last-updated date');
+check(page.includes(`آخر تحديث: ${LEGAL_UPDATED_AR}`) && LEGAL_UPDATED_AR === '6 نوفمبر 2026', 'privacy shows the new last-updated date');
 check(page.includes('<h2 id="ai">الذكاء الاصطناعي</h2>') && page.includes('محادثاتك الخاصة لا تُرسل إلى أي ذكاء اصطناعي'), 'privacy: private chats are never sent to AI');
 check(page.includes('صندوق الدعم') && page.includes('يراجعها الموظف') && page.includes('صياغة عرض وظيفي') && page.includes('اكتب لي العرض') && page.includes('لا تُرسل أي بيانات عن المرشحين'), 'privacy: the two Anthropic uses described exactly');
 check(page.includes('your private chats are never sent to any AI') && page.includes('Write the job offer for me'), 'privacy (English) matches');

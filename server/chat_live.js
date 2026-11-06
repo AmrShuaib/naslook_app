@@ -198,7 +198,7 @@ async function setup(app, opts) {
     list.push(now); rate.set(uid, list); return true;
   };
   // قواعد فقط: لا نداء لأي نموذج ذكاء اصطناعي (globalThis.naslifeAskClaude لا يُلمس هنا أبداً). إعادة الاقتراحات الذكية تحتاج
-  // موافقة صريحة لكل مستخدم مطفأة افتراضياً، وتحديث سياسة الخصوصية (القسم «مع من نشارك البيانات»)، وتحديث ملصق أبل للخصوصية
+  // موافقة صريحة لكل مستخدم مطفأة افتراضياً، وتحديث سياسة الخصوصية (القسم «الذكاء الاصطناعي» #ai في legal_content.js)، وتحديث ملصق أبل للخصوصية
   app.post("/chat/suggest", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!allow(uid)) return bad(reply, 429, "rate-limit", { perMin: SUGGEST_PER_MIN });
