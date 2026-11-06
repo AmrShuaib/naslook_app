@@ -17,6 +17,8 @@ self.addEventListener('push', (e) => {
 // مهلة تأكيد التبويب أنه فتح الوجهة؛ بعدها يُعاد تحميله على الرابط (نسخة قديمة من التطبيق لا تستمع للرسائل)
 const OPEN_ACK_MS = 1500;
 const isAppPage = (u) => u.pathname === '/' || u.pathname === '/index.html';
+// رابط إشعار من server/notify.js (#/n/<id>): له وجهة يفتحها التطبيق. غيره (إشعار رسالة من النواة برابط «/» مثلاً) يكفيه التقديم
+const isNotificationLink = (u) => /^#\/?n\/[0-9a-fA-F-]{36}$/.test(u.hash);
 
 /// يرسل الرابط إلى تبويب التطبيق وينتظر «ok» عبر منفذ الرسالة. true = التطبيق فتح الوجهة بنفسه.
 function askTab(client, url) {
@@ -52,6 +54,8 @@ self.addEventListener('notificationclick', (e) => {
     if (tab) {
       // التقديم أولاً: يُسمح به فقط قرب النقرة، قبل انتظار التأكيد
       try { if ('focus' in tab) await tab.focus(); } catch (_) {}
+      // رابط بلا وجهة داخل التطبيق: لا رسالة ولا إعادة تحميل تقطع ما يفعله المستخدم
+      if (!isNotificationLink(target)) return;
       if (await askTab(tab, target.href)) return;
       try { if ('navigate' in tab) { await tab.navigate(reloadUrl(target)); return; } } catch (_) {}
       return;

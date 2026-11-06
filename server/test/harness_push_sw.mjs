@@ -55,6 +55,14 @@ function tab(url, { ack = true, focused = false, visible = 'visible' } = {}) {
   const nav = a.navigated[0] ?? '';
   check(a.focusedCalls === 1 && a.navigated.length === 1 && /\?open=\d+#\/n\//.test(nav) && nav.endsWith(`#/n/${ID}`) && Date.now() - t0 >= 1400, 'old app tab without ack: reloaded on the link after the ack timeout', nav);
 }
+// 2ب) رابط بلا وجهة (إشعار رسالة من النواة برابط «/»): تقديم التبويب فقط، بلا رسالة ولا إعادة تحميل تقطع ما يفعله المستخدم
+{
+  const a = tab('https://naslife.app/#/', { ack: false });
+  const sw = makeSw([a]);
+  const t0 = Date.now();
+  await sw.click('/');
+  check(a.focusedCalls === 1 && a.posted.length === 0 && a.navigated.length === 0 && sw.log.opened.length === 0 && Date.now() - t0 < 500, 'generic link with the app open: focus only (no reload after an ack wait)', JSON.stringify({ posted: a.posted, nav: a.navigated }));
+}
 // 3) تبويبان: المُركَّز عليه يُختار
 {
   const a = tab('https://naslife.app/#/'), b = tab('https://naslife.app/', { focused: true });

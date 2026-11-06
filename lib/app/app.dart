@@ -149,7 +149,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     Future.microtask(() {
       if (!mounted) return;
       _socketSub = ref.read(socketProvider)?.events.listen(_onSocket);
-      PushService.resubscribeIfGranted(ref.read(apiClientProvider));
+      PushService.resubscribeIfGranted(ref.read(apiClientProvider), userId: ref.read(appStateProvider).session?.user.id);
     });
   }
 

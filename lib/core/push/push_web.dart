@@ -85,12 +85,11 @@ Future<void> pushUnsubscribe(ApiClient api) async {
   await sub.unsubscribe().toDart;
 }
 
-Future<void> pushResubscribeIfGranted(ApiClient api) async {
-  try {
-    if (pushPermission() != 'granted') return;
-    final sub = await _current();
-    if (sub != null) await api.pushSubscribe(_toMap(sub));
-  } catch (_) {}
+/// الاشتراك القائم إن كان الإذن ممنوحاً (يسجّل عامل الخدمة فيتحدّث مع كل إقلاع)؛ PushService يقرر هل يُعاد إرساله للخادم.
+Future<Map<String, dynamic>?> pushGrantedSubscription() async {
+  if (pushPermission() != 'granted') return null;
+  final sub = await _current();
+  return sub == null ? null : _toMap(sub);
 }
 
 /// الاشتراك الحالي دون تسجيل عامل الخدمة ولا انتظار جاهزيته (serviceWorker.ready لا يعود أبداً إن لم يُسجَّل عامل):
@@ -103,24 +102,17 @@ Future<web.PushSubscription?> _existing() async {
 }
 
 /// الخروج أو تبديل الحساب: الاشتراك يخص المتصفح لا الحساب، فلو بقي لوصلت إشعارات الحساب السابق لمن يدخل بعده.
-/// يُلغى محلياً أولاً (الضمان: خدمة الدفع ترد 410 على أي إرسال لاحق فيحذفه الخادم بنفسه)، ثم يُحذف من الخادم برمز الجلسة
-/// ما دام صالحاً، بمهلة قصيرة وبأفضل جهد.
-Future<void> pushSignOut(ApiClient? api, {required Duration serverTimeout}) async {
-  web.PushSubscription? sub;
-  try {
-    sub = await _existing();
-  } catch (_) {
-    return;
-  }
-  if (sub == null) return;
+/// يُلغى محلياً (الضمان: خدمة الدفع ترد 410 على أي إرسال لاحق فيحذفه الخادم بنفسه)، ويعيد عنوانه ليحذفه PushService من
+/// الخادم ما دام الرمز صالحاً. dropped = لا اشتراك على هذا المتصفح بعد الآن.
+Future<({String? endpoint, bool dropped})> pushDropLocal() async {
+  final sub = await _existing();
+  if (sub == null) return (endpoint: null, dropped: true);
   final endpoint = sub.endpoint;
+  var dropped = false;
   try {
-    await sub.unsubscribe().toDart;
+    dropped = (await sub.unsubscribe().toDart).toDart;
   } catch (_) {}
-  if (api == null || api.token == null) return;
-  try {
-    await api.pushUnsubscribe(endpoint).timeout(serverTimeout);
-  } catch (_) {}
+  return (endpoint: endpoint, dropped: dropped);
 }
 
 var _listening = false;
@@ -130,6 +122,7 @@ var _listening = false;
 void pushListenOpens(bool Function(String url) onOpen) {
   if (_listening) return;
   _listening = true;
+  _dropOpenParam();
   try {
     if (web.window.navigator.has('serviceWorker')) {
       final sw = web.window.navigator.serviceWorker;
@@ -146,5 +139,17 @@ void pushListenOpens(bool Function(String url) onOpen) {
       sw.startMessages();
     }
     web.window.addEventListener('hashchange', ((web.Event _) { onOpen(web.window.location.href); }).toJS);
+  } catch (_) {}
+}
+
+/// عامل الخدمة يعيد تحميل تبويب لم يرد بإضافة `?open=<وقت>` ليجبر التحميل الكامل؛ بعد الإقلاع (وقد قُرئ الجزء) يُزال من
+/// شريط العنوان حتى لا يُنسخ أو يُشارك. المسار والجزء لا يتغيران.
+void _dropOpenParam() {
+  try {
+    final loc = web.window.location;
+    final search = loc.search;
+    if (!search.contains('open=')) return;
+    final kept = search.substring(1).split('&').where((p) => p.isNotEmpty && !p.startsWith('open=')).toList();
+    web.window.history.replaceState(web.window.history.state, '', '${loc.pathname}${kept.isEmpty ? '' : '?${kept.join('&')}'}${loc.hash}');
   } catch (_) {}
 }

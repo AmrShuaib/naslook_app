@@ -184,8 +184,10 @@ Widget? notificationTarget(AppNotification n) {
       return const WishlistPage();
     case 'saved_search_match':
       return SearchPage(initialQuery: n.str('q') ?? '');
+    // إخفاء تلقائي بعد بلاغات، أو بلاغات محتوى جديدة (notify.js): طابور البلاغات (كان الفهرس 5 = المالية بعد إعادة ترتيب الأقسام)
     case 'content_autohidden':
-      return const AdminShell(standalone: false, initialSection: 5);
+    case 'content_reports_new':
+      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'reports').clamp(0, adminSections.length - 1));
     case 'community_post':
     case 'community_reply':
     case 'community_hidden':
@@ -298,6 +300,8 @@ Widget? _moderatedTarget(AppNotification n) {
     case 'account_warning':
     case 'account_suspended':
     case 'content_autohidden':
+    case 'content_reports_new':
+    case 'content_reported_many':
     case 'post_blocked':
       return (icon: Icons.report_gmailerrorred_outlined, color: Joy.danger);
     case 'admin_granted':

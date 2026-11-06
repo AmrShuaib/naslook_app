@@ -136,6 +136,11 @@ void main() {
       for (final k in ['content_reported_many', 'inbox_note', 'inbox_send_failed', 'inbox_unsnoozed', 'account_refund']) {
         expect(notificationTarget(_n(k)), isA<AdminShell>(), reason: k);
       }
+      // الإخفاء التلقائي وبلاغات المحتوى الجديدة: قسم البلاغات (كان content_autohidden يفتح المالية بفهرس قديم)
+      final reports = adminSections.indexWhere((s) => s.$1 == 'reports');
+      for (final k in ['content_autohidden', 'content_reports_new', 'content_reported_many']) {
+        expect((notificationTarget(_n(k)) as AdminShell).initialSection, reports, reason: k);
+      }
       expect(notificationTarget(_n('test')), isNull, reason: 'الإشعار التجريبي لا وجهة له');
       expect(notificationTarget(_n('something_new')), isNull);
     });
@@ -196,6 +201,76 @@ void main() {
   });
 
   group('sign-out hook', () {
+    tearDown(PushService.resetForTest);
+    const endpoint = 'https://push.example/ep-1';
+    ({ApiClient api, List<String> calls, List<Map<String, dynamic>> bodies, List<String?> tokens}) server() {
+      final calls = <String>[], tokens = <String?>[];
+      final bodies = <Map<String, dynamic>>[];
+      final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient((req) async {
+        calls.add('${req.method} ${req.url.path}');
+        tokens.add(req.headers['x-token']);
+        bodies.add(req.body.isEmpty ? const {} : Map<String, dynamic>.from(jsonDecode(req.body) as Map));
+        return http.Response(jsonEncode({'ok': true, 'stopped': 0}), 200, headers: {'content-type': 'application/json'});
+      }))..token = 'tok';
+      return (api: api, calls: calls, bodies: bodies, tokens: tokens);
+    }
+
+    test('logout unsubscribes this browser and deletes the subscription on the server before the token is cleared', () async {
+      SharedPreferences.setMockInitialValues({PushService.ownerKey: 'SA0000001'});
+      final s = server();
+      var dropped = 0;
+      PushService.subscriptionOverride = () async => {'endpoint': endpoint, 'keys': {'p256dh': 'k', 'auth': 'a'}};
+      PushService.dropLocalOverride = () async { dropped++; return (endpoint: endpoint, dropped: true); };
+      await PushService.resubscribeIfGranted(s.api, userId: 'SA0000001');
+      final n = _SignedIn(s.api, SessionStore());
+      await n.logout().timeout(const Duration(seconds: 5));
+      expect(dropped, 1, reason: 'الإلغاء المحلي هو الضمان: خدمة الدفع ترد 410 بعده');
+      final del = s.calls.indexOf('DELETE /push/subscribe');
+      expect(del, greaterThanOrEqualTo(0));
+      expect(s.bodies[del]['endpoint'], endpoint);
+      expect(s.tokens[del], 'tok', reason: 'يُحذف برمز الجلسة قبل مسحه');
+      expect(del, lessThan(s.calls.indexOf('POST /logout')));
+      expect(n.state.status, AuthStatus.signedOut);
+      expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), isNull);
+    });
+
+    test('a subscription left by another account (its session expired, no logout) is dropped, not moved to the new account', () async {
+      SharedPreferences.setMockInitialValues({PushService.ownerKey: 'SA0000009'});
+      final s = server();
+      var dropped = 0;
+      PushService.subscriptionOverride = () async => {'endpoint': endpoint};
+      PushService.dropLocalOverride = () async { dropped++; return (endpoint: endpoint, dropped: true); };
+      await PushService.resubscribeIfGranted(s.api, userId: 'SA0000001');
+      expect(dropped, 1);
+      expect(s.calls, isNot(contains('POST /push/subscribe')), reason: 'لا يُنسب اشتراك الحساب السابق إلى الحساب الداخل');
+      expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), isNull);
+    });
+
+    test('the same account (or a subscription saved before owners were kept) is re-sent and recorded', () async {
+      SharedPreferences.setMockInitialValues({});
+      final s = server();
+      var dropped = 0;
+      PushService.subscriptionOverride = () async => {'endpoint': endpoint};
+      PushService.dropLocalOverride = () async { dropped++; return (endpoint: endpoint, dropped: true); };
+      await PushService.resubscribeIfGranted(s.api, userId: 'SA0000001');
+      expect(s.calls, contains('POST /push/subscribe'));
+      expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), 'SA0000001');
+      await PushService.resubscribeIfGranted(s.api, userId: 'SA0000001');
+      expect(s.calls.where((c) => c == 'POST /push/subscribe').length, 2);
+      expect(dropped, 0);
+    });
+
+    test('a failed local unsubscribe keeps the owner so the next sign-in still catches it', () async {
+      SharedPreferences.setMockInitialValues({PushService.ownerKey: 'SA0000001'});
+      final s = server();
+      PushService.subscriptionOverride = () async => {'endpoint': endpoint};
+      PushService.dropLocalOverride = () async => (endpoint: endpoint, dropped: false);
+      await PushService.resubscribeIfGranted(s.api, userId: 'SA0000001');
+      await _SignedIn(s.api, SessionStore()).logout().timeout(const Duration(seconds: 5));
+      expect(s.calls, contains('DELETE /push/subscribe'), reason: 'الحذف من الخادم أهم حين يتعذر الإلغاء المحلي');
+      expect((await SharedPreferences.getInstance()).getString(PushService.ownerKey), 'SA0000001');
+    });
+
     test('the push service registers one sign-out hook, and logout still completes', () async {
       final before = AppStateNotifier.signOutHooks.length;
       final calls = <String>[];
