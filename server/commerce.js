@@ -82,6 +82,13 @@ export default async function commerce(app, opts) {
     ALTER TABLE market_wanted_replies ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE events ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
   `);
+  // الدفع عند الاستلام (بند 10 من نواقص الإطلاق): البائع يسمح به على العرض، والطلب يحمل طريقة دفعه ولا يمر بالمحفظة.
+  // cancel_reason يميّز اعتذار البائع وعدم حضور المشتري وانتهاء المهلة عن الإلغاء العادي (عدّاد «لم يحضر» يُحسب منه)
+  await pool.query(`
+    ALTER TABLE market_listings ADD COLUMN IF NOT EXISTS pay_on_receipt BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE market_orders ADD COLUMN IF NOT EXISTS payment TEXT NOT NULL DEFAULT 'wallet', ADD COLUMN IF NOT EXISTS cancel_reason TEXT, ADD COLUMN IF NOT EXISTS cash_received_at TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS market_orders_buyer_cod ON market_orders(buyer_id, status) WHERE payment='cod';
+  `);
   try { await pool.query(String.raw`UPDATE market_listings SET image_url = regexp_replace(image_url, '^(https?://)www\.', '\1', 'i') WHERE image_url ~* '^https?://www\.'`); } catch { /* عمود غير موجود أو جدول قديم */ }
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
@@ -390,6 +397,11 @@ export default async function commerce(app, opts) {
   const PLATFORM = String(process.env.PLATFORM_ACCOUNT_ID ?? "SA0000000");
   // رمز التسليم: بعد خمس محاولات خاطئة من البائع يُقفل الرمز نهائياً (حتى الصحيح)، ويبقى تأكيد المشتري متاحاً
   const CODE_MAX_FAILS = 5;
+  // الدفع عند الاستلام: حد الطلبات المفتوحة لكل مشترٍ، وعدد مرات «لم يحضر» التي توقفه عنه، ومهلة قبول البائع
+  const COD_MAX_OPEN = 3, COD_MAX_NO_SHOWS = 3, COD_ACCEPT_HOURS = 48;
+  const COD_OPEN = ["requested", "paid", "preparing", "on_the_way", "delivered"];
+  // المراحل بعد القبول (أو بعد الدفع في طلب المحفظة) وقبل الاكتمال
+  const ACTIVE = ["paid", "preparing", "on_the_way", "delivered"];
   const settingsOf = () => globalThis.naslifeSettings ?? {};
   const commissionPct = () => { const v = Number(settingsOf().marketCommissionPct); return Number.isFinite(v) && v >= 0 && v <= 30 ? v : 0; };
   const CONTACT_RE = /(\+?966|\b0)5\d{8}\b|https?:\/\/|www\.|wa\.me|t\.me|instagram\.com|snapchat\.com|tiktok\.com|@[a-z0-9_.]{4,}/i;
@@ -415,7 +427,7 @@ export default async function commerce(app, opts) {
       stock: l.stock == null ? null : Number(l.stock), sold: Number(l.sold ?? 0), views: Number(l.views ?? 0), variants: Array.isArray(l.variants) ? l.variants : [], availability: l.availability ?? null,
       publishAt: l.publish_at ?? null, bumpedAt: l.bumped_at ?? l.created_at, spotlight: !!spot, spotlightUntil: spot ? l.spotlight_until : null,
       ratingAvg: l.rating_avg == null ? null : Number(l.rating_avg), ratingCount: Number(l.rating_count ?? 0), distanceKm: dist == null || !Number.isFinite(Number(dist)) ? null : round1(Number(dist)),
-      createdAt: l.created_at, updatedAt: l.updated_at ?? l.created_at, mine: l.seller_id === uid,
+      createdAt: l.created_at, updatedAt: l.updated_at ?? l.created_at, mine: l.seller_id === uid, payOnReceipt: l.pay_on_receipt === true,
     };
   };
   globalThis.naslifeMarketListingOut = listingOut;
@@ -457,6 +469,8 @@ export default async function commerce(app, opts) {
     return av.days.includes(day) && hm >= av.from && hm < av.to && d.getTime() > Date.now();
   };
   const stockInt = (v) => (v == null || v === "" ? null : Math.max(0, Math.floor(Number(v) || 0)));
+  // الدفع عند الاستلام لما يُسلَّم أو يُلتقى عليه حضورياً فقط: توصيل أو مكان استلام مكتوب
+  const codPlaceOk = (delivery, placeName) => delivery === true || String(placeName ?? "").trim().length > 0;
   const accountAgeHours = async (uid) => { const u = await userRow(uid); const t = u?.created_at ? new Date(u.created_at).getTime() : 0; return t ? (Date.now() - t) / 3600000 : 1e9; };
 
   app.post("/market", async (req, reply) => {
@@ -476,16 +490,18 @@ export default async function commerce(app, opts) {
     if (guard) return bad(reply, 429, guard);
     // البيع بمقابل (سعر أو خيار مسعّر) يحتاج إقرار 18+؛ العرض المجاني مفتوح
     if ((price > 0 || parseVariants(b.variants).some((v) => v.price > 0)) && (await needsAdult(uid))) return bad(reply, 403, "adult-required");
+    const payOnReceipt = b.payOnReceipt === true;
+    if (payOnReceipt && !codPlaceOk(b.delivery, b.placeName)) return bad(reply, 400, "cod-needs-place");
     const publishAt = b.publishAt ? new Date(b.publishAt) : null;
     const scheduled = publishAt && !Number.isNaN(publishAt.getTime()) && publishAt.getTime() > Date.now() + 60000;
     const needsReview = settingsOf().marketReviewNewAccounts === true && (await accountAgeHours(uid)) < 24 * 7 && !(await isAdmin(uid));
     const status = b.status === "draft" ? "draft" : scheduled ? "scheduled" : needsReview ? "pending" : "active";
     const imgs = parseImages(req, b); const id = crypto.randomUUID();
-    await pool.query(`INSERT INTO market_listings(id,seller_id,kind,category,subcategory,condition,delivery,title,description,price,image_url,images,place_name,city,lat,lng,status,stock,variants,availability,publish_at,bumped_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,now())`,
+    await pool.query(`INSERT INTO market_listings(id,seller_id,kind,category,subcategory,condition,delivery,title,description,price,image_url,images,place_name,city,lat,lng,status,stock,variants,availability,publish_at,bumped_at,pay_on_receipt)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,now(),$22)`,
       [id, uid, kind, category, subcategory, CONDITIONS.has(b.condition) ? b.condition : null, b.delivery === true, title, description, price, imgs[0] ?? null, JSON.stringify(imgs),
        b.placeName ? String(b.placeName).slice(0, 80) : null, b.city ? String(b.city).slice(0, 40) : null, b.lat == null ? null : Number(b.lat), b.lng == null ? null : Number(b.lng),
-       status, stockInt(b.stock), JSON.stringify(parseVariants(b.variants)), b.availability ? JSON.stringify(parseAvailability(b.availability)) : null, scheduled ? publishAt : null]);
+       status, stockInt(b.stock), JSON.stringify(parseVariants(b.variants)), b.availability ? JSON.stringify(parseAvailability(b.availability)) : null, scheduled ? publishAt : null, payOnReceipt]);
     const row = (await pool.query("SELECT * FROM market_listings WHERE id=$1", [id])).rows[0];
     if (status === "active") globalThis.naslifeMarketOnPublish?.(row).catch?.(() => {});
     if (status === "pending") globalThis.naslifeNotifyAdmins?.({ kind: "market_pending", title: "عرض بانتظار المراجعة", body: `${await nickOf(uid)}: ${title}`, data: { listingId: id } }).catch?.(() => {});
@@ -561,6 +577,12 @@ export default async function commerce(app, opts) {
     if (b.kind !== undefined) set("kind", b.kind === "service" ? "service" : "product");
     if (b.condition !== undefined) set("condition", CONDITIONS.has(b.condition) ? b.condition : null);
     if (b.delivery !== undefined) set("delivery", b.delivery === true);
+    // الدفع عند الاستلام يبقى صالحاً بعد التعديل: يُفحص بالقيم الناتجة (المرسلة أو المحفوظة) متى لمس الطلب أحد الثلاثة
+    if (b.payOnReceipt !== undefined || b.delivery !== undefined || b.placeName !== undefined) {
+      const cod = b.payOnReceipt !== undefined ? b.payOnReceipt === true : l.pay_on_receipt === true;
+      if (cod && !codPlaceOk(b.delivery !== undefined ? b.delivery === true : l.delivery === true, b.placeName !== undefined ? b.placeName : l.place_name)) return bad(reply, 400, "cod-needs-place");
+      if (b.payOnReceipt !== undefined) set("pay_on_receipt", cod);
+    }
     if (b.images !== undefined || b.imageUrl !== undefined) { const imgs = parseImages(req, b); set("images", JSON.stringify(imgs)); set("image_url", imgs[0] ?? null); }
     if (b.placeName !== undefined) set("place_name", b.placeName ? String(b.placeName).slice(0, 80) : null);
     if (b.city !== undefined) set("city", b.city ? String(b.city).slice(0, 40) : null);
@@ -603,12 +625,13 @@ export default async function commerce(app, opts) {
     courier: o.courier_id ? await person(o.courier_id) : null, courierNote: o.courier_note ?? "", mineAsCourier: !!o.courier_id && o.courier_id === uid,
     deliveredAt: o.delivered_at ?? null, completedAt: o.completed_at ?? null, disputeStatus: o.dispute_status ?? null, disputeReason: o.dispute_reason ?? null, disputeNote: o.dispute_note ?? null,
     reviewed: o.reviewed === true, codeLocked: Number(o.code_fails ?? 0) >= CODE_MAX_FAILS, createdAt: o.created_at, updatedAt: o.updated_at,
+    payment: o.payment === "cod" ? "cod" : "wallet", cancelReason: o.cancel_reason ?? null, acceptedAt: o.accepted_at ?? null, cashReceivedAt: o.cash_received_at ?? null,
   });
   globalThis.naslifeMarketOrderOut = orderOut;
   // «من يراسلني» (profile_ext.js): أطراف طلب السوق (المشتري والبائع والمندوب) يتراسلون أياً كانت سياستهم ما دام الطلب
   // قائماً، أو تغيّر خلال 14 يوماً (متابعة التسليم والتقييم والنزاع)
   (globalThis.naslifeMessageAllow ??= new Map()).set("market-orders", async (a, b) => !!a && !!b && a !== b && (await pool.query(
-    `SELECT 1 FROM market_orders WHERE (status IN ('paid','preparing','on_the_way','delivered','disputed') OR updated_at > now() - interval '14 days')
+    `SELECT 1 FROM market_orders WHERE (status IN ('requested','paid','preparing','on_the_way','delivered','disputed') OR updated_at > now() - interval '14 days')
        AND ((buyer_id=$1 AND (seller_id=$2 OR courier_id=$2)) OR (buyer_id=$2 AND (seller_id=$1 OR courier_id=$1)) OR (seller_id=$1 AND courier_id=$2) OR (seller_id=$2 AND courier_id=$1)) LIMIT 1`, [a, b])).rowCount > 0);
   const ORDER_SQL = "SELECT o.*, l.title, l.image_url, l.kind, (r.order_id IS NOT NULL) AS reviewed FROM market_orders o JOIN market_listings l ON l.id=o.listing_id LEFT JOIN market_reviews r ON r.order_id=o.id";
   app.get("/market/orders", async (req, reply) => {
@@ -640,7 +663,9 @@ export default async function commerce(app, opts) {
     await pool.query("UPDATE market_listings SET status='hidden', updated_at=now() WHERE id=$1 AND seller_id=$2 AND status<>'blocked'", [req.params.id, uid]);
     return { ok: true };
   });
-  // الطلب: خيار ومخزون وموعد وكوبون؛ المبلغ يُحجز من المشتري ولا يصل البائع إلا عند اكتمال الطلب (تأكيد الاستلام)
+  // الطلب: خيار ومخزون وموعد وكوبون؛ المبلغ يُحجز من المشتري ولا يصل البائع إلا عند اكتمال الطلب (تأكيد الاستلام).
+  // payment:"cod" (الدفع عند الاستلام، والعرض يسمح به): لا مال يتحرك، الطلب يبدأ «بانتظار قبول البائع» (requested) ويحجز المخزون
+  // كالمدفوع، ولكل مشترٍ ٣ طلبات مفتوحة منه على الأكثر، ويُغلق عنه بعد ٣ مرات «لم يحضر»
   app.post("/market/:id/order", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (await isSuspended(uid)) return bad(reply, 403, "suspended");
@@ -648,13 +673,16 @@ export default async function commerce(app, opts) {
     const qty = Math.max(1, Math.min(20, Number(b.qty) || 1)); const note = String(b.note ?? "").slice(0, 300);
     const variantName = String(b.variant ?? "").trim(); const couponCode = String(b.coupon ?? "").trim().toUpperCase().slice(0, 24);
     const slot = b.slot ? new Date(b.slot) : null;
+    const wantCod = b.payment === "cod";
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    // ملاحظة المشتري تصل البائع نصاً وإشعاراً: الكلمات الممنوعة نفسها التي تسري على العرض
+    const bannedNote = bannedIn(note); if (bannedNote) return bad(reply, 400, "banned-words", { word: bannedNote });
     const blocked = await blockedIds(uid);
     // الشراء بمقابل يحتاج إقرار 18+ (يُفحص المبلغ داخل المعاملة؛ الطلب المجاني مفتوح)
     const adultMissing = await needsAdult(uid);
     const id = crypto.randomUUID(); const code = String(1000 + crypto.randomInt(9000));
     const fail = (err, extra = {}) => Object.assign(new Error(err), { code: err, ...extra });
-    let l, variant = null, total = 0, discount = 0, commission = 0;
+    let l, variant = null, total = 0, discount = 0, commission = 0, payment = "wallet";
     try {
       // قراءة العرض بقفل داخل المعاملة نفسها: فحص المخزون والخيار والموعد والخصم في وحدة واحدة فلا بيع زائد عند طلبين متوازيين
       await tx(async (c) => {
@@ -663,6 +691,7 @@ export default async function commerce(app, opts) {
         if (l.seller_id === uid) throw fail("own-listing");
         // لا طلب بين طرفين بينهما حظر (بأي اتجاه)
         if (blocked.includes(l.seller_id)) throw fail("not-found");
+        if (wantCod && l.pay_on_receipt !== true) throw fail("cod-unavailable");
         let unit = Number(l.price);
         const variants = Array.isArray(l.variants) ? l.variants : [];
         if (variants.length) {
@@ -683,9 +712,20 @@ export default async function commerce(app, opts) {
         }
         total = Math.max(0, subtotal - discount); commission = Math.floor(total * commissionPct() / 100);
         if (total > 0 && adultMissing) throw fail("adult-required");
-        if (total > 0) await ledger(c, uid, "market", -total, { peerId: l.seller_id, ref: id, note: l.title, points: Math.floor(total / 1000) });
-        await c.query("INSERT INTO market_orders(id,listing_id,buyer_id,seller_id,qty,total,note,code,variant,coupon,discount,commission,slot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
-          [id, l.id, uid, l.seller_id, qty, total, note, code, variant?.name ?? null, coupon, discount, commission, slot && !Number.isNaN(slot.getTime()) ? slot : null]);
+        // الطلب المجاني لا طريقة دفع له: يسلك مسار الطلب العادي بلا قبول مسبق
+        payment = wantCod && total > 0 ? "cod" : "wallet";
+        if (payment === "cod") {
+          // قفل لكل مشترٍ حتى نهاية المعاملة: طلبان متوازيان لا يتجاوزان الحد معاً
+          await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`market-cod:${uid}`]);
+          const st = (await c.query(`SELECT count(*) FILTER (WHERE cancel_reason='no_show')::int AS no_shows,
+              count(*) FILTER (WHERE status = ANY($2::text[]))::int AS open FROM market_orders WHERE buyer_id=$1 AND payment='cod'`, [uid, COD_OPEN])).rows[0];
+          if (st.no_shows >= COD_MAX_NO_SHOWS) throw fail("cod-blocked", { noShows: st.no_shows });
+          if (st.open >= COD_MAX_OPEN) throw fail("cod-limit", { max: COD_MAX_OPEN });
+          // المال لا يمر بناس لايف فلا عمولة تُقتطع منه
+          commission = 0;
+        } else if (total > 0) await ledger(c, uid, "market", -total, { peerId: l.seller_id, ref: id, note: l.title, points: Math.floor(total / 1000) });
+        await c.query("INSERT INTO market_orders(id,listing_id,buyer_id,seller_id,qty,total,note,code,variant,coupon,discount,commission,slot,payment,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+          [id, l.id, uid, l.seller_id, qty, total, note, code, variant?.name ?? null, coupon, discount, commission, slot && !Number.isNaN(slot.getTime()) ? slot : null, payment, payment === "cod" ? "requested" : "paid"]);
         if (variant) await c.query(`UPDATE market_listings SET variants = (SELECT COALESCE(jsonb_agg(CASE WHEN v->>'name'=$2 AND (v->>'stock') IS NOT NULL THEN jsonb_set(v, '{stock}', to_jsonb(GREATEST(0, (v->>'stock')::int - $3))) ELSE v END), '[]'::jsonb) FROM jsonb_array_elements(variants) v), sold=sold+$3, updated_at=now() WHERE id=$1`, [l.id, variant.name, qty]);
         else await c.query("UPDATE market_listings SET stock = CASE WHEN stock IS NULL THEN NULL ELSE GREATEST(0, stock-$2) END, sold=sold+$2, updated_at=now() WHERE id=$1", [l.id, qty]);
         if (coupon) await c.query("UPDATE market_coupons SET used=used+1 WHERE code=$1 AND seller_id=$2", [coupon, l.seller_id]);
@@ -700,14 +740,20 @@ export default async function commerce(app, opts) {
         case "coupon-min": return bad(reply, 400, "coupon-min", { minTotal: e.minTotal });
         case "insufficient-funds": return bad(reply, 402, "insufficient-funds");
         case "adult-required": return bad(reply, 403, "adult-required");
+        case "cod-unavailable": return bad(reply, 400, "cod-unavailable");
+        case "cod-blocked": return bad(reply, 403, "cod-blocked", { noShows: e.noShows });
+        case "cod-limit": return bad(reply, 429, "cod-limit", { max: e.max });
         default: throw e;
       }
     }
-    await notify(l.seller_id, { kind: "market_order", title: "طلب جديد في السوق", body: `${await nickOf(uid)} طلب ${l.title}${variant ? " (" + variant.name + ")" : ""}${qty > 1 ? " × " + qty : ""} بقيمة ${sar(total)}${note ? " · " + note.slice(0, 80) : ""}`, data: { orderId: id, listingId: l.id } });
-    return { ok: true, id, total, discount, commission, code };
+    const what = `${l.title}${variant ? " (" + variant.name + ")" : ""}${qty > 1 ? " × " + qty : ""}`;
+    if (payment === "cod") await notify(l.seller_id, { kind: "market_cod_order", title: "طلب جديد · الدفع عند الاستلام", body: `${await nickOf(uid)} طلب ${what} بقيمة ${sar(total)} يدفعها عند الاستلام. اقبل الطلب أو اعتذر${note ? " · " + note.slice(0, 80) : ""}`, data: { orderId: id, listingId: l.id, payment } });
+    else await notify(l.seller_id, { kind: "market_order", title: "طلب جديد في السوق", body: `${await nickOf(uid)} طلب ${what} بقيمة ${sar(total)}${note ? " · " + note.slice(0, 80) : ""}`, data: { orderId: id, listingId: l.id } });
+    return { ok: true, id, total, discount, commission, code, payment, status: payment === "cod" ? "requested" : "paid" };
   });
   const loadOrder = async (id) => (await pool.query(`${ORDER_SQL} WHERE o.id=$1`, [id])).rows[0] ?? null;
   const STAGE_LABEL = { preparing: "قيد التحضير", on_the_way: "في الطريق", delivered: "تم التسليم" };
+  const isCod = (o) => o?.payment === "cod";
   // تقدّم البائع بالطلب عبر المراحل (للأمام فقط)؛ «تم التسليم» ينتظر تأكيد المشتري أو رمزه، ويكتمل تلقائياً بعد ٧٢ ساعة
   const advance = async (req, reply, stage) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -722,26 +768,38 @@ export default async function commerce(app, opts) {
     // الانتقال مشروط بالحالة التي فُحصت: إلغاء متوازٍ سبق (استرداد) لا يُكتب فوقه «تم التسليم» فيدفع التأكيد أو الاكتمال التلقائي للبائع مرة ثانية
     const moved = await pool.query(`UPDATE market_orders SET status=$2, updated_at=now(), accepted_at=COALESCE(accepted_at, now())${stage === "delivered" ? ", delivered_at=now()" : ""} WHERE id=$1 AND status=$3 RETURNING id`, [o.id, stage, o.status]);
     if (!moved.rowCount) return bad(reply, 409, "bad-status");
-    await notify(o.buyer_id, { kind: "market_status", title: `طلبك: ${STAGE_LABEL[stage]}`, body: stage === "delivered" ? `${o.title}: أكد البائع التسليم. أكّد الاستلام من صفحة الطلب أو أعطه رمزك ${o.code}` : `${o.title}: ${STAGE_LABEL[stage]}`, data: { orderId: o.id, status: stage } });
+    await notify(o.buyer_id, { kind: "market_status", title: `طلبك: ${STAGE_LABEL[stage]}`, body: stage !== "delivered" ? `${o.title}: ${STAGE_LABEL[stage]}`
+      : isCod(o) ? `${o.title}: أكد البائع التسليم. ادفع له ${sar(o.total)} وأعطه رمزك ${o.code}، أو أكّد الاستلام من صفحة الطلب`
+      : `${o.title}: أكد البائع التسليم. أكّد الاستلام من صفحة الطلب أو أعطه رمزك ${o.code}`, data: { orderId: o.id, status: stage } });
     return { ok: true, status: stage };
   };
   app.post("/market/orders/:id/stage", async (req, reply) => advance(req, reply, ["preparing", "on_the_way", "delivered"].includes(req.body?.stage) ? req.body.stage : "delivered"));
   app.post("/market/orders/:id/deliver", async (req, reply) => advance(req, reply, "delivered"));
-  // اكتمال الطلب وتحرير المبلغ للبائع بعد خصم العمولة (تُقيَّد لحساب المنصة)
-  const complete = async (o, { by = "buyer", lockCode = false } = {}) => {
-    const net = Number(o.total) - Number(o.commission ?? 0);
+  // اكتمال الطلب وتحرير المبلغ للبائع بعد خصم العمولة (تُقيَّد لحساب المنصة).
+  // الدفع عند الاستلام: لا قيد في الدفتر (المال سُلّم يداً بيد)، و cash يسجّل «استلمت المبلغ» من البائع
+  const complete = async (o, { by = "buyer", lockCode = false, cash = false } = {}) => {
+    const cod = isCod(o);
+    const net = cod ? 0 : Number(o.total) - Number(o.commission ?? 0);
     await tx(async (c) => {
       if (lockCode) {
         // رمز البائع يُفحص تحت قفل الصف نفسه الذي يزيد عدّاد الأخطاء، فلا تتجاوز دفعة متوازية حد المحاولات
         const cur = (await c.query("SELECT code_fails FROM market_orders WHERE id=$1 FOR UPDATE", [o.id])).rows[0];
         if (cur && Number(cur.code_fails) >= CODE_MAX_FAILS) throw Object.assign(new Error("code-locked"), { code: "code-locked" });
       }
-      const r = await c.query("UPDATE market_orders SET status='completed', completed_at=now(), updated_at=now() WHERE id=$1 AND status IN ('paid','preparing','on_the_way','delivered') RETURNING id", [o.id]);
+      const r = await c.query("UPDATE market_orders SET status='completed', completed_at=now(), updated_at=now(), cash_received_at=CASE WHEN $2::boolean THEN now() ELSE cash_received_at END WHERE id=$1 AND status IN ('paid','preparing','on_the_way','delivered') RETURNING id", [o.id, cod && cash]);
       if (!r.rowCount) throw Object.assign(new Error("bad-status"), { code: "bad-status" });
+      if (cod) return;
       if (net > 0) await ledger(c, o.seller_id, "market_sale", net, { peerId: o.buyer_id, ref: o.id, note: o.title });
       if (Number(o.commission) > 0) await ledger(c, PLATFORM, "commission", Number(o.commission), { peerId: o.seller_id, ref: o.id, note: o.title });
     });
     globalThis.naslifeMarketOnComplete?.(o).catch?.(() => {});
+    if (cod) {
+      // لا مبلغ يصل عبر ناس لايف: الاكتمال يُبلَّغ للطرف الذي لم يُكمله
+      const data = { orderId: o.id, status: "completed", payment: "cod" };
+      if (by !== "seller") await notify(o.seller_id, { kind: "market_cod_completed", title: "اكتمل الطلب", body: `${o.title}: ${by === "auto" ? "اكتمل تلقائياً بعد ٧٢ ساعة من التسليم" : "أكّد المشتري الاستلام"} · الدفع عند الاستلام ${sar(o.total)}`, data });
+      if (by !== "buyer") await notify(o.buyer_id, { kind: "market_cod_completed", title: "اكتمل طلبك", body: `${o.title}: يمكنك الآن تقييم البائع`, data });
+      return;
+    }
     await notify(o.seller_id, { kind: "market_status", title: "اكتمل الطلب ووصلك المبلغ", body: `${o.title}: ${sar(net)}${Number(o.commission) > 0 ? " بعد عمولة " + sar(o.commission) : ""}${by === "auto" ? " (اكتمال تلقائي)" : ""}`, data: { orderId: o.id, status: "completed" } });
     if (by !== "buyer") await notify(o.buyer_id, { kind: "market_status", title: "اكتمل طلبك", body: `${o.title}: يمكنك الآن تقييم البائع`, data: { orderId: o.id, status: "completed" } });
   };
@@ -765,15 +823,29 @@ export default async function commerce(app, opts) {
         return bad(reply, 400, "bad-code", { left: Math.max(0, CODE_MAX_FAILS - Number(r.rows[0].code_fails)) });
       }
     }
-    try { await complete(o, { by: isBuyer ? "buyer" : "seller", lockCode: isSeller }); }
+    // في الدفع عند الاستلام: رمز المشتري عند البائع يعني أن التسليم والدفع تمّا معاً
+    try { await complete(o, { by: isBuyer ? "buyer" : "seller", lockCode: isSeller, cash: isSeller }); }
     catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); if (e.code === "code-locked") return bad(reply, 429, "code-locked"); throw e; }
     return { ok: true, status: "completed" };
   });
-  const refund = async (o, { status = "cancelled", amount = null, note = null } = {}) => {
-    const amt = amount == null ? Number(o.total) : amount;
+  // الدفع عند الاستلام: البائع يسجّل «استلمت المبلغ» عند التسليم فيكتمل الطلب (بلا أي قيد في المحفظة)
+  app.post("/market/orders/:id/cash-received", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const o = await loadOrder(req.params.id); if (!o) return bad(reply, 404, "not-found");
+    if (o.seller_id !== uid) return bad(reply, 403, "seller-only");
+    if (!isCod(o)) return bad(reply, 409, "not-cod");
+    if (!ACTIVE.includes(o.status)) return bad(reply, 409, "bad-status");
+    try { await complete(o, { by: "seller", cash: true }); } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
+    return { ok: true, status: "completed" };
+  });
+  // الإلغاء: الحالة الجديدة مشروطة بأن الطلب ما زال في إحدى الحالات from (تتغيّر حسب من يلغي ولماذا).
+  // الدفع عند الاستلام: لا مال محجوز فلا قيد استرداد، ويعود المخزون والكوبون كالمدفوع
+  const refund = async (o, { status = "cancelled", amount = null, note = null, reason = null, from = ["requested", ...ACTIVE, "disputed"] } = {}) => {
+    const amt = isCod(o) ? 0 : amount == null ? Number(o.total) : amount;
     await tx(async (c) => {
       // حارس الحالة قبل أي قيد في الدفتر: التحديث يقفل الصف ويفشل إن سبقه إلغاء أو اكتمال، فلا استرداد مرتين ولا بعد وصول المبلغ للبائع
-      const r = await c.query("UPDATE market_orders SET status=$2, dispute_status=CASE WHEN dispute_status IS NULL THEN NULL ELSE 'resolved' END, dispute_note=COALESCE($3, dispute_note), updated_at=now() WHERE id=$1 AND status IN ('paid','preparing','on_the_way','delivered','disputed') RETURNING id", [o.id, status, note]);
+      const r = await c.query("UPDATE market_orders SET status=$2, dispute_status=CASE WHEN dispute_status IS NULL THEN NULL ELSE 'resolved' END, dispute_note=COALESCE($3, dispute_note), cancel_reason=COALESCE($4, cancel_reason), updated_at=now() WHERE id=$1 AND status = ANY($5::text[]) RETURNING id", [o.id, status, note, reason, from]);
       if (!r.rowCount) throw Object.assign(new Error("bad-status"), { code: "bad-status" });
       if (amt > 0) await ledger(c, o.buyer_id, "refund", amt, { peerId: o.seller_id, ref: o.id, note: o.title });
       // إرجاع المخزون والكوبون عند الإلغاء الكامل
@@ -790,12 +862,53 @@ export default async function commerce(app, opts) {
     const o = await loadOrder(req.params.id); if (!o) return bad(reply, 404, "not-found");
     const byBuyer = o.buyer_id === uid;
     if (!byBuyer && o.seller_id !== uid) return bad(reply, 403, "forbidden");
-    // المشتري يلغي قبل أن يبدأ البائع؛ البائع يلغي في أي مرحلة قبل الاكتمال
-    if (byBuyer ? o.status !== "paid" : !["paid", "preparing", "on_the_way", "delivered"].includes(o.status)) return bad(reply, 409, "bad-status");
-    try { await refund(o); } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
+    // المشتري يلغي قبل أن يبدأ البائع (وفي الدفع عند الاستلام قبل القبول أيضاً)؛ البائع يلغي في أي مرحلة قبل الاكتمال
+    const allowed = byBuyer ? (isCod(o) ? ["requested", "paid"] : ["paid"]) : ["requested", ...ACTIVE];
+    if (!allowed.includes(o.status)) return bad(reply, 409, "bad-status");
+    // حارس الكتابة كما كان: إلغاء البائع يسبق نزاعاً متزامناً فيُسترد للمشتري ويُحسم النزاع (refund يُغلقه)
+    try { await refund(o, { reason: byBuyer ? "buyer" : "seller" }); } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
+    const back = !isCod(o) && Number(o.total) > 0 ? " واستُرد " + sar(o.total) + " إلى محفظتك" : "";
     await notify(byBuyer ? o.seller_id : o.buyer_id, { kind: "market_status", title: byBuyer ? "أُلغي طلب" : "أُلغي طلبك",
-      body: byBuyer ? `${await nickOf(uid)} ألغى طلب ${o.title}` : `${o.title}: ألغى البائع الطلب${Number(o.total) > 0 ? " واستُرد " + sar(o.total) + " إلى محفظتك" : ""}`, data: { orderId: o.id, status: "cancelled" } });
+      body: byBuyer ? `${await nickOf(uid)} ألغى طلب ${o.title}` : `${o.title}: ألغى البائع الطلب${back}`, data: { orderId: o.id, status: "cancelled" } });
     return { ok: true };
+  });
+  // الدفع عند الاستلام: البائع يقبل الطلب أولاً («قبول الطلب») فيدخل المراحل، أو يعتذر عنه فيُلغى ويعود المخزون
+  const codSellerOrder = async (req, reply) => {
+    const uid = await auth(req); if (!uid) { unauthorized(reply); return null; }
+    if (!UUID_RE.test(req.params.id)) { bad(reply, 400, "bad-id"); return null; }
+    const o = await loadOrder(req.params.id); if (!o) { bad(reply, 404, "not-found"); return null; }
+    if (o.seller_id !== uid) { bad(reply, 403, "seller-only"); return null; }
+    if (!isCod(o)) { bad(reply, 409, "not-cod"); return null; }
+    return o;
+  };
+  app.post("/market/orders/:id/accept", async (req, reply) => {
+    const o = await codSellerOrder(req, reply); if (!o) return;
+    if (await isSuspended(o.seller_id)) return bad(reply, 403, "suspended");
+    const r = await pool.query("UPDATE market_orders SET status='paid', accepted_at=now(), updated_at=now() WHERE id=$1 AND status='requested' RETURNING id", [o.id]);
+    if (!r.rowCount) return bad(reply, 409, "bad-status");
+    await notify(o.buyer_id, { kind: "market_cod_accepted", title: "قبل البائع طلبك", body: `${o.title}: ادفع ${sar(o.total)} للبائع عند الاستلام وأعطه رمزك ${o.code}`, data: { orderId: o.id, status: "paid", payment: "cod" } });
+    return { ok: true, status: "paid" };
+  });
+  app.post("/market/orders/:id/decline", async (req, reply) => {
+    const o = await codSellerOrder(req, reply); if (!o) return;
+    if (o.status !== "requested") return bad(reply, 409, "bad-status");
+    const reason = String(req.body?.reason ?? "").trim().slice(0, 200);
+    const w = bannedIn(reason); if (w) return bad(reply, 400, "banned-words", { word: w });
+    try { await refund(o, { reason: "declined", from: ["requested"] }); } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
+    await notify(o.buyer_id, { kind: "market_status", title: "اعتذر البائع عن طلبك", body: `${o.title}${reason ? ": " + reason : ""} · لم يُخصم منك شيء`, data: { orderId: o.id, status: "cancelled" } });
+    return { ok: true, status: "cancelled" };
+  });
+  // «لم يحضر المشتري»: يُلغى الطلب ويعود المخزون ويُحسب على المشتري؛ بعد ٣ مرات لا يُقبل منه طلب بالدفع عند الاستلام.
+  // الخدمة بموعد لا تُسجَّل قبل حلول موعدها
+  app.post("/market/orders/:id/no-show", async (req, reply) => {
+    const o = await codSellerOrder(req, reply); if (!o) return;
+    const from = ["paid", "preparing", "on_the_way"];
+    if (!from.includes(o.status)) return bad(reply, 409, "bad-status");
+    if (o.slot && new Date(o.slot).getTime() > Date.now()) return bad(reply, 409, "too-early", { slot: o.slot });
+    try { await refund(o, { reason: "no_show", from }); } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
+    const n = (await pool.query("SELECT count(*)::int AS n FROM market_orders WHERE buyer_id=$1 AND payment='cod' AND cancel_reason='no_show'", [o.buyer_id])).rows[0].n;
+    await notify(o.buyer_id, { kind: "market_status", title: "سُجّل عدم حضورك للاستلام", body: `${o.title}: سجّل البائع أنك لم تحضر (${n} من ${COD_MAX_NO_SHOWS}). ${n >= COD_MAX_NO_SHOWS ? "توقف الدفع عند الاستلام لحسابك، ويبقى الدفع من المحفظة متاحاً" : `بعد ${COD_MAX_NO_SHOWS} مرات يتوقف الدفع عند الاستلام لحسابك`}. إن كان ذلك خطأً فأبلغ عن البائع`, data: { orderId: o.id, status: "cancelled" } });
+    return { ok: true, status: "cancelled", noShows: n };
   });
   // نزاع من المشتري قبل الاكتمال: يتجمّد المبلغ حتى تحسمه الإدارة
   app.post("/market/orders/:id/dispute", async (req, reply) => {
@@ -803,6 +916,8 @@ export default async function commerce(app, opts) {
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const o = await loadOrder(req.params.id); if (!o) return bad(reply, 404, "not-found");
     if (o.buyer_id !== uid) return bad(reply, 403, "buyer-only");
+    // الدفع عند الاستلام: لا مبلغ محجوز تحسمه الإدارة؛ المشتري يبلّغ عن البائع من ورقة البلاغ بدلاً من ذلك
+    if (isCod(o)) return bad(reply, 409, "cod-no-dispute");
     if (!["paid", "preparing", "on_the_way", "delivered"].includes(o.status)) return bad(reply, 409, "bad-status");
     const reason = String(req.body?.reason ?? "").trim().slice(0, 600); if (reason.length < 5) return bad(reply, 400, "bad-reason");
     // الانتقال مشروط بالحالة: إلغاء أو اكتمال سبق في اللحظة نفسها لا يُكتب فوقه «متنازَع عليه» فيحرّر الحسم المبلغ للبائع بعد استرداده
@@ -852,6 +967,13 @@ export default async function commerce(app, opts) {
       for (const row of due) globalThis.naslifeMarketOnPublish?.(row).catch?.(() => {});
       const stale = (await pool.query(`${ORDER_SQL} WHERE o.status='delivered' AND o.delivered_at < now() - interval '72 hours' LIMIT 50`)).rows;
       for (const o of stale) { try { await complete(o, { by: "auto" }); } catch { /* تغيّرت حالته */ } }
+      // طلب الدفع عند الاستلام لا يبقى معلقاً: بلا قبول خلال ٤٨ ساعة يُلغى ويعود المخزون ويتحرر مكانه من حد المشتري
+      const unanswered = (await pool.query(`${ORDER_SQL} WHERE o.status='requested' AND o.payment='cod' AND o.created_at < now() - make_interval(hours => $1) LIMIT 50`, [COD_ACCEPT_HOURS])).rows;
+      for (const o of unanswered) {
+        try { await refund(o, { reason: "expired", from: ["requested"] }); } catch { continue; }
+        await notify(o.buyer_id, { kind: "market_status", title: "أُلغي طلبك", body: `${o.title}: لم يقبله البائع خلال ${COD_ACCEPT_HOURS} ساعة، ولم يُخصم منك شيء`, data: { orderId: o.id, status: "cancelled" } });
+        await notify(o.seller_id, { kind: "market_status", title: "أُلغي طلب لم تقبله", body: `${o.title}: مرت ${COD_ACCEPT_HOURS} ساعة بلا قبول فأُلغي وعاد المخزون`, data: { orderId: o.id, status: "cancelled" } });
+      }
     } catch (e) { app.log?.warn?.({ err: e?.message }, "market sweep failed"); }
   };
   if (process.env.NODE_ENV !== "test") setInterval(sweep, 5 * 60000).unref?.();

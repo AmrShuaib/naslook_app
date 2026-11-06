@@ -1,5 +1,5 @@
 // نموذج العرض (إنشاء أو تعديل) كصفحة كاملة: حتى ٨ صور، نوع، تصنيف وفرعي، عنوان ووصف وسعر، حالة، توصيل، مخزون،
-// خيارات بأسعار، أوقات الخدمة، مكان ومدينة، وحفظ كمسودة أو جدولة النشر.
+// خيارات بأسعار، أوقات الخدمة، مكان ومدينة، الدفع عند الاستلام، وحفظ كمسودة أو جدولة النشر.
 import 'package:flutter/material.dart';
 
 import '../../api/commerce_models.dart';
@@ -14,16 +14,18 @@ class ListingDraft {
   final int price;
   final int? stock;
   final bool delivery;
+  /// الدفع عند الاستلام: مطفأ افتراضياً، ويحتاج توصيلاً أو مكان استلام (الخادم يرفض غير ذلك بـ cod-needs-place)
+  final bool payOnReceipt;
   final List<Variant> variants;
   final Availability? availability;
   final DateTime? publishAt;
   final List<String> existingImages;
   final List<PickedImage> newImages;
-  const ListingDraft({required this.title, required this.description, required this.kind, required this.category, this.subcategory, this.condition, required this.price, this.stock, this.delivery = false, this.variants = const [], this.availability, this.publishAt,
+  const ListingDraft({required this.title, required this.description, required this.kind, required this.category, this.subcategory, this.condition, required this.price, this.stock, this.delivery = false, this.payOnReceipt = false, this.variants = const [], this.availability, this.publishAt,
       this.placeName = '', this.city = '', this.status = 'active', this.existingImages = const [], this.newImages = const []});
   /// الحقول التي يرسلها التطبيق للخادم (الصور تُضاف بعد الرفع)
   Map<String, dynamic> toBody() => {
-        'title': title, 'description': description, 'kind': kind, 'category': category, 'subcategory': subcategory, 'condition': condition, 'price': price, 'stock': stock, 'delivery': delivery,
+        'title': title, 'description': description, 'kind': kind, 'category': category, 'subcategory': subcategory, 'condition': condition, 'price': price, 'stock': stock, 'delivery': delivery, 'payOnReceipt': payOnReceipt,
         'variants': [for (final v in variants) v.toJson()], 'availability': availability?.toJson(), 'placeName': placeName, 'city': city, 'status': status, 'publishAt': publishAt?.toUtc().toIso8601String(),
       };
   /// ما يُتاح للتعديل في ملف الصور: القائمة المتبقية من الروابط القديمة فقط
@@ -59,6 +61,7 @@ class _ListingFormPageState extends State<ListingFormPage> {
   late String? sub = widget.initial?.subcategory;
   late String? condition = widget.initial?.condition;
   late bool delivery = widget.initial?.delivery ?? false;
+  late bool payOnReceipt = widget.initial?.payOnReceipt ?? false;
   late List<String> existing = [...?widget.initial?.images];
   final picked = <PickedImage>[];
   late List<Variant> variants = [...?widget.initial?.variants];
@@ -71,6 +74,7 @@ class _ListingFormPageState extends State<ListingFormPage> {
   void dispose() { for (final c in [title, desc, price, place, city, stock]) { c.dispose(); } super.dispose(); }
 
   int get imageCount => existing.length + picked.length;
+  bool get _codPlaceOk => delivery || place.text.trim().isNotEmpty;
 
   Future<void> _addImage() async {
     if (imageCount >= 8) { toast(context, 'الحد ٨ صور'); return; }
@@ -87,9 +91,11 @@ class _ListingFormPageState extends State<ListingFormPage> {
     if (title.text.trim().length < 3) { toast(context, 'اكتب عنواناً واضحاً', error: true); return; }
     final p = parseSar(price.text);
     if (variants.isEmpty && p <= 0 && price.text.trim().isNotEmpty && price.text.trim() != '0') { toast(context, 'السعر غير صالح', error: true); return; }
+    // الدفع عند الاستلام لما يُسلَّم أو يُلتقى عليه حضورياً: نفحصه هنا قبل الإغلاق حتى لا يضيع النموذج برفض الخادم
+    if (payOnReceipt && !_codPlaceOk) { setState(() => advanced = true); toast(context, 'للدفع عند الاستلام فعّل التوصيل أو اكتب مكان الاستلام', error: true); return; }
     final draft = ListingDraft(
       title: title.text.trim(), description: desc.text.trim(), kind: kind, category: category, subcategory: sub, condition: kind == 'product' ? condition : null, price: variants.isNotEmpty ? variants.map((v) => v.price).reduce((a, b) => a < b ? a : b) : p,
-      stock: variants.isNotEmpty || stock.text.trim().isEmpty ? null : int.tryParse(stock.text.trim()), delivery: delivery, variants: variants, availability: kind == 'service' ? availability : null, publishAt: publishAt,
+      stock: variants.isNotEmpty || stock.text.trim().isEmpty ? null : int.tryParse(stock.text.trim()), delivery: delivery, payOnReceipt: payOnReceipt, variants: variants, availability: kind == 'service' ? availability : null, publishAt: publishAt,
       placeName: place.text.trim(), city: city.text.trim(), status: status, existingImages: existing, newImages: picked,
     );
     // الفحص قبل إغلاق النموذج: رفضه يُبقي الصور والنص كما هي بدل أن يضيع ما كُتب
@@ -139,6 +145,9 @@ class _ListingFormPageState extends State<ListingFormPage> {
           Wrap(spacing: 8, children: [for (final e in marketConditions.entries) ChoiceChip(key: Key('lf-cond-${e.key}'), label: Text(e.value), selected: condition == e.key, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setState(() => condition = condition == e.key ? null : e.key))]),
         ],
         SwitchListTile(key: const Key('lf-delivery'), contentPadding: EdgeInsets.zero, value: delivery, onChanged: (v) => setState(() => delivery = v), title: const Text('التوصيل متاح'), subtitle: const Text('يظهر في الفلاتر ويطمئن المشتري', style: TextStyle(fontSize: 12))),
+        // بلا توصيل يلزم مكان الاستلام، فنفتح الخيارات الإضافية حيث حقله
+        SwitchListTile(key: const Key('lf-cod'), contentPadding: EdgeInsets.zero, value: payOnReceipt, onChanged: (v) => setState(() { payOnReceipt = v; if (v && !delivery) advanced = true; }), title: const Text('الدفع عند الاستلام'),
+          subtitle: Text(payOnReceipt && !_codPlaceOk ? 'فعّل التوصيل أو اكتب مكان الاستلام في الخيارات الإضافية' : 'يطلب المشتري ويدفع لك عند التسليم أو اللقاء. تقبل الطلب أولاً، ولا يمر المبلغ بالمحفظة', style: TextStyle(fontSize: 12, color: payOnReceipt && !_codPlaceOk ? Joy.danger : null))),
         const Divider(height: 24),
         // متقدم: مخزون وخيارات ومواعيد ومكان وجدولة
         InkWell(onTap: () => setState(() => advanced = !advanced), child: Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Row(children: [const Text('خيارات إضافية', style: TextStyle(fontWeight: FontWeight.w700)), const Spacer(), Icon(advanced ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: Joy.textMuted)]))),
@@ -150,7 +159,7 @@ class _ListingFormPageState extends State<ListingFormPage> {
           ],
           if (kind == 'service') _AvailabilityEditor(value: availability, onChanged: (v) => setState(() => availability = v)),
           const SizedBox(height: 10),
-          TextField(key: const Key('lf-place'), controller: place, decoration: const InputDecoration(labelText: 'الحي أو مكان الاستلام (اختياري)')),
+          TextField(key: const Key('lf-place'), controller: place, onChanged: payOnReceipt ? (_) => setState(() {}) : null, decoration: InputDecoration(labelText: payOnReceipt && !delivery ? 'مكان الاستلام' : 'الحي أو مكان الاستلام (اختياري)')),
           const SizedBox(height: 10),
           TextField(key: const Key('lf-city'), controller: city, decoration: const InputDecoration(labelText: 'المدينة (اختياري)')),
           if (!editing) ...[

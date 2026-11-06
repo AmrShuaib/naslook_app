@@ -36,7 +36,7 @@
 
 ## دورة الطلب
 
-`paid` (مدفوع من المحفظة ومحجوز) → `preparing` (قيد التحضير) → `on_the_way` (في الطريق) → `delivered` (تم التسليم) → `completed` (مكتمل، ويُحوَّل المبلغ للبائع بعد خصم العمولة).
+`paid` (مدفوع من المحفظة ومحجوز؛ أو «مقبول» في الدفع عند الاستلام، وقبله `requested`، انظر القسم التالي) → `preparing` (قيد التحضير) → `on_the_way` (في الطريق) → `delivered` (تم التسليم) → `completed` (مكتمل، ويُحوَّل المبلغ للبائع بعد خصم العمولة).
 
 - عند الدفع يحصل المشتري على **رمز تسليم من ٤ أرقام** يراه في صفحة الطلب. يكتمل الطلب إمّا بضغط المشتري «استلمت»، أو بإدخال البائع الرمز عند التسليم، أو تلقائياً بعد **٧٢ ساعة** من التسليم (كنس كل ٥ دقائق).
 - الإلغاء متاح للطرفين قبل التسليم ويعيد المبلغ والمخزون. **النزاع** يفتحه المشتري بعد التسليم ويجمّد المبلغ حتى تقرر الإدارة: إعادة للمشتري، أو تحرير للبائع، أو تقسيم.
@@ -44,6 +44,34 @@
 - **الكوبونات**: البائع ينشئها (نسبة أو مبلغ، حد أدنى، عدد استخدامات، انتهاء) ويكتبها المشتري عند الطلب.
 - **الفاتورة**: `GET /market/orders/:id/invoice` صفحة HTML قابلة للطباعة لطرفي الطلب.
 - بعد الاكتمال يقيّم المشتري (١–٥ نجوم ونص) مرة واحدة، ويرد البائع على التقييم.
+
+## الدفع عند الاستلام (6 نوفمبر 2026، بند 10 من نواقص الإطلاق)
+
+حل مرحلي لسوق المستخدمين: كل طلب كان يُدفع من المحفظة، ومستخدم iOS لا يشحن المحفظة داخل التطبيق فلا يستطيع شراء شيء. الآن يسمح البائع بالدفع عند الاستلام على عرضه، فيطلب المشتري بلا مال ويدفع للبائع مباشرة عند التسليم أو اللقاء. **لا مال يمر بناس لايف** في هذا المسار: لا قيد في الدفتر، ولا عمولة، ولا مبلغ محجوز، فلا نزاع.
+
+**العرض**: علم `payOnReceipt` (عمود `market_listings.pay_on_receipt`، مطفأ افتراضياً) من مفتاح «الدفع عند الاستلام» في نموذج العرض (`lf-cod` في `listing_form.dart`). لما يُسلَّم أو يُلتقى عليه حضورياً فقط: يلزم **توصيل** أو **مكان استلام مكتوب**، وإلا يرد الخادم **400 `cod-needs-place`** عند الإنشاء والتعديل (التعديل يُفحص بالقيم الناتجة متى لمس العلم أو التوصيل أو المكان)، والنموذج يفحص الشرط قبل أن يُغلق ويفتح «خيارات إضافية» حيث حقل المكان. صفحة العرض تعرض شارة «الدفع عند الاستلام».
+
+**الطلب** `POST /market/:id/order {payment:"cod"}`:
+- القواعد نفسها للطلب المدفوع: إقرار 18+ (`adult-required`)، الحظر بأي اتجاه (404)، الحساب الموقوف (403 `suspended`)، والكلمات الممنوعة في ملاحظة المشتري (**400 `banned-words`**؛ الفحص أُضيف للطلبين معاً). العرض بلا العلم يرد **400 `cod-unavailable`**.
+- لا خصم ولا عمولة (`commission=0`). يحجز المخزون أو مخزون الخيار والكوبون والموعد كالمدفوع، ويبدأ بحالة **`requested`** (بانتظار قبول البائع)، ويحمل رمز الاستلام نفسه. الرد يضيف `payment` و`status`.
+- **حد لكل مشترٍ**: ٣ طلبات مفتوحة بالدفع عند الاستلام على الأكثر (`requested` حتى `delivered`) وإلا **429 `cod-limit` {max}**؛ والفحص تحت قفل استشاري لكل مشترٍ (`pg_advisory_xact_lock`) فثلاثة طلبات متوازية لا تتجاوزه. بعد **٣ مرات «لم يحضر»** يرد **403 `cod-blocked` {noShows}** ويبقى الدفع من المحفظة متاحاً.
+- الطلب المجاني (المجموع صفر) طلب عادي بلا طريقة دفع ولا قبول مسبق.
+
+**دورة الطلب**: `requested` → (البائع) **`POST /market/orders/:id/accept`** → `paid` (معناها هنا «مؤكَّد/مقبول» لا «مدفوع») → المراحل نفسها → `completed`. أو **`POST /market/orders/:id/decline {reason?}`** (اعتذار، والسبب يُفحص بالكلمات الممنوعة) → `cancelled` بسبب `declined`. المراحل والمندوب لا يعملان قبل القبول (409). الطلب بلا رد خلال **٤٨ ساعة** يلغيه الكنس الدوري (سبب `expired`) ويعيد المخزون ويخطر الطرفين.
+- **الاكتمال** بلا أي قيد في الدفتر: البائع يضغط **«استلمت المبلغ»** (`POST /market/orders/:id/cash-received`، يسجّل `cash_received_at`)، أو يُدخل رمز المشتري (`/confirm {code}`، بقفل المحاولات الخمس نفسه، ويسجّل `cash_received_at` أيضاً)، أو يؤكد المشتري الاستلام (`/confirm`)، أو تلقائياً بعد ٧٢ ساعة من «تم التسليم».
+- **الإلغاء** يعيد المخزون والكوبون ولا يلمس المحفظة: المشتري قبل القبول وبعده ما دام `paid`، والبائع في أي مرحلة قبل الاكتمال. الأسباب في `cancel_reason`: `buyer` | `seller` | `declined` | `no_show` | `expired`.
+- **«لم يحضر المشتري»** `POST /market/orders/:id/no-show` (البائع، بعد القبول وقبل التسليم؛ والخدمة بموعد لا قبل حلول الموعد: **409 `too-early`**): يلغي الطلب ويعيد المخزون ويُحسب على المشتري، ويخبره بعدّاده (١ من ٣) وبأن البلاغ متاح إن كان خطأً. لا يُحسب على البائع في شارة «بائع موثوق» (`recompute` في `market_plus.js` يستثني `no_show`)، ولا يدخل في لوحة البائع إلا كإلغاء.
+- **لا نزاع**: `POST /market/orders/:id/dispute` يرد **409 `cod-no-dispute`**. بديله في التطبيق زر «إبلاغ عن البائع» (ورقة البلاغ الموحدة بنوع `user`) وسطر صريح في بطاقة الطلب وصفحته.
+- بقية الأسطح: `orderOut` يضيف `payment` (`wallet`|`cod`) و`cancelReason` و`acceptedAt` و`cashReceivedAt`؛ «من يراسلني» يفتح الطرفين من لحظة الطلب (`requested`)؛ لوحة البائع تعدّ `requested` ضمن المنتظرة، ونظرة الإدارة ضمن المفتوحة؛ والفاتورة تقول «الإجمالي (يُدفع للبائع عند الاستلام)» و«لم يمر المبلغ بمحفظة ناس لايف».
+
+**الإشعارات** (أنواع جديدة تفتح `OrderPage(orderId)` في `notify_open.dart`): `market_cod_order` (طلب جديد للبائع: اقبل أو اعتذر)، `market_cod_accepted` (للمشتري: ادفع للبائع عند الاستلام وأعطه رمزك)، `market_cod_completed` (للطرف الذي لم يُكمل الطلب). الاعتذار والإلغاء وعدم الحضور وانتهاء المهلة ورسالة «تم التسليم» (التي تقول «ادفع له وأعطه رمزك») بالنوع القائم `market_status`.
+
+**التطبيق**:
+- صفحة العرض: حين يسمح البائع والطلب مسعّر تظهر «طريقة الدفع» برقاقتين: «ادفع الآن من المحفظة» (`pay-wallet`) و«اطلب وادفع عند الاستلام» (`pay-cod`)، ويتغيّر الزر والسطر تحته. الافتراضي المحفظة على الويب وأندرويد، و**الدفع عند الاستلام في iOS** (`isIosNative`). إن رد طلب المحفظة 402 والعرض يقبل الدفع عند الاستلام ظهر حوار `funds-cod` يرسل الطلب نفسه بالدفع عند الاستلام بدل الطريق المسدود؛ وفي iOS بلا هذا الخيار حوار محايد `funds-ios` لا يدعو إلى الشحن.
+- «عروضي وطلباتي»: كل بطاقة طلب عليها شارة طريقة الدفع (`order-pay-<id>`) وحالة بلغة الطرف («طلب جديد · اقبله أو اعتذر»، «بانتظار قبول البائع»، «اعتذر البائع»، «لم يحضر المشتري»، «انتهت مهلة القبول»)، وللبائع زر «قبول الطلب» على البطاقة، وللمشتري سطر «لا نزاع… ويمكنك الإبلاغ عن البائع».
+- صفحة الطلب: سطر «الدفع: عند الاستلام للبائع مباشرة» أو «من المحفظة (محجوز حتى الاستلام)»؛ للبائع «قبول الطلب» و«اعتذار» قبل القبول، ثم المراحل و«استلمت المبلغ» و«إدخال رمز المشتري» و«لم يحضر المشتري» و«إلغاء الطلب»؛ للمشتري «إلغاء الطلب» و«تأكيد الاستلام» و«إبلاغ عن البائع» مكان «فتح نزاع».
+
+الاختبار: `server/test/harness_market_cod.mjs` (العلم، القواعد، الدورة كاملة، الاكتمال بالطرق الثلاث، الإلغاء والمخزون والكوبون والخيار، الحد والطلبات المتوازية، «لم يحضر» والإيقاف، المهلة والاكتمال التلقائي، iOS، الفاتورة ولوحة البائع والإشعارات، وأن طلب المحفظة لم يتغيّر) و`test/market_cod_test.dart`. **لم يُبنَ بعد**: أداة في الإدارة لمسح «لم يحضر» ظالم بعد بلاغ (يُعدَّل الآن من القاعدة)، ولا مفتاح منصة لإطفاء الميزة.
 
 ## البائع
 
@@ -63,11 +91,11 @@
 
 ## وجهات الإشعارات (5 نوفمبر 2026)
 
-`lib/core/notify_open.dart` يفتح كل إشعار سوق من حمولته (كانت هذه الأنواع لا تفتح شيئاً): `market_order`/`market_status`/`market_courier`/`market_dispute` → `OrderPage(orderId)` (وإلا «عروضي وطلباتي»)؛ `market_new`/`market_alert`/`market_question`/`market_spotlight`/`market_review_result`/`market_review` → `ListingPage(listingId)` (التقييم بلا عرض → الطلب)؛ `market_pending` (للمديرين) → قسم السوق في الإدارة؛ `market_wanted` → `WantedDetailPage(wantedId)`؛ `market_bazaar` → `BazaarPage(bazaarId)`؛ `wallet` (شحن بالبطاقة) → المحفظة؛ `biz` (ترقية البائع إلى دائرة) → لوحة الدائرة. النوع المجهول بلا وجهة (لا تنقّل). لكل نوع أيقونته. الاختبار في `test/links_notify_test.dart`.
+`lib/core/notify_open.dart` يفتح كل إشعار سوق من حمولته (كانت هذه الأنواع لا تفتح شيئاً): `market_order`/`market_status`/`market_courier`/`market_dispute` (ومنذ 6 نوفمبر `market_cod_order`/`market_cod_accepted`/`market_cod_completed`) → `OrderPage(orderId)` (وإلا «عروضي وطلباتي»)؛ `market_new`/`market_alert`/`market_question`/`market_spotlight`/`market_review_result`/`market_review` → `ListingPage(listingId)` (التقييم بلا عرض → الطلب)؛ `market_pending` (للمديرين) → قسم السوق في الإدارة؛ `market_wanted` → `WantedDetailPage(wantedId)`؛ `market_bazaar` → `BazaarPage(bazaarId)`؛ `wallet` (شحن بالبطاقة) → المحفظة؛ `biz` (ترقية البائع إلى دائرة) → لوحة الدائرة. النوع المجهول بلا وجهة (لا تنقّل). لكل نوع أيقونته. الاختبار في `test/links_notify_test.dart`.
 
 ## الجداول
 
-`market_listings` (أعمدة جديدة: images، subcategory، condition، delivery، stock، sold، views، variants، availability، publish_at، bumped_at، spotlight_until، rating_avg/count، city)، `market_orders` (code، variant، coupon، discount، commission، slot، delivered_at، completed_at، dispute_*)، `market_reviews`، `market_coupons`، `market_seller_stats`، `market_seller_flags`، `market_follows`، `market_questions`، `market_wanted`، `market_wanted_replies`، `market_spotlight`، `market_alerts`، `market_views`. كلها تُنشأ وتُهاجَر تلقائياً عند الإقلاع (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`).
+`market_listings` (أعمدة جديدة: images، subcategory، condition، delivery، stock، sold، views، variants، availability، publish_at، bumped_at، spotlight_until، rating_avg/count، city)، `market_orders` (code، variant، coupon، discount، commission، slot، delivered_at، completed_at، dispute_*، payment، cancel_reason، cash_received_at)، و`market_listings.pay_on_receipt`، `market_reviews`، `market_coupons`، `market_seller_stats`، `market_seller_flags`، `market_follows`، `market_questions`، `market_wanted`، `market_wanted_replies`، `market_spotlight`، `market_alerts`، `market_views`. كلها تُنشأ وتُهاجَر تلقائياً عند الإقلاع (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`).
 
 ## الاختبار
 

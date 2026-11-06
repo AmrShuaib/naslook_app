@@ -94,6 +94,10 @@ Widget? notificationTarget(AppNotification n) {
     case 'market_status':
     case 'market_courier':
     case 'market_dispute':
+    // الدفع عند الاستلام (commerce.js): طلب جديد للبائع، قبوله للمشتري، واكتماله للطرف الآخر
+    case 'market_cod_order':
+    case 'market_cod_accepted':
+    case 'market_cod_completed':
       return order == null ? const OrdersPage() : OrderPage(order);
     // العرض: جديد من بائع أتابعه، تنبيه يطابق، سؤال أو جواب، سبوت لايت ممنوح، قرار المراجعة، والتقييم أو الرد عليه
     case 'market_new':
@@ -256,6 +260,11 @@ Widget? _moderatedTarget(AppNotification n) {
     case 'biz_order':
     case 'market_order':
       return (icon: Icons.shopping_bag_outlined, color: Joy.primary);
+    case 'market_cod_order':
+    case 'market_cod_accepted':
+      return (icon: Icons.payments_outlined, color: Joy.sunText);
+    case 'market_cod_completed':
+      return (icon: Icons.task_alt_rounded, color: Joy.success);
     case 'order_status':
     case 'market_status':
     case 'order_cancelled':

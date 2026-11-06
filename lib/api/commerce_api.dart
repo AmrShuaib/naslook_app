@@ -40,8 +40,9 @@ extension CommerceApi on ApiClient {
   Future<void> viewListing(String id) => post('/market/$id/view', const {}, prompt: false);
 
   // ---- الطلبات بمراحلها
-  Future<Map<String, dynamic>> order(String listingId, int qty, {String note = '', String? variant, String? coupon, DateTime? slot}) =>
-      post('/market/$listingId/order', {'qty': qty, 'note': note, if (variant != null) 'variant': variant, if (coupon != null && coupon.isNotEmpty) 'coupon': coupon, if (slot != null) 'slot': slot.toUtc().toIso8601String()});
+  /// [cod] الدفع عند الاستلام (العرض يسمح به): لا يُخصم شيء والطلب ينتظر قبول البائع.
+  Future<Map<String, dynamic>> order(String listingId, int qty, {String note = '', String? variant, String? coupon, DateTime? slot, bool cod = false}) =>
+      post('/market/$listingId/order', {'qty': qty, 'note': note, if (variant != null) 'variant': variant, if (coupon != null && coupon.isNotEmpty) 'coupon': coupon, if (slot != null) 'slot': slot.toUtc().toIso8601String(), if (cod) 'payment': 'cod'});
   Future<List<Order>> orders() async => asList(await getList('/market/orders')).map(Order.fromJson).toList();
   Future<Order> orderDetail(String id) async => Order.fromJson(await get('/market/orders/$id'));
   Future<void> orderStage(String id, String stage) => post('/market/orders/$id/stage', {'stage': stage});
@@ -49,6 +50,11 @@ extension CommerceApi on ApiClient {
   Future<void> confirmOrder(String id, {String? code}) => post('/market/orders/$id/confirm', {if (code != null) 'code': code});
   Future<void> cancelOrder(String id) => post('/market/orders/$id/cancel', const {});
   Future<void> disputeOrder(String id, String reason) => post('/market/orders/$id/dispute', {'reason': reason});
+  // ---- الدفع عند الاستلام (البائع): قبول أو اعتذار، «استلمت المبلغ»، و«لم يحضر المشتري»
+  Future<void> acceptOrder(String id) => post('/market/orders/$id/accept', const {});
+  Future<void> declineOrder(String id, {String reason = ''}) => post('/market/orders/$id/decline', {'reason': reason});
+  Future<void> cashReceived(String id) => post('/market/orders/$id/cash-received', const {});
+  Future<void> noShowOrder(String id) => post('/market/orders/$id/no-show', const {});
   Future<void> reviewOrder(String id, int rating, String text) => post('/market/orders/$id/review', {'rating': rating, 'text': text});
   Future<void> replyReview(String orderId, String text) => post('/market/reviews/$orderId/reply', {'text': text});
   Future<List<MarketReview>> listingReviews(String id) async => asList(await getList('/market/$id/reviews')).map(MarketReview.fromJson).toList();

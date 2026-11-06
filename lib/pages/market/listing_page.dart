@@ -1,4 +1,5 @@
-// صفحة العرض: معرض صور، سعر، بائع بتقييمه وشاراته ومتابعته، وصف، خيارات، موعد للخدمة، كوبون، طلب برمز استلام،
+// صفحة العرض: معرض صور، سعر، بائع بتقييمه وشاراته ومتابعته، وصف، خيارات، موعد للخدمة، كوبون، طلب برمز استلام
+// بالمحفظة أو بالدفع عند الاستلام (حين يسمح البائع؛ الافتراضي في iOS لأن المحفظة لا تُشحن فيه)،
 // أسئلة وأجوبة عامة، تقييمات، مشاركة ومقارنة وإبلاغ؛ ولصاحب العرض: تعديل وإخفاء ورفع وسبوت لايت.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,7 @@ import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
+import '../../core/platform.dart';
 import '../../core/require_account.dart';
 import '../../core/require_adult.dart';
 import '../../core/share/share_links.dart';
@@ -37,6 +39,8 @@ class ListingPage extends ConsumerStatefulWidget {
 class _ListingPageState extends ConsumerState<ListingPage> {
   int qty = 1, page = 0;
   String? variant;
+  /// اختيار المشتري لطريقة الدفع؛ null = الافتراضي (عند الاستلام في iOS إن سمح البائع، وإلا المحفظة)
+  bool? payCod;
   DateTime? slot;
   final coupon = TextEditingController();
   Map<String, dynamic>? couponCheck;
@@ -50,6 +54,8 @@ class _ListingPageState extends ConsumerState<ListingPage> {
 
   int _unit(Listing x) => variant == null ? x.price : (x.variants.where((v) => v.name == variant).firstOrNull?.price ?? x.price);
   int _subtotal(Listing x) => _unit(x) * qty;
+  /// الدفع عند الاستلام للطلب المسعّر فقط؛ المجاني طلب عادي بلا طريقة دفع
+  bool _useCod(Listing x) => x.payOnReceipt && _subtotal(x) > 0 && (payCod ?? isIosNative);
 
   @override
   Widget build(BuildContext context) {
@@ -83,6 +89,7 @@ class _ListingPageState extends ConsumerState<ListingPage> {
             Wrap(spacing: 6, runSpacing: 6, children: [
               _chip(x.kind == 'service' ? 'خدمة' : 'منتج', Icons.sell_outlined), if (x.subcategoryLabel.isNotEmpty) _chip(x.subcategoryLabel, marketCategoryIcon(x.category)) else _chip(marketCategories[x.category] ?? x.category, marketCategoryIcon(x.category)),
               if (x.condition != null) _chip(marketConditions[x.condition] ?? x.condition!, Icons.new_releases_outlined), if (x.delivery) _chip('توصيل متاح', Icons.local_shipping_outlined),
+              if (x.payOnReceipt) KeyedSubtree(key: const Key('chip-cod'), child: _chip('الدفع عند الاستلام', Icons.payments_outlined)),
               if (x.placeName != null && x.placeName!.isNotEmpty) _chip('${x.placeName}${x.distanceKm != null ? ' · ${x.distanceKm!.toStringAsFixed(1)} كم' : ''}', Icons.place_outlined),
               if (x.spotlight) _chip('سبوت لايت', Icons.auto_awesome_rounded, bg: Joy.sunSoft, fg: Joy.sunText),
             ]),
@@ -109,6 +116,7 @@ class _ListingPageState extends ConsumerState<ListingPage> {
     final total = _subtotal(x); final disc = couponCheck?['valid'] == true ? (couponCheck!['discount'] as num).toInt() : 0;
     final v = x.variants.where((v) => v.name == variant).firstOrNull;
     final out = x.variants.isEmpty ? x.stock == 0 : (v != null && v.stock == 0);
+    final cod = _useCod(x);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       if (x.variants.isNotEmpty) ...[
         const Text('اختر', style: TextStyle(fontWeight: FontWeight.w700)), const SizedBox(height: 6),
@@ -132,14 +140,29 @@ class _ListingPageState extends ConsumerState<ListingPage> {
           suffixIcon: TextButton(onPressed: () => _checkCoupon(x), child: const Text('تحقق'))), onChanged: (_) => setState(() => couponCheck = null))),
       ]),
       if (couponCheck != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(couponCheck!['valid'] == true ? 'خصم ${money(disc)}' : marketErrText(couponCheck!['error']?.toString() ?? 'bad-coupon'), style: TextStyle(color: couponCheck!['valid'] == true ? Joy.success : Joy.danger, fontSize: 12.5))),
+      // طريقة الدفع: تظهر فقط حين يسمح البائع بالدفع عند الاستلام والطلب مسعّر
+      if (x.payOnReceipt && total > 0) ...[
+        const SizedBox(height: 12),
+        const Text('طريقة الدفع', style: TextStyle(fontWeight: FontWeight.w700)), const SizedBox(height: 6),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          ChoiceChip(key: const Key('pay-wallet'), avatar: const Icon(Icons.account_balance_wallet_outlined, size: 18), label: const Text('ادفع الآن من المحفظة'), selected: !cod, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setState(() => payCod = false)),
+          ChoiceChip(key: const Key('pay-cod'), avatar: const Icon(Icons.payments_outlined, size: 18), label: const Text('اطلب وادفع عند الاستلام'), selected: cod, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setState(() => payCod = true)),
+        ]),
+      ],
       const SizedBox(height: 12),
       FilledButton.icon(
         key: const Key('order-btn'), style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
         onPressed: out || (x.variants.isNotEmpty && variant == null) || (x.isService && x.availability != null && slot == null) ? null : () => _order(x),
-        icon: const Icon(Icons.account_balance_wallet_outlined), label: Text(out ? 'غير متوفر' : x.variants.isNotEmpty && variant == null ? 'اختر الخيار أولاً' : x.isService && x.availability != null && slot == null ? 'اختر الموعد أولاً' : 'اطلب بالمحفظة · ${money(total - disc)}'),
+        icon: Icon(cod ? Icons.payments_outlined : Icons.account_balance_wallet_outlined),
+        label: Text(out ? 'غير متوفر' : x.variants.isNotEmpty && variant == null ? 'اختر الخيار أولاً' : x.isService && x.availability != null && slot == null ? 'اختر الموعد أولاً' : cod ? 'اطلب وادفع عند الاستلام · ${money(total - disc)}' : 'اطلب بالمحفظة · ${money(total - disc)}'),
       ),
       const SizedBox(height: 8),
-      const Text('يُحجز المبلغ من محفظتك ولا يصل البائع إلا بعد تأكيدك الاستلام أو إدخاله رمز الاستلام الذي ستراه في طلبك.', style: TextStyle(color: Joy.textMuted, fontSize: 12)),
+      Text(
+        cod
+            ? 'لا يُخصم شيء من محفظتك. يقبل البائع طلبك أولاً، ثم تدفع له المبلغ عند الاستلام وتعطيه رمز الاستلام. لا نزاع على هذا الطلب لأن المبلغ لا يمر بناس لايف؛ إن واجهت مشكلة فأبلغ عن البائع.'
+            : 'يُحجز المبلغ من محفظتك ولا يصل البائع إلا بعد تأكيدك الاستلام أو إدخاله رمز الاستلام الذي ستراه في طلبك.',
+        key: const Key('pay-hint'), style: const TextStyle(color: Joy.textMuted, fontSize: 12),
+      ),
     ]);
   }
 
@@ -151,24 +174,62 @@ class _ListingPageState extends ConsumerState<ListingPage> {
   Future<void> _order(Listing x) async {
     // الزائر يُدعى للدخول قبل ورقة الملاحظة، لا بعد كتابتها
     if (!requireAccount(context)) return;
-    // الشراء المدفوع يحتاج إقرار 18+ مرة واحدة؛ الطلب المجاني لا
+    // الشراء المدفوع (بالمحفظة أو عند الاستلام) يحتاج إقرار 18+ مرة واحدة؛ الطلب المجاني لا
     if (_subtotal(x) > 0 && (!await requireAdult(context, ref) || !mounted)) return;
     final note = await askText(context, title: 'ملاحظة للبائع', hint: 'مثال: الاستلام بعد المغرب', confirm: 'تأكيد الطلب', maxLines: 2);
     if (note == null || !mounted) return;
+    await _place(x, note, cod: _useCod(x));
+  }
+
+  Future<void> _place(Listing x, String note, {required bool cod}) async {
     try {
-      final r = await ref.read(apiClientProvider).order(x.id, x.isService ? 1 : qty, note: note, variant: variant, coupon: coupon.text.trim().toUpperCase(), slot: slot);
+      final r = await ref.read(apiClientProvider).order(x.id, x.isService ? 1 : qty, note: note, variant: variant, coupon: coupon.text.trim().toUpperCase(), slot: slot, cod: cod);
       ref.invalidate(ordersProvider); ref.invalidate(walletProvider); ref.invalidate(listingProvider(x.id));
       if (!mounted) return;
+      final sent = r['payment'] == 'cod';
       await showDialog<void>(context: context, builder: (ctx) => AlertDialog(
-        title: const Text('تم الطلب'),
+        title: Text(sent ? 'أُرسل طلبك' : 'تم الطلب'),
         content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('رمز الاستلام الخاص بك:'), const SizedBox(height: 8),
           Center(child: Text(r['code']?.toString() ?? '', key: const Key('order-code'), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 32, letterSpacing: 6))),
-          const SizedBox(height: 8), const Text('أعطه للبائع عند الاستلام أو أكّد الاستلام من صفحة الطلب. لا يصل المبلغ للبائع قبل ذلك.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+          const SizedBox(height: 8),
+          Text(sent ? 'بانتظار قبول البائع، وسيصلك إشعار. عند الاستلام ادفع له ${money((r['total'] as num?)?.toInt() ?? 0)} وأعطه هذا الرمز. لم يُخصم شيء من محفظتك.' : 'أعطه للبائع عند الاستلام أو أكّد الاستلام من صفحة الطلب. لا يصل المبلغ للبائع قبل ذلك.',
+            key: const Key('order-done-hint'), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
         ]),
         actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('حسناً')), FilledButton(onPressed: () { Navigator.pop(ctx); Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersPage())); }, child: const Text('طلباتي'))],
       ));
-    } catch (e) { if (mounted) toast(context, marketErrText(e), error: true); }
+    } catch (e) {
+      if (!mounted) return;
+      if (!cod && marketErrCode(e) == 'insufficient-funds') { await _noFunds(x, note); return; }
+      toast(context, marketErrText(e), error: true);
+    }
+  }
+
+  /// رصيد المحفظة لا يكفي: إن قبل البائع الدفع عند الاستلام نعرضه بدل طريق مسدود (وهو الطريق الوحيد في iOS حيث لا شحن)،
+  /// وفي iOS بلا هذا الخيار رسالة محايدة لا تدعو إلى الشحن (أبل 3.1.1)
+  Future<void> _noFunds(Listing x, String note) async {
+    if (x.payOnReceipt) {
+      final go = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+        key: const Key('funds-cod'),
+        title: const Text('الرصيد غير كافٍ'),
+        content: const Text('رصيد محفظتك لا يغطي هذا المبلغ، لكن البائع يقبل الدفع عند الاستلام: اطلب الآن وادفع له عند التسليم.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('لاحقاً')), FilledButton(key: const Key('funds-use-cod'), onPressed: () => Navigator.pop(ctx, true), child: const Text('اطلب وادفع عند الاستلام'))],
+      ));
+      if (go != true || !mounted) return;
+      setState(() => payCod = true);
+      await _place(x, note, cod: true);
+      return;
+    }
+    if (isIosNative) {
+      await showDialog<void>(context: context, builder: (ctx) => AlertDialog(
+        key: const Key('funds-ios'),
+        title: const Text('الرصيد غير كافٍ'),
+        content: const Text('رصيد محفظتك لا يغطي هذا المبلغ، وهذا العرض لا يقبل الدفع عند الاستلام. يمكنك مراسلة البائع للاتفاق.'),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('حسناً'))],
+      ));
+      return;
+    }
+    toast(context, marketErrText('insufficient-funds'), error: true);
   }
 
   void _toggleCompare(Listing x) {

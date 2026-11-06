@@ -47,7 +47,7 @@ export default async function marketPlus(app, opts) {
   // ---- شارات البائع وإحصاءاته (تُعاد كتابتها بعد كل تقييم أو اكتمال طلب)
   const recompute = async (sellerId) => {
     const r = (await pool.query("SELECT avg(rating)::real AS avg, count(*)::int AS n FROM market_reviews WHERE seller_id=$1 AND NOT hidden", [sellerId])).rows[0];
-    const o = (await pool.query(`SELECT count(*) FILTER (WHERE status='completed')::int AS done, count(*) FILTER (WHERE status IN ('cancelled','refunded') AND updated_at > now() - interval '90 days')::int AS cancelled,
+    const o = (await pool.query(`SELECT count(*) FILTER (WHERE status='completed')::int AS done, count(*) FILTER (WHERE status IN ('cancelled','refunded') AND cancel_reason IS DISTINCT FROM 'no_show' AND updated_at > now() - interval '90 days')::int AS cancelled,
       avg(EXTRACT(EPOCH FROM (accepted_at - created_at)) / 3600) FILTER (WHERE accepted_at IS NOT NULL)::real AS resp FROM market_orders WHERE seller_id=$1`, [sellerId])).rows[0];
     let verified = false; try { verified = (await pool.query("SELECT 1 FROM login_aliases WHERE user_id=$1 AND verified", [sellerId])).rowCount > 0; } catch { /* لا جدول */ }
     const flags = (await pool.query("SELECT licensed FROM market_seller_flags WHERE seller_id=$1", [sellerId])).rows[0];
@@ -413,7 +413,7 @@ export default async function marketPlus(app, opts) {
       count(*) FILTER (WHERE created_at >= now() - interval '7 days')::int AS week_n, COALESCE(sum(total) FILTER (WHERE created_at >= now() - interval '7 days'),0)::bigint AS week_v,
       count(*) FILTER (WHERE created_at >= now() - interval '30 days')::int AS month_n, COALESCE(sum(total) FILTER (WHERE created_at >= now() - interval '30 days'),0)::bigint AS month_v,
       COALESCE(sum(total - commission) FILTER (WHERE status='completed' AND created_at >= now() - interval '30 days'),0)::bigint AS month_net,
-      count(*) FILTER (WHERE status IN ('paid','preparing','on_the_way'))::int AS pending, count(*) FILTER (WHERE status='delivered')::int AS awaiting, count(*) FILTER (WHERE status='disputed')::int AS disputed
+      count(*) FILTER (WHERE status IN ('requested','paid','preparing','on_the_way'))::int AS pending, count(*) FILTER (WHERE status='delivered')::int AS awaiting, count(*) FILTER (WHERE status='disputed')::int AS disputed
       FROM market_orders WHERE seller_id=$1 AND status NOT IN ('cancelled','refunded')`, [uid])).rows[0];
     const views7 = (await pool.query("SELECT count(*)::int AS n FROM market_views v JOIN market_listings l ON l.id=v.listing_id WHERE l.seller_id=$1 AND v.day >= CURRENT_DATE - 7", [uid])).rows[0].n;
     const top = (await pool.query(`SELECT l.id, l.title, l.image_url, l.views, l.sold, l.status, COALESCE((SELECT sum(total) FROM market_orders o WHERE o.listing_id=l.id AND o.status NOT IN ('cancelled','refunded')),0)::bigint AS revenue,
@@ -444,16 +444,18 @@ export default async function marketPlus(app, opts) {
     const buyer = await person(o.buyer_id), seller = await person(o.seller_id);
     const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     const d = (t) => (t ? new Date(new Date(t).getTime() + 3 * 3600000).toISOString().slice(0, 16).replace("T", " ") : "");
-    const status = { paid: "مؤكَّد", preparing: "قيد التحضير", on_the_way: "في الطريق", delivered: "تم التسليم", completed: "مكتمل", cancelled: "ملغى", refunded: "مسترد", disputed: "نزاع" }[o.status] ?? o.status;
+    const status = { requested: "بانتظار قبول البائع", paid: "مؤكَّد", preparing: "قيد التحضير", on_the_way: "في الطريق", delivered: "تم التسليم", completed: "مكتمل", cancelled: "ملغى", refunded: "مسترد", disputed: "نزاع" }[o.status] ?? o.status;
     const unit = Number(o.total) + Number(o.discount ?? 0);
+    // الدفع عند الاستلام (commerce.js): المال لا يمر بالمحفظة فلا «مدفوع» ولا تحرير عند التأكيد
+    const cod = o.payment === "cod";
     const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>فاتورة ${esc(o.id.slice(0, 8))}</title>
 <style>body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:720px;margin:32px auto;padding:0 20px;color:#111}h1{font-size:22px;margin:0}.muted{color:#6b7280;font-size:13px}table{width:100%;border-collapse:collapse;margin-top:18px}td,th{padding:10px 8px;border-bottom:1px solid #e5e5ea;text-align:right}th{background:#f2f2f7;font-weight:600}.tot td{font-weight:700}.head{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #BF3A1E;padding-bottom:12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.box{background:#fafafa;border-radius:12px;padding:12px}@media print{button{display:none}}</style></head><body>
 <div class="head"><div><h1>فاتورة سوق ناس لايف</h1><div class="muted">رقم ${esc(o.id)} · ${d(o.created_at)}</div></div><div><strong>${esc(status)}</strong></div></div>
 <div class="grid"><div class="box"><div class="muted">المشتري</div><div>${esc(buyer.nickname)} · ${esc(buyer.id)}</div></div><div class="box"><div class="muted">البائع</div><div>${esc(seller.nickname)} · ${esc(seller.id)}</div></div></div>
 <table><tr><th>البند</th><th>الكمية</th><th>المبلغ</th></tr><tr><td>${esc(o.title)}${o.variant ? " (" + esc(o.variant) + ")" : ""}${o.slot ? "<div class='muted'>موعد: " + d(o.slot) + "</div>" : ""}</td><td>${o.qty}</td><td>${esc(sar(unit))}</td></tr>
 ${Number(o.discount) > 0 ? `<tr><td>خصم${o.coupon ? " (" + esc(o.coupon) + ")" : ""}</td><td></td><td>- ${esc(sar(o.discount))}</td></tr>` : ""}
-<tr class="tot"><td>الإجمالي المدفوع</td><td></td><td>${esc(sar(o.total))}</td></tr>${o.seller_id === uid && Number(o.commission) > 0 ? `<tr><td class="muted">عمولة المنصة</td><td></td><td class="muted">${esc(sar(o.commission))}</td></tr><tr class="tot"><td>صافي البائع</td><td></td><td>${esc(sar(Number(o.total) - Number(o.commission)))}</td></tr>` : ""}</table>
-${o.note ? `<p class="muted">ملاحظة: ${esc(o.note)}</p>` : ""}<p class="muted">المبالغ بالريال السعودي. الدفع عبر محفظة ناس لايف؛ يُحرَّر المبلغ للبائع عند تأكيد الاستلام.</p><button onclick="print()">طباعة / حفظ PDF</button></body></html>`;
+<tr class="tot"><td>${cod ? "الإجمالي (يُدفع للبائع عند الاستلام)" : "الإجمالي المدفوع"}</td><td></td><td>${esc(sar(o.total))}</td></tr>${o.seller_id === uid && Number(o.commission) > 0 ? `<tr><td class="muted">عمولة المنصة</td><td></td><td class="muted">${esc(sar(o.commission))}</td></tr><tr class="tot"><td>صافي البائع</td><td></td><td>${esc(sar(Number(o.total) - Number(o.commission)))}</td></tr>` : ""}</table>
+${o.note ? `<p class="muted">ملاحظة: ${esc(o.note)}</p>` : ""}<p class="muted">المبالغ بالريال السعودي. ${cod ? "الدفع عند الاستلام مباشرة للبائع؛ لم يمر المبلغ بمحفظة ناس لايف." : "الدفع عبر محفظة ناس لايف؛ يُحرَّر المبلغ للبائع عند تأكيد الاستلام."}</p><button onclick="print()">طباعة / حفظ PDF</button></body></html>`;
     return reply.type("text/html; charset=utf-8").send(html);
   });
 
@@ -462,7 +464,7 @@ ${o.note ? `<p class="muted">ملاحظة: ${esc(o.note)}</p>` : ""}<p class="mu
   app.get("/adminapi/market/overview", async (req, reply) => {
     const uid = await adminOnly(req, reply); if (!uid) return;
     const st = (await pool.query("SELECT status, count(*)::int AS n FROM market_listings GROUP BY status")).rows;
-    const o = (await pool.query(`SELECT count(*) FILTER (WHERE status IN ('paid','preparing','on_the_way','delivered'))::int AS open, count(*) FILTER (WHERE status='disputed')::int AS disputed,
+    const o = (await pool.query(`SELECT count(*) FILTER (WHERE status IN ('requested','paid','preparing','on_the_way','delivered'))::int AS open, count(*) FILTER (WHERE status='disputed')::int AS disputed,
       COALESCE(sum(total) FILTER (WHERE status NOT IN ('cancelled','refunded') AND created_at >= now() - interval '30 days'),0)::bigint AS gmv30, COALESCE(sum(commission) FILTER (WHERE status='completed' AND completed_at >= now() - interval '30 days'),0)::bigint AS commission30,
       count(*) FILTER (WHERE created_at >= now() - interval '30 days')::int AS orders30, count(*) FILTER (WHERE status IN ('cancelled','refunded') AND created_at >= now() - interval '30 days')::int AS cancelled30, COALESCE(avg(total) FILTER (WHERE status NOT IN ('cancelled','refunded') AND created_at >= now() - interval '30 days'),0)::bigint AS basket FROM market_orders`)).rows[0];
     const spot = (await pool.query("SELECT COALESCE(sum(paid),0)::bigint AS rev, count(*) FILTER (WHERE status='active' AND ends_at > now())::int AS active FROM market_spotlight WHERE created_at >= now() - interval '30 days'")).rows[0];
