@@ -1111,7 +1111,7 @@ http.createServer((req, res) => {
       if (req.method === 'PUT') return lb((b) => { if (s.stopped) return lj(409, { error: 'ended' }); s.lat = Number(b.lat); s.lng = Number(b.lng); s.accuracy = b.accuracy ?? null; s.at = new Date().toISOString(); lj(200, { ok: true }); });
       if (req.method === 'DELETE') { s.stopped = true; return lj(200, { ok: true }); }
     }
-    if (key === 'GET /chat/live/status') return lj(200, { ok: true, minutes: [15, 60, 480], pushMinMs: 5000, suggest: { ai: false, perMin: 20 } });
+    if (key === 'GET /chat/live/status') return lj(200, { ok: true, minutes: [15, 60, 480], pushMinMs: 5000, suggest: { ai: false, paused: 'consent-required', perMin: 20 } });
     if (key === 'POST /chat/suggest') return lb((b) => { const last = [...(Array.isArray(b.messages) ? b.messages : [])].reverse().find((m) => !m.mine)?.text ?? ''; const sug = /السلام/.test(last) ? ['وعليكم السلام ورحمة الله', 'هلا والله', 'أهلاً، كيف الحال؟'] : /سعر|بكم|ريال/.test(last) ? ['كم السعر؟', 'فيه خصم؟', 'تمام، أبغى واحد'] : /[؟?]/.test(last) ? ['نعم', 'لا', 'خلني أتأكد'] : ['تمام', 'أبشر', 'خلني أرجع لك']; lj(200, { suggestions: sug, source: 'rules' }); });
   }
   // ---- chat live + suggest (stream B) end

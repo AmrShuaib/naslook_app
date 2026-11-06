@@ -28,7 +28,7 @@ export function companyLines(company = {}) {
 }
 const aboutAr = (company) => `
 <h2 id="about">من نحن</h2>
-<p>ناس لايف منصة تشغّلها ${COMPANY_AR}، شركة سعودية مقرها المملكة العربية السعودية.</p>
+<p>ناس لايف منصة تشغّلها ${COMPANY_AR}، شركة مسجّلة في المملكة العربية السعودية.</p>
 <ul>${companyLines(company).ar.map((l) => `<li>${l}</li>`).join("")}</ul>`;
 const aboutEn = (company) => `<li><b>About us:</b> ${companyLines(company).en.join(" · ")}</li>`;
 
@@ -75,9 +75,9 @@ export function privacyBody({ supportEmail, company }) {
 
 <h2 id="ai">الذكاء الاصطناعي</h2>
 <p><b>محادثاتك الخاصة لا تُرسل إلى أي ذكاء اصطناعي.</b> الردود المقترحة فوق حقل الكتابة تأتي من قواعد ثابتة تعمل على خوادمنا، ولا يقرأ رسائلك أي نموذج.</p>
-<p>نستخدم نموذج Claude من شركة Anthropic في حالتين فقط، وكل منهما يطلبها صاحبها بنفسه، وتعالج Anthropic النص على خوادم خارج المملكة:</p>
+<p>نستخدم نموذج Claude من شركة Anthropic في حالتين فقط، ولا تعمل أي منهما إلا حين يطلبها موظف الدعم أو فريق الدائرة بنفسه. تعالج Anthropic النص المرسل على خوادم خارج المملكة:</p>
 <ul>
-<li><b>صندوق الدعم</b>: حين يكون المساعد الذكي مفعّلاً ويطلب موظف الدعم ملخصاً لمراسلة أو مسودة رد عليها، تُرسل نصوص رسائل تلك المراسلة (ومعها اسم المرسل وبريده كما وردا فيها). المسودة لا تصلك قبل أن يراجعها الموظف ويعدّلها.</li>
+<li><b>صندوق الدعم</b>: حين يكون المساعد الذكي مفعّلاً ويطلب موظف الدعم ملخصاً لمراسلة أو مسودة رد عليها، تُرسل نصوص رسائل تلك المراسلة ووقت كل رسالة واسم مرسلها (أو بريده إن لم يذكر اسماً)، ولا تُرسل الملاحظات الداخلية للفريق. الملخص للفريق وحده، والمسودة لا تصلك قبل أن يراجعها الموظف ويعدّلها.</li>
 <li><b>صياغة عرض وظيفي</b>: حين يضغط فريق دائرة «اكتب لي العرض» تُرسل بيانات العرض التي كتبها فقط: اسم الدائرة وفئتها، المسمّى الوظيفي، القسم، نوع الدوام، المدينة، النقاط التي كتبها، ونطاق الراتب إن حدّده. يعدّل الفريق المسودة قبل النشر. لا تُرسل أي بيانات عن المرشحين ولا ملفات التوظيف.</li>
 </ul>
 <p>إن أضفنا مستقبلاً اقتراحات ذكية في المحادثات فلن تعمل إلا بعد موافقتك الصريحة، ونحدّث هذه السياسة قبلها.</p>
@@ -123,7 +123,7 @@ ${aboutAr(company)}
 <li><b>Transactions:</b> in-app wallet balance, orders, bookings, tickets and top-ups. Card payments happen on the hosted page of Moyasar, a licensed payment gateway; we never receive card data.</li>
 <li><b>Usage and technical data:</b> views, clicks and likes shown as statistics to content owners; IP address and device type in server logs for security.</li>
 <li><b>Processors:</b> Moyasar (payments), our email provider and our hosting provider.</li>
-<li><b>AI:</b> your private chats are never sent to any AI; suggested replies in chat come from fixed rules on our servers. We use Anthropic's Claude, processed outside Saudi Arabia, in two cases only, each requested by the person concerned: (1) in the support inbox, when the assistant is enabled and a staff member asks for a summary or a draft reply, the messages of that thread (with the sender's name and email as they appear) are sent, and staff review every draft before it reaches you; (2) when a circle's team taps "Write the job offer for me", only the job details they typed are sent (circle name and category, title, department, job type, city, their bullet points and salary range); no candidate data is sent. Any future AI feature in chat will require your explicit opt-in first.</li>
+<li><b>AI:</b> your private chats are never sent to any AI; suggested replies in chat come from fixed rules on our servers. We use Anthropic's Claude, processed outside Saudi Arabia, in two cases only, each run only when a support agent or a circle's team asks for it: (1) in the support inbox, when the assistant is enabled and an agent asks for a summary or a draft reply, the messages of that thread are sent with their times and the sender's name (or email address when no name is given), never the team's internal notes, and an agent reviews every draft before it reaches you; (2) when a circle's team taps "Write the job offer for me", only the job details they typed are sent (circle name and category, title, department, job type, city, their bullet points and salary range); no candidate data is sent. Any future AI feature in chat will require your explicit opt-in first.</li>
 <li><b>Retention:</b> while your account exists. On deletion we remove your email, profile, photo and push subscriptions immediately and hide your content, which is erased within 30 days. Financial records are kept as required by law under an anonymous identifier. Messages already delivered stay with their recipients and show "Deleted user".</li>
 <li><b>Delete your account</b> in the app: My Space → Account → Delete account. If you cannot sign in, email us from your account address.</li>
 <li><b>Ages:</b> 13 and over, declared at sign-up; wallet top-ups, buying and selling for money are for users 18 and over, declared once before the first financial action.</li>
