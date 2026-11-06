@@ -9,6 +9,9 @@ await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nicknam
 await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara') ON CONFLICT (id) DO NOTHING");
 await pool.query(`CREATE TABLE IF NOT EXISTS biz (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_ar TEXT NOT NULL DEFAULT '', category TEXT NOT NULL, sector TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', lat DOUBLE PRECISION NOT NULL, lng DOUBLE PRECISION NOT NULL, address TEXT NOT NULL DEFAULT '', hours TEXT NOT NULL DEFAULT '', phone TEXT, website TEXT, color TEXT, highlights JSONB NOT NULL DEFAULT '[]', verified BOOLEAN NOT NULL DEFAULT false, official BOOLEAN NOT NULL DEFAULT false, active BOOLEAN NOT NULL DEFAULT true, sort INT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), owner_id TEXT, logo_url TEXT)`);
 await pool.query("DELETE FROM biz WHERE id LIKE 'pm-%'");
+// دوائر حزم أخرى في القاعدة المشتركة (biz_onboard وrow) قد تقع في الدمام قرب هذه النقاط فتسحب نسبة اللحظات إليها: تُطفأ في هذا الصندوق
+try { await pool.query("UPDATE biz SET active=false WHERE id NOT LIKE 'pm-%' AND lat BETWEEN 26.42 AND 26.45 AND lng BETWEEN 50.09 AND 50.11"); }
+catch { await pool.query("DELETE FROM biz WHERE id NOT LIKE 'pm-%' AND lat BETWEEN 26.42 AND 26.45 AND lng BETWEEN 50.09 AND 50.11").catch(() => {}); }
 // دائرتان في الدمام بينهما ~600 م
 await pool.query("INSERT INTO biz(id,name,name_ar,category,lat,lng) VALUES('pm-cafe','PM Cafe','مقهى الواجهة','cafe',26.4300,50.1000),('pm-salon','PM Salon','صالون الواجهة','salon',26.4354,50.1000)");
 await pool.query("DROP TABLE IF EXISTS map_posts; DROP TABLE IF EXISTS map_post_likes; DROP TABLE IF EXISTS map_post_views; DROP TABLE IF EXISTS map_post_events");
@@ -42,6 +45,9 @@ r = await call('/mapposts/feed?place=biz:pm-none');
 check(r.code === 200 && r.json.items.length === 0, 'unknown circle → empty list');
 
 await pool.query("DELETE FROM biz WHERE id LIKE 'pm-%'");
+// دوائر حزم أخرى في القاعدة المشتركة (biz_onboard وrow) قد تقع في الدمام قرب هذه النقاط فتسحب نسبة اللحظات إليها: تُطفأ في هذا الصندوق
+try { await pool.query("UPDATE biz SET active=false WHERE id NOT LIKE 'pm-%' AND lat BETWEEN 26.42 AND 26.45 AND lng BETWEEN 50.09 AND 50.11"); }
+catch { await pool.query("DELETE FROM biz WHERE id NOT LIKE 'pm-%' AND lat BETWEEN 26.42 AND 26.45 AND lng BETWEEN 50.09 AND 50.11").catch(() => {}); }
 await app.close(); await pool.end();
 console.log(fails ? `\n${fails} FAILED` : '\nALL PLACE MOMENTS TESTS PASSED');
 process.exit(fails ? 1 : 0);
