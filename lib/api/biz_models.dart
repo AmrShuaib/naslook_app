@@ -11,8 +11,23 @@ double? _d(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString()
 /// قائمة نصوص (asList في models.dart تحوّل العناصر إلى خرائط، فلا تصلح للنصوص).
 List<String> _strings(dynamic v) => v is List ? v.map((e) => e.toString()).where((e) => e.isNotEmpty && e != '{}').toList() : const [];
 
-/// الأنواع التي تُحجز بموعد محدد (عرض سينمائي أو عيادة).
+/// الأنواع التي تُحجز بموعد محدد (عرض سينمائي أو موعد عيادة أو خدمة).
 bool isSlotKind(String kind) => kind == 'showtime' || kind == 'clinic';
+
+/// أيام المواعيد بترقيم الخادم نفسه (0 = الأحد … 6 = السبت، كـ getUTCDay بتوقيت السعودية في business.js)،
+/// مرتّبة للعرض من السبت إلى الجمعة.
+const appointmentWeekdays = [(6, 'السبت'), (0, 'الأحد'), (1, 'الاثنين'), (2, 'الثلاثاء'), (3, 'الأربعاء'), (4, 'الخميس'), (5, 'الجمعة')];
+
+/// وصف مختصر لأيام العمل: «كل الأيام» أو «الأحد – الخميس» أو أسماء الأيام متتالية بترتيب الأسبوع.
+String workDaysLabel(List<int>? days) {
+  if (days == null || days.isEmpty || days.toSet().length >= 7) return 'كل الأيام';
+  final set = days.toSet();
+  final ordered = [for (final (d, name) in appointmentWeekdays) if (set.contains(d)) name];
+  // مدى متصل في ترتيب الأسبوع (السبت أولاً): يُختصر بأوله وآخره
+  final idx = [for (final (i, (d, _)) in appointmentWeekdays.indexed) if (set.contains(d)) i];
+  final contiguous = idx.length >= 3 && idx.last - idx.first == idx.length - 1;
+  return contiguous ? '${ordered.first} – ${ordered.last}' : ordered.join('، ');
+}
 
 /// فئات الدوائر التجارية وتخصصها.
 enum BizCategory {
@@ -47,6 +62,15 @@ enum BizCategory {
   String get catalogTitle => switch (this) { brand => 'المنتجات', cinema => 'العروض', hotel => 'الغرف', carRental => 'السيارات', hospital => 'العيادات والخدمات', airport => 'مرافق المطار والخدمات', cafe => 'القائمة', restaurant => 'القائمة', company => 'الخدمات والأقسام', university => 'الكليات والخدمات', shop => 'المنتجات', services => 'الخدمات', salon => 'الخدمات والمواعيد', clinic => 'العيادات والمواعيد', entertainment => 'الفعاليات والتذاكر', other => 'الخدمات' };
   String get actionLabel => switch (this) { brand => 'اشترِ', cinema => 'احجز تذاكر', hotel => 'احجز', carRental => 'احجز', hospital => 'احجز موعداً', airport => 'التفاصيل', cafe => 'اطلب', restaurant => 'اطلب', company => 'التفاصيل', university => 'التفاصيل', shop => 'اشترِ', services => 'اطلب', salon => 'احجز موعداً', clinic => 'احجز موعداً', entertainment => 'احجز تذاكر', other => 'التفاصيل' };
   String get orderNoun => switch (this) { brand => 'طلب', cinema => 'تذكرة', hotel => 'حجز فندقي', carRental => 'حجز سيارة', hospital => 'موعد', airport => 'طلب', cafe => 'طلب', restaurant => 'طلب', company => 'طلب', university => 'طلب', shop => 'طلب', services => 'طلب', salon => 'موعد', clinic => 'موعد', entertainment => 'تذكرة', other => 'طلب' };
+
+  /// أنواع الأصناف التي يضيفها المالك (الأول هو الافتراضي): الصالون والخدمات يجمعان المواعيد والمنتجات.
+  List<String> get itemKinds => switch (this) { salon => const ['clinic', 'product'], services => const ['product', 'clinic'], _ => [itemKind] };
+
+  /// صنف الموعد (clinic) بلغة العيادة للمستشفى والعيادة، وبلغة الخدمة لغيرهما (صالون، خدمات وورش).
+  bool get clinicWords => this == hospital || this == clinic;
+
+  /// أيقونة صنف الموعد بحسب الفئة.
+  IconData get appointmentIcon => switch (this) { salon => Icons.content_cut_rounded, services => Icons.handyman_outlined, _ => Icons.medical_services_outlined };
 }
 
 /// «HH:MM» بالتوقيت المحلي (لبطاقة «هنا اليوم حتى …»).
@@ -197,6 +221,13 @@ class BizItem {
   String get unitLabel => switch (unit) { 'night' => 'لليلة', 'day' => 'لليوم', 'ticket' => 'للتذكرة', 'visit' => 'للزيارة', _ => '' };
   bool get isFree => price == 0;
   bool get soldOut => kind == 'product' && stock != null && stock! <= 0;
+  /// أيام عمل صنف الموعد كما حفظها المالك (0 = الأحد … 6 = السبت)؛ null = كل الأيام.
+  List<int>? get workDays {
+    final d = meta['days'];
+    if (d is! List || d.isEmpty) return null;
+    final out = [for (final v in d) if (v is num && v >= 0 && v <= 6) v.toInt()];
+    return out.isEmpty ? null : out;
+  }
 }
 
 class Showtime {
@@ -328,7 +359,7 @@ class BizOrder {
       );
 
   String get statusLabel => switch (status) { 'confirmed' => 'مؤكد', 'used' => 'مستخدم', 'cancelled' => 'ملغى', _ => status };
-  String get kindLabel => switch (kind) { 'showtime' => 'تذاكر سينما', 'clinic' => 'موعد عيادة', 'room' => 'حجز فندقي', 'car' => 'حجز سيارة', _ => 'طلب شراء' };
+  String get kindLabel => switch (kind) { 'showtime' => 'تذاكر سينما', 'clinic' => category.clinicWords ? 'موعد عيادة' : 'موعد خدمة', 'room' => 'حجز فندقي', 'car' => 'حجز سيارة', _ => 'طلب شراء' };
   bool get upcoming => status == 'confirmed' && (startAt == null || startAt!.isAfter(DateTime.now().subtract(const Duration(hours: 6))));
 
   /// وصف مختصر للكمية والمدة: "3 تذاكر" أو "غرفتان × ليلتان".

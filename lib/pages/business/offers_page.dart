@@ -14,17 +14,21 @@ import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import 'business_page.dart' show dayLabel, shortDate, bizErrText, openBusiness;
 
-/// مستويات تنبيه العضو: كل العروض، القريبة فقط (الافتراضي)، بلا تنبيهات.
+/// مستويات تنبيه العضو: كل العروض (الافتراضي) أو بلا تنبيهات. تنبيهات القرب مؤجلة، فالمستوى القديم «near» يُعرض «كل العروض»
+/// لأن الخادم يرسل له كل العروض (server/offers.js).
 const notifyLevels = [
-  ('all', 'كل العروض', 'يصلك تنبيه بكل عرض جديد من هذه الدائرة', Icons.notifications_active_outlined),
-  ('near', 'القريبة فقط', 'يصلك التنبيه حين تكون قريباً من المكان', Icons.near_me_outlined),
+  ('all', 'كل العروض', 'يصلك تنبيه بكل عرض أو خبر جديد من هذه الدائرة، تنبيه واحد في اليوم على الأكثر', Icons.notifications_active_outlined),
   ('none', 'بلا تنبيهات', 'تشاهد العروض بنفسك في الدائرة ومحفظتك', Icons.notifications_off_outlined),
 ];
 
-String notifyLevelLabel(String? level) => notifyLevels.where((l) => l.$1 == level).firstOrNull?.$2 ?? 'القريبة فقط';
+/// المستوى كما يعمل فعلاً: «none» يبقى، وكل ما عداه (بلا صف أو «near» القديم) هو «all».
+String effectiveNotifyLevel(String? level) => level == 'none' ? 'none' : 'all';
+
+String notifyLevelLabel(String? level) => notifyLevels.firstWhere((l) => l.$1 == effectiveNotifyLevel(level)).$2;
 
 /// ورقة اختيار مستوى تنبيهات الدائرة. تعيد المستوى الجديد أو null إن لم يتغيّر.
 Future<String?> showNotifyLevelSheet(BuildContext context, WidgetRef ref, {required String bizId, required String current}) async {
+  current = effectiveNotifyLevel(current);
   final picked = await showModalBottomSheet<String>(
     context: context,
     showDragHandle: true,
@@ -323,7 +327,7 @@ class _CircleOffersPageState extends ConsumerState<CircleOffersPage> {
       } else {
         await ref.read(apiClientProvider).followBiz(widget.bizId);
         invalidateBiz(ref, widget.bizId);
-        if (mounted) toast(context, 'انضممت إلى $_title · تصلك عروضها القريبة');
+        if (mounted) toast(context, 'انضممت إلى $_title · يصلك تنبيه بعروضها الجديدة');
       }
     } catch (e) {
       if (mounted) toast(context, bizErrText(e), error: true);
@@ -349,7 +353,7 @@ class _CircleOffersPageState extends ConsumerState<CircleOffersPage> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
               children: [
-                _MemberLine(member: p.member, notify: p.notify, busy: _busy, onJoin: _join, onNotify: () => showNotifyLevelSheet(context, ref, bizId: widget.bizId, current: p.notify ?? 'near')),
+                _MemberLine(member: p.member, notify: p.notify, busy: _busy, onJoin: _join, onNotify: () => showNotifyLevelSheet(context, ref, bizId: widget.bizId, current: p.notify ?? 'all')),
                 const SizedBox(height: 12),
                 if (empty) const EmptyState(icon: Icons.local_offer_outlined, title: 'لا عروض حالياً', subtitle: 'حين تنشر الدائرة عرضاً يظهر هنا، ويصل الأعضاء حسب مستوى التنبيه الذي اختاروه.'),
                 if (p.active.isNotEmpty) ...[

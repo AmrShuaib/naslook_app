@@ -29,6 +29,7 @@ import 'community_page.dart';
 import 'my_bookings_page.dart';
 import 'offers_page.dart';
 import '../hotels/hotel_book_page.dart' show HotelEntryCard;
+import '../posts/place_moments.dart';
 import '../jobs/jobs_page.dart' show JobsEntryCard;
 import 'owner/business_dashboard_page.dart';
 import 'owner/dashboard_posts.dart';
@@ -193,7 +194,9 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
                     ),
                   ),
               ],
+              // لحظات الناس من هذا المكان (تُنسب اللحظة إلى أقرب دائرة ضمن 250 م)؛ تظهر للزائر أيضاً ولا تظهر إن لم توجد
               const SizedBox(height: 16),
+              PlaceMomentsEntry(bizId: biz.id),
               SectionTitle(biz.category.catalogTitle),
               if (biz.items.isEmpty) const EmptyState(icon: Icons.inventory_2_outlined, title: 'لا عناصر بعد'),
               for (final it in biz.items)
@@ -253,7 +256,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
 
   void _openOffers(Biz b) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleOffersPage(bizId: b.id, title: b.title, onJoin: () => _follow(b, joinOnly: true))));
 
-  /// الانضمام ضغطة واحدة: يفتح العروض والخصومات والتحديثات، مع سطر إخبار بمستوى التنبيه الافتراضي (القريبة فقط) وزر تغييره.
+  /// الانضمام ضغطة واحدة: يفتح العروض والخصومات والتحديثات، مع سطر إخبار بمستوى التنبيه الافتراضي (كل العروض) وزر تغييره.
   Future<void> _follow(Biz b, {bool joinOnly = false}) async {
     if (_busy) return;
     // «انضم» من صفحة العروض يُستدعى من شاشة أخرى: ندعو الزائر للدخول قبل أي حوار
@@ -283,9 +286,9 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
           ScaffoldMessenger.of(context)
             ..hideCurrentSnackBar()
             ..showSnackBar(SnackBar(
-              content: Text('انضممت إلى ${b.title} · تصلك عروضها حين تكون قريباً'),
+              content: Text('انضممت إلى ${b.title} · يصلك تنبيه بعروضها الجديدة'),
               duration: const Duration(seconds: 6),
-              action: SnackBarAction(label: 'تغيير', textColor: Joy.sun, onPressed: () => showNotifyLevelSheet(context, ref, bizId: b.id, current: 'near')),
+              action: SnackBarAction(label: 'تغيير', textColor: Joy.sun, onPressed: () => showNotifyLevelSheet(context, ref, bizId: b.id, current: 'all')),
             ));
         }
       }
@@ -868,7 +871,7 @@ class _ClinicCardState extends State<_ClinicCard> {
     return JoyCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(width: 54, height: 54, decoration: BoxDecoration(color: widget.biz.color.withValues(alpha: .12), borderRadius: BorderRadius.circular(14)), child: Icon(Icons.medical_services_outlined, color: widget.biz.color.computeLuminance() > .6 ? Joy.text : widget.biz.color)),
+          Container(width: 54, height: 54, decoration: BoxDecoration(color: widget.biz.color.withValues(alpha: .12), borderRadius: BorderRadius.circular(14)), child: Icon(widget.biz.category.appointmentIcon, color: widget.biz.color.computeLuminance() > .6 ? Joy.text : widget.biz.color)),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(it.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
@@ -1149,7 +1152,7 @@ class OrderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = o.status == 'confirmed';
-    final icon = switch (o.kind) { 'showtime' => Icons.local_movies_outlined, 'clinic' => Icons.medical_services_outlined, 'room' => Icons.hotel_outlined, 'car' => Icons.directions_car_outlined, _ => Icons.shopping_bag_outlined };
+    final icon = switch (o.kind) { 'showtime' => Icons.local_movies_outlined, 'clinic' => o.category.appointmentIcon, 'room' => Icons.hotel_outlined, 'car' => Icons.directions_car_outlined, _ => Icons.shopping_bag_outlined };
     return ListRow(
       leading: Container(width: 46, height: 46, decoration: BoxDecoration(color: active ? Joy.primarySoft : Joy.surface2, borderRadius: BorderRadius.circular(14)), child: Icon(icon, color: active ? Joy.primary : Joy.textMuted)),
       title: Text(showBiz ? '${o.bizName} · ${o.title}' : o.title, maxLines: 1, overflow: TextOverflow.ellipsis),

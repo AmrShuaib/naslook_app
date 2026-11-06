@@ -8,7 +8,6 @@ import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
-import '../../core/location.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../state/safety_providers.dart';
@@ -17,6 +16,7 @@ import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
+import 'event_create_page.dart';
 
 final eventsProvider = FutureProvider<List<Event>>((ref) => ref.watch(apiClientProvider).events());
 final myEventsProvider = FutureProvider<List<Event>>((ref) => ref.watch(apiClientProvider).events(mine: true));
@@ -80,55 +80,11 @@ class _EventsPageState extends ConsumerState<EventsPage> {
   Future<void> _create() async {
     // الزائر يُدعى للدخول قبل النموذج، وإلا ملأه كله ثم رفضه الخادم وضاع
     if (!requireAccount(context)) return;
-    final title = TextEditingController(), desc = TextEditingController(), place = TextEditingController();
-    final tierName = TextEditingController(text: 'عادي'), tierPrice = TextEditingController(text: '0'), tierQty = TextEditingController(text: '50');
-    DateTime starts = DateTime.now().add(const Duration(days: 1));
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setS) => AlertDialog(
-        title: const Text('فعالية جديدة'),
-        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: title, decoration: const InputDecoration(labelText: 'العنوان'), autofocus: true),
-          const SizedBox(height: 10),
-          TextField(controller: desc, maxLines: 2, decoration: const InputDecoration(labelText: 'الوصف')),
-          const SizedBox(height: 10),
-          TextField(controller: place, decoration: const InputDecoration(labelText: 'المكان')),
-          const SizedBox(height: 10),
-          ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.event_rounded, color: Joy.primary), title: Text(when(starts)), onTap: () async {
-            final d = await showDatePicker(context: ctx, firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)), initialDate: starts);
-            if (d == null || !ctx.mounted) return;
-            final t = await showTimePicker(context: ctx, initialTime: TimeOfDay.fromDateTime(starts));
-            if (t == null) return;
-            setS(() => starts = DateTime(d.year, d.month, d.day, t.hour, t.minute));
-          }),
-          const Divider(),
-          const Align(alignment: AlignmentDirectional.centerStart, child: Text('التذكرة', style: TextStyle(fontWeight: FontWeight.w600))),
-          const SizedBox(height: 6),
-          TextField(controller: tierName, decoration: const InputDecoration(labelText: 'اسم الفئة')),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(child: TextField(controller: tierPrice, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'السعر (ر.س)', helperText: '0 = مجانية'))),
-            const SizedBox(width: 10),
-            Expanded(child: TextField(controller: tierQty, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'العدد'))),
-          ]),
-        ])),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('إنشاء'))],
-      )),
-    );
-    if (ok != true || title.text.trim().isEmpty || !mounted) return;
-    final gps = await DeviceLocation.browse();
-    final pres = ref.read(myPresenceProvider).value;
-    try {
-      final ev = await ref.read(apiClientProvider).createEvent({
-        'title': title.text.trim(), 'description': desc.text.trim(), 'placeName': place.text.trim(), 'startsAt': starts.toUtc().toIso8601String(),
-        'lat': gps?.latitude ?? pres?.lat, 'lng': gps?.longitude ?? pres?.lng,
-        'tiers': [{'name': tierName.text.trim(), 'price': ((double.tryParse(tierPrice.text) ?? 0) * 100).round(), 'quantity': int.tryParse(tierQty.text) ?? 50}],
-      });
-      ref.invalidate(eventsProvider); ref.invalidate(myEventsProvider);
-      if (mounted) Navigator.of(context).push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: ev.id)));
-    } catch (e) {
-      if (mounted) toast(context, e.toString(), error: true);
-    }
+    // المكان يحدده المنشئ (موقع جهازه افتراضياً أو نقطة على الخريطة)، لا موقع جهازه لحظة الضغط على «إنشاء»
+    final ev = await EventCreatePage.open(context);
+    if (ev == null || !mounted) return;
+    ref.invalidate(eventsProvider); ref.invalidate(myEventsProvider);
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => EventDetailPage(eventId: ev.id)));
   }
 }
 

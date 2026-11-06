@@ -51,7 +51,7 @@
 
 ## الفئات
 
-`CATEGORIES` في `business.js` (مصدَّرة وعلى `globalThis.naslifeBizCategories`) صارت 16: القديمة `brand, cinema, hotel, car_rental, hospital, airport, cafe, restaurant, company, university` والجديدة `shop` (متجر)، `services` (خدمات وورش)، `salon` (صالون وتجميل)، `clinic` (عيادة)، `entertainment` (ترفيه)، `other` (أخرى). الأسماء العربية في `CATEGORY_AR` ونوع الصنف الافتراضي في `ITEM_KIND_OF`: `shop/services → product`، `salon/clinic → clinic` (مواعيد)، `entertainment → showtime`، `other → info`. `GET /biz?category=` والإنشاء القديم `POST /biz` يقبلان الجديدة.
+`CATEGORIES` في `business.js` (مصدَّرة وعلى `globalThis.naslifeBizCategories`) صارت 16: القديمة `brand, cinema, hotel, car_rental, hospital, airport, cafe, restaurant, company, university` والجديدة `shop` (متجر)، `services` (خدمات وورش)، `salon` (صالون وتجميل)، `clinic` (عيادة)، `entertainment` (ترفيه)، `other` (أخرى). الأسماء العربية في `CATEGORY_AR` ونوع الصنف الافتراضي في `ITEM_KIND_OF`: `shop/services → product`، `salon/clinic → clinic` (مواعيد)، `entertainment → showtime`، `other → info`. `GET /biz?category=` والإنشاء القديم `POST /biz` يقبلان الجديدة. منذ 6 نوفمبر 2026 يختار المالك أيام عمل المواعيد (السبت – الجمعة)، والصالون والخدمات يضيفان «منتجاً» أو «موعداً» بلغة الخدمة لا العيادة: التفاصيل في `docs/appointments.md`.
 
 ## الخطوات الست والتحقق (`POST /biz/register`)
 
