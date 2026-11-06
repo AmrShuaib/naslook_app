@@ -212,12 +212,17 @@ class BizItem {
   final int discussions;
   /// عرض سعر فعّال على هذا العنصر (deal) إن وُجد.
   final ItemDeal? deal;
-  const BizItem({required this.id, required this.bizId, required this.kind, required this.title, this.description = '', required this.price, this.unit = 'item', this.stock, this.meta = const {}, this.imageUrl, this.slots = const [], this.active = true, this.sort = 0, this.discussions = 0, this.deal});
+  /// يقبل «احجز الآن وادفع في المكان» (يفعّله صاحب الدائرة لكل صنف؛ مطفأ افتراضياً).
+  final bool payAtVenue;
+  const BizItem({required this.id, required this.bizId, required this.kind, required this.title, this.description = '', required this.price, this.unit = 'item', this.stock, this.meta = const {}, this.imageUrl, this.slots = const [], this.active = true, this.sort = 0, this.discussions = 0, this.deal, this.payAtVenue = false});
   factory BizItem.fromJson(Map m) => BizItem(
         id: m['id'].toString(), bizId: m['bizId']?.toString() ?? '', kind: m['kind']?.toString() ?? 'product', title: m['title']?.toString() ?? '', description: m['description']?.toString() ?? '',
         price: _i(m['price']), unit: m['unit']?.toString() ?? 'item', stock: m['stock'] == null ? null : _i(m['stock']), meta: _m(m['meta']), imageUrl: m['imageUrl']?.toString(),
         slots: asList(m['slots']).map(Showtime.fromJson).toList(), active: m['active'] != false, sort: _i(m['sort']), discussions: _i(m['discussions']), deal: m['deal'] is Map ? ItemDeal.fromJson(_m(m['deal'])) : null,
+        payAtVenue: m['payAtVenue'] == true,
       );
+  /// الدفع في المكان متاح لهذا الصنف المدفوع.
+  bool get venueOk => payAtVenue && price > 0;
   int? get oldPrice => deal != null ? price : (meta['oldPrice'] == null ? null : _i(meta['oldPrice']));
   /// السعر الذي يدفعه المستخدم فعلاً: سعر العرض إن وُجد.
   int get payPrice => deal?.price ?? price;
@@ -272,7 +277,10 @@ class BizStats {
   final List<({String kind, int count, int total})> byKind;
   final List<({DateTime day, int orders, int revenue})> daily;
   final List<({String itemId, String title, int count, int total})> topItems;
+  /// المال: المحجوز حتى الاستلام والمُحرَّر لمحفظة صاحب الدائرة والدفع في المكان.
+  final BizMoney money;
   const BizStats({
+    this.money = const BizMoney(),
     this.ordersTotal = 0, this.confirmed = 0, this.used = 0, this.cancelled = 0, this.ordersLast7 = 0, this.next24h = 0, this.customers = 0, this.followers = 0, this.reviews = 0, this.unanswered = 0, this.views = 0,
     this.revenueTotal = 0, this.revenueLast7 = 0, this.revenueLast30 = 0, this.rating, this.byKind = const [], this.daily = const [], this.topItems = const [],
   });
@@ -280,13 +288,22 @@ class BizStats {
     final o = _m(m['orders']), r = _m(m['revenue']);
     return BizStats(
       ordersTotal: _i(o['total']), confirmed: _i(o['confirmed']), used: _i(o['used']), cancelled: _i(o['cancelled']), ordersLast7: _i(o['last7']), next24h: _i(o['next24h']), customers: _i(o['customers']),
-      revenueTotal: _i(r['total']), revenueLast7: _i(r['last7']), revenueLast30: _i(r['last30']), rating: _d(m['rating']),
+      revenueTotal: _i(r['total']), revenueLast7: _i(r['last7']), revenueLast30: _i(r['last30']), rating: _d(m['rating']), money: BizMoney.fromJson(_m(m['money'])),
       followers: _i(m['followers']), reviews: _i(m['reviews']), unanswered: _i(m['unanswered']), views: _i(m['views']),
       byKind: [for (final k in asList(m['byKind'])) (kind: k['kind']?.toString() ?? '', count: _i(k['count']), total: _i(k['total']))],
       daily: [for (final d in asList(m['daily'])) (day: DateTime.tryParse(d['day']?.toString() ?? '') ?? DateTime.now(), orders: _i(d['orders']), revenue: _i(d['revenue']))],
       topItems: [for (final t in asList(m['topItems'])) (itemId: t['itemId']?.toString() ?? '', title: t['title']?.toString() ?? '', count: _i(t['count']), total: _i(t['total']))],
     );
   }
+}
+
+/// مال الدائرة: المحجوز (ومنه المجمّد بنزاع) والمحرَّر، والدفع في المكان المستحق والمدفوع.
+class BizMoney {
+  final int held, disputed, released, venueDue, venuePaid, disputesOpen, noShows, holdDays;
+  const BizMoney({this.held = 0, this.disputed = 0, this.released = 0, this.venueDue = 0, this.venuePaid = 0, this.disputesOpen = 0, this.noShows = 0, this.holdDays = 3});
+  factory BizMoney.fromJson(Map m) => BizMoney(held: _i(m['held']), disputed: _i(m['disputed']), released: _i(m['released']), venueDue: _i(m['venueDue']), venuePaid: _i(m['venuePaid']),
+      disputesOpen: _i(m['disputesOpen']), noShows: _i(m['noShows']), holdDays: m['holdDays'] == null ? 3 : _i(m['holdDays']));
+  bool get isEmpty => held == 0 && released == 0 && venueDue == 0 && venuePaid == 0 && disputesOpen == 0;
 }
 
 class BizStaff {
@@ -351,18 +368,66 @@ class BizOrder {
   final bool cancellable;
   final Person? customer;
   final OrderOffer? offer;
+  /// wallet | at_venue | free
+  final String payment;
+  /// للدفع في المكان: هل أكّد صاحب الدائرة «تم الدفع»؟ (المحفظة والمجاني مدفوعان دائماً)
+  final bool paid;
+  /// للمدفوع من المحفظة: held (محجوز حتى الاستلام) | released | refunded | split | credited (طلب قديم قُيّد عند الشراء)
+  final String? funds;
+  final DateTime? paidAt, releaseAt, releasedAt, usedAt;
+  final BizDispute? dispute;
+  /// يستطيع العميل فتح «لدي مشكلة» على هذا الطلب الآن.
+  final bool disputable;
+  /// من يرى الطلب (GET /biz/orders/:id): customer | team | admin
+  final String? viewer;
+  /// مرات «لم يحضر» لهذا العميل في الدائرة (للفريق).
+  final int? noShows;
+  final Person? owner;
   const BizOrder({this.offer,
     required this.id, required this.bizId, required this.itemId, required this.kind, required this.status, required this.code, this.note = '', this.title = '', this.bizName = '',
     this.category = BizCategory.brand, this.qty = 1, this.units = 1, required this.total, this.startAt, this.endAt, this.createdAt, this.meta = const {}, this.cancellable = false, this.customer,
+    this.payment = 'wallet', this.paid = true, this.funds, this.paidAt, this.releaseAt, this.releasedAt, this.usedAt, this.dispute, this.disputable = false, this.viewer, this.noShows, this.owner,
   });
   factory BizOrder.fromJson(Map m) => BizOrder(
         id: m['id'].toString(), bizId: m['bizId']?.toString() ?? '', itemId: m['itemId']?.toString() ?? '', kind: m['kind']?.toString() ?? 'product', status: m['status']?.toString() ?? 'confirmed',
         code: m['code']?.toString() ?? '', note: m['note']?.toString() ?? '', title: m['title']?.toString() ?? '', bizName: (m['bizNameAr']?.toString().isNotEmpty == true ? m['bizNameAr'] : m['bizName'])?.toString() ?? '',
         category: BizCategory.of(m['category']?.toString()), qty: _i(m['qty']), units: _i(m['units']), total: _i(m['total']), startAt: _t(m['startAt']), endAt: _t(m['endAt']), createdAt: _t(m['createdAt']),
         meta: _m(m['meta']), cancellable: m['cancellable'] == true, customer: m['customer'] is Map ? Person.fromJson(_m(m['customer'])) : null, offer: m['offer'] is Map ? OrderOffer.fromJson(_m(m['offer'])) : null,
+        payment: m['payment']?.toString() ?? (_i(m['total']) > 0 ? 'wallet' : 'free'), paid: m['paid'] != false, funds: m['funds']?.toString(), paidAt: _t(m['paidAt']), releaseAt: _t(m['releaseAt']),
+        releasedAt: _t(m['releasedAt']), usedAt: _t(m['usedAt']), dispute: m['dispute'] is Map ? BizDispute.fromJson(_m(m['dispute'])) : null, disputable: m['disputable'] == true,
+        viewer: m['viewer']?.toString(), noShows: m['noShows'] == null ? null : _i(m['noShows']), owner: m['owner'] is Map ? Person.fromJson(_m(m['owner'])) : null,
       );
 
-  String get statusLabel => switch (status) { 'confirmed' => 'مؤكد', 'used' => 'مستخدم', 'cancelled' => 'ملغى', _ => status };
+  String get statusLabel => switch (status) { 'confirmed' => 'مؤكد', 'used' => 'مستخدم', 'cancelled' => 'ملغى', 'no_show' => 'لم يحضر', _ => status };
+  bool get atVenue => payment == 'at_venue';
+  bool get fromWallet => payment == 'wallet';
+  /// طلب دفع في المكان لم يُؤكَّد دفعه بعد (والطلب قائم).
+  bool get venueUnpaid => atVenue && !paid && (status == 'confirmed' || status == 'used');
+  bool get held => funds == 'held';
+  bool get disputeOpen => dispute?.open == true;
+  /// سطر الدفع كما يراه العميل.
+  String get paymentLabel => switch (payment) {
+        'at_venue' => paid ? 'دُفع في المكان' : 'الدفع في المكان: لم يُدفع بعد',
+        'free' => 'مجاني',
+        _ => switch (funds) {
+            'held' => disputeOpen ? 'من المحفظة · المبلغ مجمّد حتى حسم النزاع' : 'من المحفظة · المبلغ محجوز حتى الاستلام',
+            'refunded' => 'من المحفظة · استُرد المبلغ',
+            'split' => 'من المحفظة · قُسم المبلغ',
+            _ => 'من المحفظة',
+          },
+      };
+  /// سطر المال كما يراه صاحب الدائرة.
+  String get ownerMoneyLabel => switch (payment) {
+        'at_venue' => paid ? 'دُفع في المكان' : 'الدفع في المكان: لم يُدفع بعد',
+        'free' => 'مجاني',
+        _ => switch (funds) {
+            'held' => disputeOpen ? 'محجوز ومجمّد بنزاع' : releaseAt == null ? 'محجوز حتى الاستلام' : 'محجوز حتى الاستلام أو ${releaseAt!.day}/${releaseAt!.month}',
+            'released' || 'credited' => 'في محفظتك',
+            'refunded' => 'استُرد للعميل',
+            'split' => 'قُسم مع العميل',
+            _ => 'من المحفظة',
+          },
+      };
   String get kindLabel => switch (kind) { 'showtime' => 'تذاكر سينما', 'clinic' => category.clinicWords ? 'موعد عيادة' : 'موعد خدمة', 'room' => 'حجز فندقي', 'car' => 'حجز سيارة', _ => 'طلب شراء' };
   bool get upcoming => status == 'confirmed' && (startAt == null || startAt!.isAfter(DateTime.now().subtract(const Duration(hours: 6))));
 
@@ -376,6 +441,32 @@ class BizOrder {
       };
 }
 
+
+/// نزاع «لدي مشكلة» على طلب دائرة: السبب والصور ورسائل الطرفين والإدارة وقرار الحسم.
+class BizDispute {
+  final String status, reason;
+  final List<String> photos;
+  final String? resolution, note;
+  final List<BizDisputeMessage> messages;
+  final DateTime? createdAt, resolvedAt;
+  const BizDispute({required this.status, required this.reason, this.photos = const [], this.resolution, this.note, this.messages = const [], this.createdAt, this.resolvedAt});
+  factory BizDispute.fromJson(Map m) => BizDispute(
+        status: m['status']?.toString() ?? 'open', reason: m['reason']?.toString() ?? '', photos: [for (final p in asList(m['photos'])) p.toString()],
+        resolution: m['resolution']?.toString(), note: m['note']?.toString(), messages: asList(m['messages']).map(BizDisputeMessage.fromJson).toList(),
+        createdAt: _t(m['createdAt']), resolvedAt: _t(m['resolvedAt']),
+      );
+  bool get open => status == 'open';
+  String get resolutionLabel => switch (resolution) { 'refund' => 'أُعيد المبلغ للعميل', 'release' => 'حُرّر المبلغ للدائرة', 'split' => 'قُسم المبلغ بين الطرفين', _ => 'قيد المراجعة' };
+}
+
+class BizDisputeMessage {
+  /// customer | team | admin
+  final String by, text;
+  final DateTime? at;
+  const BizDisputeMessage({required this.by, required this.text, this.at});
+  factory BizDisputeMessage.fromJson(Map m) => BizDisputeMessage(by: m['by']?.toString() ?? 'customer', text: m['text']?.toString() ?? '', at: _t(m['at']));
+  String get byLabel => switch (by) { 'team' => 'الدائرة', 'admin' => 'إدارة ناس لايف', _ => 'العميل' };
+}
 
 // ------------------------------------------------------------------ العروض (server/offers.js)
 

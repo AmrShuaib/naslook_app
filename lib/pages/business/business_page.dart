@@ -26,6 +26,7 @@ import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
 import '../../api/community_api.dart';
+import 'biz_order_page.dart';
 import 'community_page.dart';
 import 'my_bookings_page.dart';
 import 'offers_page.dart';
@@ -98,6 +99,9 @@ String bizErrText(Object e) {
   if (s.contains('no-owner')) return 'هذه الدائرة لم يستلمها صاحبها بعد فلا يمكن الدفع لها الآن';
   // البيع والحجز مقفلان حتى توثيق السجل التجاري أو وثيقة العمل الحر
   if (s.contains('not-verified')) return 'هذه الدائرة لم تُوثَّق بعد فلا يمكن الطلب منها الآن';
+  // الدفع في المكان: الصنف لا يقبله، أو تكرر «لم يحضر» ثلاث مرات في هذه الدائرة
+  if (s.contains('venue-not-allowed')) return 'هذا الصنف لا يقبل الدفع في المكان';
+  if (s.contains('venue-blocked')) return 'تكرر عدم حضورك في هذه الدائرة، فلم يعد الدفع في المكان متاحاً لك فيها؛ ادفع من المحفظة';
   if (e is ApiException && e.body?['error'] == 'offer-unavailable') return offerUnavailableText(e.body?['reason']?.toString());
   if (e is ApiException) return e.message;
   return s;
@@ -346,7 +350,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
     // السعر الخاص يُطبّق تلقائياً على الخادم؛ نعرضه هنا إن كان متاحاً للمستخدم (عام، أو للأعضاء وهو عضو)
     final deal = it.deal != null && (!it.deal!.membersOnly || b.following) ? it.deal : null;
     final unit = deal?.price ?? it.price;
-    final ok = await showActionSheet<bool>(
+    final pay = await showActionSheet<String>(
       context,
       body: (ctx, setS) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(it.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
@@ -357,10 +361,10 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
         _TotalRow(total: unit * qty, hint: deal != null ? 'بعرض «${deal.title}» بدل ${money(it.price * qty)}' : null),
         if (it.deal != null && deal == null) const Padding(padding: EdgeInsets.only(top: 6), child: Text('السعر الخاص للأعضاء؛ انضم إلى الدائرة ليُطبّق على طلبك', style: TextStyle(color: Joy.textMuted, fontSize: 12))),
       ]),
-      action: (ctx, _) => FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.shopping_bag_outlined), label: Text('ادفع ${money(unit * qty)} من المحفظة')),
+      action: (ctx, _) => payButtons(ctx, it, unit * qty, icon: Icons.shopping_bag_outlined, walletLabel: 'ادفع ${money(unit * qty)} من المحفظة'),
     );
-    if (ok != true) return;
-    await _order(b, it, qty: qty);
+    if (pay == null) return;
+    await _order(b, it, qty: qty, payment: pay);
   }
 
   /// حجز غرفة أو سيارة: مدة من التقويم ثم التفاصيل.
@@ -381,7 +385,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
     final start = DateTime(range.start.year, range.start.month, range.start.day), end = start.add(Duration(days: units));
     var qty = 1, guests = 2;
     final room = it.kind == 'room';
-    final ok = await showActionSheet<bool>(
+    final pay = await showActionSheet<String>(
       context,
       body: (ctx, setS) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(it.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
@@ -397,21 +401,28 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
         const SizedBox(height: 6),
         _TotalRow(total: it.price * units * qty, hint: '${money(it.price)} ${it.unitLabel} × $units${qty > 1 ? ' × $qty' : ''}'),
       ]),
-      action: (ctx, _) => FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: Icon(b.category.icon), label: Text('تأكيد الحجز ودفع ${money(it.price * units * qty)}')),
+      action: (ctx, _) => payButtons(ctx, it, it.price * units * qty, icon: b.category.icon, walletLabel: 'تأكيد الحجز ودفع ${money(it.price * units * qty)}'),
     );
-    if (ok != true) return;
-    await _order(b, it, qty: qty, startAt: start, endAt: end, guests: it.kind == 'room' ? guests : null);
+    if (pay == null) return;
+    await _order(b, it, qty: qty, startAt: start, endAt: end, guests: it.kind == 'room' ? guests : null, payment: pay);
   }
 
-  Future<void> _order(Biz b, BizItem it, {required int qty, DateTime? startAt, DateTime? endAt, int? guests}) async {
+  /// [payment] من ورقة الطلب ('wallet' | 'at_venue')؛ المواعيد والتذاكر تطلب بلا اختيار، فيُسأل هنا إن قبل الصنف الدفع في المكان.
+  Future<void> _order(Biz b, BizItem it, {required int qty, DateTime? startAt, DateTime? endAt, int? guests, String? payment}) async {
     // مواعيد العيادة والعروض تطلب مباشرة، لكن قد تطلب الموقع قبل الطلب: لا نطلبه من زائر
     if (!requireAccount(context)) return;
-    // الطلب أو الحجز المدفوع يحتاج إقرار 18+ مرة واحدة؛ الصنف المجاني لا
+    // الطلب أو الحجز المدفوع يحتاج إقرار 18+ مرة واحدة (والدفع في المكان كذلك)؛ الصنف المجاني لا
     if (it.price > 0 && (!await requireAdult(context, ref) || !mounted)) return;
+    var pay = payment ?? 'wallet';
+    if (payment == null && it.venueOk) {
+      final p = await showPayChoice(context, it, it.payPrice * qty);
+      if (p == null || !mounted) return;
+      pay = p;
+    }
     try {
       // موقع الجهاز يُرسل مع الطلب فقط حين تكون للدائرة عروض، ليُفتح عرض «لمن هنا الآن» تلقائياً؛ مهلة قصيرة ثم آخر موقع معروف
       final loc = b.offers > 0 ? await DeviceLocation.current(precise: true, timeout: const Duration(seconds: 3)) : null;
-      final o = await ref.read(apiClientProvider).orderBiz(b.id, itemId: it.id, qty: qty, startAt: startAt, endAt: endAt, guests: guests, lat: loc?.latitude, lng: loc?.longitude);
+      final o = await ref.read(apiClientProvider).orderBiz(b.id, itemId: it.id, qty: qty, startAt: startAt, endAt: endAt, guests: guests, lat: loc?.latitude, lng: loc?.longitude, payment: pay);
       invalidateBiz(ref, b.id);
       ref.invalidate(walletProvider);
       if (!mounted) return;
@@ -419,35 +430,80 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
     } catch (e) {
       if (!mounted) return;
       if (e.toString().contains('insufficient-funds')) {
+        // الصنف يقبل الدفع في المكان: هو المخرج من «الرصيد غير كافٍ» (وفي iOS المخرج الوحيد لأن الشحن غير متاح فيه)
+        final venue = it.venueOk;
         // iOS: لا شحن في التطبيق، فلا ندعو للشحن ولا نفتح المحفظة (أبل 3.1.1 تمنع توجيه المستخدم للدفع خارج التطبيق)
         if (isIosNative) {
-          await showDialog<void>(
+          final atVenue = await showDialog<bool>(
             context: context,
             builder: (ctx) => AlertDialog(
               key: const Key('biz-funds-ios'),
               title: const Text('الرصيد غير كافٍ'),
-              content: const Text('رصيد محفظتك لا يغطي هذا المبلغ'),
-              actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('حسناً'))],
+              content: Text(venue ? 'رصيد محفظتك لا يغطي هذا المبلغ. يمكنك الحجز الآن والدفع في المكان.' : 'رصيد محفظتك لا يغطي هذا المبلغ'),
+              actions: [
+                if (venue) TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('لاحقاً')),
+                if (venue)
+                  FilledButton(key: const Key('biz-funds-venue'), onPressed: () => Navigator.pop(ctx, true), child: const Text('احجز وادفع في المكان'))
+                else
+                  FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('حسناً')),
+              ],
             ),
           );
+          if (atVenue == true && mounted) await _order(b, it, qty: qty, startAt: startAt, endAt: endAt, guests: guests, payment: 'at_venue');
           return;
         }
         if (!mounted) return;
-        final go = await showDialog<bool>(
+        final go = await showDialog<String>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('الرصيد غير كافٍ'),
-            content: const Text('رصيد محفظتك لا يغطي هذا المبلغ. اشحن المحفظة ثم أعد المحاولة.'),
-            actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('لاحقاً')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('المحفظة'))],
+            content: Text(venue ? 'رصيد محفظتك لا يغطي هذا المبلغ. اشحن المحفظة ثم أعد المحاولة، أو احجز الآن وادفع في المكان.' : 'رصيد محفظتك لا يغطي هذا المبلغ. اشحن المحفظة ثم أعد المحاولة.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('لاحقاً')),
+              if (venue) TextButton(key: const Key('biz-funds-venue'), onPressed: () => Navigator.pop(ctx, 'venue'), child: const Text('ادفع في المكان')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, 'wallet'), child: const Text('المحفظة')),
+            ],
           ),
         );
-        if (go == true && mounted) Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()));
+        if (!mounted) return;
+        if (go == 'wallet') Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()));
+        if (go == 'venue') await _order(b, it, qty: qty, startAt: startAt, endAt: endAt, guests: guests, payment: 'at_venue');
       } else {
         toast(context, bizErrText(e), error: true);
       }
     }
   }
 }
+
+/// زر الدفع في ورقة الطلب، ومعه «احجز الآن وادفع في المكان» حين يقبله الصنف؛ كلاهما يغلق الورقة بطريقة الدفع ('wallet' | 'at_venue').
+Widget payButtons(BuildContext ctx, BizItem it, int total, {required IconData icon, required String walletLabel}) {
+  final wallet = FilledButton.icon(
+    key: const Key('pay-wallet'),
+    onPressed: () => Navigator.pop(ctx, 'wallet'),
+    icon: Icon(it.venueOk ? Icons.account_balance_wallet_outlined : icon),
+    label: Text(it.venueOk ? 'ادفع الآن من المحفظة · ${money(total)}' : walletLabel),
+  );
+  if (!it.venueOk) return wallet;
+  return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    wallet,
+    const SizedBox(height: 8),
+    OutlinedButton.icon(key: const Key('pay-venue'), onPressed: () => Navigator.pop(ctx, 'at_venue'), icon: const Icon(Icons.storefront_outlined), label: const Text('احجز الآن وادفع في المكان')),
+  ]);
+}
+
+/// اختيار طريقة الدفع للمواعيد والتذاكر (تُطلب من البطاقة مباشرة) حين يقبل الصنف الدفع في المكان.
+Future<String?> showPayChoice(BuildContext context, BizItem it, int total) => showActionSheet<String>(
+      context,
+      body: (ctx, _) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('طريقة الدفع', key: Key('pay-choice'), style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
+        Text(it.title, style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
+        const SizedBox(height: 10),
+        _TotalRow(total: total),
+        const SizedBox(height: 8),
+        const Text('في الدفع بالمكان لا يُخصم شيء من محفظتك: أظهر الرمز وادفع للدائرة عند الوصول.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.5)),
+      ]),
+      action: (ctx, _) => payButtons(ctx, it, total, icon: Icons.account_balance_wallet_outlined, walletLabel: 'ادفع الآن من المحفظة · ${money(total)}'),
+    );
 
 /// صف تسمية + عدّاد (الكمية، الغرف، النزلاء).
 Widget _stepRow(String label, Widget stepper) => Padding(
@@ -524,9 +580,9 @@ void showOrderSheet(BuildContext context, BizOrder o, {Biz? biz, VoidCallback? o
       builder: (ctx, ref, _) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(o.status == 'cancelled' ? Icons.cancel_outlined : Icons.check_circle_rounded, color: o.status == 'cancelled' ? Joy.textMuted : Joy.success, size: 40),
+          Icon(o.status == 'cancelled' || o.status == 'no_show' ? Icons.cancel_outlined : Icons.check_circle_rounded, color: o.status == 'cancelled' || o.status == 'no_show' ? Joy.textMuted : Joy.success, size: 40),
           const SizedBox(height: 6),
-          Text(o.status == 'cancelled' ? 'حجز ملغى' : o.status == 'used' ? 'تم الاستخدام' : (o.kind == 'product' ? 'تم الشراء' : 'تم الحجز'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+          Text(o.status == 'cancelled' ? 'حجز ملغى' : o.status == 'no_show' ? 'سُجّل عدم حضورك' : o.status == 'used' ? 'تم الاستخدام' : o.atVenue ? 'تم الحجز · الدفع في المكان' : (o.kind == 'product' ? 'تم الشراء' : 'تم الحجز'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
           Text('${o.bizName.isNotEmpty ? o.bizName : biz?.title ?? ''} · ${o.title}', style: const TextStyle(color: Joy.textMuted), textAlign: TextAlign.center),
           const SizedBox(height: 12),
           Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Joy.line)), child: QrImageView(data: o.code, size: 170)),
@@ -548,13 +604,16 @@ void showOrderSheet(BuildContext context, BizOrder o, {Biz? biz, VoidCallback? o
               ]),
             ),
           _kv('الحالة', o.statusLabel),
+          if (o.payment != 'free') KeyedSubtree(key: const Key('order-payment'), child: _kv('الدفع', o.paymentLabel)),
           const SizedBox(height: 12),
-          Text(o.kind == 'product' ? 'أظهر الرمز عند الاستلام من الفرع' : 'أظهر الرمز عند الوصول', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+          Text(o.venueUnpaid ? 'أظهر الرمز وادفع ${money(o.total)} للدائرة عند الوصول' : o.kind == 'product' ? 'أظهر الرمز عند الاستلام من الفرع' : 'أظهر الرمز عند الوصول', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
           if (o.cancellable) ...[
             const SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: () async {
-                final ok = await showDialog<bool>(context: ctx, builder: (d) => AlertDialog(title: const Text('إلغاء الحجز؟'), content: const Text('سيُعاد المبلغ كاملاً إلى محفظتك.'), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('تراجع')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('إلغاء الحجز'))]));
+                // ما دُفع من المحفظة يعود إليها كاملاً؛ الدفع في المكان لم يمر بالتطبيق فلا استرداد
+                final refundable = o.fromWallet;
+                final ok = await showDialog<bool>(context: ctx, builder: (d) => AlertDialog(title: const Text('إلغاء الحجز؟'), content: Text(refundable ? 'سيُعاد المبلغ كاملاً إلى محفظتك.' : o.atVenue ? 'لم تدفع شيئاً عبر التطبيق، فيُلغى الحجز فقط.' : 'سيُلغى الحجز.'), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('تراجع')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('إلغاء الحجز'))]));
                 if (ok != true) return;
                 try {
                   await ref.read(apiClientProvider).cancelBizOrder(o.id);
@@ -564,14 +623,42 @@ void showOrderSheet(BuildContext context, BizOrder o, {Biz? biz, VoidCallback? o
                   onCancelled?.call();
                   if (ctx.mounted) {
                     Navigator.pop(ctx);
-                    toast(ctx, 'أُلغي الحجز وأُعيد ${money(o.total)} إلى محفظتك');
+                    toast(ctx, refundable ? 'أُلغي الحجز وأُعيد ${money(o.total)} إلى محفظتك' : 'أُلغي الحجز');
                   }
                 } catch (e) {
                   if (ctx.mounted) toast(ctx, bizErrText(e), error: true);
                 }
               },
               icon: const Icon(Icons.close_rounded, size: 18),
-              label: const Text('إلغاء واسترداد المبلغ'),
+              label: Text(o.fromWallet ? 'إلغاء واسترداد المبلغ' : 'إلغاء الحجز'),
+            ),
+          ],
+          // «لدي مشكلة» على طلب دُفع من المحفظة (المبلغ محجوز، أو خلال 7 أيام من الاستخدام)، و«عرض المشكلة» بعد فتحها
+          if (o.disputable && o.dispute == null) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              key: const Key('order-dispute'),
+              onPressed: () async {
+                final r = await showDisputeSheet(ctx, ref, o);
+                if (r != null && ctx.mounted) {
+                  Navigator.pop(ctx);
+                  onCancelled?.call();
+                }
+              },
+              icon: const Icon(Icons.report_problem_outlined, size: 18, color: Joy.danger),
+              label: const Text('لدي مشكلة', style: TextStyle(color: Joy.danger)),
+            ),
+          ],
+          if (o.dispute != null) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              key: const Key('order-open-dispute'),
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => BizOrderPage(orderId: o.id)));
+              },
+              icon: Icon(o.disputeOpen ? Icons.gavel_rounded : Icons.task_alt_rounded, size: 18),
+              label: Text(o.disputeOpen ? 'عرض المشكلة والرد' : 'عرض قرار المشكلة'),
             ),
           ],
         ]),
@@ -1107,7 +1194,7 @@ class _ShowtimeCardState extends State<_ShowtimeCard> {
                           if (mounted) setState(() => busy = false);
                         }
                       },
-                child: Text('ادفع ${money(it.price * qty)}'),
+                child: Text(it.venueOk ? 'احجز · ${money(it.price * qty)}' : 'ادفع ${money(it.price * qty)}'),
               ),
             ]),
           ),
@@ -1161,7 +1248,7 @@ class OrderRow extends StatelessWidget {
     return ListRow(
       leading: Container(width: 46, height: 46, decoration: BoxDecoration(color: active ? Joy.primarySoft : Joy.surface2, borderRadius: BorderRadius.circular(14)), child: Icon(icon, color: active ? Joy.primary : Joy.textMuted)),
       title: Text(showBiz ? '${o.bizName} · ${o.title}' : o.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text('${o.summary}${o.startAt != null ? ' · ${dayLabel(o.startAt!)}${isSlotKind(o.kind) ? ' ${clockOf(o.startAt)}' : ''}' : ''} · ${o.statusLabel}', maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text('${o.summary}${o.startAt != null ? ' · ${dayLabel(o.startAt!)}${isSlotKind(o.kind) ? ' ${clockOf(o.startAt)}' : ''}' : ''} · ${o.statusLabel}${o.venueUnpaid ? ' · يُدفع في المكان' : ''}${o.disputeOpen ? ' · مشكلة قيد المراجعة' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
         Text(money(o.total), style: TextStyle(fontWeight: FontWeight.w700, color: active ? Joy.text : Joy.textMuted, fontSize: 13.5)),
         const Icon(Icons.qr_code_2_rounded, size: 18, color: Joy.textMuted),

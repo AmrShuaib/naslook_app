@@ -66,7 +66,7 @@ class _ItemRow extends ConsumerWidget {
               Expanded(child: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5), maxLines: 1, overflow: TextOverflow.ellipsis)),
               if (item.isOffer) Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(999)), child: const Text('عرض', style: TextStyle(color: Joy.accent, fontSize: 10.5, fontWeight: FontWeight.w700))),
             ]),
-            Text('${money(item.price)} ${item.unitLabel} · $stockLabel${item.kind == 'showtime' ? ' · $times' : item.kind == 'clinic' ? ' · ${workDaysLabel(item.workDays)} · $times' : ''}', key: Key('catalog-line-${item.id}'), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5), maxLines: 2, overflow: TextOverflow.ellipsis),
+            Text('${money(item.price)} ${item.unitLabel} · $stockLabel${item.kind == 'showtime' ? ' · $times' : item.kind == 'clinic' ? ' · ${workDaysLabel(item.workDays)} · $times' : ''}${item.payAtVenue ? ' · يُدفع في المكان' : ''}', key: Key('catalog-line-${item.id}'), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5), maxLines: 2, overflow: TextOverflow.ellipsis),
           ])),
           if (biz.canManage)
             Switch(
@@ -109,6 +109,8 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
   /// أيام عمل صنف الموعد بترقيم الخادم (0 = الأحد … 6 = السبت).
   late Set<int> days;
   bool breakfast = false, busy = false, uploading = false;
+  /// «الدفع في المكان» لهذا الصنف: مطفأ افتراضياً ويفعّله المالك صراحة.
+  bool payAtVenue = false;
   String? imageUrl;
   /// نوع الصنف: ثابت للعنصر الموجود، ويختاره المالك للجديد حين تجمع الفئة بين المنتج والموعد (الصالون والخدمات).
   late String kind;
@@ -147,6 +149,7 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
     // صنف بلا أيام محفوظة يُعرض بكل الأيام (هكذا يحسبه الخادم)؛ والجديد: الأحد – الخميس للعيادة وكل الأيام للخدمة
     days = it != null ? (it!.workDays ?? [0, 1, 2, 3, 4, 5, 6]).toSet() : (clinicWords ? {0, 1, 2, 3, 4} : {0, 1, 2, 3, 4, 5, 6});
     breakfast = m['breakfast'] == true;
+    payAtVenue = it?.payAtVenue ?? false;
     imageUrl = it?.imageUrl;
   }
 
@@ -286,6 +289,16 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
           const SizedBox(height: 10),
           TextField(controller: fuel, decoration: const InputDecoration(labelText: 'الوقود', hintText: 'بنزين، كهرباء، هجين')),
         ],
+        // الدفع في المكان: لا يمر مال عبر ناس لايف، ويُسجَّل «تم الدفع» عند الاستلام
+        if (kind != 'info')
+          SwitchListTile(
+            key: const Key('item-pay-venue'),
+            contentPadding: EdgeInsets.zero,
+            value: payAtVenue,
+            onChanged: (v) => setState(() => payAtVenue = v),
+            title: const Text('الدفع في المكان'),
+            subtitle: const Text('يختار العميل «احجز الآن وادفع في المكان» بلا رصيد في المحفظة، وتؤكد أنت «تم الدفع» عند وصوله', style: TextStyle(fontSize: 12)),
+          ),
         const SizedBox(height: 16),
         Row(children: [
           Expanded(child: FilledButton.icon(onPressed: busy ? null : _save, icon: const Icon(Icons.save_outlined), label: Text(isNew ? 'إضافة' : 'حفظ'))),
@@ -346,7 +359,7 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
       if (kind == 'room') ...{'beds': beds.text.trim(), 'guests': intOf(guests) ?? 2, 'size': intOf(size), 'view': view.text.trim(), 'breakfast': breakfast},
       if (kind == 'car') ...{'cls': cls.text.trim(), 'seats': intOf(seats) ?? 5, 'transmission': transmission.text.trim(), 'year': intOf(year), 'fuel': fuel.text.trim()},
     };
-    final body = <String, dynamic>{'kind': kind, 'title': title.text.trim(), 'description': description.text.trim(), 'price': p, 'stock': stock.text.trim().isEmpty ? null : intOf(stock), 'meta': meta, 'imageUrl': imageUrl};
+    final body = <String, dynamic>{'kind': kind, 'title': title.text.trim(), 'description': description.text.trim(), 'price': p, 'stock': stock.text.trim().isEmpty ? null : intOf(stock), 'meta': meta, 'imageUrl': imageUrl, 'payAtVenue': kind != 'info' && payAtVenue};
     setState(() => busy = true);
     try {
       final api = ref.read(apiClientProvider);

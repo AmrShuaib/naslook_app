@@ -45,6 +45,8 @@
 
 وأنواع أخرى كانت بلا وجهة ولها وجهة واضحة: `content_reported_many` و`content_reports_new` (مصدر إداري في `notify.js`) → طابور البلاغات في الإدارة، و`content_autohidden` صُحّح إليه (كان يفتح «المالية» بفهرس رقمي قديم)؛ `inbox_note` و`inbox_send_failed` و`inbox_unsnoozed` → البريد الوارد في الإدارة؛ `account_refund` → المالية في الإدارة.
 
+`biz_dispute` (نوفمبر 2026، `business.js`: فتح «لدي مشكلة» على طلب دائرة والرد عليها وحسمها) → صفحة الطلب `BizOrderPage` من `orderId` لكل طرف، والحمولة `side` (`customer`/`team`/`admin`) تختار الاحتياط حين يغيب المعرّف. التفاصيل في `docs/circle-orders.md`.
+
 **ما بقي بلا وجهة عمداً**: `account_warning` و`account_suspended` و`account_restored` (نص الإشعار هو المحتوى، ولا شاشة تخصها)، و`test` (الإشعار التجريبي). الجرد من `grep` على `kind:` في `server/*.js` (5 نوفمبر 2026)؛ أي نوع جديد يحتاج سطراً في `notificationTarget` وأيقونة في `notificationStyle`.
 
 ## الاختبارات

@@ -10,10 +10,11 @@ import '../../../state/biz_providers.dart';
 import '../../../ui/profile_avatar.dart';
 import '../../../ui/widgets.dart';
 import '../../chat/chat_thread_page.dart' show ChatThreadPage;
+import '../biz_order_page.dart' show BizOrderPage, VenueActions, orderErrText;
 import '../business_page.dart' show dayLabel, shortDate;
 import 'business_editor.dart';
 
-const _filters = [('upcoming', 'القادمة'), ('today', 'اليوم'), ('confirmed', 'مؤكدة'), ('used', 'مستخدمة'), ('cancelled', 'ملغاة'), ('', 'الكل')];
+const _filters = [('upcoming', 'القادمة'), ('today', 'اليوم'), ('confirmed', 'مؤكدة'), ('used', 'مستخدمة'), ('disputed', 'مشكلات'), ('no_show', 'لم يحضر'), ('cancelled', 'ملغاة'), ('', 'الكل')];
 
 /// طلبات الدائرة لصاحبها وطاقمه: تصفية بالحالة، بحث بالرمز، تأكيد الاستلام، إلغاء واسترداد للعميل.
 class OrdersTab extends ConsumerStatefulWidget {
@@ -30,7 +31,9 @@ class _OrdersTabState extends ConsumerState<OrdersTab> {
   @override
   Widget build(BuildContext context) {
     final list = ref.watch(bizOrdersProvider((id: widget.biz.id, status: status)));
+    final cash = ref.watch(bizStatsProvider(widget.biz.id)).valueOrNull?.money;
     return Column(children: [
+      if (cash != null && !cash.isEmpty) _MoneyStrip(cash),
       Padding(
         padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
         child: Row(children: [
@@ -77,6 +80,42 @@ class _OrdersTabState extends ConsumerState<OrdersTab> {
   }
 }
 
+/// شريط مال الدائرة: المحجوز حتى الاستلام (لا يصل المحفظة بعد)، والمحرَّر إلى المحفظة، والدفع في المكان المستحق، والمشكلات المفتوحة.
+class _MoneyStrip extends StatelessWidget {
+  final BizMoney m;
+  const _MoneyStrip(this.m);
+  @override
+  Widget build(BuildContext context) {
+    Widget cell(String label, String value, Color color, {Key? key}) => Expanded(
+          key: key,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: const TextStyle(color: Joy.textMuted, fontSize: 11)),
+            const SizedBox(height: 2),
+            Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w800, color: color, fontSize: 14)),
+          ]),
+        );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+      child: JoyCard(
+        key: const Key('orders-money'),
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            cell('محجوز حتى الاستلام', money(m.held), Joy.sunText, key: const Key('orders-money-held')),
+            cell('وصل محفظتك', money(m.released), Joy.success, key: const Key('orders-money-released')),
+            cell('يُدفع في المكان', money(m.venueDue), Joy.primary, key: const Key('orders-money-venue')),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+            'يصل المبلغ محفظتك عند تأكيد الاستلام، أو بعد ${m.holdDays} أيام من الموعد أو الشراء${m.disputesOpen > 0 ? ' · ${m.disputesOpen} مشكلة مفتوحة تجمّد ${money(m.disputed)}' : ''}',
+            style: TextStyle(color: m.disputesOpen > 0 ? Joy.danger : Joy.textMuted, fontSize: 11.5),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
 class OwnerOrderCard extends ConsumerWidget {
   final Biz biz;
   final BizOrder o;
@@ -99,6 +138,16 @@ class OwnerOrderCard extends ConsumerWidget {
           ]),
           Text('${o.title} · ${o.summary}', style: const TextStyle(fontSize: 12.5), maxLines: 1, overflow: TextOverflow.ellipsis),
           Text('$when · ${o.code}', style: const TextStyle(color: Joy.textMuted, fontSize: 11.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+          // حالة المال باختصار: مشكلة مفتوحة، أو دفع في المكان لم يُسجَّل، أو مبلغ محجوز
+          if (o.disputeOpen || o.venueUnpaid || o.held)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                o.disputeOpen ? 'مشكلة من العميل · المبلغ مجمّد' : o.venueUnpaid ? 'الدفع في المكان: لم يُدفع بعد' : 'محجوز حتى الاستلام',
+                key: Key('owner-order-money-${o.id}'),
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: o.disputeOpen ? Joy.danger : o.venueUnpaid ? Joy.sunText : Joy.textMuted),
+              ),
+            ),
         ])),
         const SizedBox(width: 8),
         Text(money(o.total), style: TextStyle(fontWeight: FontWeight.w800, color: active ? Joy.primary : Joy.textMuted, fontSize: 13.5)),
@@ -139,7 +188,22 @@ void showOwnerOrderSheet(BuildContext context, WidgetRef ref, Biz biz, BizOrder 
         if (o.meta['hall'] != null) kv('الصالة', '${o.meta['hall']}'),
         if (o.note.isNotEmpty) kv('ملاحظة العميل', o.note),
         kv('المبلغ', money(o.total)),
+        if (o.payment != 'free') KeyedSubtree(key: const Key('owner-money-line'), child: kv('الدفع', o.ownerMoneyLabel)),
         kv('وقت الطلب', '${dayLabel(o.createdAt ?? DateTime.now())} · ${clockOf(o.createdAt)}'),
+        // الدفع في المكان: «لم يُدفع بعد» مع «تم الدفع» و«لم يحضر» بعد حلول الموعد
+        if (o.venueUnpaid) ...[
+          const SizedBox(height: 10),
+          VenueActions(order: o, onDone: () { if (ctx.mounted) Navigator.pop(ctx); }),
+        ],
+        if (o.dispute != null) ...[
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: const Key('owner-open-dispute'),
+            onPressed: () { Navigator.pop(ctx); Navigator.of(context).push(MaterialPageRoute(builder: (_) => BizOrderPage(orderId: o.id))); },
+            icon: Icon(o.disputeOpen ? Icons.gavel_rounded : Icons.task_alt_rounded, size: 18, color: o.disputeOpen ? Joy.danger : Joy.success),
+            label: Text(o.disputeOpen ? 'مشكلة من العميل · اعرضها ورد' : 'عرض قرار المشكلة', style: TextStyle(color: o.disputeOpen ? Joy.danger : Joy.success)),
+          ),
+        ],
         const SizedBox(height: 14),
         if (o.status == 'confirmed') ...[
           FilledButton.icon(
@@ -157,16 +221,22 @@ void showOwnerOrderSheet(BuildContext context, WidgetRef ref, Biz biz, BizOrder 
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: () async {
-                final ok = await showDialog<bool>(context: ctx, builder: (d) => AlertDialog(title: const Text('إلغاء الطلب؟'), content: Text('سيُعاد ${money(o.total)} كاملاً إلى محفظة العميل ويُخصم من محفظتك.'), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('تراجع')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Joy.danger), onPressed: () => Navigator.pop(d, true), child: const Text('إلغاء واسترداد'))]));
+                // المحجوز يعود للعميل بلا مساس بمحفظتك؛ ما وصل محفظتك (طلب قديم أو مبلغ حُرّر) يُخصم منها؛ والدفع في المكان لا استرداد له
+                final content = !o.fromWallet
+                    ? (o.atVenue ? 'لم يدفع العميل عبر التطبيق، فيُلغى الطلب فقط.' : 'سيُلغى الطلب.')
+                    : o.held
+                        ? 'سيُعاد ${money(o.total)} كاملاً إلى العميل من المبلغ المحجوز، ولا يُخصم شيء من محفظتك.'
+                        : 'سيُعاد ${money(o.total)} كاملاً إلى محفظة العميل ويُخصم من محفظتك.';
+                final ok = await showDialog<bool>(context: ctx, builder: (d) => AlertDialog(key: const Key('owner-cancel-dialog'), title: const Text('إلغاء الطلب؟'), content: Text(content), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('تراجع')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Joy.danger), onPressed: () => Navigator.pop(d, true), child: Text(o.fromWallet ? 'إلغاء واسترداد' : 'إلغاء الطلب'))]));
                 if (ok != true) return;
                 try {
                   await ref.read(apiClientProvider).ownerCancelOrder(biz.id, o.id);
                   invalidateBizAll(ref, biz.id);
-                  if (ctx.mounted) { Navigator.pop(ctx); toast(ctx, 'أُلغي الطلب وأُعيد المبلغ للعميل'); }
+                  if (ctx.mounted) { Navigator.pop(ctx); toast(ctx, o.fromWallet ? 'أُلغي الطلب وأُعيد المبلغ للعميل' : 'أُلغي الطلب'); }
                 } catch (e) { if (ctx.mounted) toast(ctx, ownerErrText(e), error: true); }
               },
               icon: const Icon(Icons.close_rounded, size: 18, color: Joy.danger),
-              label: const Text('إلغاء واسترداد المبلغ للعميل', style: TextStyle(color: Joy.danger)),
+              label: Text(o.fromWallet ? 'إلغاء واسترداد المبلغ للعميل' : 'إلغاء الطلب', style: const TextStyle(color: Joy.danger)),
             ),
           ],
         ],
@@ -184,7 +254,29 @@ Future<void> checkinByCode(BuildContext context, WidgetRef ref, Biz biz) async {
     invalidateBizAll(ref, biz.id);
     if (!context.mounted) return;
     toast(context, 'تم التأكيد · ${o.customer?.nickname ?? ''} · ${o.title}');
+    // حجز بالدفع في المكان: بعد الاستلام يُطلب المبلغ ويُسجَّل «تم الدفع»
+    if (o.venueUnpaid) await _askVenuePaid(context, ref, biz, o);
   } catch (e) {
     if (context.mounted) toast(context, ownerErrText(e), error: true);
+  }
+}
+
+Future<void> _askVenuePaid(BuildContext context, WidgetRef ref, Biz biz, BizOrder o) async {
+  final paid = await showDialog<bool>(
+    context: context,
+    builder: (d) => AlertDialog(
+      key: const Key('checkin-venue-dialog'),
+      title: const Text('الدفع في المكان: لم يُدفع بعد'),
+      content: Text('اطلب ${money(o.total)} من ${o.customer?.nickname.isNotEmpty == true ? o.customer!.nickname : 'العميل'} ثم أكّد الدفع.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('لاحقاً')), FilledButton(key: const Key('checkin-venue-paid'), onPressed: () => Navigator.pop(d, true), child: const Text('تم الدفع'))],
+    ),
+  );
+  if (paid != true) return;
+  try {
+    await ref.read(apiClientProvider).markVenuePaid(biz.id, o.id);
+    invalidateBizAll(ref, biz.id);
+    if (context.mounted) toast(context, 'سُجّل الدفع');
+  } catch (e) {
+    if (context.mounted) toast(context, orderErrText(e), error: true);
   }
 }
