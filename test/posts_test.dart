@@ -15,6 +15,7 @@ import 'package:naslook/pages/posts/overlay_canvas.dart';
 import 'package:naslook/pages/posts/post_viewer.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
+import 'package:naslook/state/posts_providers.dart';
 import 'package:naslook/state/providers.dart';
 
 class _SignedIn extends AppStateNotifier {
@@ -32,7 +33,8 @@ Map<String, dynamic> _post1({bool liked = false, int likes = 5}) => {
       'tag': 'offer', 'title': 'عرض القهوة', 'price': 1500, 'cta': {'type': 'whatsapp', 'value': '0501234567', 'label': 'اطلب عبر واتساب'}, 'lat': 21.55, 'lng': 39.16, 'placeName': 'الكورنيش',
       'status': 'active', 'views': 42, 'likes': likes, 'liked': liked, 'mine': false, 'expired': false, 'createdAt': DateTime.now().toUtc().toIso8601String(),
     };
-Map<String, dynamic> _post2() => {
+Map<String, dynamic> _post2({String? audience}) => {
+      if (audience != null) 'audience': audience,
       'id': _p2, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'kind': 'text', 'caption': 'منشور قديم مخفي', 'bg': '#37474F', 'overlays': [], 'tag': 'moment', 'lat': 21.5, 'lng': 39.2,
       'status': 'hidden', 'views': 3, 'likes': 0, 'liked': false, 'mine': true, 'expired': false, 'createdAt': DateTime.now().toUtc().toIso8601String(), 'expiresAt': DateTime.now().add(const Duration(hours: 5)).toUtc().toIso8601String(),
     };
@@ -41,6 +43,8 @@ class _Srv {
   final calls = <String>[];
   final bodies = <String, Map<String, dynamic>>{};
   bool liked = false;
+  /// جمهور منشوري المخفي كما يحفظه الخادم (null = خادم بلا الحقل)
+  String? aud2;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
 
   Future<http.Response> handle(http.Request req) async {
@@ -51,7 +55,10 @@ class _Srv {
       case 'GET /mapposts':
         return _json([_post1(), _post2()]);
       case 'GET /mapposts/mine':
-        return _json([_post2()]);
+        return _json([_post2(audience: aud2)]);
+      case 'PATCH /mapposts/$_p2':
+        aud2 = bodies[key]!['audience'] as String?;
+        return _json(_post2(audience: aud2));
       case 'POST /mapposts':
         final b = bodies[key]!;
         return _json({..._post2(), 'id': 'aaaaaaaa-0000-4000-8000-000000000009', 'status': 'active', ...b, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'mine': true});
@@ -145,5 +152,43 @@ void main() {
     expect(find.textContaining('مخفي'), findsWidgets);
     expect(find.textContaining('3 مشاهدة'), findsOneWidget);
     expect(find.text('منشور جديد'), findsOneWidget);
+    // منشور من خادم بلا حقل الجمهور كان عاماً
+    expect(find.descendant(of: find.byKey(const Key('aud-chip-$_p2')), matching: find.text('الجميع')), findsOneWidget);
+  });
+
+  testWidgets('my posts: each moment shows its audience and the chip switches it through PATCH', (tester) async {
+    final srv = await _pump(tester, const MyPostsPage());
+    srv.aud2 = 'friends';
+    // إعادة الجلب بالجمهور الذي يحفظه الخادم
+    final ctx = tester.element(find.byType(MyPostsPage));
+    ProviderScope.containerOf(ctx).invalidate(myPostsProvider);
+    await _settle(tester);
+    final chip = find.byKey(const Key('aud-chip-$_p2'));
+    expect(find.descendant(of: chip, matching: find.text('الأصدقاء')), findsOneWidget);
+    await tester.tap(chip);
+    await _settle(tester);
+    expect(find.text('من يرى هذا المنشور؟'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('aud-set-all')));
+    await _settle(tester);
+    expect(srv.bodies['PATCH /mapposts/$_p2'], {'audience': 'all'});
+    expect(find.descendant(of: chip, matching: find.text('الجميع')), findsOneWidget, reason: 'القائمة تُعاد بعد الحفظ');
+    expect(find.text('صار للجميع'), findsOneWidget);
+    // اختيار الجمهور الحالي لا يرسل شيئاً
+    srv.bodies.remove('PATCH /mapposts/$_p2');
+    await tester.tap(chip);
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('aud-set-all')));
+    await _settle(tester);
+    expect(srv.bodies.containsKey('PATCH /mapposts/$_p2'), isFalse);
+  });
+
+  testWidgets('viewer marks a friends-only moment «للأصدقاء» and leaves a public one unmarked', (tester) async {
+    await _pump(tester, PostViewerPage(posts: [MapPost.fromJson({..._post1(), 'audience': 'friends'}), MapPost.fromJson(_post1())]), height: 900);
+    expect(find.byKey(const Key('moment-friends-mark')), findsOneWidget);
+    expect(find.text('للأصدقاء'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await _pump(tester, PostViewerPage(posts: [MapPost.fromJson(_post1())]), height: 900);
+    expect(find.byKey(const Key('moment-friends-mark')), findsNothing);
+    await tester.pumpWidget(const SizedBox()); // يوقف مؤقّت التقدّم التلقائي
   });
 }

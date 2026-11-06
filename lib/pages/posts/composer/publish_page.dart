@@ -76,16 +76,21 @@ class _PublishPageState extends ConsumerState<PublishPage> {
     d.listingPrice = lstPrice.text.trim();
   }
 
-  /// المسودة النصية فقط (بلا وسائط): تُستعاد عند فتح المحرّر التالي
+  /// المسودة النصية فقط (بلا وسائط): تُستعاد عند فتح المحرّر التالي. الجمهور يُحفظ إن اختاره الناشر صراحةً (فارغ = الافتراضي)
   Future<void> _saveDraft() async {
     try {
       final p = await SharedPreferences.getInstance();
-      await p.setString(composerDraftKey, '${d.destination.name}|${d.ttlHours}|${d.tag}|${d.ctaType ?? ''}|${d.caption.replaceAll('|', ' ')}');
+      await p.setString(composerDraftKey, '${d.destination.name}|${d.ttlHours}|${d.tag}|${d.ctaType ?? ''}|${d.audience ?? ''}|${d.caption.replaceAll('|', ' ')}');
+      await p.remove(composerDraftKeyV2);
     } catch (_) { /* لا شيء */ }
   }
 
   static Future<void> clearDraft() async {
-    try { (await SharedPreferences.getInstance()).remove(composerDraftKey); } catch (_) { /* لا شيء */ }
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.remove(composerDraftKey);
+      await p.remove(composerDraftKeyV2);
+    } catch (_) { /* لا شيء */ }
   }
 
   // ---------------------------------------------------------------- النشر
@@ -133,6 +138,8 @@ class _PublishPageState extends ConsumerState<PublishPage> {
             'cta': d.ctaType == null || (d.ctaType != 'chat' && d.ctaValue.isEmpty) ? null : {'type': d.ctaType, 'value': d.ctaValue, 'label': d.ctaLabel},
             // التعديل بلا تسجيل جديد لا يرسل الصوت أصلاً فيبقى تسجيل اللحظة كما هو؛ مسودة التعديل لا تحمل التسجيل القديم فإرسال null كان يحذفه
             if (v != null || !editingExisting) ...{'audioUrl': audioUrl, 'audioSec': v?.duration.inSeconds},
+            // الجمهور صريحاً دائماً: ما يراه الناشر هنا هو ما يُحفظ (الخادم لا يحسب افتراضياً مختلفاً)
+            'audience': d.effectiveAudience,
           };
           final MapPost post;
           if (editingExisting) {
@@ -318,6 +325,8 @@ class _PublishPageState extends ConsumerState<PublishPage> {
               Expanded(child: Text('الخريطة تعرض صورة الغلاف فقط. لعرض كل الصور انشرها في السوق أو مجتمع دائرة.', style: TextStyle(color: Joy.sunText, fontSize: 12.5, height: 1.5))),
             ]),
           ),
+        _audienceChoice(),
+        const SizedBox(height: 18),
         const Text('المدة على الخريطة', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
         const SizedBox(height: 8),
         Wrap(spacing: 8, children: [for (final (h, l) in postTtlOptions) ChoiceChip(key: Key('ttl-$h'), label: Text(l), selected: d.ttlHours == h, showCheckmark: false, selectedColor: Joy.primary, labelStyle: TextStyle(color: d.ttlHours == h ? Colors.white : Joy.text, fontSize: 13), side: BorderSide.none, onSelected: (_) => setState(() => d.ttlHours = h))]),
@@ -341,6 +350,25 @@ class _PublishPageState extends ConsumerState<PublishPage> {
           TextButton(key: const Key('pub-place'), onPressed: _editPlace, child: const Text('تغيير')),
         ]),
       ]);
+
+  /// «من يراها؟»: الأصدقاء أو الجميع، بالافتراضي من نوع المنشور حتى يختار الناشر، وسطر يشرح الاختيار الحالي
+  Widget _audienceChoice() {
+    final aud = d.effectiveAudience;
+    Widget chip(String v, IconData icon) => ChoiceChip(
+          key: Key('aud-$v'), avatar: Icon(icon, size: 17, color: aud == v ? Colors.white : Joy.textMuted), label: Text(postAudiences[v]!), selected: aud == v, showCheckmark: false, selectedColor: Joy.primary,
+          labelStyle: TextStyle(color: aud == v ? Colors.white : Joy.text, fontSize: 13), side: BorderSide.none, onSelected: (_) => setState(() => d.audience = v),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('من يراها؟', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, children: [chip('friends', Icons.people_alt_outlined), chip('all', Icons.public_rounded)]),
+      const SizedBox(height: 4),
+      Text(
+        aud == 'friends' ? 'يراها من أضفتهم إلى جهات اتصالك فقط' : 'يراها كل من يفتح الخريطة ما دام ملفك عاماً',
+        key: const Key('aud-hint'), style: const TextStyle(color: Joy.textMuted, fontSize: 12),
+      ),
+    ]);
+  }
 
   Widget _circleOptions() {
     final circles = ref.watch(publishCirclesProvider);
@@ -385,20 +413,25 @@ class _PublishPageState extends ConsumerState<PublishPage> {
       ]);
 }
 
-const composerDraftKey = 'composer.draft.v2';
+/// المسودة: الوجهة|المدة|النوع|زر الإجراء|الجمهور|التعليق (v3 أضاف الجمهور)، والصيغة القديمة v2 بلا جمهور تُقرأ مرة ثم تُستبدل
+const composerDraftKey = 'composer.draft.v3';
+const composerDraftKeyV2 = 'composer.draft.v2';
 
 /// يقرأ المسودة النصية المحفوظة (إن وُجدت) ويطبّقها على مسودة جديدة.
 Future<void> restoreComposerDraft(ComposerDraft d) async {
   try {
     final p = await SharedPreferences.getInstance();
-    final s = p.getString(composerDraftKey);
+    final v3 = p.getString(composerDraftKey);
+    final s = v3 ?? p.getString(composerDraftKeyV2);
     if (s == null) return;
     final parts = s.split('|');
-    if (parts.length < 5) return;
+    final head = v3 != null ? 5 : 4;
+    if (parts.length < head + 1) return;
     d.destination = Destination.values.firstWhere((x) => x.name == parts[0], orElse: () => Destination.map);
     d.ttlHours = int.tryParse(parts[1]) ?? 24;
     d.tag = postTags.containsKey(parts[2]) ? parts[2] : 'moment';
     d.ctaType = parts[3].isEmpty ? null : parts[3];
-    d.caption = parts.sublist(4).join('|');
+    if (v3 != null) d.audience = postAudiences.containsKey(parts[4]) ? parts[4] : null;
+    d.caption = parts.sublist(head).join('|');
   } catch (_) { /* لا شيء */ }
 }

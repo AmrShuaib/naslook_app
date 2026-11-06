@@ -25,7 +25,7 @@ const call = async (method, url, { body = {}, user = 'SA0000001', expect } = {})
   return j;
 };
 const p1 = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000', caption: 'عرض إيكيا', title: 'خصم', tag: 'offer', cta: { type: 'biz', value: 'biz-ikea' }, lat: 21.5, lng: 39.2 }, expect: 200 });
-const p2 = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000', caption: 'لحظة', lat: 21.5, lng: 39.2 }, expect: 200 });
+const p2 = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', bg: '#000', caption: 'لحظة', lat: 21.5, lng: 39.2 }, expect: 200 });
 // أحداث: المالك لا يُحتسب
 await call('POST', `/mapposts/${p1.id}/view`, { expect: 200 });
 await call('POST', `/mapposts/${p1.id}/cta`, { expect: 200 });

@@ -57,6 +57,8 @@ class ComposerDraft {
   // تفاصيل احترافية (اختيارية)
   String tag, title, price, ctaValue, ctaLabel;
   String? ctaType;
+  /// من يرى المنشور على الخريطة: 'friends' أو 'all'، وnull = لم يختر الناشر فيُعرض ويُرسل [defaultAudience]
+  String? audience;
   // وجهة الدائرة
   String? circleId, circleName;
   // نموذج العرض السريع
@@ -70,12 +72,21 @@ class ComposerDraft {
     this.board = '#FFFFFF', this.template = 'plain', List<PostOverlay>? overlays, this.filter = 'none', this.adjust = const PhotoAdjust(), this.frame = const PhotoFrame(), this.voice,
     this.caption = '', this.destination = Destination.map, this.ttlHours = 24, this.tag = 'moment', this.title = '', this.price = '', this.ctaType, this.ctaValue = '', this.ctaLabel = '',
     this.circleId, this.circleName, this.listingTitle = '', this.listingPrice = '', this.listingCategory = 'other', this.listingKind = 'product', this.delivery = false, this.editing,
+    String? audience,
   })  : shots = shots ?? [],
-        overlays = overlays ?? [];
+        overlays = overlays ?? [],
+        // تعديل منشور قائم يبدأ بجمهوره الحالي
+        audience = audience ?? editing?.audience;
 
   Shot? get coverShot => shots.isEmpty ? null : shots[cover.clamp(0, shots.length - 1)];
   bool get isText => kind == 'text';
   bool get isVideo => kind == 'video';
   bool get hasPro => tag != 'moment' || title.isNotEmpty || price.isNotEmpty || ctaType != null;
+  /// زر الإجراء يُرسل فعلاً (كما في شاشة النشر): «مراسلة» بلا قيمة، وغيره بقيمة
+  bool get hasCta => ctaType != null && (ctaType == 'chat' || ctaValue.isNotEmpty);
+  /// الافتراضي بقاعدة الخادم نفسها (defaultAudience في server/map_posts.js، قرار المالك): اللحظة الشخصية للأصدقاء، والمنشور التجاري
+  /// (نوع غير «لحظة» أو بسعر أو بزر إجراء) للجميع لأن غايته الوصول
+  String get defaultAudience => tag != 'moment' || price.isNotEmpty || hasCta ? 'all' : 'friends';
+  String get effectiveAudience => audience ?? defaultAudience;
   bool get hasContent => isText ? (overlays.any((o) => !o.isSticker) || caption.isNotEmpty || voice != null) : isVideo ? video != null : shots.isNotEmpty || editing != null;
 }

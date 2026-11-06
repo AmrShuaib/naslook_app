@@ -90,7 +90,7 @@ profile_events (id BIGSERIAL, user_id, actor_id, kind, created_at)              
 ### المساعدات العامة والحذف
 
 - `globalThis.naslifeProfileExt(uid)` → صف `profile_ext` أو `null`.
-- `globalThis.naslifeAuthorVisibleSql(authorExpr, viewerExpr, { single })` → شرط SQL منطقي واحد «هل يرى `viewerExpr` محتوى `authorExpr`؟» (صاحبه، أو ملف عام، أو صديق بالتعريف أعلاه)، مغلّف بـ`COALESCE(..., false)` فيصلح في `WHERE` وفي `SELECT ... AS visible`. التعبيران نصيان (`p.user_id` و`$1::text`؛ `NULL` للضيف). **شكلان** للقاعدة نفسها:
+- `globalThis.naslifeAuthorVisibleSql(authorExpr, viewerExpr, { single, publicWhen })` → شرط SQL منطقي واحد «هل يرى `viewerExpr` محتوى `authorExpr`؟» (صاحبه، أو ملف عام، أو صديق بالتعريف أعلاه)، مغلّف بـ`COALESCE(..., false)` فيصلح في `WHERE` وفي `SELECT ... AS visible`. `publicWhen` (اختياري، 6 نوفمبر 2026) شرط SQL على الصف نفسه يقيّد فرع «الملف العام» وحده: `صاحبه OR (publicWhen AND ملف عام) OR صديق`؛ عليه يبني «الجمهور» لكل لحظة في `map_posts.js` (`publicWhen` = `p.audience = 'all'`)، ومعه يعمل فحص الأصدقاء حتى بلا عمود خصوصية في النواة. الدالة تحمل العلامة `publicWhen = true` فلا يمرّر `map_posts.js` الشرط إلا لقاعدة تفهمه (وإلا احتياطه المغلق). التعبيران نصيان (`p.user_id` و`$1::text`؛ `NULL` للضيف). **شكلان** للقاعدة نفسها:
   - **القوائم** (الافتراضي): استعلامات فرعية غير مرتبطة بالصف: معرّفات أصحاب الملفات الخاصة (`users` ثم جدول الملف بـ`UNION ALL`) ومن أضافوا المشاهد، فيحسبها Postgres مرة لكل استعلام (`hashed SubPlan` في `EXPLAIN`) لا لكل صف، وتبقى كلفتها المقدّرة صغيرة مع آلاف اللحظات.
   - **صف واحد** (`{ single: true }`): فحوص مفاتيح مرتبطة بالصف (`EXISTS` على `users.id` ومفتاح جدول الملف وزوج `contacts(user_id, contact_id)`)، فقراءة لحظة واحدة (`/mapposts/:id`، الإعجاب، التفاعلات، كل عنصر في «محفوظاتي» حتى 300 في الطلب و5000 في الكنس، بطاقة المحادثة، رابط المشاركة، عدّ منشورات الملف) لا تمسح جدول الملفات كله في كل نداء. لا يُستعمل للقوائم: Postgres يقدّر الشكل المرتبط بفحص لكل صف فتكبر الكلفة المقدّرة مع عدد اللحظات حتى تتجاوز عتبة JIT (`jit_above_cost`) فيُترجم الاستعلام عند كل طلب.
 
@@ -98,7 +98,7 @@ profile_events (id BIGSERIAL, user_id, actor_id, kind, created_at)              
 - `globalThis.naslifeIsPublic(uid)` → `true/false` (`true` بلا عمود خصوصية؛ خطأ القاعدة يُرمى ليقرر المستدعي، والبث الحي يغلق عند الشك).
 - `globalThis.naslifeFriendIds(uid)` → من أضافهم المستخدم إلى جهات اتصاله (حتى 5000)، بالتعريف نفسه.
 - `globalThis.naslifePrivacyStatus` → `{ privacy, friends }`: هل وُجد عمود الخصوصية وجدول جهات الاتصال.
-- ميزة «الجمهور» لكل لحظة القادمة (الافتراضي «الأصدقاء» بقرار المالك) تبني فوق هذه في `map_posts.js` (`naslifeMomentVisibleSql` و`momentAudience`) لا هنا.
+- ميزة «الجمهور» لكل لحظة (6 نوفمبر 2026، الافتراضي «الأصدقاء» بقرار المالك) تبني فوق هذه في `map_posts.js` (`naslifeMomentVisibleSql` بخيار `publicWhen`، و`momentAudience` بـ`naslifeIsPublic` و`naslifeFriendIds`). لحظة «الأصدقاء» لا يراها إلا صاحبها ومن أضافهم ولو كان ملفه عاماً، والملف الخاص يبقى لأصدقائه وحدهم مهما كان الجمهور. عدّ «المنشورات» في الملف (`stats.posts`) يمر بالقاعدة نفسها فيعدّ لكل مشاهد ما يفتحه، وبلا `map_posts.js` (نادر) يمرّر `publicWhen` بنفسه إن وُجد عمود `audience`. التفاصيل في `docs/moments.md` «جمهور اللحظة».
 - `globalThis.naslifeProfileV2Delete(uid)` → يحذف `profile_ext` و`user_follows` (الجانبان) و`profile_views` (الجانبان) و`profile_events` (الجانبان)؛ يعيد `true/false`.
 - `server/account_delete.js` يمسح الجداول الأربعة مباشرة داخل معاملة الحذف الناعم (بجانب `user_layouts`) عند وجودها.
 

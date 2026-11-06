@@ -205,9 +205,9 @@ else {
 
 // ===================== 2) التفاعلات
 const vUrl = `https://naslife.app/chat/media/${vName}`, iUrl = `https://naslife.app/chat/media/${iName}`;
-const pImg = await call('POST', '/mapposts', { body: { kind: 'image', mediaUrl: `/chat/media/${iName}`, caption: 'غروب <b>الكورنيش</b>', lat: 21.54, lng: 39.17, placeName: 'الكورنيش' }, user: 'SA0000002', expect: 200 });
-const pVid = await call('POST', '/mapposts', { body: { kind: 'video', mediaUrl: `/chat/media/${vName}`, caption: 'موج', durationSec: 12, lat: 21.54, lng: 39.17 }, user: 'SA0000002', expect: 200 });
-const pTxt = await call('POST', '/mapposts', { body: { kind: 'text', caption: 'صباح الخير يا جدة', bg: '#0B3D4F', lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 });
+const pImg = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'image', mediaUrl: `/chat/media/${iName}`, caption: 'غروب <b>الكورنيش</b>', lat: 21.54, lng: 39.17, placeName: 'الكورنيش' }, user: 'SA0000002', expect: 200 });
+const pVid = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'video', mediaUrl: `/chat/media/${vName}`, caption: 'موج', durationSec: 12, lat: 21.54, lng: 39.17 }, user: 'SA0000002', expect: 200 });
+const pTxt = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', caption: 'صباح الخير يا جدة', bg: '#0B3D4F', lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 });
 check(pImg.mediaUrl === iUrl && pVid.mediaUrl === vUrl, 'posts created with absolute media urls');
 const R = `/moments/${pImg.id}`;
 const zero = { '😍': 0, '😂': 0, '🔥': 0, '👏': 0 };
@@ -295,7 +295,7 @@ check(meta(h.body, 'og:url') === `https://naslife.app/m/${pImg.id}` && refresh(h
 h = await getHtml(`/m/${pVid.id.toUpperCase()}`);
 check(meta(h.body, 'og:image') === `https://naslife.app/chat/thumb/${vName}` && meta(h.body, 'og:title') === 'موج' && meta(h.body, 'og:description') === 'sara' && meta(h.body, 'og:type') === 'video.other', 'video moment: og:image = /chat/thumb/<name>, id case-insensitive', JSON.stringify({ i: meta(h.body, 'og:image'), d: meta(h.body, 'og:description') }));
 check(refresh(h.body) === `0; url=/#/m/${pVid.id}`, 'redirect uses the lowercase id');
-const pBare = await call('POST', '/mapposts', { body: { kind: 'image', mediaUrl: `/chat/media/${iName}`, lat: 21.5, lng: 39.2 }, user: 'SA0000001', expect: 200 });
+const pBare = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'image', mediaUrl: `/chat/media/${iName}`, lat: 21.5, lng: 39.2 }, user: 'SA0000001', expect: 200 });
 h = await getHtml(`/m/${pBare.id}`);
 check(meta(h.body, 'og:title') === 'لحظة على ناس لايف' && meta(h.body, 'og:description') === 'amr', 'no caption → «لحظة على ناس لايف»', meta(h.body, 'og:title'));
 // صورة ليست من وسائطنا (رابط قديم أو خارجي): لا مصغّر لها، فتبقى الصورة نفسها
@@ -320,7 +320,7 @@ const list = await call('GET', '/wishlist', { expect: 200 });
 check(list.find((x2) => x2.refId === pVid.id)?.imageUrl === `/chat/thumb/${vName}`, 'list keeps the video thumb');
 // ثلاث لحظات منتهية منذ 31 يوماً: محفوظة، ومحفوظة بمعرّف بأحرف كبيرة، وغير محفوظة
 const old = [];
-for (const c of ['محفوظة', 'محفوظة بأحرف كبيرة', 'غير محفوظة']) old.push(await call('POST', '/mapposts', { body: { kind: 'text', caption: c, lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 }));
+for (const c of ['محفوظة', 'محفوظة بأحرف كبيرة', 'غير محفوظة']) old.push(await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', caption: c, lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 }));
 await call('POST', '/wishlist', { body: { kind: 'post', refId: old[0].id }, expect: 200 });
 await call('POST', '/wishlist', { body: { kind: 'post', refId: old[1].id.toUpperCase() }, user: 'SA0000004', expect: 200 });
 await pool.query("UPDATE map_posts SET expires_at = now() - interval '31 days', created_at = now() - interval '32 days' WHERE id = ANY($1::uuid[])", [old.map((o) => o.id)]);
@@ -337,7 +337,7 @@ check(!(await exists(old[0].id)) && await exists(old[1].id), 'unsaving lets the 
 
 // ---- اللحظة المخفية أو المحجوبة أو المحظور صاحبها: «محفوظاتي» لا تكشف نصها ولا صورتها، ولا حفظ جديد، والكنس لا يحميها
 const secretImg = 'mtysecret-' + 'f'.repeat(24) + '.jpg';
-const pSecret = await call('POST', '/mapposts', { body: { kind: 'image', mediaUrl: `/chat/media/${secretImg}`, caption: 'SECRET caption', lat: 21.5, lng: 39.2 }, user: 'SA0000002', expect: 200 });
+const pSecret = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'image', mediaUrl: `/chat/media/${secretImg}`, caption: 'SECRET caption', lat: 21.5, lng: 39.2 }, user: 'SA0000002', expect: 200 });
 const savedSecret = await call('POST', '/wishlist', { body: { kind: 'post', refId: pSecret.id }, expect: 200 });
 check(savedSecret.title === 'SECRET caption' && /mtysecret/.test(savedSecret.imageUrl), 'active moment saved with its caption and image');
 await call('PATCH', `/mapposts/${pSecret.id}`, { body: { status: 'hidden' }, user: 'SA0000002', expect: 200 });
@@ -366,7 +366,7 @@ check(mine.title === 'لحظة لم تعد متاحة' && mine.imageUrl === null
 await call('POST', '/wishlist', { body: { kind: 'post', refId: pSecret.id }, user: 'SA0000001', expect: 404 });
 await pool.query('DELETE FROM user_blocks');
 // الكنس: لحظة منتهية منذ 31 يوماً محفوظة لكنها مخفية تُحذف، والنشطة المحفوظة تبقى
-const oldHidden = await call('POST', '/mapposts', { body: { kind: 'text', caption: 'مخفية محفوظة', lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 });
+const oldHidden = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', caption: 'مخفية محفوظة', lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 });
 await call('POST', '/wishlist', { body: { kind: 'post', refId: oldHidden.id }, expect: 200 });
 await call('PATCH', `/mapposts/${oldHidden.id}`, { body: { status: 'hidden' }, user: 'SA0000003', expect: 200 });
 await pool.query("UPDATE map_posts SET expires_at = now() - interval '40 days', created_at = now() - interval '41 days' WHERE id = ANY($1::uuid[])", [[oldHidden.id, pSecret.id]]);

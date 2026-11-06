@@ -71,7 +71,7 @@ check(c['#t/NAS-NOPE0000'] === null, 'unknown ticket → null');
 
 // عرض في السوق ومنشور على الخريطة
 const mk = await call('POST', '/market', { body: { title: 'آيفون 13', price: 180000, category: 'electronics', kind: 'product', placeName: 'جدة' }, user: 'SA0000002', expect: 200 });
-const post = await call('POST', '/mapposts', { body: { kind: 'text', caption: 'الجوازات مزدحمة الآن', lat: 21.68, lng: 39.15, placeName: 'صالة 1' }, user: 'SA0000002', expect: 200 });
+const post = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', caption: 'الجوازات مزدحمة الآن', lat: 21.68, lng: 39.15, placeName: 'صالة 1' }, user: 'SA0000002', expect: 200 });
 c = await cards([`#mk/${mk.id}`, `#post/${post.id}`]);
 check(c[`#mk/${mk.id}`]?.type === 'listing' && c[`#mk/${mk.id}`].title === 'آيفون 13' && c[`#mk/${mk.id}`].price === 180000 && c[`#mk/${mk.id}`].seller?.nickname === 'sara', '#mk/id → listing card', JSON.stringify(c[`#mk/${mk.id}`]));
 check(c[`#post/${post.id}`]?.type === 'post' && c[`#post/${post.id}`].title === 'الجوازات مزدحمة الآن' && /sara/.test(c[`#post/${post.id}`].subtitle), '#post/id → map post card', JSON.stringify(c[`#post/${post.id}`]));
