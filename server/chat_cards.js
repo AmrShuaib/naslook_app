@@ -87,7 +87,7 @@ async function setup(app, opts) {
   };
 
   // ---- تحليل رمز واحد إلى بطاقة (null إن لم يُفهم أو لم يوجد)
-  async function resolve(ref) {
+  async function resolve(ref, viewer = null) {
     const s = String(ref ?? "").trim();
     if (s.length < 2 || s.length > 120) return null;
     if (s[0] === "@") {
@@ -118,7 +118,10 @@ async function setup(app, opts) {
       }
       case "post": {
         if (!UUID_RE.test(b ?? "")) return null;
-        const p = (await pool.query("SELECT * FROM map_posts WHERE id=$1 AND status='active'", [b])).rows[0]; if (!p) return null;
+        // لحظة صاحب الملف الخاص لا تظهر بطاقتها إلا لمن يراها (القاعدة الواحدة في map_posts.js)
+        const vf = globalThis.naslifeMomentVisibleSql;
+        const vis = typeof vf === "function" ? vf("map_posts", "$2::text") : "($2::text IS NULL OR TRUE)";
+        const p = (await pool.query(`SELECT * FROM map_posts WHERE id=$1 AND status='active' AND ${vis}`, [b, viewer])).rows[0]; if (!p) return null;
         const u = personOf(await userRow(p.user_id));
         return { type: "post", id: p.id, title: p.title || p.caption || (p.kind === "image" ? "صورة" : p.kind === "video" ? "فيديو" : p.kind === "audio" ? "تسجيل صوتي" : "منشور"), subtitle: [u?.nickname, p.place_name].filter(Boolean).join(" · "), image: p.kind === "image" ? p.media_url : null, kind: p.kind, price: p.price == null ? null : Number(p.price), user: u };
       }
@@ -171,7 +174,7 @@ async function setup(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const refs = [...new Set(String(req.query?.refs ?? "").split(",").map((s) => s.trim()).filter(Boolean))].slice(0, MAX_REFS);
     const out = {};
-    await Promise.all(refs.map(async (r) => { try { out[r] = await resolve(r); } catch (e) { req.log?.warn?.(`chat_cards resolve ${r}: ${e?.message}`); out[r] = null; } }));
+    await Promise.all(refs.map(async (r) => { try { out[r] = await resolve(r, uid); } catch (e) { req.log?.warn?.(`chat_cards resolve ${r}: ${e?.message}`); out[r] = null; } }));
     return { refs: out };
   });
 

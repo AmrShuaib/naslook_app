@@ -15,6 +15,7 @@ const AUTHOR = 'SA0000011', FRIEND = 'SA0000012', STRANGER = 'SA0000013', ONEWAY
 const VIEWERS = { author: AUTHOR, friend: FRIEND, stranger: STRANGER, oneway: ONEWAY, guest: null };
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query('DROP TABLE IF EXISTS profile_ext, user_follows, profile_views, profile_events CASCADE');
+await pool.query('DROP TABLE IF EXISTS saved_searches CASCADE');
 await pool.query('DROP TABLE IF EXISTS users, profiles, contacts, map_post_likes, map_post_views, map_post_events, map_posts, map_post_reactions, map_post_react_notified, wishlist_items CASCADE');
 await pool.query(`CREATE TABLE users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now());
   CREATE TABLE profiles (user_id TEXT PRIMARY KEY, bio TEXT NOT NULL DEFAULT '', skills TEXT[] DEFAULT '{}', is_public BOOLEAN DEFAULT true);
@@ -33,6 +34,8 @@ const boot = async (full) => {
     a.register((await import('../moment_extras.js')).default, { pool, auth, sweepMs: 0 });
     a.register((await import('../wishlist.js')).default, { pool, auth, sweepMs: 0 });
     a.register((await import('../share.js')).default, { pool, auth, webappDir: dir + 'webapp' });
+    a.register((await import('../chat_cards.js')).default, { pool, auth });
+    a.register((await import('../saved_search.js')).default, { pool, auth, sweepMs: 0 });
   }
   a.register((await import('../profile_ext.js')).default, { pool, auth });
   a.register((await import('../row.js')).default, { pool, auth });
@@ -104,6 +107,25 @@ check((await call('GET', `/mapposts/feed?authors=${AUTHOR}`, { user: STRANGER })
 // الإعجاب: الغريب 404، الصديق يعجب
 await call('POST', `/mapposts/${priv.id}/like`, { user: STRANGER, expect: 404 });
 check((await call('POST', `/mapposts/${priv.id}/like`, { user: FRIEND, expect: 200 })).j.liked === true, 'friend can like the private moment');
+// بطاقة #post/<id> في المحادثة (chat_cards.js): الغريب لا يأخذ عنوانها ولا صاحبها، والصديق يأخذها
+{
+  const ref = encodeURIComponent(`#post/${priv.id}`);
+  const cs = (await call('GET', `/chat/cards?refs=${ref}`, { user: STRANGER, expect: 200 })).j;
+  check(cs.refs[`#post/${priv.id}`] === null, 'chat card #post: a stranger gets no card for the private moment', JSON.stringify(cs));
+  const cf = (await call('GET', `/chat/cards?refs=${ref}`, { user: FRIEND, expect: 200 })).j;
+  check(cf.refs[`#post/${priv.id}`]?.id === priv.id, 'chat card #post: the friend gets the card', JSON.stringify(cf).slice(0, 200));
+  const cp = (await call('GET', `/chat/cards?refs=${encodeURIComponent(`#post/${pub.id}`)}`, { user: STRANGER, expect: 200 })).j;
+  check(cp.refs[`#post/${pub.id}`]?.id === pub.id, 'chat card #post: a public moment still resolves for anyone');
+}
+// تنبيه البحث المحفوظ (saved_search.js): لا يطابق لحظة صاحب الملف الخاص لغريب، ويطابقها للصديق
+{
+  const runFor = async (user) => {
+    const s = (await call('POST', '/searches/saved', { body: { q: 'بيت' }, user, expect: 200 })).j;
+    return (await call('POST', `/searches/saved/${s.id}/run`, { user, expect: 200 })).j.items.map((i) => i.id);
+  };
+  check(!(await runFor(STRANGER)).includes(priv.id), 'saved search: a stranger is not matched with the private moment');
+  check((await runFor(FRIEND)).includes(priv.id), 'saved search: the friend is matched with it');
+}
 
 // ---- رابط المشاركة: لحظة الملف الخاص بلا صورة ولا نص ولا مكان (من يقرأ الوسوم ضيف)
 const getHtml = async (url) => (await app.inject({ method: 'GET', url, headers: { host: 'naslife.app', 'x-forwarded-proto': 'https' } })).body;

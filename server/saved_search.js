@@ -40,6 +40,8 @@ export default async function savedSearch(app, opts) {
 
   // ---- المطابقة: ما نُشر بعد since ويطابق الكلمة، ضمن النطاق إن حُدد، وليس من المستخدم نفسه
   const within = (latCol, lngCol) => `($4::float8 IS NULL OR $6::float8 IS NULL OR (${latCol} IS NOT NULL AND ${DIST("$4", "$5", latCol, lngCol)} <= $6::float8))`;
+  // لحظة صاحب الملف الخاص لا تُطابق إلا لمن يراها (القاعدة الواحدة في map_posts.js)، وإلا وصل عنوانها إشعاراً لغريب
+  const momentVisible = (alias, viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, viewerExpr) : `(${viewerExpr} IS NULL OR TRUE)`; };
   async function matchesFor(s, since) {
     const like = likeOf(s.q);
     const params = [since, s.user_id, like, s.lat, s.lng, s.radius_km];
@@ -50,7 +52,7 @@ export default async function savedSearch(app, opts) {
       catch (e) { app.log?.warn?.({ err: e?.message }, `saved_search: ${type} query failed`); }
     };
     if (sources.posts && want("posts")) await run("post", `SELECT id, COALESCE(NULLIF(title,''), NULLIF(caption,''), 'منشور') AS title, created_at FROM map_posts
-      WHERE status='active' AND expires_at > now() AND created_at > $1::timestamptz AND user_id <> $2
+      WHERE status='active' AND expires_at > now() AND created_at > $1::timestamptz AND user_id <> $2 AND ${momentVisible("map_posts", "$2::text")}
       AND (${NORM("title")} LIKE $3 OR ${NORM("caption")} LIKE $3 OR ${NORM("COALESCE(place_name,'')")} LIKE $3) AND ${within("lat", "lng")} ORDER BY created_at DESC LIMIT 20`);
     if (sources.market && want("market")) await run("listing", `SELECT id, title, created_at FROM market_listings
       WHERE status='active' AND created_at > $1::timestamptz AND seller_id <> $2
