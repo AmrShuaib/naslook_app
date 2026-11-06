@@ -118,9 +118,10 @@ async function setup(app, opts) {
       }
       case "post": {
         if (!UUID_RE.test(b ?? "")) return null;
-        // لحظة صاحب الملف الخاص لا تظهر بطاقتها إلا لمن يراها (القاعدة الواحدة في map_posts.js)
+        // لحظة صاحب الملف الخاص لا تظهر بطاقتها إلا لمن يراها (القاعدة الواحدة في map_posts.js، بفحص مفتاح لأنها لحظة واحدة)؛ بلا
+        // map_posts.js لا نعرف القاعدة فلا بطاقة إلا للحظة المشاهد نفسه (إغلاق عند الشك)
         const vf = globalThis.naslifeMomentVisibleSql;
-        const vis = typeof vf === "function" ? vf("map_posts", "$2::text") : "($2::text IS NULL OR TRUE)";
+        const vis = typeof vf === "function" ? vf("map_posts", "$2::text", { single: true }) : "COALESCE(map_posts.user_id = $2::text, false)";
         const p = (await pool.query(`SELECT * FROM map_posts WHERE id=$1 AND status='active' AND ${vis}`, [b, viewer])).rows[0]; if (!p) return null;
         const u = personOf(await userRow(p.user_id));
         return { type: "post", id: p.id, title: p.title || p.caption || (p.kind === "image" ? "صورة" : p.kind === "video" ? "فيديو" : p.kind === "audio" ? "تسجيل صوتي" : "منشور"), subtitle: [u?.nickname, p.place_name].filter(Boolean).join(" · "), image: p.kind === "image" ? p.media_url : null, kind: p.kind, price: p.price == null ? null : Number(p.price), user: u };

@@ -78,6 +78,8 @@ class _Srv {
   String? messageReason;
   /// جهات اتصالي (GET /contacts): أضفته أنا ولا يعني أنه أضافني
   List<Map<String, dynamic>> contacts = const [];
+  /// flags.isFriend كما يحسبه الخادم: صاحب الملف أضافني (تعريف اللحظات و«من يراسلني» نفسه)، لا جهات اتصالي
+  bool ownerAddedMe = false;
   int followers = 1212;
   String accountType = 'personal';
   Map<String, dynamic>? intro = {'kind': 'voice', 'url': 'https://test.local/chat/media/intro.m4a', 'sec': 42, 'at': '2026-09-20T10:00:00Z'};
@@ -91,7 +93,7 @@ class _Srv {
         'intro': intro,
         'stats': {'posts': 128, 'followers': followers, 'following': 40, 'circles': 6, 'ratingAvg': 4.9, 'ratingCount': 47, 'completedOrders': 31, 'friends': 12},
         'trust': {'emailVerified': true, 'phoneVerified': false, 'memberSince': '2025-03-05T00:00:00Z', 'respondsFast': true},
-        'flags': {'isMe': false, 'isFollowing': following, 'isFriend': contacts.isNotEmpty, 'canMessage': canMessage, 'messageReason': messageReason, 'online': true, 'isPrivate': false, 'blocked': false},
+        'flags': {'isMe': false, 'isFollowing': following, 'isFriend': ownerAddedMe, 'canMessage': canMessage, 'messageReason': messageReason, 'online': true, 'isPrivate': false, 'blocked': false},
         'memberSince': '2025-03-05T00:00:00Z',
       };
   Map<String, dynamic> _privateVisitor() => {'id': 'SA0000002', 'nickname': 'fahad.shots', 'displayName': 'فهد الغامدي', 'avatarUrl': null, 'coverUrl': null, 'flags': {'isPrivate': true, 'isMe': false, 'isFriend': false, 'canMessage': true}, 'stats': {}};
@@ -125,6 +127,8 @@ class _Srv {
     switch (key) {
       case 'GET /profiles/SA0000002/v2':
         if (!v2) return _json({'error': 'not-found'}, 404);
+        // الملف الخاص كاملٌ لمن أضافه صاحبه فقط، كما في الخادم
+        if (private && ownerAddedMe) return _json({..._visitor(), 'flags': {...(_visitor()['flags'] as Map<String, dynamic>), 'isPrivate': true}});
         return _json(private ? _privateVisitor() : _visitor());
       case 'GET /profiles/SA0000002':
         return _json({'id': 'SA0000002', 'nickname': 'fahad.shots', 'bio': 'أصوّر البحر والمقاهي في جدة', 'skills': ['تصوير بورتريه', 'درون'], 'hobbies': ['غوص'], 'lookingFor': [], 'offerings': [{'name': 'جلسة تصوير شخصية', 'description': 'ساعة'}], 'isPublic': true, 'createdAt': '2025-03-05T00:00:00Z'});
@@ -397,6 +401,35 @@ void main() {
       expect(find.text('ملف خاص'), findsOneWidget);
       expect(find.byKey(const Key('profile-tabs')), findsNothing);
       expect(find.byKey(const Key('stats-row')), findsNothing);
+      expect(find.text('تفاصيل هذا المستخدم ولحظاته تظهر لأصدقائه فقط'), findsOneWidget);
+    });
+
+    testWidgets('a private profile I added but whose owner did not add me back stays locked and reads as a pending request', (tester) async {
+      // الخادم يعيد الكائن المختصر (isFriend=false) لأن صاحبه لم يضفني، وإن كان في جهات اتصالي: لا عدد منشورات ولا تبويبات
+      await _pump(tester, const UserProfilePage(person: _sara), srv: _Srv()
+        ..private = true
+        ..contacts = [{'id': 'SA0000002', 'nickname': 'fahad.shots'}]);
+      expect(find.byKey(const Key('private-state')), findsOneWidget);
+      expect(find.text('تظهر تفاصيله ولحظاته بعد أن يقبل طلب صداقتك'), findsOneWidget);
+      expect(find.byKey(const Key('stats-row')), findsNothing);
+      expect(find.byKey(const Key('profile-tabs')), findsNothing);
+      expect(find.byKey(const Key('posts-grid')), findsNothing);
+      expect(find.descendant(of: find.byKey(const Key('friend-btn')), matching: find.text('طلب مُرسل')), findsOneWidget);
+      expect(find.text('صديق'), findsNothing);
+      // المراسلة مفتوحة عنده («all»)، فلا تلميح «بانتظار القبول» مكان زر المراسلة
+      expect(find.byKey(const Key('message-btn')), findsOneWidget);
+      expect(find.text('بانتظار قبول طلب الصداقة'), findsNothing);
+    });
+
+    testWidgets('a private profile whose owner added me opens fully: stats, tabs and the posts grid', (tester) async {
+      await _pump(tester, const UserProfilePage(person: _sara), srv: _Srv()
+        ..private = true
+        ..ownerAddedMe = true);
+      expect(find.byKey(const Key('private-state')), findsNothing);
+      expect(find.byKey(const Key('stats-row')), findsOneWidget);
+      expect(find.byKey(const Key('profile-tabs')), findsOneWidget);
+      expect(find.byKey(const Key('posts-grid')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('friend-btn')), matching: find.text('صديق')), findsOneWidget);
     });
 
     testWidgets('without v2 on the server the page still works from the core profile', (tester) async {

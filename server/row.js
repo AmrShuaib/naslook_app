@@ -172,8 +172,9 @@ export default async function row(app, opts = {}) {
   // شرط الضيف على الفعاليات من commerce.js (عمود خصوصية الدوائر يُكتشف هناك)؛ إن غابت الإضافة نُخفي فعاليات الدوائر كلها عن الضيف احتياطاً
   const guestEvents = async () => { try { const f = globalThis.naslifeGuestEventsSql; return typeof f === "function" ? String(await f(null, "e")) : " AND e.vessel_id IS NULL"; } catch { return " AND e.vessel_id IS NULL"; } };
   const place = (ctx, r, km) => ({ lat: Number(r.lat), lng: Number(r.lng), distanceKm: ctx.located ? round1(km) : null });
-  // من يرى اللحظة: جزء SQL الواحد من map_posts.js (لحظات الملف الخاص لصاحبها وأصدقائه، وبعدها «الجمهور» لكل لحظة)؛ بلا الإضافة = الجميع كما كان
-  const momentVisible = (alias, viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, viewerExpr) : `(${viewerExpr} IS NULL OR TRUE)`; };
+  // من يرى اللحظة: جزء SQL الواحد من map_posts.js (لحظات الملف الخاص لصاحبها وأصدقائه، وبعدها «الجمهور» لكل لحظة، واحتياطه المغلق
+  // إن غابت قاعدة profile_ext.js). بلا map_posts.js لا نعرف القاعدة فلا يظهر للمشاهد إلا ما نشره هو (إغلاق عند الشك لا «الجميع عامّ»)
+  const momentVisible = (alias, viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, viewerExpr) : `COALESCE(${alias}.user_id = ${viewerExpr}, false)`; };
 
   // الحمولة = شكل المنشور كما يعيده GET /mapposts تماماً (ليفتح التطبيق المشاهد بلا طلب آخر)
   const postOut = (p, uid, user) => ({

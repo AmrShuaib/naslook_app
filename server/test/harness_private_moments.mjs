@@ -2,8 +2,9 @@
 // صاحب ملف «غير عام» لا يرى لحظاته إلا هو وأصدقاؤه (من أضافهم هو إلى جهات اتصاله، تعريف «من يراسلني»). أربعة مشاهدين: الصديق،
 // الغريب، من أضاف صاحب الملف من طرفه فقط (ليس صديقاً)، والضيف؛ على كل مسار تتسرب منه لحظة: GET /mapposts و/mapposts/feed
 // و/mapposts/:id و/mapposts/trending والإعجاب، /row و/feed (row.js)، البث الحي /live/wait (live.js يصفّي لكل مستمع)،
-// رابط المشاركة /m/:id (share.js)، التفاعلات (moment_extras.js)، والمحفوظات (wishlist.js) لمن لم يعد صديقاً. ثم العمود في users
-// بدل جدول الملف، وأخيراً بلا عمود خصوصية = الجميع عامّ كما كان.
+// رابط المشاركة /m/:id (share.js)، التفاعلات (moment_extras.js)، والمحفوظات (wishlist.js) لمن لم يعد صديقاً. ثم الملف نفسه بالتعريف
+// نفسه، والشكلان (القوائم وقراءة الصف الواحد) بـEXPLAIN على 30 ألف ملف، واحتياط map_posts.js المغلق بلا قاعدة profile_ext.js، ثم العمود
+// في users بدل جدول الملف، وأخيراً بلا عمود خصوصية = الجميع عامّ كما كان، والقاعدة تُنشر قبل جداول profile_ext.js.
 import Fastify from 'fastify';
 import pg from 'pg';
 process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0';
@@ -27,7 +28,8 @@ await pool.query(`INSERT INTO contacts(user_id, contact_id) VALUES ('${AUTHOR}',
 
 const auth = async (req) => req.headers['x-user'] || null;
 const dir = new URL('.', import.meta.url).pathname;
-const boot = async (full) => {
+// profileExt: false = بلا قاعدة profile_ext.js (لم تُسجَّل أو تعثّرت قبل نشرها) فيعمل احتياط map_posts.js
+const boot = async (full, { profileExt = true } = {}) => {
   const a = Fastify();
   a.register((await import('../map_posts.js')).default, { pool, auth });
   if (full) {
@@ -37,7 +39,7 @@ const boot = async (full) => {
     a.register((await import('../chat_cards.js')).default, { pool, auth });
     a.register((await import('../saved_search.js')).default, { pool, auth, sweepMs: 0 });
   }
-  a.register((await import('../profile_ext.js')).default, { pool, auth });
+  if (profileExt) a.register((await import('../profile_ext.js')).default, { pool, auth });
   a.register((await import('../row.js')).default, { pool, auth });
   if (full) a.register((await import('../live.js')).default, { pool, auth });
   await a.ready();
@@ -161,13 +163,115 @@ check((await call('GET', '/mapposts', { user: null })).j.some((p) => p.id === pr
 await call('GET', `/mapposts/${priv.id}`, { user: STRANGER, expect: 200 });
 await pool.query('UPDATE profiles SET is_public=false WHERE user_id=$1', [AUTHOR]);
 
-// ---- الكفاءة: استعلام واحد بلا استعلام لكل صف (الأجزاء استعلامات فرعية غير مرتبطة)
+// ---- الملف نفسه بالتعريف نفسه: من أضافها من طرفه فقط يرى الملف المختصر (لا نبذة ولا عدّ للحظات لا يفتحها)، والصديقة ترى عدداً
+// يساوي ما تفتحه في «لحظاته»
+{
+  const prof = async (u) => (await call('GET', `/profiles/${AUTHOR}/v2`, { user: u, expect: 200 })).j;
+  const ow = await prof(ONEWAY);
+  check(ow.flags.isPrivate === true && ow.flags.isFriend === false && ow.bio === undefined && JSON.stringify(ow.stats) === '{}', 'profile: a one-way contact gets the limited private profile, like moments', JSON.stringify(ow));
+  for (const u of [STRANGER, null]) check(JSON.stringify((await prof(u)).stats) === '{}', `profile: ${u ?? 'guest'} gets no stats`);
+  const fp = await prof(FRIEND);
+  const fFeed = (await call('GET', `/mapposts/feed?authors=${AUTHOR}`, { user: FRIEND, expect: 200 })).j.items.length;
+  check(fp.flags.isFriend === true && fFeed >= 1 && fp.stats.posts === fFeed, 'profile: the friend sees the full profile and a posts count equal to the moments she can open', `${fp.stats?.posts} vs ${fFeed}`);
+}
+
+// ---- الكفاءة بشكلين للجزء نفسه. القوائم: استعلامات فرعية غير مرتبطة بالصف (تذكر p.user_id وحده) يجزّئها Postgres مرة لكل استعلام،
+// وكلفتها المقدّرة تبقى صغيرة مع آلاف اللحظات (الشكل المرتبط يُقدَّر بفحص لكل صف فتكبر كلفته مع عدد اللحظات حتى تتجاوز عتبة JIT). صف واحد ({ single: true }، في
+// /mapposts/:id والإعجاب والتفاعلات و«محفوظاتي» وبطاقة المحادثة ورابط المشاركة وعدّ منشورات الملف): فحوص مفاتيح مرتبطة بالصف فلا يُمسح
+// جدول الملفات كله في كل قراءة
 const frag = globalThis.naslifeMomentVisibleSql('p', '$1::text');
-check(!/\bp\.(?!user_id)/.test(frag.replace(/\bp\.user_id\b/g, '')) && (frag.match(/p\.user_id/g) || []).length === 3, 'fragment references the row only through p.user_id (uncorrelated subqueries)', frag);
+check(!/\bp\.(?!user_id)/.test(frag.replace(/\bp\.user_id\b/g, '')) && (frag.match(/p\.user_id/g) || []).length === 3, 'list fragment references the row only through p.user_id (uncorrelated subqueries)', frag);
 const plan = (await pool.query(`EXPLAIN SELECT p.id FROM map_posts p WHERE ${frag}`, [STRANGER])).rows.map((r) => r['QUERY PLAN']).join('\n');
-check((plan.match(/hashed SubPlan/g) || []).length === 2, 'planner hashes the private-id and friend sets once per query', plan.replace(/\n/g, ' | ').slice(0, 300));
+check((plan.match(/hashed SubPlan/g) || []).length === 2, 'list: the planner hashes the private-id and friend sets once per query', plan.replace(/\n/g, ' | ').slice(0, 300));
+const one = globalThis.naslifeMomentVisibleSql('p', '$1::text', { single: true });
+check(one.includes('EXISTS (SELECT 1 FROM "profiles" vis_p WHERE vis_p."user_id" = p.user_id') && one.includes('EXISTS (SELECT 1 FROM "contacts" vis_c WHERE vis_c."user_id" = p.user_id AND vis_c."contact_id" = $1::text)') && !one.includes('NOT IN'),
+  'single-row fragment probes the keys of the row\'s author (profile key, contact pair)', one);
+// 30 ألف مستخدم إضافي بملفاتهم (خُمسهم خاص) و5000 لحظة لهم
+await pool.query(`INSERT INTO users(id, nickname) SELECT 'SF'||lpad(g::text, 7, '0'), 'filler'||g FROM generate_series(1, 30000) g`);
+await pool.query(`INSERT INTO profiles(user_id, is_public) SELECT 'SF'||lpad(g::text, 7, '0'), g % 5 <> 0 FROM generate_series(1, 30000) g`);
+await pool.query(`INSERT INTO map_posts(id, user_id, kind, caption, lat, lng, expires_at) SELECT gen_random_uuid(), 'SF'||lpad(((g * 7) % 30000 + 1)::text, 7, '0'), 'text', 'حشو', 21.5, 39.1, now() + interval '1 day' FROM generate_series(1, 5000) g`);
+await pool.query('ANALYZE users; ANALYZE profiles; ANALYZE contacts; ANALYZE map_posts');
+{
+  // الشكلان يتفقان على 5000 لحظة مختلطة: الغريب يرى لحظات أصحاب الملفات العامة وحدها
+  const n = async (sql) => Number((await pool.query(sql, [STRANGER])).rows[0].n);
+  const want = await n(`SELECT count(*)::int AS n FROM map_posts p JOIN profiles pr ON pr.user_id = p.user_id WHERE p.user_id LIKE 'SF%' AND pr.is_public AND $1::text IS NOT NULL`);
+  const [ln, on] = [await n(`SELECT count(*)::int AS n FROM map_posts p WHERE p.user_id LIKE 'SF%' AND ${frag}`), await n(`SELECT count(*)::int AS n FROM map_posts p WHERE p.user_id LIKE 'SF%' AND ${one}`)];
+  check(want === 4000 && ln === want && on === want, 'both forms agree on 5000 mixed moments (a stranger sees the public authors\' only)', `${want} ${ln} ${on}`);
+  // القائمة بلا حد يقصّه الفهرس (كالرائج والبث بالمسافة): الكلفة المقدّرة تحت عتبة JIT فلا يُترجم الاستعلام عند كل طلب
+  const jit = Number((await pool.query('SHOW jit_above_cost')).rows[0].jit_above_cost);
+  const cost = async (f) => (await pool.query(`EXPLAIN (FORMAT JSON) SELECT count(*) FROM map_posts p WHERE ${f}`, [STRANGER])).rows[0]['QUERY PLAN'][0].Plan['Total Cost'];
+  const [cl, co] = [await cost(frag), await cost(one)];
+  check(cl < jit && cl * 5 < co, 'list form keeps the estimated cost of a 5000-moment scan small and under the JIT threshold; the correlated form is costed per row', `list ${cl} / single ${co} / jit_above_cost ${jit}`);
+}
+const nodes = (n) => [n, ...(n.Plans ?? []).flatMap(nodes)];
+const point = async (f, viewer, id) => {
+  const pl = (await pool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT p.id FROM map_posts p WHERE p.id = $2 AND ${f}`, [viewer, id])).rows[0]['QUERY PLAN'][0].Plan;
+  const scans = nodes(pl).filter((x) => x['Node Type'] === 'Seq Scan' && ['users', 'profiles'].includes(x['Relation Name'])).length;
+  return { rows: pl['Actual Rows'], blocks: pl['Shared Hit Blocks'] + pl['Shared Read Blocks'], userTableScans: scans };
+};
+for (const [label, viewer, id, rows] of [['stranger / private', STRANGER, priv.id, 0], ['friend / private', FRIEND, priv.id, 1], ['guest / public', null, pub.id, 1]]) {
+  const r = await point(one, viewer, id);
+  check(r.rows === rows && r.blocks < 40 && r.userTableScans === 0, `point lookup (${label}) with 30k extra profiles: right answer, key probes only`, JSON.stringify(r));
+}
+{
+  // الفرق الذي جاء من أجله الشكل الثاني: الشكل الأول لصف واحد يبني مجموعة الملفات الخاصة كلها
+  const [o, l] = [await point(one, STRANGER, priv.id), await point(frag, STRANGER, priv.id)];
+  check(l.rows === 0 && l.userTableScans > 0 && o.blocks * 3 < l.blocks, 'the list form on a single row scans the profiles table; the single form does not', `single ${o.blocks} vs list ${l.blocks} blocks`);
+}
+// المسارات نفسها ما زالت صحيحة مع الحشو (الإعجاب ورابط المشاركة وبطاقة المحادثة والتفاعلات تمر بالشكل الثاني)
+await call('GET', `/mapposts/${priv.id}`, { user: STRANGER, expect: 404 });
+await call('GET', `/mapposts/${priv.id}`, { user: FRIEND, expect: 200 });
+await call('GET', `/moments/${priv.id}/reactions`, { user: STRANGER, expect: 404 });
+check(meta(await getHtml(`/m/${priv.id}`), 'og:title') === 'لحظة على ناس لايف', 'share /m/ still generic for the private moment');
+await pool.query("DELETE FROM map_posts WHERE user_id LIKE 'SF%'; DELETE FROM profiles WHERE user_id LIKE 'SF%'; DELETE FROM users WHERE id LIKE 'SF%'; ANALYZE users; ANALYZE profiles; ANALYZE map_posts");
 
 await app.close();
+
+// ---- احتياط map_posts.js المغلق: عمود الخصوصية موجود وقاعدة profile_ext.js غائبة (لم تُسجَّل، أو تعثّرت قبل نشرها) → لحظة الملف الخاص
+// لصاحبها وحده لا «الجميع عامّ»: الغريب والضيف ومن أضافها من طرفه لا يرونها، والصديقة أيضاً حتى تعود القاعدة (إغلاق عند الشك)،
+// والعامة كما هي، وتنبيه في السجل. الإضافات الأخرى تمر بجزء map_posts.js فترث الاحتياط نفسه
+const dropRule = () => { for (const k of ['naslifeAuthorVisibleSql', 'naslifeIsPublic', 'naslifeFriendIds', 'naslifePrivacyStatus']) delete globalThis[k]; };
+const bootWarned = async (full, opts) => {
+  const warns = [], warn0 = console.warn;
+  console.warn = (...a) => { warns.push(a.join(' ')); };
+  try { return { a: await boot(full, opts), warns }; } finally { console.warn = warn0; }
+};
+const closedSweep = async (label) => {
+  const s = {};
+  for (const [k, u] of Object.entries(VIEWERS)) {
+    const m = (await call('GET', '/mapposts?bbox=39.8,22.8,40.0,23.0', { user: u, expect: 200 })).j.map((p) => p.id);
+    s[k] = { priv: m.includes(priv.id), pub: m.includes(pub.id) };
+    await call('GET', `/mapposts/${priv.id}`, { user: u, expect: k === 'author' ? 200 : 404 });
+  }
+  for (const [k, v] of Object.entries(s)) check(v.priv === (k === 'author') && v.pub === true, `${label}: ${k} ${k === 'author' ? 'sees' : 'does not see'} the private moment, sees the public one`, JSON.stringify(v));
+};
+{
+  dropRule();
+  const r = await bootWarned(true, { profileExt: false });
+  app = r.a;
+  check(typeof globalThis.naslifeAuthorVisibleSql !== 'function' && r.warns.some((w) => w.includes('naslifeAuthorVisibleSql')), 'no profile_ext rule: map_posts serves on its closed fallback and warns at ready', JSON.stringify(r.warns));
+  const lf = globalThis.naslifeMomentVisibleSql('p', '$1::text'), sf = globalThis.naslifeMomentVisibleSql('p', '$1::text', { single: true });
+  check(lf.includes('NOT IN (SELECT vis_f."user_id" FROM "profiles" vis_f') && sf.includes('EXISTS (SELECT 1 FROM "profiles" vis_f WHERE vis_f."user_id" = p.user_id'), 'fallback has the same two forms (list set, single-row probe)', `${lf} || ${sf}`);
+  await closedSweep('fallback GET /mapposts + /mapposts/:id');
+  for (const [k, u] of Object.entries(VIEWERS)) {
+    const ids = (await call('GET', '/feed?kind=moment&lat=22.9&lng=39.9', { user: u, expect: 200 })).j.items.map((i) => i.id);
+    check(ids.includes(priv.id) === (k === 'author') && ids.includes(pub.id), `fallback /feed (row.js): ${k}`, JSON.stringify(ids));
+  }
+  await call('POST', `/mapposts/${priv.id}/like`, { user: FRIEND, expect: 404 });
+  await call('GET', `/moments/${priv.id}/reactions`, { user: STRANGER, expect: 404 });
+  await call('POST', '/wishlist', { body: { kind: 'post', refId: priv.id }, user: STRANGER, expect: 404 });
+  check((await call('GET', `/chat/cards?refs=${encodeURIComponent(`#post/${priv.id}`)}`, { user: STRANGER, expect: 200 })).j.refs[`#post/${priv.id}`] === null, 'fallback chat card #post: none for a stranger');
+  check(meta(await getHtml(`/m/${priv.id}`), 'og:title') === 'لحظة على ناس لايف' && meta(await getHtml(`/m/${pub.id}`), 'og:title') === 'صباح الخير', 'fallback share /m/: private generic, public keeps its preview');
+  // البث الحي: لحظة خاصة جديدة لا تصل إلا صاحبها
+  const h0 = (await call('GET', '/live/wait', { user: null, expect: 200 })).j.seq;
+  const p2 = (await call('POST', '/mapposts', { body: { kind: 'text', bg: '#0A6E78', caption: 'سرّ آخر', lat: 22.902, lng: 39.902 }, user: AUTHOR, expect: 200 })).j;
+  for (const [k, u] of Object.entries(VIEWERS)) {
+    const evs = (await call('GET', `/live/wait?after=${h0}&timeout=0`, { user: u, expect: 200 })).j.events.filter((e) => e.kind === 'post').map((e) => e.data.id);
+    check(evs.includes(p2.id) === (k === 'author'), `fallback live: ${k} ${k === 'author' ? 'gets' : 'does not get'} the new private moment`, JSON.stringify(evs));
+  }
+  await pool.query('DELETE FROM map_posts WHERE id=$1', [p2.id]);
+  await app.close();
+}
 
 // ---- العمود في users بدل جدول الملف (users.is_public كما يكتشفه profile_ext)
 await pool.query('ALTER TABLE profiles DROP COLUMN is_public');
@@ -181,6 +285,11 @@ ids = (await call('GET', '/mapposts', { user: FRIEND, expect: 200 })).j.map((p) 
 check(ids.includes(priv.id), 'users.is_public=false: the friend still sees it');
 ids = (await call('GET', '/feed?kind=moment', { user: null, expect: 200 })).j.items.map((i) => i.id);
 check(!ids.includes(priv.id) && ids.includes(pub.id), 'users.is_public=false: /feed hides it from guests');
+await app.close();
+// الاحتياط يكتشف العمود في users أيضاً
+dropRule();
+({ a: app } = await bootWarned(false, { profileExt: false }));
+await closedSweep('fallback on users.is_public');
 await app.close();
 
 // ---- بلا عمود خصوصية في النواة: الجميع عامّ كما كان
@@ -197,6 +306,42 @@ await call('POST', `/moments/${priv.id}/react`, { body: { emoji: '👏' }, user:
 await call('POST', '/wishlist', { body: { kind: 'post', refId: priv.id }, user: STRANGER, expect: 200 });
 check(meta(await getHtml(`/m/${priv.id}`), 'og:title') === 'سرّ البيت', 'no privacy column → share preview as before');
 await app.close();
+
+// بلا عمود خصوصية وبلا profile_ext.js أيضاً: الجميع عامّ كما كان (الاحتياط لا يغلق ما لا خصوصية له) ولا تنبيه
+{
+  dropRule();
+  const r = await bootWarned(true, { profileExt: false });
+  app = r.a;
+  check(r.warns.length === 0, 'no privacy column, no profile_ext: no warning', JSON.stringify(r.warns));
+  ids = (await call('GET', '/mapposts', { user: null, expect: 200 })).j.map((p) => p.id);
+  check(ids.includes(priv.id) && ids.includes(pub.id), 'no privacy column, no profile_ext → guests see every moment');
+  await call('GET', `/mapposts/${priv.id}`, { user: STRANGER, expect: 200 });
+  await call('POST', `/moments/${priv.id}/react`, { body: { emoji: '😍' }, user: STRANGER, expect: 200 });
+  await app.close();
+}
+
+// ---- القاعدة تُنشر قبل جداول profile_ext.js ومساراتها: تعثّر بعدها (هنا إنشاء جداول الإضافة) يُفشل الإقلاع ويتراجع النشر التلقائي،
+// لكن ما يبقى في العملية لا يرجع إلى الاحتياط: القاعدة كاملة بالأصدقاء منشورة
+await pool.query('ALTER TABLE profiles ADD COLUMN is_public BOOLEAN DEFAULT true');
+await pool.query('UPDATE profiles SET is_public=false WHERE user_id=$1', [AUTHOR]);
+{
+  dropRule();
+  const flaky = { query: (sql, params) => (/CREATE TABLE IF NOT EXISTS profile_ext/.test(String(sql)) ? Promise.reject(new Error('db hiccup')) : pool.query(sql, params)) };
+  const a = Fastify();
+  a.register((await import('../profile_ext.js')).default, { pool: flaky, auth });
+  let err = null; try { await a.ready(); } catch (e) { err = e; }
+  check(err?.message === 'db hiccup', 'the injected failure happened after discovery (boot fails)', String(err?.message));
+  const f = globalThis.naslifeAuthorVisibleSql;
+  check(typeof f === 'function' && globalThis.naslifePrivacyStatus?.privacy === true, 'the rule was published before the failing step');
+  if (typeof f === 'function') {
+    const sees = async (viewer) => (await pool.query(`SELECT ${f('$1::text', '$2::text', { single: true })} AS v, ${f('$1::text', '$2::text')} AS l`, [AUTHOR, viewer])).rows[0];
+    const [fr, st] = [await sees(FRIEND), await sees(STRANGER)];
+    check(fr.v === true && fr.l === true && st.v === false && st.l === false, 'the published rule is the full one (the friend sees, the stranger does not), in both forms', JSON.stringify({ fr, st }));
+  }
+  await a.close().catch(() => {});
+}
+// لا نترك ملفاً خاصاً في القاعدة المشتركة لحزم أخرى تُقلع map_posts.js وحدها (فيعمل احتياطها)
+await pool.query('ALTER TABLE profiles DROP COLUMN is_public');
 
 await pool.end();
 console.log(fails ? `${fails} FAILED` : 'ALL PRIVATE MOMENTS TESTS PASSED');

@@ -235,6 +235,10 @@ check(it.intro.kind === 'video' && it.intro.sec === 30 && same(dropped, ['https:
 // الظهور: friends فقط → مخفي عن الغريب والضيف، ظاهر للصديق والمالك
 p = await call('GET', `/profiles/${FAHAD}/v2`, { user: KHALID, expect: 200 }); check(p.intro === null, 'intro hidden from a stranger when visibility=friends');
 p = await call('GET', `/profiles/${FAHAD}/v2`, { user: null, expect: 200 }); check(p.intro === null, 'intro hidden from guests when visibility=friends');
+// من أضاف صاحب الملف من طرفه فقط ليس صديقاً هنا أيضاً (تعريف واحد للصديق في الملف واللحظات و«من يراسلني»)
+await pool.query('INSERT INTO contacts(user_id, contact_id) VALUES ($1, $2)', [KHALID, FAHAD]);
+p = await call('GET', `/profiles/${FAHAD}/v2`, { user: KHALID, expect: 200 }); check(p.intro === null && p.flags.isFriend === false, 'intro hidden from a one-way contact when visibility=friends', JSON.stringify(p.flags));
+await pool.query('DELETE FROM contacts WHERE user_id=$1 AND contact_id=$2', [KHALID, FAHAD]);
 p = await call('GET', `/profiles/${FAHAD}/v2`, { user: SARA, expect: 200 }); check(p.intro?.kind === 'video' && p.intro.url === 'https://naslife.app/chat/media/v2.mp4' && p.intro.sec === 30, 'intro visible to a friend', JSON.stringify(p.intro));
 m = await call('GET', '/me/profile/v2', { expect: 200 }); check(m.intro?.kind === 'video', 'intro visible to the owner');
 await call('PUT', '/me/profile/v2', { body: { introVisibility: 'all' }, expect: 200 });
@@ -250,8 +254,16 @@ check(dropped.length === 2, 'second delete is a no-op');
 p = await call('GET', `/profiles/${NOURA}/v2`, { user: KHALID, expect: 200 });
 check(same(Object.keys(p).sort(), ['avatarUrl', 'coverUrl', 'displayName', 'flags', 'id', 'nickname', 'stats']) && p.flags.isPrivate === true && p.flags.isMe === false && same(p.stats, {}) && p.bio === undefined, 'private profile limited for a stranger', JSON.stringify(p));
 p = await call('GET', `/profiles/${NOURA}/v2`, { user: null, expect: 200 }); check(p.flags.isPrivate === true && p.bio === undefined, 'private profile limited for guests');
-p = await call('GET', `/profiles/${NOURA}/v2`, { user: SARA, expect: 200 }); check(p.flags.isPrivate === true && p.flags.isFriend === true && p.bio === 'خاص' && typeof p.stats.posts === 'number', 'private profile full for a friend');
-p = await call('GET', '/me/profile/v2', { user: NOURA, expect: 200 }); check(p.flags.isPrivate === true && p.flags.isMe === true && p.bio === 'خاص' && p.settings && p.completion, 'private profile full for the owner');
+// لحظة نشطة لنورة: الصديقة والمالكة تعدّانها (القاعدة نفسها التي تفتحها)، ولا عدد لغيرهما
+await pool.query(`INSERT INTO map_posts(id, user_id, status, expires_at) VALUES ($1, '${NOURA}', 'active', now() + interval '1 day')`, [uuid(5)]);
+p = await call('GET', `/profiles/${NOURA}/v2`, { user: SARA, expect: 200 }); check(p.flags.isPrivate === true && p.flags.isFriend === true && p.bio === 'خاص' && p.stats.posts === 1, 'private profile full for a friend, with the moment she can open counted', JSON.stringify(p.stats));
+// من أضاف صاحبة الملف الخاص من طرفه فقط (طلب غير مقبول) ليس صديقاً: الملف المختصر كالغريب، بتعريف اللحظات و«من يراسلني» نفسه
+await pool.query('INSERT INTO contacts(user_id, contact_id) VALUES ($1, $2)', [KHALID, NOURA]);
+p = await call('GET', `/profiles/${NOURA}/v2`, { user: KHALID, expect: 200 });
+check(p.flags.isPrivate === true && p.flags.isFriend === false && p.bio === undefined && same(p.stats, {}), 'private profile stays limited for a one-way contact', JSON.stringify(p));
+await pool.query('DELETE FROM contacts WHERE user_id=$1 AND contact_id=$2', [KHALID, NOURA]);
+p = await call('GET', '/me/profile/v2', { user: NOURA, expect: 200 }); check(p.flags.isPrivate === true && p.flags.isMe === true && p.bio === 'خاص' && p.settings && p.completion && p.stats.posts === 1, 'private profile full for the owner');
+await pool.query('DELETE FROM map_posts WHERE id=$1', [uuid(5)]);
 
 // ---- المتابعة
 await call('POST', `/profiles/${FAHAD}/follow`, { user: null, expect: 401 });

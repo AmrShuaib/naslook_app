@@ -51,24 +51,6 @@ export function handleShape(nickname) {
 export default async function profileV2(app, opts) {
   const { pool, auth } = opts;
   if (!pool || !auth) throw new Error("profile_v2: pool and auth are required");
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS profile_ext (
-      user_id TEXT PRIMARY KEY, cover_url TEXT,
-      display_name TEXT NOT NULL DEFAULT '', job_title TEXT NOT NULL DEFAULT '', city TEXT NOT NULL DEFAULT '', district TEXT NOT NULL DEFAULT '',
-      links JSONB NOT NULL DEFAULT '[]',
-      intro_kind TEXT, intro_url TEXT, intro_sec INT, intro_at TIMESTAMPTZ, intro_visibility TEXT NOT NULL DEFAULT 'all',
-      msg_policy TEXT NOT NULL DEFAULT 'all', show_online BOOLEAN NOT NULL DEFAULT true, show_city BOOLEAN NOT NULL DEFAULT true, show_friends BOOLEAN NOT NULL DEFAULT false,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
-    CREATE TABLE IF NOT EXISTS user_follows (follower_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (follower_id, user_id));
-    CREATE INDEX IF NOT EXISTS user_follows_user ON user_follows(user_id, created_at DESC);
-    CREATE TABLE IF NOT EXISTS profile_views (user_id TEXT NOT NULL, viewer_id TEXT NOT NULL, day DATE NOT NULL, PRIMARY KEY (user_id, viewer_id, day));
-    CREATE INDEX IF NOT EXISTS profile_views_user_day ON profile_views(user_id, day);
-    CREATE TABLE IF NOT EXISTS profile_events (id BIGSERIAL PRIMARY KEY, user_id TEXT NOT NULL, actor_id TEXT, kind TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
-    CREATE INDEX IF NOT EXISTS profile_events_user_at ON profile_events(user_id, created_at DESC);
-    -- نوع الحساب هنا لا في النواة: PUT /me/profile في النواة يرفض «pro» (bad-account-type) ففشل حفظ الملف المهني كله
-    ALTER TABLE profile_ext ADD COLUMN IF NOT EXISTS account_type TEXT;
-  `);
-
   // ---- اكتشاف جداول النواة وأعمدتها (كما في profile.js وadmin.js) حتى لا نفترض أسماءً غير موجودة
   const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
   const tables = new Set((await pool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")).rows.map((r) => r.table_name));
@@ -107,6 +89,77 @@ export default async function profileV2(app, opts) {
     const b = pick(c, "contact_id", "friend_id", "other_id", "peer_id", "user_b", "b_id", "to_id", "contact", "friend");
     if (a && b && a !== b) { C = { table: t, a, b }; break; }
   }
+  // ---- خصوصية الملف للإضافات الأخرى (أولها لحظات الخريطة في map_posts.js وكل ما يقرأ منها): «ملف عام» مطفأ في النواة
+  // (is_public=false في users أو في جدول الملف، كما يقرؤه coreProfile) = ما ينشره صاحبه لا يراه إلا هو وأصدقاؤه.
+  // الصديق بتعريف «من يراسلني» نفسه (hasContact): من أضافه صاحب الحساب إلى جهات اتصاله، فطلب صداقة من الطرف الآخر وحده لا يفتح شيئاً،
+  // وهو نفسه ما يفتح الملف الخاص في buildProfile. بلا عمود الخصوصية في النواة = الجميع عامّ (كما كان قبل)، وبلا جدول جهات اتصال = لا أصدقاء.
+  // تُنشر هنا قبل جداول الإضافة ومساراتها: ما يتعثّر بعدها لا يترك map_posts.js على احتياطه (الذي يغلق لحظات الملف الخاص حتى عن الأصدقاء).
+  const typeOf = async (t, c) => { try { return (await pool.query("SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2", [t, c])).rows[0]?.data_type ?? null; } catch { return null; } };
+  // عمود غير نصي (uuid أو رقم) يُحوَّل نصاً حتى يقارن بمعرّف المستخدم؛ النصي يبقى كما هو فيصلح له الفهرس
+  const asText = async (t, c, expr) => (["text", "character varying", "character"].includes(await typeOf(t, c)) ? expr : `${expr}::text`);
+  // أسماء الجداول المستعارة vis_* حتى لا تحجب اسماً مستعاراً في الاستعلام الخارجي
+  const UID = U.ok && U.isPublic ? await asText("users", "id", "vis_u.id") : null;
+  const PKEY = P && PC.isPublic ? await asText(P.table, P.key, `vis_p.${q(P.key)}`) : null;
+  const CA = C ? await asText(C.table, C.a, `vis_c.${q(C.a)}`) : null, CB = C ? await asText(C.table, C.b, `vis_c.${q(C.b)}`) : null;
+  // «أصحاب الملفات الخاصة» بشكلين: للقوائم مجموعة غير مرتبطة بالصف يجزّئها Postgres مرة لكل استعلام (hashed SubPlan)، ولقراءة صف واحد
+  // فحص مفتاح مرتبط بالصف (EXISTS على users.id ومفتاح جدول الملف). الشكل المرتبط وحده لا يصلح للقوائم: Postgres يقدّر كلفته بفحصٍ لكل صف
+  // فتتضخم كلفة استعلام آلاف اللحظات ويبدأ JIT (عشرات إلى مئات المللي ثانية)، وغير المرتبط وحده يمسح جدول الملفات في كل قراءة لصف واحد
+  const PRIVATE_IDS = [
+    UID && `SELECT ${UID} FROM users vis_u WHERE vis_u.${q(U.isPublic)} = false AND vis_u.id IS NOT NULL`,
+    PKEY && `SELECT ${PKEY} FROM ${q(P.table)} vis_p WHERE vis_p.${q(PC.isPublic)} = false AND vis_p.${q(P.key)} IS NOT NULL`,
+  ].filter(Boolean).join(" UNION ALL ") || null;
+  const privateSql = (who) => {
+    const parts = [];
+    if (UID) parts.push(`EXISTS (SELECT 1 FROM users vis_u WHERE ${UID} = ${who} AND vis_u.${q(U.isPublic)} = false)`);
+    if (PKEY) parts.push(`EXISTS (SELECT 1 FROM ${q(P.table)} vis_p WHERE ${PKEY} = ${who} AND vis_p.${q(PC.isPublic)} = false)`);
+    return parts.length ? `(${parts.join(" OR ")})` : null;
+  };
+  // شرط SQL منطقي: يرى viewerExpr (تعبير نصي، NULL للضيف) محتوى authorExpr؟ صاحبه دائماً، والملف العام للجميع، والخاص لأصدقائه فقط.
+  // single: true لاستعلام يقرأ صفاً واحداً (أو صفوف صاحب واحد): فحوص مفاتيح بدل بناء المجموعة كلها. فحص جهات الاتصال آخراً فلا يُقيَّم
+  // إلا لصف صاحبه خاص. ميزة «الجمهور» لكل لحظة تبني فوقه في map_posts.js لا هنا.
+  const authorVisibleSql = (authorExpr, viewerExpr, { single = false } = {}) => {
+    // بلا عمود خصوصية: صحيح دائماً، مع ذكر معامل المشاهد حتى لا يرفض Postgres معاملاً مرسلاً لا يظهر في الاستعلام
+    if (!PRIVATE_IDS) return `(${viewerExpr} IS NULL OR TRUE)`;
+    if (single) {
+      const friend = C ? ` OR EXISTS (SELECT 1 FROM ${q(C.table)} vis_c WHERE ${CA} = ${authorExpr} AND ${CB} = ${viewerExpr})` : "";
+      return `COALESCE((${authorExpr} = ${viewerExpr} OR NOT ${privateSql(authorExpr)}${friend}), false)`;
+    }
+    const friend = C ? ` OR ${authorExpr} IN (SELECT ${CA} FROM ${q(C.table)} vis_c WHERE ${CB} = ${viewerExpr} AND vis_c.${q(C.a)} IS NOT NULL)` : "";
+    return `COALESCE((${authorExpr} = ${viewerExpr} OR ${authorExpr} NOT IN (${PRIVATE_IDS})${friend}), false)`;
+  };
+  globalThis.naslifeAuthorVisibleSql = authorVisibleSql;
+  globalThis.naslifePrivacyStatus = { privacy: !!PRIVATE_IDS, friends: !!C };
+  // ملف المستخدم عام؟ (true بلا عمود خصوصية). خطأ القاعدة يُرمى ليقرر المستدعي (البث الحي يغلق عند الشك)
+  globalThis.naslifeIsPublic = async (uid) => {
+    const id = String(uid ?? ""), priv = privateSql("$1::text"); if (!id || !priv) return true;
+    return (await pool.query(`SELECT ${priv} AS priv`, [id])).rows[0]?.priv !== true;
+  };
+  // أصدقاء المستخدم بالتعريف أعلاه: من أضافهم هو إلى جهات اتصاله (حتى 5000)
+  globalThis.naslifeFriendIds = async (uid) => {
+    const id = String(uid ?? ""); if (!id || !C) return [];
+    return (await pool.query(`SELECT DISTINCT ${CB} AS id FROM ${q(C.table)} vis_c WHERE ${CA} = $1 AND vis_c.${q(C.b)} IS NOT NULL LIMIT 5000`, [id])).rows.map((r) => r.id);
+  };
+
+  // لا تُغلَّف هذه الإضافة بـ try/catch: تعثّرها يُفشل إقلاع Fastify كله فيتراجع النشر التلقائي بدل خادم بلا ملفات. القاعدة أعلاه نُشرت
+  // قبل هذا السطر، ولو غابت كلها (إضافة غير مسجّلة) فاحتياط map_posts.js يغلق لحظات الملف الخاص ولا يفتحها
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS profile_ext (
+      user_id TEXT PRIMARY KEY, cover_url TEXT,
+      display_name TEXT NOT NULL DEFAULT '', job_title TEXT NOT NULL DEFAULT '', city TEXT NOT NULL DEFAULT '', district TEXT NOT NULL DEFAULT '',
+      links JSONB NOT NULL DEFAULT '[]',
+      intro_kind TEXT, intro_url TEXT, intro_sec INT, intro_at TIMESTAMPTZ, intro_visibility TEXT NOT NULL DEFAULT 'all',
+      msg_policy TEXT NOT NULL DEFAULT 'all', show_online BOOLEAN NOT NULL DEFAULT true, show_city BOOLEAN NOT NULL DEFAULT true, show_friends BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS user_follows (follower_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (follower_id, user_id));
+    CREATE INDEX IF NOT EXISTS user_follows_user ON user_follows(user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS profile_views (user_id TEXT NOT NULL, viewer_id TEXT NOT NULL, day DATE NOT NULL, PRIMARY KEY (user_id, viewer_id, day));
+    CREATE INDEX IF NOT EXISTS profile_views_user_day ON profile_views(user_id, day);
+    CREATE TABLE IF NOT EXISTS profile_events (id BIGSERIAL PRIMARY KEY, user_id TEXT NOT NULL, actor_id TEXT, kind TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE INDEX IF NOT EXISTS profile_events_user_at ON profile_events(user_id, created_at DESC);
+    -- نوع الحساب هنا لا في النواة: PUT /me/profile في النواة يرفض «pro» (bad-account-type) ففشل حفظ الملف المهني كله
+    ALTER TABLE profile_ext ADD COLUMN IF NOT EXISTS account_type TEXT;
+  `);
+
   const postsOk = await has("map_posts", "user_id", "status", "expires_at");
   const reviewsOk = await has("market_reviews", "seller_id", "rating");
   const ordersOk = await has("market_orders", "seller_id", "status");
@@ -179,7 +232,6 @@ export default async function profileV2(app, opts) {
     } catch { /* ignore */ }
     return out;
   };
-  const isFriend = async (a, b) => (a && b && a !== b && C ? exists(`SELECT 1 FROM ${q(C.table)} WHERE (${q(C.a)}=$1 AND ${q(C.b)}=$2) OR (${q(C.a)}=$2 AND ${q(C.b)}=$1) LIMIT 1`, [a, b]) : false);
   // ---- «من يراسلني»: النواة تملك POST /messages ولا تمر عليه الإضافات، فهذه القاعدة يفحصها التطبيق مسبقاً عبر
   // GET /profiles/:id/can-message وتطابقها flags.canMessage في الملف. الصديق هنا من أضافه صاحب الحساب نفسه
   // (طلب صداقة من طرف واحد لا يفتح المراسلة)، والرد على من كتب لي أولاً مسموح دائماً، والحظر يمنع في كل الحالات.
@@ -212,9 +264,12 @@ export default async function profileV2(app, opts) {
   const loadExt = async (id) => { try { return (await pool.query("SELECT * FROM profile_ext WHERE user_id=$1", [id])).rows[0] ?? null; } catch { return null; } };
   const EXT_DEFAULTS = { cover_url: null, display_name: "", job_title: "", city: "", district: "", links: [], intro_kind: null, intro_url: null, intro_sec: null, intro_at: null, intro_visibility: "all", msg_policy: "all", show_online: true, show_city: true, show_friends: false, account_type: null };
   const followersOf = (id) => count("SELECT count(*)::int AS n FROM user_follows WHERE user_id=$1", [id]);
-  const stats = async (id) => {
+  // عدد اللحظات بقاعدة الرؤية نفسها (map_posts.js، وإلا قاعدة هذا الملف) حتى يطابق ما يفتحه الزائر في تبويب المنشورات، ويتبع «الجمهور»
+  // لكل لحظة حين يأتي. single: لحظات صاحب واحد، ففحص مفتاح لكل لحظة لا بناء مجموعة أصحاب الملفات الخاصة كلها
+  const momentVisible = (viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f("map_posts", viewerExpr, { single: true }) : authorVisibleSql("map_posts.user_id", viewerExpr, { single: true }); };
+  const stats = async (id, viewer = null) => {
     const [posts, followers, following, circles, friends, completedOrders] = await Promise.all([
-      postsOk ? count("SELECT count(*)::int AS n FROM map_posts WHERE user_id=$1 AND status='active' AND expires_at > now()", [id]) : 0,
+      postsOk ? count(`SELECT count(*)::int AS n FROM map_posts WHERE user_id=$1 AND status='active' AND expires_at > now() AND ${momentVisible("$2::text")}`, [id, viewer ?? null]) : 0,
       followersOf(id),
       count("SELECT count(*)::int AS n FROM user_follows WHERE follower_id=$1", [id]),
       M ? count(`SELECT count(*)::int AS n FROM ${q(M.table)} WHERE ${q(M.key)}=$1`, [id]) : 0,
@@ -229,7 +284,9 @@ export default async function profileV2(app, opts) {
   // ---- بناء كائن الملف كما يراه الزائر (أو صاحبه)
   async function buildProfile(u, viewer) {
     const id = u.id, isMe = !!viewer && viewer === id;
-    const [ext0, core, friend, following] = await Promise.all([loadExt(id), coreProfile(id, u), isFriend(viewer, id), viewer && viewer !== id ? exists("SELECT 1 FROM user_follows WHERE follower_id=$1 AND user_id=$2", [viewer, id]) : false]);
+    // الصديق من أضافه صاحب الملف (hasContact)، تعريف اللحظات و«من يراسلني» نفسه: من أضاف صاحب ملف خاص من طرفه وحده (طلب لم يُقبل)
+    // يأخذ الملف المختصر كالغريب، فلا تفاصيل ولا عدّ للحظات لا يفتحها ولا التعريف المخصص للأصدقاء
+    const [ext0, core, friend, following] = await Promise.all([loadExt(id), coreProfile(id, u), hasContact(id, viewer), viewer && viewer !== id ? exists("SELECT 1 FROM user_follows WHERE follower_id=$1 AND user_id=$2", [viewer, id]) : false]);
     const ext = { ...EXT_DEFAULTS, ...(ext0 ?? {}) };
     const links = (Array.isArray(ext.links) ? ext.links : []).map(normaliseLink).filter(Boolean).slice(0, MAX_LINKS).map((l) => ({ ...l, url: linkUrl(l.kind, l.value) }));
     const isPrivate = core.isPublic === false;
@@ -241,7 +298,7 @@ export default async function profileV2(app, opts) {
     const showCity = isMe || ext.show_city === true;
     const showFriends = isMe || ext.show_friends === true;
     const introVisible = !!ext.intro_kind && (isMe || ext.intro_visibility === "all" || friend);
-    const st = await stats(id);
+    const st = await stats(id, viewer);
     const memberSince = iso(u.createdAt);
     return {
       ...head, bio: core.bio, accountType: ACCOUNT_TYPES.includes(ext.account_type) ? ext.account_type : core.accountType, jobTitle: ext.job_title, city: showCity ? ext.city : "", district: showCity ? ext.district : "", links,
@@ -426,40 +483,6 @@ export default async function profileV2(app, opts) {
     try { if ((await globalThis.naslifeNickReserved?.(s.nickname)) === true) return { valid: true, available: false, reason: "taken" }; } catch { /* ignore */ }
     return { valid: true, available: true, reason: null };
   });
-
-  // ---- خصوصية الملف للإضافات الأخرى (أولها لحظات الخريطة في map_posts.js وكل ما يقرأ منها): «ملف عام» مطفأ في النواة
-  // (is_public=false في users أو في جدول الملف، كما يقرؤه coreProfile) = ما ينشره صاحبه لا يراه إلا هو وأصدقاؤه.
-  // الصديق بتعريف «من يراسلني» نفسه (hasContact): من أضافه صاحب الحساب إلى جهات اتصاله، فطلب صداقة من الطرف الآخر وحده لا يفتح شيئاً.
-  // بلا عمود الخصوصية في النواة = الجميع عامّ (كما كان قبل)، وبلا جدول جهات اتصال = لا أصدقاء. الأجزاء استعلامات فرعية غير مرتبطة
-  // بالصف فيحسبها Postgres مرة لكل استعلام (hashed subplan) لا مرة لكل لحظة.
-  const typeOf = async (t, c) => { try { return (await pool.query("SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2", [t, c])).rows[0]?.data_type ?? null; } catch { return null; } };
-  // عمود غير نصي (uuid أو رقم) يُحوَّل نصاً حتى يقارن بمعرّف المستخدم؛ النصي يبقى كما هو فيصلح له الفهرس
-  const asText = async (t, c, expr) => (["text", "character varying", "character"].includes(await typeOf(t, c)) ? expr : `${expr}::text`);
-  const privParts = [];
-  if (U.ok && U.isPublic) privParts.push(`SELECT ${await asText("users", "id", "pu.id")} FROM users pu WHERE pu.${q(U.isPublic)} = false AND pu.id IS NOT NULL`);
-  if (P && PC.isPublic) privParts.push(`SELECT ${await asText(P.table, P.key, `pp.${q(P.key)}`)} FROM ${q(P.table)} pp WHERE pp.${q(PC.isPublic)} = false AND pp.${q(P.key)} IS NOT NULL`);
-  const PRIVATE_IDS = privParts.length ? privParts.join(" UNION ALL ") : null;
-  const CA = C ? await asText(C.table, C.a, `pc.${q(C.a)}`) : null, CB = C ? await asText(C.table, C.b, `pc.${q(C.b)}`) : null;
-  // شرط SQL منطقي: يرى viewerExpr (تعبير نصي، NULL للضيف) محتوى authorExpr؟ صاحبه دائماً، والملف العام للجميع، والخاص لأصدقائه فقط.
-  // ميزة «الجمهور» لكل لحظة تبني فوقه في map_posts.js (naslifeMomentVisibleSql) لا هنا.
-  const authorVisibleSql = (authorExpr, viewerExpr) => {
-    // بلا عمود خصوصية: صحيح دائماً، مع ذكر معامل المشاهد حتى لا يرفض Postgres معاملاً مرسلاً لا يظهر في الاستعلام
-    if (!PRIVATE_IDS) return `(${viewerExpr} IS NULL OR TRUE)`;
-    const friend = C ? ` OR ${authorExpr} IN (SELECT ${CA} FROM ${q(C.table)} pc WHERE ${CB} = ${viewerExpr} AND pc.${q(C.a)} IS NOT NULL)` : "";
-    return `COALESCE((${authorExpr} = ${viewerExpr} OR ${authorExpr} NOT IN (${PRIVATE_IDS})${friend}), false)`;
-  };
-  globalThis.naslifeAuthorVisibleSql = authorVisibleSql;
-  globalThis.naslifePrivacyStatus = { privacy: !!PRIVATE_IDS, friends: !!C };
-  // ملف المستخدم عام؟ (true بلا عمود خصوصية). خطأ القاعدة يُرمى ليقرر المستدعي (البث الحي يغلق عند الشك)
-  globalThis.naslifeIsPublic = async (uid) => {
-    const id = String(uid ?? ""); if (!id || !PRIVATE_IDS) return true;
-    return !(await pool.query(`SELECT 1 FROM (${PRIVATE_IDS}) x(id) WHERE x.id = $1 LIMIT 1`, [id])).rowCount;
-  };
-  // أصدقاء المستخدم بالتعريف أعلاه: من أضافهم هو إلى جهات اتصاله (حتى 5000)
-  globalThis.naslifeFriendIds = async (uid) => {
-    const id = String(uid ?? ""); if (!id || !C) return [];
-    return (await pool.query(`SELECT DISTINCT ${CB} AS id FROM ${q(C.table)} pc WHERE ${CA} = $1 AND pc.${q(C.b)} IS NOT NULL LIMIT 5000`, [id])).rows.map((r) => r.id);
-  };
 
   // ---- للإضافات الأخرى وحذف الحساب
   globalThis.naslifeProfileExt = async (uid) => loadExt(String(uid ?? ""));

@@ -47,13 +47,14 @@ async function setup(app, opts) {
   };
   const nickname = async (id) => { try { return (await pool.query("SELECT nickname FROM users WHERE id=$1", [id])).rows[0]?.nickname || ""; } catch { return ""; } };
 
-  // من يرى اللحظة: جزء SQL الواحد من map_posts.js (لحظات الملف الخاص لصاحبها وأصدقائه)؛ بلا الإضافة = الجميع كما كان
-  const momentVisible = (alias, viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, viewerExpr) : `(${viewerExpr} IS NULL OR TRUE)`; };
+  // من يرى اللحظة: جزء SQL الواحد من map_posts.js (لحظات الملف الخاص لصاحبها وأصدقائه، واحتياطه المغلق)؛ بلا map_posts.js لا نعرف
+  // القاعدة فلا يتفاعل المشاهد إلا مع لحظته (إغلاق عند الشك لا «الجميع عامّ»)
+  const momentVisible = (alias, viewerExpr, opts) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, viewerExpr, opts) : `COALESCE(${alias}.user_id = ${viewerExpr}, false)`; };
   // اللحظة التي يُتفاعل معها: موجودة ونشطة (إلا قراءة صاحبها للحظته المخفية)، يراها المشاهد (من لم يعد صديقاً لصاحب ملف خاص
   // = 404 كأنها غير موجودة، قراءةً وتفاعلاً)، وبلا حظر بين المشاهد وصاحبها
   async function load(id, uid, { ownerMayRead = false } = {}) {
     if (!UUID_RE.test(id)) return { code: 404, error: "not-found" };
-    const p = (await pool.query(`SELECT p.id, p.user_id, p.status, ${momentVisible("p", "$2::text")} AS visible FROM map_posts p WHERE p.id=$1`, [id, uid ?? null])).rows[0];
+    const p = (await pool.query(`SELECT p.id, p.user_id, p.status, ${momentVisible("p", "$2::text", { single: true })} AS visible FROM map_posts p WHERE p.id=$1`, [id, uid ?? null])).rows[0];
     if (!p) return { code: 404, error: "not-found" };
     if (p.status !== "active" && !(ownerMayRead && uid && p.user_id === uid)) return { code: 404, error: "not-found" };
     if (p.visible === false && p.user_id !== uid) return { code: 404, error: "not-found" };

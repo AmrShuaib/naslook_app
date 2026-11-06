@@ -88,11 +88,15 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
     final blocked = !isMe && isBlockedId(ref.watch(blockedIdsProvider), id);
     final coreErr = core.error;
     final corePrivate = coreErr is ApiException && (coreErr.statusCode == 403 || coreErr.statusCode == 404);
+    // الصديق في الملف الخاص بتعريف الخادم الواحد (flags.isFriend: صاحب الملف أضافني)، وهو ما يفتح لحظاته ومراسلته «للأصدقاء»؛
+    // إضافتي له وحدها لا تفتح الملف ولا عدد منشوراته
     final private = corePrivate || (p2 != null && p2.flags.isPrivate && !p2.flags.isFriend && !p2.flags.isMe && !isMe);
     final since = p2?.since ?? pc?.createdAt;
     final canMessage = p2?.flags.canMessage ?? true;
-    // أضفته ولم يضفني: «صديق» من جهتي فقط، وسياسة الأصدقاء عنده تنتظر قبوله (لا نقول «صديق» و«غير صديق» معاً)
-    final friendPending = !canMessage && p2?.flags.messageReason == 'friends-only' && contacts.any((c) => c.id == id);
+    // أضفته ولم يضفني: «صديق» من جهتي فقط، وسياسة الأصدقاء عنده أو ملفه الخاص ينتظران قبوله (لا نقول «صديق» و«غير الأصدقاء» معاً)
+    final iAdded = contacts.any((c) => c.id == id);
+    final msgPending = iAdded && !canMessage && p2?.flags.messageReason == 'friends-only';
+    final friendPending = msgPending || (iAdded && p2 != null && p2.flags.isPrivate && !p2.flags.isFriend && !isMe);
 
     return Scaffold(
       backgroundColor: Joy.bg,
@@ -202,7 +206,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
                               alignment: Alignment.center,
                               decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(999)),
                               child: Text(
-                                  friendPending
+                                  msgPending
                                       ? 'بانتظار قبول طلب الصداقة'
                                       : switch (p2?.flags.messageReason) { 'nobody' => 'لا يستقبل رسائل جديدة', 'blocked' => 'حظرت هذا الشخص', _ => 'لا يستقبل رسائل من غير الأصدقاء' },
                                   style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
@@ -252,7 +256,11 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
                   const SizedBox(height: 14),
                 ],
                 if (private)
-                  const EmptyState(key: Key('private-state'), icon: Icons.lock_outline_rounded, title: 'ملف خاص', subtitle: 'تفاصيل هذا المستخدم تظهر لأصدقائه فقط')
+                  EmptyState(
+                      key: const Key('private-state'),
+                      icon: Icons.lock_outline_rounded,
+                      title: 'ملف خاص',
+                      subtitle: friendPending ? 'تظهر تفاصيله ولحظاته بعد أن يقبل طلب صداقتك' : 'تفاصيل هذا المستخدم ولحظاته تظهر لأصدقائه فقط')
                 else if (core.isLoading && p2 == null)
                   const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
                 else if (coreErr != null && p2 == null)

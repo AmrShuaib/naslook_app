@@ -85,8 +85,10 @@ export default async function wishlist(app, opts) {
         }
         case "post": {
           if (!tables.post || !UUID_RE.test(refId)) return null;
-          // visible: قاعدة map_posts.js الواحدة (لحظة صاحب الملف الخاص لا يراها إلا أصدقاؤه)؛ من لم يعد يراها يأخذ البطاقة العامة
-          const vis = typeof globalThis.naslifeMomentVisibleSql === "function" ? globalThis.naslifeMomentVisibleSql("map_posts", "$2::text") : "($2::text IS NULL OR TRUE)";
+          // visible: قاعدة map_posts.js الواحدة (لحظة صاحب الملف الخاص لا يراها إلا أصدقاؤه)؛ من لم يعد يراها يأخذ البطاقة العامة.
+          // لحظة واحدة لكل عنصر (حتى 300 في الطلب و5000 في الكنس) ففحص مفتاح (single). بلا map_posts.js لا نعرف القاعدة فلا تُكشف إلا
+          // لحظة الحافظ نفسه (إغلاق عند الشك)
+          const vis = typeof globalThis.naslifeMomentVisibleSql === "function" ? globalThis.naslifeMomentVisibleSql("map_posts", "$2::text", { single: true }) : "COALESCE(map_posts.user_id = $2::text, false)";
           const r = await pool.query(`SELECT user_id, title, caption, price, media_url, kind, status, expires_at, ${vis} AS visible FROM map_posts WHERE id=$1`, [refId, uid ?? null]);
           const p = r.rows[0]; if (!p) return null;
           // صاحب اللحظة يرى لحظته المخفية كما في GET /mapposts/:id

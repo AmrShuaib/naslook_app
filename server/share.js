@@ -136,7 +136,8 @@ ${metaTags(meta)}
   // اللحظة المخفية أو المحجوبة أو المحذوفة تُعرض بوسوم عامة بلا نص ولا صورة.
   // اللحظة الخاصة (ملف صاحبها غير عام، القاعدة من map_posts.js) كالمخفية: المعاينة من منظور الضيف لأن من يقرأ الوسوم بلا جلسة.
   const MEDIA_NAME = /\/chat\/media\/([a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5})(?:[?#].*)?$/i;
-  const momentVisible = (alias) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, "NULL::text") : "true"; };
+  // لحظة واحدة: فحص مفتاح (single). بلا map_posts.js لا نعرف القاعدة: كل لحظة بالوسوم العامة (إغلاق عند الشك)
+  const momentVisible = (alias) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, "NULL::text", { single: true }) : "false"; };
   app.get("/m/:id", async (req, reply) => {
     const id = String(req.params.id ?? "").toLowerCase();
     const ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);

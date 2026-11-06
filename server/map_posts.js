@@ -124,22 +124,72 @@ export default async function posts(app, opts) {
   const many = async (rows, uid) => { const cache = new Map(); const res = []; for (const r of rows) { if (!cache.has(r.user_id)) cache.set(r.user_id, await person(r.user_id)); res.push({ ...(await out(r, uid)), user: cache.get(r.user_id) }); } return res; };
 
   // ---- من يرى اللحظة: جزء SQL واحد تستعمله كل قراءة للحظات (القوائم هنا، والصف والتغذية في row.js، ورابط المشاركة في share.js،
-  // والتفاعلات في moment_extras.js، والمحفوظات في wishlist.js). صاحبها يراها دائماً، ولحظات صاحب الملف الخاص («ملف عام» مطفأ)
-  // لا يراها إلا أصدقاؤه، بقاعدة profile_ext.js (naslifeAuthorVisibleSql). ميزة «الجمهور» لكل لحظة (الافتراضي «الأصدقاء» بقرار
-  // المالك) تضيف شرطها هنا وفي momentAudience وحدهما فتسري على المسارات كلها. alias اسم جدول map_posts في الاستعلام، وviewerExpr
-  // تعبير نصي لمعرّف المشاهد (NULL للضيف). بلا profile_ext (أو بلا عمود الخصوصية في النواة) = الجميع عامّ كما كان.
-  const momentVisibleSql = (alias, viewerExpr) => {
-    const f = globalThis.naslifeAuthorVisibleSql;
+  // والتفاعلات في moment_extras.js، والمحفوظات في wishlist.js، وبطاقة المحادثة في chat_cards.js، والبحث المحفوظ في saved_search.js، وعدّ
+  // المنشورات في profile_ext.js). صاحبها يراها دائماً، ولحظات صاحب الملف الخاص («ملف عام» مطفأ) لا يراها إلا أصدقاؤه، بقاعدة
+  // profile_ext.js (naslifeAuthorVisibleSql). ميزة «الجمهور» لكل لحظة (الافتراضي «الأصدقاء» بقرار المالك) تضيف شرطها هنا وفي
+  // momentAudience وحدهما فتسري على المسارات كلها. alias اسم جدول map_posts في الاستعلام، وviewerExpr تعبير نصي لمعرّف المشاهد
+  // (NULL للضيف)، و{ single: true } لاستعلام يقرأ لحظة واحدة (فحص مفتاح مرتبط بالصف بدل مجموعة تُجزَّأ للقائمة كلها؛ السبب في
+  // profile_ext.js). بلا عمود الخصوصية في النواة = الجميع عامّ كما كان.
+  //
+  // احتياط مغلق: هذه الإضافة تُقلع قبل profile_ext.js، ولو غابت قاعدته (لم تُسجَّل، أو تعثّرت قبل نشرها لو غُلّفت يوماً بـtry/catch) لا
+  // تصير لحظات الملفات الخاصة عامة. نكتشف عمود الخصوصية بأنفسنا عند الإقلاع (users.is_public، وجدول ملف بمفتاح مستخدم: profiles وما يشبهه كما في
+  // profile_ext.js) ونبني جزءاً محافظاً: صاحبها، أو صاحب ملف ليس خاصاً. أصدقاء صاحب الملف الخاص لا يرونها حتى تعود القاعدة (إغلاق عند الشك).
+  const TEXTY = new Set(["text", "character varying", "character"]);
+  const qi = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
+  const privProbes = [];
+  {
+    const cols = new Map();
+    for (const r of (await pool.query(`SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema='public'
+        AND table_name IN (SELECT table_name FROM information_schema.columns WHERE table_schema='public' AND column_name='is_public')`)).rows) {
+      if (!cols.has(r.table_name)) cols.set(r.table_name, new Map());
+      cols.get(r.table_name).set(r.column_name, r.data_type);
+    }
+    // لكل جدول شكلان كقاعدة profile_ext.js: مجموعة المعرّفات الخاصة للقوائم، وفحص مفتاح لصف واحد
+    const probe = (table, key, type) => {
+      const k = TEXTY.has(type) ? `vis_f.${qi(key)}` : `vis_f.${qi(key)}::text`;
+      return {
+        ids: `SELECT ${k} FROM ${qi(table)} vis_f WHERE vis_f.is_public = false AND vis_f.${qi(key)} IS NOT NULL`,
+        one: (who) => `EXISTS (SELECT 1 FROM ${qi(table)} vis_f WHERE ${k} = ${who} AND vis_f.is_public = false)`,
+      };
+    };
+    const u = cols.get("users");
+    if (u?.has("id")) privProbes.push(probe("users", "id", u.get("id")));
+    for (const [t, c] of cols) {
+      if (t === "users") continue;
+      // ما قد يختاره profile_ext.js جدولاً للملف: اسمه فيه profile أو فيه النبذة والمهارات (لا جداول الدوائر وغيرها بعمود is_public)
+      if (!/profile/.test(t) && !(c.has("bio") && c.has("skills"))) continue;
+      const key = ["user_id", "id", "uid"].find((k) => c.has(k));
+      if (key) privProbes.push(probe(t, key, c.get(key)));
+    }
+  }
+  const privateOf = (who) => (privProbes.length ? `(${privProbes.map((x) => x.one(who)).join(" OR ")})` : null);
+  const PRIVATE_IDS = privProbes.length ? privProbes.map((x) => x.ids).join(" UNION ALL ") : null;
+  const closedVisibleSql = (alias, viewerExpr, { single = false } = {}) => {
     // البديل يذكر معامل المشاهد: Postgres يرفض معاملاً مرسلاً لا يظهر في الاستعلام (الإعجاب يمرّره لهذا الجزء وحده)
-    return typeof f === "function" ? f(`${alias}.user_id`, viewerExpr) : `(${viewerExpr} IS NULL OR TRUE)`;
+    if (!PRIVATE_IDS) return `(${viewerExpr} IS NULL OR TRUE)`;
+    const notPrivate = single ? `NOT ${privateOf(`${alias}.user_id`)}` : `${alias}.user_id NOT IN (${PRIVATE_IDS})`;
+    return `COALESCE((${alias}.user_id = ${viewerExpr} OR ${notPrivate}), false)`;
+  };
+  const momentVisibleSql = (alias, viewerExpr, opts = {}) => {
+    const f = globalThis.naslifeAuthorVisibleSql;
+    return typeof f === "function" ? f(`${alias}.user_id`, viewerExpr, opts) : closedVisibleSql(alias, viewerExpr, opts);
   };
   globalThis.naslifeMomentVisibleSql = momentVisibleSql;
-  // جمهور البث الحي للحظة جديدة بالقاعدة نفسها: null = الجميع، وإلا من تُسلَّم إليهم فقط (صاحبها وأصدقاؤه). عند الشك (خطأ القاعدة) صاحبها وحده
+  // بعد تحميل الإضافات كلها: عمود خصوصية بلا قاعدة profile_ext.js = الاحتياط المغلق يعمل، فننبّه في السجل
+  app.addHook("onReady", async () => {
+    if (privProbes.length && typeof globalThis.naslifeAuthorVisibleSql !== "function") {
+      console.warn("map_posts: profile privacy column found but profile_ext.js rule (naslifeAuthorVisibleSql) is missing; private profiles' moments are shown to their authors only until it loads");
+    }
+  });
+  // جمهور البث الحي للحظة جديدة بالقاعدة نفسها: null = الجميع، وإلا من تُسلَّم إليهم فقط (صاحبها وأصدقاؤه). بلا قاعدة profile_ext.js
+  // فالاحتياط نفسه (صاحب الملف الخاص وحده)، وعند الشك (خطأ القاعدة) صاحبها وحده
   const momentAudience = async (p) => {
     try {
       const isPublic = globalThis.naslifeIsPublic;
-      if (typeof isPublic !== "function" || (await isPublic(p.user_id))) return null;
-      return [p.user_id, ...((await globalThis.naslifeFriendIds?.(p.user_id)) ?? [])];
+      if (typeof isPublic === "function") return (await isPublic(p.user_id)) ? null : [p.user_id, ...((await globalThis.naslifeFriendIds?.(p.user_id)) ?? [])];
+      const priv = privateOf("$1::text");
+      if (!priv) return null;
+      return (await pool.query(`SELECT ${priv} AS priv`, [p.user_id])).rows[0]?.priv === false ? null : [p.user_id];
     } catch { return [p.user_id]; }
   };
 
@@ -283,7 +333,7 @@ export default async function posts(app, opts) {
   app.get("/mapposts/:id", async (req, reply) => {
     const uid = await optionalAuth(req);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const p = (await pool.query(`${SELECT.replace(" FROM map_posts p", `, ${momentVisibleSql("p", "$1::text")} AS visible FROM map_posts p`)} WHERE p.id=$2`, [uid, req.params.id])).rows[0];
+    const p = (await pool.query(`${SELECT.replace(" FROM map_posts p", `, ${momentVisibleSql("p", "$1::text", { single: true })} AS visible FROM map_posts p`)} WHERE p.id=$2`, [uid, req.params.id])).rows[0];
     if (!p) return bad(reply, 404, "not-found");
     if (p.status !== "active" && p.user_id !== uid && !(await isAdmin(uid))) return bad(reply, 404, "not-found");
     // لحظة صاحب ملف خاص لغير أصدقائه (والضيف) كأنها غير موجودة؛ الإدارة تراها للإشراف على البلاغات
@@ -349,7 +399,7 @@ export default async function posts(app, opts) {
   app.post("/mapposts/:id/like", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const p = (await pool.query(`SELECT user_id, caption, title, ${momentVisibleSql("map_posts", "$2::text")} AS visible FROM map_posts WHERE id=$1 AND status='active'`, [req.params.id, uid])).rows[0];
+    const p = (await pool.query(`SELECT user_id, caption, title, ${momentVisibleSql("map_posts", "$2::text", { single: true })} AS visible FROM map_posts WHERE id=$1 AND status='active'`, [req.params.id, uid])).rows[0];
     // من لا يرى اللحظة (ملف صاحبها خاص وليس صديقاً) لا يعجب بها
     if (!p || p.visible === false) return bad(reply, 404, "not-found");
     const del = await pool.query("DELETE FROM map_post_likes WHERE post_id=$1 AND user_id=$2 RETURNING 1", [req.params.id, uid]);
