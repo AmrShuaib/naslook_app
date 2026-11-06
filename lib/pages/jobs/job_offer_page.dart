@@ -11,9 +11,11 @@ import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/jobs_providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../business/business_page.dart' show openBusiness;
 import '../chat/chat_thread_page.dart';
+import 'job_trust.dart';
 
 /// صفحة عرض وظيفي من جهة المرشح: تفاصيل الوظيفة والدائرة، ثم الرد (أقبل / لاحقاً / لا يناسبني)، ثم أسئلة الفرز بعد القبول،
 /// ثم طلبي (إجاباتي والمرحلة والمقابلة والمحادثة مع مسؤول التوظيف). الهوية تُكشف للدائرة بعد الإجابة فقط (الخادم يضمن ذلك).
@@ -178,7 +180,14 @@ class _JobOfferPageState extends ConsumerState<JobOfferPage> {
     final m = offer.valueOrNull;
     return Scaffold(
       backgroundColor: Joy.bg,
-      appBar: AppBar(title: const Text('عرض وظيفي')),
+      appBar: AppBar(title: const Text('عرض وظيفي'), actions: [
+        // البلاغ على الوظيفة نفسها (نوع job)؛ إن أُخفيت تختفي بطاقتها من الواردة
+        if (m != null)
+          ReportMenuButton(
+            type: 'job', id: m.jobId, keyPrefix: 'offer-report', reportLabel: 'إبلاغ عن الوظيفة', iconSize: 22, color: Joy.text,
+            onReported: (r) { if (r.hidden) invalidateJobs(ref, matchId: m.id); },
+          ),
+      ]),
       body: offer.when(
         data: _body,
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -245,6 +254,7 @@ class _JobOfferPageState extends ConsumerState<JobOfferPage> {
                         if (b?.verified == true) const Padding(padding: EdgeInsetsDirectional.only(start: 4), child: Icon(Icons.verified_rounded, size: 16, color: Joy.primary)),
                       ]),
                       if (b != null && b.address.isNotEmpty) Text(b.address, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+                      if (j?.unverifiedCircle == true) const Padding(padding: EdgeInsets.only(top: 4), child: UnverifiedCircleTag()),
                     ]),
                   ),
                   if (b != null) const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
@@ -271,6 +281,8 @@ class _JobOfferPageState extends ConsumerState<JobOfferPage> {
               ]),
             ]),
           ),
+          const SizedBox(height: 12),
+          const JobSafetyNote(),
           if (m.reasons.isNotEmpty) ...[
             const SizedBox(height: 12),
             const SectionTitle('لماذا وصلك هذا العرض'),

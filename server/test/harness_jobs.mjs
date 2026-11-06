@@ -1,6 +1,7 @@
 // التوظيف (server/jobs.js): ملف التوظيف، محرك الصياغة (ذكاء اصطناعي ثم القالب)، النشر والمطابقة والحد الأسبوعي وحد الباقة،
 // بطاقة العرض والقبول والأسئلة وكشف الهوية بعد الإجابة، التقديم بلا دعوة، لوحة المرشحين (مراحل، ملاحظات، مقابلات، إحصاءات،
-// تصدير pro)، الإدارة (موافقة، إغلاق، باقات)، المسح الدوري، وبطاقة #job في المحادثة.
+// تصدير pro)، الإدارة (موافقة، إغلاق، باقات)، المسح الدوري، وبطاقة #job في المحادثة. والثقة: لا مطابقة تلقائية لدائرة غير موثّقة
+// (علامة bizVerified في العام، والمسح يطابق بعد التوثيق)، والبلاغ على الوظيفة (نوع job في safety.js) بإخفاء وإعادة.
 import Fastify from 'fastify';
 import pg from 'pg';
 import { scoreMatch, templateDraft, norm } from '../jobs.js';
@@ -36,6 +37,7 @@ app.register((await import('../commerce.js')).default, { pool, auth });
 app.register((await import('../chat_tools.js')).default, { pool, auth });
 app.register((await import('../business.js')).default, { pool, auth });
 app.register((await import('../chat_cards.js')).default, { pool, auth });
+app.register((await import('../safety.js')).default, { pool, auth });
 app.register((await import('../jobs.js')).default, { pool, auth, sweepMs: 0 });
 await app.ready(); await new Promise((r) => setTimeout(r, 400));
 const call = async (method, url, { body = {}, user = 'SA0000001', expect, raw = false } = {}) => {
@@ -86,11 +88,27 @@ let job = await call('POST', `/biz/${B}/manage/jobs`, { body: { title: 'باري
 check(job.status === 'draft' && job.city === 'جدة' && job.assigneeId === SARA && job.questions.length === 4 && job.counts.sent === 0, 'job created as draft with city inferred from address', JSON.stringify([job.status, job.city]));
 await call('POST', `/biz/${B}/manage/jobs`, { body: { title: 'كاشير', assigneeId: KHALID }, expect: 400 });
 let pv = await call('GET', `/biz/${B}/manage/jobs/${job.id}/preview-match`, { expect: 200 });
-check(pv.strong === 1 && pv.good === 0 && pv.profiles === 2, 'preview counts one strong match in the same city', JSON.stringify(pv));
+check(pv.strong === 1 && pv.good === 0 && pv.profiles === 2 && pv.autoMatch === false, 'preview counts one strong match in the same city (auto-match off: unverified circle)', JSON.stringify(pv));
 pv = await call('POST', `/biz/${B}/manage/jobs/preview-match`, { body: { title: 'باريستا', skills: ['قهوة مختصة'], type: 'remote' }, expect: 200 });
 check(pv.profiles === 3 && pv.strong + pv.good === 2, 'unsaved preview for a remote job counts both cities', JSON.stringify(pv));
+// دائرة غير موثّقة: تنشر في القائمة العامة بعلامة، ولا تصل بطاقتها لأحد
 job = await call('POST', `/biz/${B}/manage/jobs/${job.id}/publish`, { expect: 200 });
-check(job.status === 'open' && job.matched.sent === 1 && job.counts.sent === 1, 'publish matched and sent one card', JSON.stringify(job.matched));
+check(job.status === 'open' && job.matched.sent === 0 && job.matched.skipped === 'not-verified' && job.counts.sent === 0, 'unverified circle publishes without auto-matching', JSON.stringify(job.matched));
+check((await notes('job_offer', KHALID)).length === 0, 'no job card pushed for an unverified circle');
+const pubU = await call('GET', `/jobs/${job.id}`, { user: KHALID, expect: 200 });
+check(pubU.bizVerified === false && pubU.biz.verified === false, 'public job carries the unverified flag');
+check((await call('GET', '/jobs', { user: null, expect: 200 })).items.some((x) => x.id === job.id && x.bizVerified === false), 'unverified job stays in the public list with the flag');
+check((await call('POST', '/adminapi/jobs/sweep', { user: ADMIN, expect: 200 })).matched === 0, 'sweep skips open jobs of unverified circles');
+m = await call('GET', `/biz/${B}/manage/jobs`, { user: SARA, expect: 200 });
+check(m.verified === false, 'board tells the hiring team the circle is unverified');
+// التوثيق لاحقاً (أي كاتب يقلب verified): المسح التالي يطابق العرض المفتوح أولاً
+await pool.query("UPDATE biz SET verified=true WHERE id=$1", [B]);
+const swv = await call('POST', '/adminapi/jobs/sweep', { user: ADMIN, expect: 200 });
+check(swv.matched === 1, 'after verification the next sweep matches the open job', JSON.stringify(swv));
+m = await call('GET', `/biz/${B}/manage/jobs`, { user: SARA, expect: 200 });
+job = m.items.find((x) => x.id === job.id);
+check(job.status === 'open' && job.counts.sent === 1 && m.verified === true, 'card sent and counted once the circle is verified', JSON.stringify(job.counts));
+check((await call('GET', `/jobs/${job.id}`, { user: KHALID, expect: 200 })).bizVerified === true, 'verified flag on the public job');
 const n1 = await notes('job_offer', KHALID);
 check(n1.length === 1 && n1[0].data.jobId === job.id && n1[0].title.includes('باريستا'), 'khalid notified with the job offer');
 check((await notes('job_offer', NORA)).length === 0 && (await notes('job_offer', MAJED)).length === 0, 'unrelated and other-city profiles were not matched');
@@ -259,6 +277,45 @@ check(sw3.closed === 1, 'sweep closes a job past its deadline', JSON.stringify(s
 await call('POST', `/biz/${B}/manage/jobs/${job3.id}/publish`, { expect: 200 });
 await call('POST', `/adminapi/jobs/${job3.id}/close`, { body: { reason: 'إعلان مكرر' }, user: ADMIN, expect: 200 });
 check((await notes('job_review', OWNER)).some((n) => n.body === 'إعلان مكرر'), 'admin close notifies the team with the reason');
+// ---- البلاغ على الوظيفة: إخفاء تلقائي عند ثلاثة مبلّغين، إشعار المالك، خروج من القوائم والتقديم والمطابقة، ثم إعادة الإظهار
+globalThis.naslifeSettings.jobsFreeActive = 10;
+const job5 = await call('POST', `/biz/${B}/manage/jobs`, { body: { title: 'باريستا صباحي', description: 'باريستا للفترة الصباحية في فرع الروضة، خبرة في القهوة المختصة وخدمة الزبائن.', skills: ['قهوة مختصة', 'لاتيه آرت'], type: 'full', publish: true }, expect: 200 });
+check(job5.status === 'open' && job5.matched.sent === 1, 'verified circle job reaches the matching seeker', JSON.stringify(job5.matched));
+const M5 = (await call('GET', '/jobs/inbox', { user: KHALID, expect: 200 })).items.find((i) => i.jobId === job5.id)?.id;
+check(!!M5, 'job card in the seeker inbox');
+const rep5 = (user, expect) => call('POST', '/safety/report', { body: { targetType: 'job', targetId: job5.id, reason: 'احتيال أو نصب: يطلب رسوم تسجيل' }, user, expect });
+check((await rep5(OWNER, 400)).error === 'own-content', 'the circle owner cannot report their own job');
+check((await rep5(NORA, 200)).hidden === false && (await rep5(MAJED, 200)).hidden === false, 'two reports keep the job visible');
+const r3 = await rep5(KHALID, 200);
+check(r3.hidden === true && r3.reports === 3, 'third reporter auto-hides the job', JSON.stringify(r3));
+const hn = (await notes('job_review', OWNER)).filter((n) => n.data?.targetType === 'job');
+check(hn.length === 1 && hn[0].data.jobId === job5.id && hn[0].data.bizId === B && hn[0].data.manage === true && hn[0].title.includes('عرض وظيفي'), 'circle owner notified with a route to the jobs tab', JSON.stringify(hn[0]));
+check(!(await call('GET', '/jobs', { user: null, expect: 200 })).items.some((x) => x.id === job5.id), 'hidden job leaves the public list');
+check(!(await call('GET', `/biz/${B}/jobs`, { user: null, expect: 200 })).items.some((x) => x.id === job5.id), 'hidden job leaves the circle jobs list');
+await call('GET', `/jobs/${job5.id}`, { user: NORA, expect: 404 });
+check(!(await call('GET', '/jobs/inbox', { user: KHALID, expect: 200 })).items.some((i) => i.jobId === job5.id), 'hidden job card leaves the seeker inbox');
+check((await call('POST', `/jobs/offers/${M5}/accept`, { user: KHALID, expect: 409 })).error === 'job-closed', 'a hidden job cannot be accepted');
+await call('POST', `/jobs/${job5.id}/apply`, { user: NORA, expect: 404 });
+const b5 = (await call('GET', `/biz/${B}/manage/jobs`, { user: OWNER, expect: 200 })).items.find((x) => x.id === job5.id);
+check(b5?.status === 'blocked', 'the team sees the job as blocked', b5?.status);
+await call('POST', `/biz/${B}/manage/jobs/${job5.id}/publish`, { user: OWNER, expect: 409 });
+await call('POST', `/biz/${B}/manage/jobs/${job5.id}/close`, { user: OWNER, expect: 409 });
+await call('POST', `/biz/${B}/manage/jobs/${job5.id}/duplicate`, { user: OWNER, expect: 409 });
+await pool.query("UPDATE jobs SET last_matched_at = now() - interval '1 hour' WHERE id=$1", [job5.id]);
+check((await call('POST', '/adminapi/jobs/sweep', { user: ADMIN, expect: 200 })).matched === 0, 'sweep does not match a hidden job');
+const mq = await call('GET', '/adminapi/moderation?type=job', { user: ADMIN, expect: 200 });
+const qi = mq.items.find((i) => i.targetId === job5.id);
+check(qi && qi.targetType === 'job' && qi.typeName === 'عرض وظيفي' && qi.jobId === job5.id && qi.bizId === B && qi.hidden === true && qi.owner?.id === OWNER && qi.reports === 3, 'moderation queue lists the job with its id, circle and owner', JSON.stringify(qi));
+const rs = await call('POST', `/adminapi/moderation/job/${job5.id}`, { body: { action: 'restore' }, user: ADMIN, expect: 200 });
+check(rs.changed === true && rs.status === 'visible', 'admin restore brings the job back', JSON.stringify(rs));
+check((await call('GET', `/jobs/${job5.id}`, { user: NORA, expect: 200 })).status === 'open', 'restored job returns to its previous status (open)');
+check((await notes('job_review', OWNER)).some((n) => n.data?.targetType === 'job' && n.title.includes('أُعيد إظهار')), 'owner told about the restore');
+const hd = await call('POST', `/adminapi/moderation/job/${job5.id}`, { body: { action: 'hide', note: 'يطلب رسوماً' }, user: ADMIN, expect: 200 });
+check(hd.changed === true && hd.status === 'hidden', 'admin can hide a job directly');
+await call('POST', `/biz/${B}/manage/jobs/${job5.id}/pause`, { user: OWNER, expect: 409 });
+// إغلاق إداري لعرض مخفي يحوّله «مغلقاً» قابلاً لإعادة النشر، فيُرفض ويبقى القرار في طابور البلاغات
+await call('POST', `/adminapi/jobs/${job5.id}/close`, { user: ADMIN, expect: 409 });
+
 globalThis.naslifeSettings.jobsEnabled = false;
 await call('PUT', '/jobs/profile', { body: { titles: ['x'] }, user: MAJED, expect: 403 });
 await call('POST', `/biz/${B}/manage/jobs`, { body: { title: 'كاشير' }, expect: 403 });

@@ -51,7 +51,8 @@ class WalletPage extends ConsumerWidget {
                   Row(children: [
                     const Text('الرصيد المتاح', style: TextStyle(color: Joy.primaryOn, fontSize: 12.5)),
                     const Spacer(),
-                    Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: Colors.white.withValues(alpha: .14), borderRadius: BorderRadius.circular(999)), child: const Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.shield_outlined, size: 13, color: Joy.primaryOn), SizedBox(width: 4), Text('محمي بالرقم السري', style: TextStyle(color: Joy.primaryOn, fontSize: 11))])),
+                    // لا رقم سري خاص بالمحفظة (الرقم السري هنا كلمة سر الحساب)، فالشارة تقول ما هو صحيح: رصيد للإنفاق الداخلي بلا سحب
+                    Container(key: const Key('wallet-scope'), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: Colors.white.withValues(alpha: .14), borderRadius: BorderRadius.circular(999)), child: const Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.storefront_outlined, size: 13, color: Joy.primaryOn), SizedBox(width: 4), Text('للإنفاق داخل ناس لايف', style: TextStyle(color: Joy.primaryOn, fontSize: 11))])),
                   ]),
                   const SizedBox(height: 6),
                   Text(money(wallet.balance), style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: Joy.primaryOn, fontSize: 34)),
@@ -71,7 +72,8 @@ class WalletPage extends ConsumerWidget {
               const SizedBox(height: 14),
               Row(children: [
                 if (transfers) _action(Icons.send_rounded, 'تحويل', () => _transfer(context, ref), key: const Key('wallet-transfer')),
-                if (transfers) _action(Icons.qr_code_scanner_rounded, 'دفع', () => _pay(context, ref), key: const Key('wallet-pay')),
+                // الدفع بلصق رمز المستلم أو نك نيمه (لا ماسح كاميرا)، فالأيقونة لوحة مفاتيح لا ماسح
+                if (transfers) _action(Icons.keyboard_alt_outlined, 'دفع', () => _pay(context, ref), key: const Key('wallet-pay')),
                 _action(Icons.confirmation_number_outlined, 'تذاكري', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()))),
                 _action(Icons.receipt_long_outlined, 'حجوزاتي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyBookingsPage()))),
                 _action(Icons.local_offer_outlined, 'عروضي', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyOffersPage()))),

@@ -11,6 +11,7 @@ import '../business_page.dart' show shortDate;
 import 'job_actions.dart';
 import 'job_candidates_page.dart';
 import 'job_editor_page.dart';
+import 'verify_circle_page.dart';
 
 /// تبويب التوظيف في لوحة الدائرة: الباقة، الأرقام العامة، وقائمة العروض الوظيفية بإجراءاتها.
 /// يظهر للمالك والمدير ومسؤول التوظيف (Biz.canHire)؛ لغيرهم قفل توضيحي.
@@ -47,6 +48,20 @@ class JobsTab extends ConsumerWidget {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(14)),
                   child: const Row(children: [Icon(Icons.pause_circle_outline_rounded, color: Joy.accent), SizedBox(width: 8), Expanded(child: Text('التوظيف موقوف مؤقتاً من إدارة المنصة؛ يمكنك تجهيز المسودات وسيُتاح النشر عند إعادة التفعيل', style: TextStyle(color: Joy.accent, fontWeight: FontWeight.w600, fontSize: 12.5)))]),
+                ),
+              // دائرة غير موثّقة: عروضها في القائمة العامة بشارة، ولا تصل بطاقاتها للباحثين حتى التوثيق (server/jobs.js)
+              if (!b.verified)
+                Container(
+                  key: const Key('jobs-unverified'),
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                  decoration: BoxDecoration(color: Joy.sunSoft, borderRadius: BorderRadius.circular(14)),
+                  child: Row(children: [
+                    const Icon(Icons.info_outline_rounded, color: Joy.sunText),
+                    const SizedBox(width: 8),
+                    const Expanded(child: Text('دائرتك غير موثّقة: عروضك تظهر في قائمة الوظائف بشارة «دائرة غير موثّقة»، ولا تصل للمرشحين المطابقين إلا بعد التوثيق', style: TextStyle(color: Joy.sunText, fontWeight: FontWeight.w600, fontSize: 12.5))),
+                    TextButton(key: const Key('jobs-verify'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => VerifyCirclePage(bizId: biz.id, initial: biz))), child: const Text('وثّق')),
+                  ]),
                 ),
               JobPlanCard(plan: b.plan),
               const SizedBox(height: 10),

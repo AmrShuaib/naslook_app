@@ -243,7 +243,7 @@ class BadgeChip extends StatelessWidget {
   const BadgeChip(this.badge, {super.key});
   @override
   Widget build(BuildContext context) {
-    final (icon, color) = switch (badge) { 'verified' => (Icons.verified_rounded, Joy.primary), 'trusted' => (Icons.shield_rounded, Joy.success), 'top' => (Icons.star_rounded, Joy.sunText), 'fast' => (Icons.bolt_rounded, Joy.accent), _ => (Icons.workspace_premium_rounded, Joy.warning) };
+    final (icon, color) = switch (badge) { 'verified' => (Icons.mark_email_read_outlined, Joy.primary), 'trusted' => (Icons.shield_rounded, Joy.success), 'top' => (Icons.star_rounded, Joy.sunText), 'fast' => (Icons.bolt_rounded, Joy.accent), _ => (Icons.workspace_premium_rounded, Joy.warning) };
     return Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: color.withValues(alpha: .1), borderRadius: BorderRadius.circular(999)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 12, color: color), const SizedBox(width: 3), Text(sellerBadgeLabels[badge] ?? badge, style: TextStyle(color: color, fontSize: 10.5, fontWeight: FontWeight.w700))]));
   }
 }

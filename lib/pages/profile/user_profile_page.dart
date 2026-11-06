@@ -151,10 +151,11 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 50, 20, 0),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                // الاسم + علامة التوثيق + وسم المسمى للمحترف
+                // الاسم + علامة التوثيق + وسم المسمى للمحترف. العلامة الزرقاء محجوزة لتوثيق الهوية (الجوال/نفاذ، قريباً):
+                // تأكيد البريد وحده يظهر رقيقةَ «بريد مؤكد» أدناه حتى لا يفهمه الزائر توثيقاً للهوية
                 Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: 6, runSpacing: 4, children: [
                   Text(name, style: Theme.of(context).textTheme.headlineSmall),
-                  if (p2?.trust.emailVerified == true) const Icon(Icons.verified_rounded, key: Key('verified-mark'), color: Joy.primary, size: 22),
+                  if (p2?.trust.phoneVerified == true) const Icon(Icons.verified_rounded, key: Key('verified-mark'), color: Joy.primary, size: 22),
                   if (p2 != null && p2.isPro && p2.jobTitle.isNotEmpty) ProfileChip(p2.jobTitle, key: const Key('job-tag'), icon: Icons.work_outline_rounded),
                 ]),
                 const SizedBox(height: 2),
@@ -243,7 +244,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
                   ),
                   const SizedBox(height: 10),
                   Wrap(spacing: 6, runSpacing: 6, children: [
-                    if (p2.trust.emailVerified) const ProfileChip('بريد موثّق', icon: Icons.verified_outlined, bg: Joy.primarySoft, fg: Joy.primary),
+                    if (p2.trust.emailVerified) const ProfileChip('بريد مؤكد', key: Key('email-confirmed'), icon: Icons.mark_email_read_outlined, bg: Joy.primarySoft, fg: Joy.primary),
                     if (p2.trust.respondsFast == true) const ProfileChip('يرد سريعاً', icon: Icons.bolt_rounded, bg: Joy.sunSoft, fg: Joy.sunText),
                     if (p2.stats.completedOrders > 0) ProfileChip('${p2.stats.completedOrders} طلباً مكتملاً', icon: Icons.check_circle_outline_rounded, bg: Joy.surface2, fg: Joy.text),
                     if (since != null) ProfileChip('عضو منذ ${monthYear(since)}', icon: Icons.schedule_rounded, bg: Joy.surface2, fg: Joy.text),

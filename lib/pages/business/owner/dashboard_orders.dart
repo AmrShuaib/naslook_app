@@ -41,7 +41,8 @@ class _OrdersTabState extends ConsumerState<OrdersTab> {
             ),
           ),
           const SizedBox(width: 8),
-          FilledButton.tonalIcon(onPressed: () => checkinByCode(context, ref, widget.biz), icon: const Icon(Icons.qr_code_scanner_rounded, size: 18), label: const Text('استلام')),
+          // إدخال يدوي لرمز الحجز (لا ماسح كاميرا في التطبيق)
+          FilledButton.tonalIcon(key: const Key('orders-checkin-code'), onPressed: () => checkinByCode(context, ref, widget.biz), icon: const Icon(Icons.keyboard_alt_outlined, size: 18), label: const Text('إدخال رمز الاستلام')),
         ]),
       ),
       SizedBox(

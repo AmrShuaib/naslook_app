@@ -436,7 +436,8 @@ const marketSubcategories = <String, Map<String, String>>{
 };
 const marketConditions = {'new': 'جديد', 'used': 'مستعمل'};
 const marketSorts = {'near': 'الأقرب', 'new': 'الأحدث', 'cheap': 'الأرخص', 'expensive': 'الأغلى', 'popular': 'الأكثر طلباً', 'rated': 'الأعلى تقييماً'};
-const sellerBadgeLabels = {'verified': 'موثّق', 'trusted': 'بائع موثوق', 'top': 'الأعلى تقييماً', 'fast': 'سريع الرد', 'licensed': 'مرخّص'};
+// المفتاح verified من الخادم يعني تأكيد بريد الدخول فقط (server/market_plus.js)، فيُعرض «بريد مؤكد» لا «موثّق» حتى لا يُفهم توثيقاً للهوية
+const sellerBadgeLabels = {'verified': 'بريد مؤكد', 'trusted': 'بائع موثوق', 'top': 'الأعلى تقييماً', 'fast': 'سريع الرد', 'licensed': 'مرخّص'};
 const orderStatusLabels = {'paid': 'مؤكَّد', 'preparing': 'قيد التحضير', 'on_the_way': 'في الطريق', 'delivered': 'تم التسليم', 'completed': 'مكتمل', 'cancelled': 'ملغى', 'refunded': 'مسترد', 'disputed': 'نزاع'};
 const orderStages = ['paid', 'preparing', 'on_the_way', 'delivered', 'completed'];
 const weekdayLabels = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];

@@ -9,17 +9,19 @@ import '../../core/require_account.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../state/jobs_public_providers.dart';
+import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../business/business_page.dart' show openBusiness, shortDate;
 import '../chat/chat_thread_page.dart';
 import 'job_offer_page.dart';
 import 'job_profile_page.dart';
+import 'job_trust.dart';
 
 /// رابط الوظيفة العام للمشاركة.
 String jobLink(String id) => '${publicOrigin()}/jobs/$id';
 
-/// صفحة الوظيفة العامة: الدائرة، المسمّى، الدوام والمدينة والموعد النهائي، الراتب إن ظهر، الوصف والمتطلبات والمهارات،
-/// وأسفلها «تقدّم الآن» أو حالتي على الوظيفة (تقدّمت / لديك دعوة).
+/// صفحة الوظيفة العامة: الدائرة (وشارة «دائرة غير موثّقة»)، المسمّى، الدوام والمدينة والموعد النهائي، سطر الأمان، الراتب إن ظهر،
+/// الوصف والمتطلبات والمهارات، وأسفلها «تقدّم الآن» أو حالتي على الوظيفة (تقدّمت / لديك دعوة). زر ⋯ للإبلاغ عن الوظيفة.
 class JobPage extends ConsumerStatefulWidget {
   final String id;
   /// نسخة من القائمة تُعرض حتى يصل التفصيل.
@@ -96,7 +98,15 @@ class _JobPageState extends ConsumerState<JobPage> {
       backgroundColor: Joy.bg,
       appBar: AppBar(
         title: const Text('الوظيفة'),
-        actions: [if (job != null) IconButton(key: const Key('job-share'), tooltip: 'مشاركة', icon: const Icon(Icons.ios_share_rounded), onPressed: () => _share(job))],
+        actions: [
+          if (job != null) IconButton(key: const Key('job-share'), tooltip: 'مشاركة', icon: const Icon(Icons.ios_share_rounded), onPressed: () => _share(job)),
+          // البلاغ (نوع job في server/safety.js): عند بلوغ الحد تُخفى الوظيفة من القوائم والمطابقة حتى تراجعها الإدارة
+          if (job != null)
+            ReportMenuButton(
+              type: 'job', id: job.id, keyPrefix: 'job-report', reportLabel: 'إبلاغ عن الوظيفة', iconSize: 22, color: Joy.text,
+              onReported: (r) { if (r.hidden) invalidatePublicJobs(ref, jobId: job.id, bizId: job.bizId); },
+            ),
+        ],
       ),
       body: job == null
           ? detail.when(
@@ -109,7 +119,7 @@ class _JobPageState extends ConsumerState<JobPage> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
                 children: [
-                  if (job.biz != null) _BizCard(biz: job.biz!),
+                  if (job.biz != null) _BizCard(biz: job.biz!, unverified: job.unverifiedCircle),
                   const SizedBox(height: 12),
                   Text(job.title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20, height: 1.3)),
                   if (job.department.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 2), child: Text(job.department, style: const TextStyle(color: Joy.textMuted, fontSize: 13))),
@@ -121,6 +131,8 @@ class _JobPageState extends ConsumerState<JobPage> {
                     if (job.experienceMin > 0) _tag(Icons.timeline_rounded, 'خبرة ${job.experienceMin}+ سنوات'),
                     if (job.education != 'none') _tag(Icons.school_outlined, jobEducation[job.education] ?? job.education),
                   ]),
+                  const SizedBox(height: 12),
+                  const JobSafetyNote(),
                   if (job.salaryVisible && job.salaryText.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     JoyCard(
@@ -189,7 +201,8 @@ class _JobPageState extends ConsumerState<JobPage> {
 /// بطاقة الدائرة الناشرة: تفتح صفحتها.
 class _BizCard extends StatelessWidget {
   final JobBiz biz;
-  const _BizCard({required this.biz});
+  final bool unverified;
+  const _BizCard({required this.biz, this.unverified = false});
   @override
   Widget build(BuildContext context) => JoyCard(
         key: const Key('job-biz'),
@@ -204,6 +217,7 @@ class _BizCard extends StatelessWidget {
                 if (biz.verified) const Padding(padding: EdgeInsets.only(right: 4), child: Icon(Icons.verified_rounded, size: 16, color: Joy.primary)),
               ]),
               Text([if (biz.category.isNotEmpty) biz.category, if (biz.address.isNotEmpty) biz.address.split('،').first else if (biz.city.isNotEmpty) biz.city].join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+              if (unverified) const Padding(padding: EdgeInsets.only(top: 4), child: UnverifiedCircleTag()),
             ]),
           ),
           const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),

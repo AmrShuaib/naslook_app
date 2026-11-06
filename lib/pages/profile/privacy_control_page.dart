@@ -49,8 +49,9 @@ class _PrivacyControlPageState extends ConsumerState<PrivacyControlPage> {
               key: const Key('verify-email'),
               leading: Icon(Icons.mail_outline_rounded, color: emailVerified ? Joy.success : Joy.textMuted),
               title: const Text('البريد الإلكتروني'),
-              subtitle: Text(emailVerified ? 'موثّق' : 'غير موثّق بعد · من «حسابي» في ماي سبيس'),
-              trailing: emailVerified ? const Icon(Icons.verified_rounded, color: Joy.success) : null,
+              // تأكيد البريد لا يثبت الهوية: «مؤكد» بأيقونة بريد، والعلامة الزرقاء لتوثيق الجوال أو الهوية لاحقاً
+              subtitle: Text(emailVerified ? 'مؤكد' : 'غير مؤكد بعد · من «حسابي» في ماي سبيس'),
+              trailing: emailVerified ? const Icon(Icons.mark_email_read_rounded, color: Joy.success) : null,
             ),
             const Divider(indent: 16, endIndent: 16),
             const ListTile(key: Key('verify-phone'), leading: Icon(Icons.phone_iphone_rounded, color: Joy.textMuted), title: Text('رقم الجوال'), subtitle: Text('توثيق الجوال يظهر علامة التوثيق بجانب اسمك'), trailing: _Soon()),

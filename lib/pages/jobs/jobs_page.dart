@@ -13,6 +13,7 @@ import '../../state/providers.dart' show signedInProvider;
 import '../../ui/widgets.dart';
 import 'job_page.dart';
 import 'job_profile_page.dart';
+import 'job_trust.dart';
 
 /// ملف التوظيف الخاص بالمستخدم (لعرض الدعوة لإنشائه في الحالة الفارغة)؛ للزائر لا طلب.
 final _myJobProfileProvider = FutureProvider<JobProfileState>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).jobProfile() : const JobProfileState());
@@ -203,6 +204,7 @@ class JobCard extends StatelessWidget {
             ]),
             const SizedBox(height: 3),
             Text([if (job.city.isNotEmpty) job.city, job.typeLabel].join(' · '), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+            if (job.unverifiedCircle) const Padding(padding: EdgeInsets.only(top: 4), child: UnverifiedCircleTag()),
             const SizedBox(height: 3),
             Row(children: [
               if (job.salaryVisible && job.salaryText.isNotEmpty) ...[

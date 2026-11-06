@@ -25,6 +25,7 @@ import '../../core/directions.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../ui/widgets.dart';
+import '../jobs/job_trust.dart' show JobSafetyNote;
 import 'live_share.dart';
 
 // الاتجاهات انتقلت إلى core/directions.dart (يستعملها عارض اللحظات أيضاً)؛ تبقى متاحة لمن يستورد هذا الملف
@@ -250,6 +251,8 @@ class ChatCodeCard extends StatelessWidget {
             title: c.title, subtitle: c.subtitle,
             trailing: open ? const _Chip('عرض وظيفي', icon: Icons.work_outline_rounded) : const _Chip('مغلق', color: Joy.textMuted, bg: Joy.surface2),
           ),
+          // محادثة التوظيف هي حيث يطلب المحتال رسوماً أو صورة هوية: سطر الأمان الثابت على البطاقة نفسها
+          const Padding(padding: EdgeInsets.only(top: 8), child: JobSafetyNote(compact: true)),
           _actions([_button('الدائرة', 'open', icon: Icons.storefront_outlined)]),
         ]));
       default:

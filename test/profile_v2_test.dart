@@ -262,7 +262,9 @@ void main() {
       expect(srv.calls, contains('GET /profiles/SA0000002/v2'));
       expect(find.byKey(const Key('profile-cover')), findsOneWidget);
       expect(find.text('فهد الغامدي'), findsOneWidget);
-      expect(find.byKey(const Key('verified-mark')), findsOneWidget);
+      // تأكيد البريد وحده لا يضع العلامة الزرقاء (محجوزة لتوثيق الهوية) بل رقيقة «بريد مؤكد» بأيقونة بريد
+      expect(find.byKey(const Key('verified-mark')), findsNothing);
+      expect(find.byIcon(Icons.verified_rounded), findsNothing);
       expect(find.byKey(const Key('job-tag')), findsOneWidget);
       expect(find.text('مصوّر'), findsOneWidget);
       expect(find.textContaining('@fahad.shots'), findsOneWidget);
@@ -277,7 +279,9 @@ void main() {
       expect(find.text('128'), findsOneWidget);
       expect(find.text('1212'), findsOneWidget);
       expect(find.text('4.9'), findsOneWidget);
-      expect(find.text('بريد موثّق'), findsOneWidget);
+      expect(find.text('بريد موثّق'), findsNothing);
+      expect(find.text('بريد مؤكد'), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('email-confirmed')), matching: find.byIcon(Icons.mark_email_read_outlined)), findsOneWidget);
       expect(find.text('يرد سريعاً'), findsOneWidget);
       expect(find.text('31 طلباً مكتملاً'), findsOneWidget);
       expect(find.text('عضو منذ مارس 2025'), findsOneWidget);
@@ -530,7 +534,8 @@ void main() {
   group('privacy & control', () {
     testWidgets('segments and switches PUT the right keys; «ملف عام» goes to the core profile', (tester) async {
       final (srv, _) = await _pump(tester, const PrivacyControlPage(), height: 1800);
-      expect(find.text('موثّق'), findsOneWidget);
+      expect(find.text('مؤكد'), findsOneWidget);
+      expect(find.text('موثّق'), findsNothing);
       expect(find.text('قريباً'), findsNWidgets(3));
       await tester.tap(find.text('الأصدقاء'));
       await _settle(tester);

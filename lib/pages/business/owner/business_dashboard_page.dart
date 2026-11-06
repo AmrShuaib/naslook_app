@@ -193,7 +193,7 @@ class OverviewTab extends ConsumerWidget {
         Wrap(spacing: 8, runSpacing: 8, children: [
           // «أنا هنا اليوم» للدائرة المتنقلة فقط: الخادم يرفض الدبوس للثابتة (409 not-mobile)، فلا نعرض زراً ينتهي بخطأ
           if (biz.isMobile) _Action(key: const Key('here-today'), icon: Icons.where_to_vote_outlined, label: biz.hereActive ? 'أنت هنا حتى ${clockLabel(biz.here!.until)}' : 'أنا هنا اليوم', onTap: () => showHereTodaySheet(context, biz)),
-          _Action(icon: Icons.qr_code_scanner_rounded, label: 'تأكيد استلام برمز', onTap: () => checkinByCode(context, ref, biz)),
+          _Action(icon: Icons.keyboard_alt_outlined, label: 'إدخال رمز الاستلام', onTap: () => checkinByCode(context, ref, biz)),
           if (biz.canManage) _Action(key: const Key('verify-entry'), icon: Icons.verified_user_outlined, label: biz.verified ? 'التوثيق ✓' : 'التوثيق', onTap: () => openVerifyCircle(context, biz.id, initial: biz)),
           if (biz.canManage) _Action(icon: Icons.add_box_outlined, label: 'إضافة ${_itemNoun(biz.category)}', onTap: () => openItemEditor(context, biz)),
           if (biz.canManage) _Action(icon: Icons.local_offer_outlined, label: 'عرض جديد', onTap: () => openOfferTemplates(context, biz, ref.read(manageOffersProvider(biz.id)).valueOrNull?.templates ?? const [])),

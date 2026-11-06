@@ -251,7 +251,9 @@ class _JobEditorPageState extends ConsumerState<JobEditorPage> {
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Text('معاينة المطابقة', style: TextStyle(fontWeight: FontWeight.w700)),
             Text(
-              preview == null ? 'كم باحثاً عن عمل يطابق هذا العرض الآن؟ (أعداد فقط، بلا هويات)' : '${preview!.strong} مطابق قوي · ${preview!.good} جيد · من ${preview!.profiles} ملف نشط',
+              preview == null
+                  ? 'كم باحثاً عن عمل يطابق هذا العرض الآن؟ (أعداد فقط، بلا هويات)'
+                  : '${preview!.strong} مطابق قوي · ${preview!.good} جيد · من ${preview!.profiles} ملف نشط${preview!.autoMatch ? '' : '\nتصلهم البطاقة بعد توثيق الدائرة'}',
               key: const Key('job-preview-text'),
               style: const TextStyle(color: Joy.textMuted, fontSize: 12.5),
             ),

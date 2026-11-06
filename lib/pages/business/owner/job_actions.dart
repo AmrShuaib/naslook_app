@@ -23,7 +23,8 @@ List<JobAction> jobActionsFor(Job job) {
     if (s == 'open' || s == 'paused' || s == 'pending') (id: 'filled', label: 'شُغلت الوظيفة', icon: Icons.task_alt_rounded, danger: false),
     if (s == 'open' || s == 'paused' || s == 'pending') (id: 'close', label: 'إغلاق العرض', icon: Icons.stop_circle_outlined, danger: false),
     (id: 'edit', label: 'تعديل', icon: Icons.edit_outlined, danger: false),
-    (id: 'duplicate', label: 'تكرار كمسودة', icon: Icons.copy_outlined, danger: false),
+    // العرض المخفي بالإشراف لا يُكرَّر (الخادم يرفض) حتى لا يُعاد نشره بنسخة
+    if (s != 'blocked') (id: 'duplicate', label: 'تكرار كمسودة', icon: Icons.copy_outlined, danger: false),
     (id: 'stats', label: 'الإحصاءات', icon: Icons.bar_chart_rounded, danger: false),
     if (s == 'draft') (id: 'delete', label: 'حذف المسودة', icon: Icons.delete_outline_rounded, danger: true),
   ];
@@ -34,6 +35,7 @@ String jobPublishedText(Job job) {
   if (job.status == 'pending') return 'أُرسل العرض للمراجعة وسيُنشر بعد موافقة الإدارة';
   final m = job.matched;
   if (m == null) return 'نُشر العرض';
+  if (m.notVerified) return 'نُشر العرض في قائمة الوظائف؛ يصل للمرشحين المطابقين بعد توثيق الدائرة';
   if (m.sent == 0) return 'نُشر العرض ولم نجد مرشحاً مطابقاً بعد؛ سنرسله لمن يطابقه لاحقاً';
   return 'وصل العرض إلى ${m.sent} مرشحاً';
 }
@@ -116,7 +118,7 @@ class JobStatusChip extends StatelessWidget {
   const JobStatusChip(this.status, {super.key});
   @override
   Widget build(BuildContext context) {
-    final c = switch (status) { 'open' => Joy.success, 'pending' => Joy.warning, 'paused' => Joy.accent, 'filled' => Joy.primary, _ => Joy.textMuted };
+    final c = switch (status) { 'open' => Joy.success, 'pending' => Joy.warning, 'paused' => Joy.accent, 'filled' => Joy.primary, 'blocked' => Joy.danger, _ => Joy.textMuted };
     return Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: c.withValues(alpha: .12), borderRadius: BorderRadius.circular(999)), child: Text(jobStatusLabel(status), style: TextStyle(color: c, fontSize: 10.5, fontWeight: FontWeight.w700)));
   }
 }

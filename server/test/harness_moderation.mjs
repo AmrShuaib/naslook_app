@@ -216,7 +216,7 @@ await call('GET', '/adminapi/moderation', { user: R1, expect: 403 });
 let mq = await call('GET', '/adminapi/moderation', { user: ADMIN, expect: 200 });
 const evItem = mq.items.find((i) => i.targetType === 'event' && i.targetId === EV.id);
 check(evItem && evItem.reports === 3 && evItem.owner?.id === AUTHOR && evItem.owner.nickname === 'monamod' && evItem.hidden === true && evItem.title === 'أمسية منى' && evItem.reasons.includes('مسيء') && evItem.typeName === 'فعالية', 'queue groups reports with owner, preview and state', JSON.stringify(evItem));
-check(mq.open >= 9 && mq.items.length === mq.open && mq.types.length === 15 && mq.types.some((t) => t.id === 'vessel' && t.name === 'دائرة'), 'open count and the 15 target types (with vessel)', `${mq.open}/${mq.items.length}`);
+check(mq.open >= 9 && mq.items.length === mq.open && mq.types.length === 16 && mq.types.some((t) => t.id === 'vessel' && t.name === 'دائرة') && mq.types.some((t) => t.id === 'job' && t.name === 'عرض وظيفي'), 'open count and the 16 target types (with vessel and job)', `${mq.open}/${mq.items.length}`);
 let a = await call('POST', `/adminapi/moderation/event/${EV.id}`, { body: { action: 'restore', note: 'لا مخالفة' }, user: ADMIN, expect: 200 });
 check(a.changed === true && a.status === 'visible', 'restore brings the event back', JSON.stringify(a));
 await call('GET', `/events/${EV.id}`, { user: null, expect: 200 });
