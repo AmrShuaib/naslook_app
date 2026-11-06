@@ -399,6 +399,11 @@ export default async function commerce(app, opts) {
   const CODE_MAX_FAILS = 5;
   // الدفع عند الاستلام: حد الطلبات المفتوحة لكل مشترٍ، وعدد مرات «لم يحضر» التي توقفه عنه، ومهلة قبول البائع
   const COD_MAX_OPEN = 3, COD_MAX_NO_SHOWS = 3, COD_ACCEPT_HOURS = 48;
+  // «لم يحضر» لا يُسجَّل قبل أن يحين التسليم (ساعتان بعد القبول ما لم يكن «في الطريق» أو بموعد)، ويُعدّ ببائعين مختلفين خلال ٩٠ يوماً:
+  // بائع واحد معادٍ أو متعجل لا يُغلق المسار على مشترٍ، ولا يبقى الأثر للأبد
+  const COD_NO_SHOW_WAIT_HOURS = 2, COD_NO_SHOW_DAYS = 90;
+  const noShowCount = async (c, buyerId) => (await c.query(`SELECT count(DISTINCT seller_id)::int AS n FROM market_orders
+      WHERE buyer_id=$1 AND payment='cod' AND cancel_reason='no_show' AND updated_at > now() - make_interval(days => $2)`, [buyerId, COD_NO_SHOW_DAYS])).rows[0].n;
   const COD_OPEN = ["requested", "paid", "preparing", "on_the_way", "delivered"];
   // المراحل بعد القبول (أو بعد الدفع في طلب المحفظة) وقبل الاكتمال
   const ACTIVE = ["paid", "preparing", "on_the_way", "delivered"];
@@ -629,9 +634,11 @@ export default async function commerce(app, opts) {
   });
   globalThis.naslifeMarketOrderOut = orderOut;
   // «من يراسلني» (profile_ext.js): أطراف طلب السوق (المشتري والبائع والمندوب) يتراسلون أياً كانت سياستهم ما دام الطلب
-  // قائماً، أو تغيّر خلال 14 يوماً (متابعة التسليم والتقييم والنزاع)
+  // قائماً، أو تغيّر خلال 14 يوماً (متابعة التسليم والتقييم والنزاع). طلب الدفع عند الاستلام الذي انتهى قبل أن يقبله البائع
+  // (اعتذار أو إلغاء أو انتهاء مهلة) لا يفتح المراسلة: الطلب مجاني فلا يصير بطاقة مرور دائمة إلى بائع قيّد من يراسله
   (globalThis.naslifeMessageAllow ??= new Map()).set("market-orders", async (a, b) => !!a && !!b && a !== b && (await pool.query(
     `SELECT 1 FROM market_orders WHERE (status IN ('requested','paid','preparing','on_the_way','delivered','disputed') OR updated_at > now() - interval '14 days')
+       AND NOT (payment='cod' AND accepted_at IS NULL AND status IN ('cancelled','refunded'))
        AND ((buyer_id=$1 AND (seller_id=$2 OR courier_id=$2)) OR (buyer_id=$2 AND (seller_id=$1 OR courier_id=$1)) OR (seller_id=$1 AND courier_id=$2) OR (seller_id=$2 AND courier_id=$1)) LIMIT 1`, [a, b])).rowCount > 0);
   const ORDER_SQL = "SELECT o.*, l.title, l.image_url, l.kind, (r.order_id IS NOT NULL) AS reviewed FROM market_orders o JOIN market_listings l ON l.id=o.listing_id LEFT JOIN market_reviews r ON r.order_id=o.id";
   app.get("/market/orders", async (req, reply) => {
@@ -717,9 +724,9 @@ export default async function commerce(app, opts) {
         if (payment === "cod") {
           // قفل لكل مشترٍ حتى نهاية المعاملة: طلبان متوازيان لا يتجاوزان الحد معاً
           await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`market-cod:${uid}`]);
-          const st = (await c.query(`SELECT count(*) FILTER (WHERE cancel_reason='no_show')::int AS no_shows,
-              count(*) FILTER (WHERE status = ANY($2::text[]))::int AS open FROM market_orders WHERE buyer_id=$1 AND payment='cod'`, [uid, COD_OPEN])).rows[0];
-          if (st.no_shows >= COD_MAX_NO_SHOWS) throw fail("cod-blocked", { noShows: st.no_shows });
+          const st = (await c.query("SELECT count(*)::int AS open FROM market_orders WHERE buyer_id=$1 AND payment='cod' AND status = ANY($2::text[])", [uid, COD_OPEN])).rows[0];
+          const noShows = await noShowCount(c, uid);
+          if (noShows >= COD_MAX_NO_SHOWS) throw fail("cod-blocked", { noShows, days: COD_NO_SHOW_DAYS });
           if (st.open >= COD_MAX_OPEN) throw fail("cod-limit", { max: COD_MAX_OPEN });
           // المال لا يمر بناس لايف فلا عمولة تُقتطع منه
           commission = 0;
@@ -741,7 +748,7 @@ export default async function commerce(app, opts) {
         case "insufficient-funds": return bad(reply, 402, "insufficient-funds");
         case "adult-required": return bad(reply, 403, "adult-required");
         case "cod-unavailable": return bad(reply, 400, "cod-unavailable");
-        case "cod-blocked": return bad(reply, 403, "cod-blocked", { noShows: e.noShows });
+        case "cod-blocked": return bad(reply, 403, "cod-blocked", { noShows: e.noShows, days: e.days });
         case "cod-limit": return bad(reply, 429, "cod-limit", { max: e.max });
         default: throw e;
       }
@@ -898,16 +905,18 @@ export default async function commerce(app, opts) {
     await notify(o.buyer_id, { kind: "market_status", title: "اعتذر البائع عن طلبك", body: `${o.title}${reason ? ": " + reason : ""} · لم يُخصم منك شيء`, data: { orderId: o.id, status: "cancelled" } });
     return { ok: true, status: "cancelled" };
   });
-  // «لم يحضر المشتري»: يُلغى الطلب ويعود المخزون ويُحسب على المشتري؛ بعد ٣ مرات لا يُقبل منه طلب بالدفع عند الاستلام.
-  // الخدمة بموعد لا تُسجَّل قبل حلول موعدها
+  // «لم يحضر المشتري»: يُلغى الطلب ويعود المخزون ويُحسب على المشتري؛ إن سجّله ٣ بائعين مختلفين خلال ٩٠ يوماً لا يُقبل منه طلب
+  // بالدفع عند الاستلام. لا يُسجَّل قبل أن يحين التسليم: الخدمة بموعد عند حلوله، وغيرها «في الطريق» أو بعد ساعتين من القبول
   app.post("/market/orders/:id/no-show", async (req, reply) => {
     const o = await codSellerOrder(req, reply); if (!o) return;
     const from = ["paid", "preparing", "on_the_way"];
     if (!from.includes(o.status)) return bad(reply, 409, "bad-status");
-    if (o.slot && new Date(o.slot).getTime() > Date.now()) return bad(reply, 409, "too-early", { slot: o.slot });
+    const dueAt = o.slot ? new Date(o.slot).getTime() : o.status === "on_the_way" ? 0 : new Date(o.accepted_at ?? o.created_at).getTime() + COD_NO_SHOW_WAIT_HOURS * 3600000;
+    if (dueAt > Date.now()) return bad(reply, 409, "too-early", { slot: o.slot ?? null, at: new Date(dueAt).toISOString() });
     try { await refund(o, { reason: "no_show", from }); } catch (e) { if (e.code === "bad-status") return bad(reply, 409, "bad-status"); throw e; }
-    const n = (await pool.query("SELECT count(*)::int AS n FROM market_orders WHERE buyer_id=$1 AND payment='cod' AND cancel_reason='no_show'", [o.buyer_id])).rows[0].n;
-    await notify(o.buyer_id, { kind: "market_status", title: "سُجّل عدم حضورك للاستلام", body: `${o.title}: سجّل البائع أنك لم تحضر (${n} من ${COD_MAX_NO_SHOWS}). ${n >= COD_MAX_NO_SHOWS ? "توقف الدفع عند الاستلام لحسابك، ويبقى الدفع من المحفظة متاحاً" : `بعد ${COD_MAX_NO_SHOWS} مرات يتوقف الدفع عند الاستلام لحسابك`}. إن كان ذلك خطأً فأبلغ عن البائع`, data: { orderId: o.id, status: "cancelled" } });
+    const n = await noShowCount(pool, o.buyer_id);
+    // نص محايد: لا دعوة إلى المحفظة (مستخدم iOS لا يشحنها)
+    await notify(o.buyer_id, { kind: "market_status", title: "سُجّل عدم حضورك للاستلام", body: `${o.title}: سجّل البائع أنك لم تحضر (${n} من ${COD_MAX_NO_SHOWS}). ${n >= COD_MAX_NO_SHOWS ? "توقف الدفع عند الاستلام لحسابك" : `إن سجّل ذلك ${COD_MAX_NO_SHOWS} بائعين مختلفين خلال ${COD_NO_SHOW_DAYS} يوماً يتوقف الدفع عند الاستلام لحسابك`}. إن كان ذلك خطأً فأبلغ عن البائع`, data: { orderId: o.id, status: "cancelled" } });
     return { ok: true, status: "cancelled", noShows: n };
   });
   // نزاع من المشتري قبل الاكتمال: يتجمّد المبلغ حتى تحسمه الإدارة
@@ -959,6 +968,29 @@ export default async function commerce(app, opts) {
     const msg = { refund: "أُعيد المبلغ كاملاً للمشتري", release: "حُرِّر المبلغ للبائع", split: "قُسم المبلغ بين الطرفين" }[resolution];
     await notify([o.buyer_id, o.seller_id], { kind: "market_dispute", title: "حُسم النزاع", body: `${o.title}: ${msg}${note ? " · " + note : ""}`, data: { orderId: o.id } });
     return { ok: true, resolution };
+  });
+  // «لم يحضر» ظالم: المشتري يبلّغ عن البائع، والإدارة تراجع القائمة (نافذة العدّ نفسها، مع عدّاد كل مشترٍ) وتمسحه.
+  // السبب يصير no_show_cleared فلا يُحسب على المشتري، ويُعدّ إلغاءً على البائع في شاراته (recompute يستثني no_show وحده)
+  app.get("/adminapi/market/no-shows", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
+    const rows = (await pool.query(`${ORDER_SQL} WHERE o.payment='cod' AND o.cancel_reason='no_show' AND o.updated_at > now() - make_interval(days => $1) ORDER BY o.updated_at DESC LIMIT 100`, [COD_NO_SHOW_DAYS])).rows;
+    const counts = new Map();
+    for (const b of new Set(rows.map((r) => r.buyer_id))) counts.set(b, await noShowCount(pool, b));
+    return { days: COD_NO_SHOW_DAYS, max: COD_MAX_NO_SHOWS, items: await Promise.all(rows.map(async (o) => ({ order: await orderOut(o, uid), buyerNoShows: counts.get(o.buyer_id) ?? 0 }))) };
+  });
+  app.post("/adminapi/market/orders/:id/clear-no-show", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const o = await loadOrder(req.params.id); if (!o) return bad(reply, 404, "not-found");
+    const note = String(req.body?.note ?? "").trim().slice(0, 300);
+    const r = await pool.query("UPDATE market_orders SET cancel_reason='no_show_cleared', updated_at=now() WHERE id=$1 AND cancel_reason='no_show' RETURNING id", [o.id]);
+    if (!r.rowCount) return bad(reply, 409, "not-no-show");
+    await globalThis.naslifeMarketRecomputeSeller?.(o.seller_id)?.catch?.(() => {});
+    await notify(o.buyer_id, { kind: "market_status", title: "أُزيل تسجيل عدم حضورك", body: `${o.title}: راجعت الإدارة الطلب وأزالت «لم يحضر» عن حسابك${note ? " · " + note : ""}`, data: { orderId: o.id } });
+    await notify(o.seller_id, { kind: "market_status", title: "أُزيل «لم يحضر المشتري»", body: `${o.title}: راجعت الإدارة الطلب وأزالت تسجيل عدم الحضور${note ? " · " + note : ""}`, data: { orderId: o.id } });
+    return { ok: true, noShows: await noShowCount(pool, o.buyer_id) };
   });
   // مسح دوري: نشر المجدول، واكتمال الطلبات المسلَّمة التي لم يؤكدها المشتري خلال ٧٢ ساعة
   const sweep = async () => {

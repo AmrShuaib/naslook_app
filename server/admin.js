@@ -298,11 +298,14 @@ export default async function admin(app, opts) {
       if (U.created) users.new7 = (await pool.query(`SELECT count(*)::int AS n FROM users WHERE ${q(U.created)} >= now() - interval '7 days'`)).rows[0].n;
       if (U.seen) users.active7 = (await pool.query(`SELECT count(*)::int AS n FROM users WHERE ${q(U.seen)} >= now() - interval '7 days'`)).rows[0].n;
     }
+    // إيراد السوق ما مرّ بالمحفظة فقط: طلب الدفع عند الاستلام (commerce.js) يُعدّ طلباً ولا يدخل الإيراد لأن المال يُسلَّم للبائع يداً بيد،
+    // والمسترد عاد للمشتري. العمود يُفحص عند الطلب لأن commerce.js قد يضيفه بعد إقلاع هذه الإضافة
+    const marketRevWhere = marketOk ? `status NOT IN ('cancelled','refunded')${(await colsOf("market_orders")).has("payment") ? " AND payment IS DISTINCT FROM 'cod'" : ""}` : "false";
     const orders7 = (await pool.query(`SELECT
         (SELECT count(*) FROM biz_orders WHERE status IN ('confirmed','used') AND created_at >= now() - interval '7 days')::int AS biz,
         (SELECT COALESCE(SUM(total),0) FROM biz_orders WHERE status IN ('confirmed','used') AND created_at >= now() - interval '7 days')::bigint AS biz_rev,
         ${marketOk ? "(SELECT count(*) FROM market_orders WHERE status<>'cancelled' AND created_at >= now() - interval '7 days')::int" : "0"} AS market,
-        ${marketOk ? "(SELECT COALESCE(SUM(total),0) FROM market_orders WHERE status<>'cancelled' AND created_at >= now() - interval '7 days')::bigint" : "0"} AS market_rev,
+        ${marketOk ? `(SELECT COALESCE(SUM(total),0) FROM market_orders WHERE ${marketRevWhere} AND created_at >= now() - interval '7 days')::bigint` : "0"} AS market_rev,
         ${eventsOk ? "(SELECT count(*) FROM tickets WHERE status<>'refunded' AND created_at >= now() - interval '7 days')::int" : "0"} AS tickets,
         ${eventsOk ? "(SELECT COALESCE(SUM(paid),0) FROM tickets WHERE status<>'refunded' AND created_at >= now() - interval '7 days')::bigint" : "0"} AS tickets_rev`)).rows[0];
     const circles = bizOk ? (await pool.query("SELECT count(*) FILTER (WHERE active)::int AS active, count(*) FILTER (WHERE NOT active)::int AS inactive, count(*) FILTER (WHERE owner_id IS NOT NULL)::int AS owned, (SELECT count(*) FROM biz_claims WHERE status='pending')::int AS claims FROM biz")).rows[0] : { active: 0, inactive: 0, owned: 0, claims: 0 };
@@ -324,7 +327,7 @@ export default async function admin(app, opts) {
           + ${marketOk ? "(SELECT count(*) FROM market_orders m WHERE m.status<>'cancelled' AND (m.created_at + interval '3 hours')::date = d::date)::int" : "0"}
           + ${eventsOk ? "(SELECT count(*) FROM tickets t WHERE t.status<>'refunded' AND (t.created_at + interval '3 hours')::date = d::date)::int" : "0"} AS orders,
         (SELECT COALESCE(SUM(total),0) FROM biz_orders o WHERE o.status IN ('confirmed','used') AND (o.created_at + interval '3 hours')::date = d::date)::bigint
-          + ${marketOk ? "(SELECT COALESCE(SUM(total),0) FROM market_orders m WHERE m.status<>'cancelled' AND (m.created_at + interval '3 hours')::date = d::date)::bigint" : "0"}
+          + ${marketOk ? `(SELECT COALESCE(SUM(total),0) FROM market_orders m WHERE ${marketRevWhere} AND (m.created_at + interval '3 hours')::date = d::date)::bigint` : "0"}
           + ${eventsOk ? "(SELECT COALESCE(SUM(paid),0) FROM tickets t WHERE t.status<>'refunded' AND (t.created_at + interval '3 hours')::date = d::date)::bigint" : "0"} AS revenue
       FROM generate_series((now() + interval '3 hours')::date - ${days - 1}, (now() + interval '3 hours')::date, '1 day') AS d ORDER BY d`)).rows;
     const suspended = (await pool.query("SELECT count(*)::int AS n FROM user_flags WHERE suspended")).rows[0].n;

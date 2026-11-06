@@ -11,7 +11,7 @@ const OPS = new URL('./ops-test', import.meta.url).pathname;
 fs.rmSync(OPS, { recursive: true, force: true });
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query(`DROP TABLE IF EXISTS login_aliases, account_recovery, legal_consents, account_deletions, sessions, profiles, push_subscriptions, contacts, user_flags, admins, team_members CASCADE`);
-await pool.query(`DROP TABLE IF EXISTS wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders, admin_audit, chat_live CASCADE`);
+await pool.query(`DROP TABLE IF EXISTS wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders, biz_disputes, admin_audit, chat_live CASCADE`);
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
 await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ");
 await pool.query("DELETE FROM users");
@@ -32,6 +32,8 @@ await pool.query(`CREATE TABLE sessions (token TEXT PRIMARY KEY, user_id TEXT NO
   CREATE TABLE tickets (id UUID PRIMARY KEY, event_id UUID NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'valid');
   CREATE TABLE biz (id TEXT PRIMARY KEY, name TEXT, owner_id TEXT, active BOOLEAN NOT NULL DEFAULT true);
   CREATE TABLE biz_claims (biz_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'approved', PRIMARY KEY (biz_id, user_id));
+  CREATE TABLE biz_orders (id UUID PRIMARY KEY, biz_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'confirmed', start_at TIMESTAMPTZ, total BIGINT NOT NULL DEFAULT 0, funds TEXT);
+  CREATE TABLE biz_disputes (order_id UUID PRIMARY KEY, status TEXT NOT NULL DEFAULT 'open');
   CREATE TABLE chat_live (id UUID PRIMARY KEY, from_id TEXT NOT NULL, to_id TEXT NOT NULL, lat DOUBLE PRECISION, lng DOUBLE PRECISION, accuracy REAL, updated_at TIMESTAMPTZ,
     until TIMESTAMPTZ NOT NULL, stopped_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now());`);
 
@@ -112,6 +114,14 @@ r = await call('GET', '/me/account/delete/preview', { token: monaTok });
 check(r.json.canDelete === false && r.json.blockers.some((b) => b.code === 'open-orders'), 'open order blocks deletion');
 r = await call('POST', '/me/account/delete', { token: monaTok, body: { password: 'Password1', confirm: 'حذف' } });
 check(r.code === 409 && r.json.error === 'blocked' && r.json.blockers[0].code === 'open-orders', 'delete refused while an order is open');
+// طلب الدفع عند الاستلام بانتظار قبول البائع (requested) التزام مفتوح أيضاً: للمشتري، وللبائع حين يكون الطلب عليه
+await pool.query("UPDATE market_orders SET status='requested' WHERE id=$1", [order]);
+r = await call('GET', '/me/account/delete/preview', { token: monaTok });
+check(r.json.canDelete === false && r.json.blockers.some((b) => b.code === 'open-orders'), 'a pay-on-receipt request awaiting the seller blocks the buyer');
+await pool.query("UPDATE market_orders SET buyer_id='SA0000009', seller_id=$2 WHERE id=$1", [order, mona]);
+r = await call('GET', '/me/account/delete/preview', { token: monaTok });
+check(r.json.canDelete === false && r.json.blockers.some((b) => b.code === 'open-orders'), 'and blocks the seller it is waiting on');
+await pool.query("UPDATE market_orders SET buyer_id=$2, seller_id='SA0000009' WHERE id=$1", [order, mona]);
 await pool.query("UPDATE market_orders SET status='completed', note='شارع الأمير سلطان، بيت 12' WHERE id=$1", [order]);
 const ev = crypto.randomUUID();
 await pool.query("INSERT INTO events(id,host_id,starts_at) VALUES($1,$2,now()+interval '3 days')", [ev, mona]);
@@ -128,6 +138,20 @@ r = await call('GET', '/me/account/delete/preview', { token: monaTok });
 check(r.json.canDelete === true && r.json.warnings.some((w) => w.code === 'wallet-balance') && r.json.balance === 2500, 'positive balance is a warning in preview (refund option)');
 r = await call('POST', '/me/account/delete', { token: monaTok, body: { password: 'Password1', confirm: 'حذف' } });
 check(r.code === 409 && r.json.blockers.some((b) => b.code === 'wallet-balance'), 'positive balance needs refund:true');
+// مال عميل محجوز في دائرة المستخدم (موعد مضى ولم يُحرَّر بعد)، أو نزاع مفتوح على مبلغ حُرّر: الدائرة تعود بلا مالك بعد الحذف
+await pool.query("INSERT INTO biz(id,name,owner_id) VALUES('heldshop','held shop',$1)", [mona]);
+const heldOrder = crypto.randomUUID();
+await pool.query("INSERT INTO biz_orders(id,biz_id,user_id,status,start_at,total,funds) VALUES($1,'heldshop','SA0000009','used',now()-interval '1 day',5000,'held')", [heldOrder]);
+r = await call('GET', '/me/account/delete/preview', { token: monaTok });
+check(r.json.canDelete === false && r.json.blockers.some((b) => b.code === 'circle-held-funds' && b.count === 1), 'held customer money in an owned circle blocks deletion', JSON.stringify(r.json.blockers));
+await pool.query("UPDATE biz_orders SET funds='released' WHERE id=$1", [heldOrder]);
+await pool.query("INSERT INTO biz_disputes(order_id) VALUES($1)", [heldOrder]);
+r = await call('GET', '/me/account/delete/preview', { token: monaTok });
+check(r.json.blockers.some((b) => b.code === 'circle-held-funds'), 'an open dispute in an owned circle blocks deletion');
+await pool.query("UPDATE biz_disputes SET status='resolved'");
+r = await call('GET', '/me/account/delete/preview', { token: monaTok });
+check(!r.json.blockers.some((b) => b.code === 'circle-held-funds'), 'released money with a resolved dispute no longer blocks');
+await pool.query("DELETE FROM biz_disputes"); await pool.query("DELETE FROM biz_orders"); await pool.query("DELETE FROM biz WHERE id='heldshop'");
 await pool.query("INSERT INTO admins(user_id) VALUES($1)", [old]);
 r = await call('GET', '/me/account/delete/preview', { token: oldTok });
 check(r.json.blockers.some((b) => b.code === 'staff-account'), 'admin/staff account cannot self-delete');
@@ -220,6 +244,6 @@ check((await pool.query('SELECT purged_at FROM account_deletions WHERE user_id=$
 console.log(fails ? `${fails} FAILED` : 'ALL OK');
 await app.close();
 // جداول هذه الحزمة مختصرة؛ تُحذف كي تنشئها الإضافات كاملة في الحزم التالية (run.sh all)
-await pool.query(`DROP TABLE IF EXISTS sessions, profiles, push_subscriptions, contacts, user_flags, admins, team_members, admin_audit, wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders CASCADE`);
+await pool.query(`DROP TABLE IF EXISTS sessions, profiles, push_subscriptions, contacts, user_flags, admins, team_members, admin_audit, wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders, biz_disputes CASCADE`);
 await pool.end();
 process.exit(fails ? 1 : 0);

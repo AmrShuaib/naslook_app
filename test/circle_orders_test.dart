@@ -18,11 +18,13 @@ import 'package:naslook/core/media/pick_image.dart';
 import 'package:naslook/core/notify_open.dart';
 import 'package:naslook/core/platform.dart';
 import 'package:naslook/pages/admin/admin_biz_disputes.dart';
+import 'package:naslook/pages/admin/admin_settings.dart';
 import 'package:naslook/pages/admin/admin_shell.dart';
 import 'package:naslook/pages/business/biz_order_page.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/my_bookings_page.dart';
 import 'package:naslook/pages/business/owner/dashboard_catalog.dart';
+import 'package:naslook/pages/business/owner/business_editor.dart' show ownerErrText;
 import 'package:naslook/pages/business/owner/dashboard_orders.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
@@ -50,15 +52,15 @@ Map<String, dynamic> _biz(String category, List<Map<String, dynamic>> items, {St
       'items': items, 'reviews': [], 'posts': [], 'myOrders': [], 'verificationStatus': 'approved', 'canSell': true,
     };
 
-Map<String, dynamic> _order(String id, {String payment = 'wallet', bool paid = true, String? funds, String status = 'confirmed', DateTime? startAt, Map<String, dynamic>? dispute, bool disputable = false, String? viewer, String kind = 'product', int total = 5000}) => {
+Map<String, dynamic> _order(String id, {String payment = 'wallet', bool paid = true, String? funds, String status = 'confirmed', DateTime? startAt, Map<String, dynamic>? dispute, bool disputable = false, String? viewer, String kind = 'product', int total = 5000, DateTime? createdAt, int? noShows}) => {
       'id': id, 'bizId': 'biz-shop', 'bizNameAr': 'متجر لمسة', 'category': 'shop', 'itemId': 'oil', 'title': 'زيت شعر', 'kind': kind, 'qty': 1, 'units': 1, 'total': total, 'status': status,
-      'code': 'NAS-${id.toUpperCase()}', 'note': '', 'meta': {}, 'createdAt': _now.toIso8601String(), 'cancellable': status == 'confirmed' && dispute == null, 'payment': payment, 'paid': paid,
+      'code': 'NAS-${id.toUpperCase()}', 'note': '', 'meta': {}, 'createdAt': (createdAt?.toUtc() ?? _now).toIso8601String(), if (noShows != null) 'noShows': noShows, 'cancellable': status == 'confirmed' && dispute == null, 'payment': payment, 'paid': paid,
       'funds': funds, 'releaseAt': _now.add(const Duration(days: 3)).toIso8601String(), if (startAt != null) 'startAt': startAt.toUtc().toIso8601String(), 'dispute': dispute, 'disputable': disputable,
       if (viewer != null) 'viewer': viewer, 'customer': {'id': 'SA0000002', 'nickname': 'sara'},
     };
 
 Map<String, dynamic> _dispute({bool open = true}) => {
-      'status': open ? 'open' : 'resolved', 'reason': 'وصل المنتج مكسوراً', 'photos': ['/media/a.jpg'], 'resolution': open ? null : 'split', 'note': null,
+      'status': open ? 'open' : 'resolved', 'reason': 'وصل المنتج مكسوراً', 'photos': ['/chat/media/a1b2c3-0123456789abcdef01234567.jpg'], 'resolution': open ? null : 'split', 'note': null,
       'messages': [{'by': 'team', 'text': 'نعتذر، نرسل بديلاً', 'at': _now.toIso8601String()}], 'createdAt': _now.toIso8601String(),
     };
 
@@ -70,6 +72,8 @@ class _Srv {
   List<Map<String, dynamic>> ownerOrders = [];
   List<Map<String, dynamic>> mine = [];
   Map<String, dynamic>? single;
+  Map<String, dynamic> money = {'held': 5000, 'disputed': 0, 'released': 12000, 'venueDue': 5000, 'venuePaid': 0, 'disputesOpen': 0, 'noShows': 0, 'holdDays': 3};
+  Map<String, dynamic> settings = {'testTopup': false, 'maxTopup': 100000, 'minTopup': 10000, 'maxCardTopup': 500000};
   _Srv(this.biz);
   Map<String, dynamic>? last(String key) => bodies[key]?.last;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
@@ -87,7 +91,7 @@ class _Srv {
     if (key.startsWith('PATCH /biz/biz-shop/items/')) return _json({..._item(key.split('/').last), ...last(key)!});
     if (key == 'GET /biz/biz-shop/orders') return _json(ownerOrders);
     if (key == 'GET /biz/biz-shop/stats') {
-      return _json({'orders': {'total': 2}, 'revenue': {'total': 10000}, 'byKind': [], 'daily': [], 'topItems': [], 'money': {'held': 5000, 'disputed': 0, 'released': 12000, 'venueDue': 5000, 'venuePaid': 0, 'disputesOpen': 0, 'noShows': 0, 'holdDays': 3}});
+      return _json({'orders': {'total': 2}, 'revenue': {'total': 10000}, 'byKind': [], 'daily': [], 'topItems': [], 'money': money});
     }
     if (key == 'POST /biz/biz-shop/checkin') return _json(_order('o2', payment: 'at_venue', paid: false, status: 'used'));
     if (key == 'POST /biz/biz-shop/orders/o2/paid') return _json(_order('o2', payment: 'at_venue', paid: true, status: 'used'));
@@ -96,9 +100,13 @@ class _Srv {
     if (key == 'GET /biz/orders/o1') return _json(single ?? _order('o1'));
     if (key == 'POST /biz/orders/o1/dispute') return _json(_order('o1', funds: 'held', dispute: {..._dispute(), 'reason': last(key)!['reason'], 'messages': []}, viewer: 'customer'));
     if (key == 'POST /biz/orders/o1/dispute/reply') return _json(single ?? _order('o1'));
-    if (key == 'POST /chat/upload') return _json({'url': '/media/p1.jpg', 'type': 'image/jpeg', 'kind': 'image'});
+    if (key == 'POST /chat/upload') return _json({'url': '/chat/media/p1abc2-0123456789abcdef01234567.jpg', 'type': 'image/jpeg', 'kind': 'image'});
     if (key == 'GET /adminapi/biz/disputes') return _json([{..._order('o1', funds: 'held', dispute: _dispute(), viewer: 'admin'), 'owner': {'id': 'SA0000009', 'nickname': 'lamsa'}}]);
     if (key == 'POST /adminapi/biz/disputes/o1') return _json({'ok': true});
+    if (key == 'GET /adminapi/settings') return _json(settings);
+    if (key == 'POST /adminapi/settings') return _json({...last(key)!});
+    if (key == 'GET /adminapi/admins') return _json([]);
+    if (key == 'GET /adminapi/payments/config') return _json({'enabled': false, 'provider': 'moyasar'});
     if (key == 'GET /wallet') return _json({'balance': 0, 'points': 0});
     if (key == 'GET /notify/unread') return _json({'unread': 0});
     if (key == 'GET /wishlist') return _json([]);
@@ -163,6 +171,27 @@ void main() {
     expect(d.open, isFalse);
     expect(d.resolutionLabel, 'قُسم المبلغ بين الطرفين');
     expect(d.messages.single.byLabel, 'الدائرة');
+  });
+
+  test('Arabic counts, admin money label, and when the team may cancel or mark a no-show', () {
+    String days(int n) => arCount(n, one: 'يوم واحد', two: 'يومين', few: 'أيام', many: 'يوماً');
+    expect([days(1), days(2), days(3), days(10), days(11), days(30)], ['يوم واحد', 'يومين', '3 أيام', '10 أيام', '11 يوماً', '30 يوماً']);
+    // الإدارة لا تملك محفظة الدائرة
+    expect(BizOrder.fromJson(_order('a', funds: 'released', viewer: 'admin')).ownerMoneyLabel, 'وصل محفظة الدائرة');
+    expect(BizOrder.fromJson(_order('a', funds: 'released', viewer: 'team')).ownerMoneyLabel, 'في محفظتك');
+    // بعد قرار النزاع لا إلغاء من الدائرة
+    expect(BizOrder.fromJson(_order('a', funds: 'held')).ownerCancellable, isTrue);
+    expect(BizOrder.fromJson(_order('a', funds: 'held', dispute: _dispute())).ownerCancellable, isTrue);
+    expect(BizOrder.fromJson(_order('a', funds: 'split', dispute: _dispute(open: false))).ownerCancellable, isFalse);
+    expect(BizOrder.fromJson(_order('a', funds: 'released', dispute: {..._dispute(open: false), 'resolution': 'release'})).ownerCancellable, isFalse);
+    // «لم يحضر» للمنتج بعد يوم من الطلب، وللموعد بعد حلوله
+    final now = DateTime.now();
+    expect(BizOrder.fromJson(_order('a', payment: 'at_venue', paid: false, createdAt: now)).canNoShowAt(now), isFalse);
+    expect(BizOrder.fromJson(_order('a', payment: 'at_venue', paid: false, createdAt: now.subtract(const Duration(hours: 25)))).canNoShowAt(now), isTrue);
+    expect(BizOrder.fromJson(_order('a', payment: 'at_venue', paid: false, kind: 'clinic', startAt: now.add(const Duration(hours: 1)))).canNoShowAt(now), isFalse);
+    expect(BizOrder.fromJson(_order('a', payment: 'at_venue', paid: false, kind: 'clinic', startAt: now.subtract(const Duration(minutes: 5)))).canNoShowAt(now), isTrue);
+    // مسح رمز حجز سُجّل «لم يحضر»
+    expect(ownerErrText(const ApiException(409, 'already-no_show')), 'سُجّل هذا الحجز: لم يحضر');
   });
 
   testWidgets('checkout: an item that allows it offers «احجز الآن وادفع في المكان» and books without the wallet', (tester) async {
@@ -269,6 +298,78 @@ void main() {
     expect(find.descendant(of: find.byKey(const Key('owner-cancel-dialog')), matching: find.textContaining('ولا يُخصم شيء من محفظتك')), findsOneWidget);
   });
 
+  testWidgets('owner: strip counts days in Arabic and shows «تجمّد» only when held money is frozen', (tester) async {
+    final srv = _Srv(_biz('shop', [], role: 'owner'))..money = {'held': 0, 'disputed': 0, 'released': 9000, 'venueDue': 0, 'venuePaid': 0, 'disputesOpen': 1, 'noShows': 0, 'holdDays': 1};
+    await _pump(tester, srv, Scaffold(body: OrdersTab(biz: Biz.fromJson(srv.biz))));
+    final note = _text(tester, 'orders-money-note');
+    expect(note, contains('بعد يوم واحد من الموعد'));
+    expect(note, contains('مشكلة مفتوحة'));
+    expect(note, isNot(contains('تجمّد')));
+    expect(note, isNot(contains('أيام')));
+    final srv2 = _Srv(_biz('shop', [], role: 'owner'))..money = {'held': 5000, 'disputed': 5000, 'released': 0, 'venueDue': 0, 'venuePaid': 0, 'disputesOpen': 2, 'noShows': 0, 'holdDays': 14};
+    await _pump(tester, srv2, Scaffold(body: OrdersTab(biz: Biz.fromJson(srv2.biz))));
+    expect(_text(tester, 'orders-money-note'), allOf(contains('بعد 14 يوماً'), contains('مشكلتان مفتوحتان تجمّد 50 ر.س')));
+  });
+
+  testWidgets('owner: no cancel after a dispute decision; a product booked at the venue gets «لم يحضر» only after a day', (tester) async {
+    final srv = _Srv(_biz('shop', [_item('oil', venue: true)], role: 'owner'))
+      ..ownerOrders = [
+        _order('o5', funds: 'split', dispute: _dispute(open: false)),
+        _order('o6', funds: 'held'),
+        _order('o7', payment: 'at_venue', paid: false),
+        _order('o8', payment: 'at_venue', paid: false, createdAt: DateTime.now().subtract(const Duration(hours: 25))),
+      ];
+    await _pump(tester, srv, Scaffold(body: OrdersTab(biz: Biz.fromJson(srv.biz))));
+    await _tap(tester, find.textContaining('NAS-O5').first);
+    expect(find.byKey(const Key('owner-open-dispute')), findsOneWidget);
+    expect(find.byKey(const Key('owner-cancel-order')), findsNothing);
+    await tester.tapAt(const Offset(400, 20));
+    await _settle(tester);
+    await _tap(tester, find.textContaining('NAS-O6').first);
+    expect(find.byKey(const Key('owner-cancel-order')), findsOneWidget);
+    await tester.tapAt(const Offset(400, 20));
+    await _settle(tester);
+    await _tap(tester, find.textContaining('NAS-O7').first);
+    expect(find.byKey(const Key('venue-unpaid-banner')), findsOneWidget);
+    expect(find.byKey(const Key('owner-no-show')), findsNothing);
+    await tester.tapAt(const Offset(400, 20));
+    await _settle(tester);
+    await _tap(tester, find.textContaining('NAS-O8').first);
+    expect(find.byKey(const Key('owner-no-show')), findsOneWidget);
+  });
+
+  testWidgets('order page: no-show count in Arabic for the team, and the admin sees the circle wallet', (tester) async {
+    final srv = _Srv(_biz('shop', []))..single = _order('o1', payment: 'at_venue', paid: false, viewer: 'team', noShows: 2);
+    await _pump(tester, srv, const BizOrderPage(orderId: 'o1'));
+    expect(find.descendant(of: find.byKey(const Key('order-no-shows')), matching: find.text('مرتان')), findsOneWidget);
+    final srv2 = _Srv(_biz('shop', []))..single = _order('o1', funds: 'released', viewer: 'admin');
+    await _pump(tester, srv2, const BizOrderPage(orderId: 'o1'));
+    expect(find.descendant(of: find.byKey(const Key('order-payment-line')), matching: find.text('وصل محفظة الدائرة')), findsOneWidget);
+    expect(find.text('في محفظتك'), findsNothing);
+  });
+
+  testWidgets('admin settings: «أيام حجز المبلغ» shows the default and saves within 1..30', (tester) async {
+    final srv = _Srv(_biz('shop', []));
+    await _pump(tester, srv, const Scaffold(body: AdminSettingsPage()));
+    // الصفحة طويلة: شاشة أطول حتى يُبنى قسم «طلبات الدوائر» وزر الحفظ
+    tester.view.physicalSize = const Size(600, 3600);
+    await _settle(tester);
+    final field = find.byKey(const Key('set-biz-hold-days'));
+    await tester.scrollUntilVisible(field, 300, scrollable: find.byType(Scrollable).first);
+    expect(tester.widget<TextField>(field).controller!.text, '3');
+    await tester.enterText(field, '7');
+    Future<void> save() async {
+      await tester.scrollUntilVisible(find.byKey(const Key('set-save')), 400, scrollable: find.byType(Scrollable).first);
+      await _tap(tester, find.byKey(const Key('set-save')));
+    }
+    await save();
+    expect(srv.last('POST /adminapi/settings')!['bizHoldDays'], 7);
+    await tester.scrollUntilVisible(field, -300, scrollable: find.byType(Scrollable).first);
+    await tester.enterText(field, '45');
+    await save();
+    expect(srv.last('POST /adminapi/settings')!['bizHoldDays'], 30);
+  });
+
   testWidgets('owner: checking in a venue booking by code asks to confirm the payment', (tester) async {
     final srv = _Srv(_biz('shop', [_item('oil', venue: true)], role: 'owner'));
     await _pump(tester, srv, Scaffold(body: OrdersTab(biz: Biz.fromJson(srv.biz))));
@@ -300,7 +401,7 @@ void main() {
     await _tap(tester, find.byKey(const Key('dispute-submit')));
     final body = srv.last('POST /biz/orders/o1/dispute')!;
     expect(body['reason'], 'وصل المنتج مكسوراً');
-    expect(body['photos'], ['/media/p1.jpg']);
+    expect(body['photos'], ['/chat/media/p1abc2-0123456789abcdef01234567.jpg']);
   });
 
   testWidgets('order page: the team sees the dispute thread and replies', (tester) async {

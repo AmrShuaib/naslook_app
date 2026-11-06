@@ -25,7 +25,7 @@ class AdminSettingsPage extends ConsumerStatefulWidget {
 class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
   final maxTopup = TextEditingController(), minTopup = TextEditingController(), maxCardTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), supportEmail = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
   final commission = TextEditingController(), spotPrice = TextEditingController(), spotMaxDays = TextEditingController(), spotMaxActive = TextEditingController();
-  final jobsFree = TextEditingController(), jobsCap = TextEditingController();
+  final jobsFree = TextEditingController(), jobsCap = TextEditingController(), bizHold = TextEditingController();
   final companyCr = TextEditingController(), companyVat = TextEditingController(), companyAddress = TextEditingController();
   bool? testTopup, maintenance, reviewNew, blockContacts, transfers, chatPayments, bannedDefault, requireVerify, jobsEnabled, jobsApproval;
   double? jobsScore;
@@ -62,6 +62,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     jobsFree.text = '${s.jobsFreeActive}';
     jobsCap.text = '${s.jobsWeeklyCap}';
     jobsScore = s.jobsMinScore;
+    bizHold.text = '${s.bizHoldDays}';
   }
 
   /// حد المطابقة بخطوة 0.05 بين 0.1 و1 (كما يقبله الخادم).
@@ -142,6 +143,14 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             SwitchListTile(key: const Key('set-review-new'), contentPadding: EdgeInsets.zero, value: reviewNew ?? s.marketReviewNewAccounts, onChanged: (v) => setState(() => reviewNew = v), title: const Text('مراجعة عروض الحسابات الجديدة'), subtitle: const Text('عروض من سجّل قبل أقل من أسبوع لا تظهر إلا بعد موافقة الإدارة', style: TextStyle(fontSize: 12))),
             SwitchListTile(key: const Key('set-block-contacts'), contentPadding: EdgeInsets.zero, value: blockContacts ?? s.marketBlockContacts, onChanged: (v) => setState(() => blockContacts = v), title: const Text('منع أرقام الجوال والروابط في العروض'), subtitle: const Text('يبقي التواصل داخل المنصة', style: TextStyle(fontSize: 12))),
           ])),
+          // المبلغ المدفوع من المحفظة لطلب دائرة يبقى محجوزاً حتى الاستلام أو هذه المهلة (docs/circle-orders.md)
+          const SectionTitle('طلبات الدوائر'),
+          JoyCard(child: TextField(
+            key: const Key('set-biz-hold-days'),
+            controller: bizHold,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'أيام حجز المبلغ قبل تحريره للدائرة', helperText: 'من 1 إلى 30 يوماً بعد نهاية الموعد أو الشراء. يُحرَّر أبكر عند تأكيد الاستلام، ويتجمد ما دامت على الطلب مشكلة مفتوحة', helperMaxLines: 3),
+          )),
           const SectionTitle('التوظيف'),
           JoyCard(child: Column(children: [
             SwitchListTile(key: const Key('set-jobs-enabled'), contentPadding: EdgeInsets.zero, value: jobsEnabled ?? s.jobsEnabled, onChanged: (v) => setState(() => jobsEnabled = v), title: const Text('تفعيل التوظيف'), subtitle: const Text('نشر الوظائف من الدوائر، بطاقات العروض للباحثين، والتقديم. عند الإطفاء تختفي الوظائف من الخريطة والدوائر', style: TextStyle(fontSize: 12))),
@@ -177,7 +186,8 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
                 await ref.read(apiClientProvider).adminSaveSettings({if (testTopup != null && testTopup != s.testTopup) 'testTopup': testTopup, 'maxTopup': parseSar(maxTopup.text), 'minTopup': parseSar(minTopup.text), 'maxCardTopup': parseSar(maxCardTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold,
                   'supportEmail': supportEmail.text.trim(), 'transfersEnabled': transfers ?? s.transfersEnabled, 'chatPaymentsEnabled': chatPayments ?? s.chatPaymentsEnabled, 'bannedWordsDefault': bannedDefault ?? s.bannedWordsDefault, 'requireEmailVerification': requireVerify ?? s.requireEmailVerification,
                   'companyCr': companyCr.text.trim(), 'companyVat': companyVat.text.trim(), 'companyAddress': companyAddress.text.trim(),
-                  'jobsEnabled': jobsEnabled ?? s.jobsEnabled, 'jobsRequireApproval': jobsApproval ?? s.jobsRequireApproval, 'jobsFreeActive': int.tryParse(jobsFree.text.trim()) ?? s.jobsFreeActive, 'jobsWeeklyCap': int.tryParse(jobsCap.text.trim()) ?? s.jobsWeeklyCap, 'jobsMinScore': _snapScore(jobsScore ?? s.jobsMinScore)});
+                  'jobsEnabled': jobsEnabled ?? s.jobsEnabled, 'jobsRequireApproval': jobsApproval ?? s.jobsRequireApproval, 'jobsFreeActive': int.tryParse(jobsFree.text.trim()) ?? s.jobsFreeActive, 'jobsWeeklyCap': int.tryParse(jobsCap.text.trim()) ?? s.jobsWeeklyCap, 'jobsMinScore': _snapScore(jobsScore ?? s.jobsMinScore),
+                  'bizHoldDays': (int.tryParse(bizHold.text.trim()) ?? s.bizHoldDays).clamp(1, 30)});
                 loaded = false;
                 invalidateAdmin(ref);
                 ref.invalidate(publicSettingsProvider);

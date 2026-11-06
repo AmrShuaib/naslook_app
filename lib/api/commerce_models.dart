@@ -176,7 +176,7 @@ class Order {
   final DateTime? createdAt, updatedAt, slot, deliveredAt, completedAt;
   /// طريقة الدفع: wallet (محجوز في المحفظة حتى الاستلام) أو cod (عند الاستلام للبائع مباشرة، بلا نزاع)
   final String payment;
-  /// سبب الإلغاء: buyer | seller | declined (اعتذار البائع) | no_show (لم يحضر المشتري) | expired (لم يُقبل خلال ٤٨ ساعة)
+  /// سبب الإلغاء: buyer | seller | declined (اعتذار البائع) | no_show (لم يحضر المشتري) | no_show_cleared (مسحته الإدارة) | expired (لم يُقبل خلال ٤٨ ساعة)
   final String? cancelReason;
   final DateTime? acceptedAt, cashReceivedAt;
   const Order({required this.id, required this.listingId, required this.title, required this.status, required this.note, this.imageUrl, this.kind, this.code, this.variant, this.coupon, this.disputeStatus, this.disputeReason, this.disputeNote,

@@ -2,16 +2,24 @@
 // علم العرض وشرط التوصيل أو مكان الاستلام، الطلب بلا مال وبحجز المخزون، قبول البائع أو اعتذاره، المراحل، «استلمت المبلغ» ورمز المشتري
 // وتأكيده، الإلغاء وإرجاع المخزون والكوبون، لا نزاع، حد ٣ طلبات مفتوحة (ومتوازية)، «لم يحضر» وإيقافه بعد ٣، مهلة القبول ٤٨ ساعة،
 // الاكتمال التلقائي، قواعد الطلب المدفوع (18+، الحظر، الإيقاف، الكلمات الممنوعة)، عميل iOS، الفاتورة ولوحة البائع والإشعارات.
+// وبعد المراجعة: «لم يحضر» لا يُسجَّل قبل أن يحين التسليم ويُعدّ ببائعين مختلفين خلال ٩٠ يوماً وتمسحه الإدارة، ونصه بلا المحفظة؛
+// «من يراسلني» لا يُفتح بطلب لم يُقبل؛ والشارات لا تُصنع بطلبات بين حسابين ولا تُهدم بطلبات منافس ملغاة.
 import Fastify from 'fastify';
 import pg from 'pg';
 process.env.WALLET_TEST_TOPUP = '1'; process.env.NODE_ENV = 'test';
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 const SELLER = 'SA0000702', BUYER = 'SA0000703', BUYER2 = 'SA0000704', OTHER = 'SA0000705', RIDER = 'SA0000706', MINOR = 'SA0000707', PLATFORM = 'SA0000000';
-const OURS = [SELLER, BUYER, BUYER2, OTHER, RIDER, MINOR, PLATFORM];
+// بائعان آخران لعدّ «لم يحضر» ببائعين مختلفين، ومشترٍ جديد لـ«من يراسلني»، ومدير، وبائع ومشترٍ يتبادلان طلبات بلا مال، ومنافس
+const SELLER2 = 'SA0000708', SELLER3 = 'SA0000709', BUYER3 = 'SA0000710', ADMIN = 'SA0000711', FSELL = 'SA0000712', FBUY = 'SA0000713', COMP = 'SA0000714';
+const OURS = [SELLER, BUYER, BUYER2, OTHER, RIDER, MINOR, PLATFORM, SELLER2, SELLER3, BUYER3, ADMIN, FSELL, FBUY, COMP];
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
 await pool.query(`INSERT INTO users(id,nickname,created_at) VALUES('${SELLER}','codseller',now()-interval '30 days'),('${BUYER}','codbuyer',now()-interval '30 days'),('${BUYER2}','codbuyer2',now()-interval '30 days'),
-  ('${OTHER}','codother',now()-interval '30 days'),('${RIDER}','codrider',now()-interval '30 days'),('${MINOR}','codminor',now()-interval '30 days'),('${PLATFORM}','naslife',now()-interval '60 days')
+  ('${OTHER}','codother',now()-interval '30 days'),('${RIDER}','codrider',now()-interval '30 days'),('${MINOR}','codminor',now()-interval '30 days'),('${PLATFORM}','naslife',now()-interval '60 days'),
+  ('${SELLER2}','codseller2',now()-interval '30 days'),('${SELLER3}','codseller3',now()-interval '30 days'),('${BUYER3}','codbuyer3',now()-interval '30 days'),('${ADMIN}','codadmin',now()-interval '30 days'),
+  ('${FSELL}','codfarmer',now()-interval '30 days'),('${FBUY}','codsock',now()-interval '30 days'),('${COMP}','codrival',now()-interval '30 days')
   ON CONFLICT (id) DO UPDATE SET nickname=EXCLUDED.nickname, created_at=EXCLUDED.created_at`);
+await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false');
+await pool.query('UPDATE users SET is_admin = (id = $1) WHERE id = ANY($2)', [ADMIN, OURS]);
 await pool.query("CREATE TABLE IF NOT EXISTS user_flags (user_id TEXT PRIMARY KEY, suspended BOOLEAN NOT NULL DEFAULT false, note TEXT, updated_at TIMESTAMPTZ DEFAULT now())");
 await pool.query('DELETE FROM user_flags WHERE user_id = ANY($1)', [OURS]);
 // جداول السوق تبدأ نظيفة (الحزم الأخرى تفعل الشيء نفسه)، والمحافظ لمستخدمينا فقط
@@ -21,7 +29,7 @@ for (const sql of ['DELETE FROM wallet_tx WHERE user_id = ANY($1)', 'DELETE FROM
 const notes = []; globalThis.naslifeNotify = async (ids, p) => { notes.push({ ids: [].concat(ids), ...p }); }; globalThis.naslifeNotifyAdmins = async (p) => { notes.push({ ids: ['admins'], ...p }); };
 globalThis.naslifeSettings = { marketCommissionPct: 10, marketBlockContacts: true, maxTopup: 10000000 };
 // إقرار 18+ والحظر والكلمات الممنوعة كما تنشرها legal_pages.js وsafety.js
-const adults = new Set([SELLER, BUYER, BUYER2, OTHER]);
+const adults = new Set([SELLER, BUYER, BUYER2, OTHER, SELLER2, SELLER3, BUYER3, FSELL, FBUY, COMP]);
 globalThis.naslifeAdultOk = async (u) => adults.has(u);
 const blocks = new Set(); globalThis.naslifeBlockedIds = async (u) => [...blocks].filter((p) => p.split(':').includes(u)).map((p) => p.split(':').find((x) => x !== u));
 globalThis.naslifeCheckText = (...t) => (t.some((x) => /ممنوعة/.test(String(x ?? ''))) ? 'ممنوعة' : null);
@@ -204,19 +212,69 @@ for (let i = 0; i < 3; i++) { const o = await cod(L1.id, {}, { user: BUYER2, exp
 await call('POST', `/market/orders/${ns[0].id}/no-show`, { user: SELLER, expect: 409 }); // قبل القبول
 await call('POST', `/market/orders/${ns[0].id}/accept`, { user: SELLER, expect: 200 });
 await call('POST', `/market/orders/${ns[0].id}/no-show`, { user: BUYER2, expect: 403 });
+// لا «لم يحضر» لحظة القبول ولا أثناء التحضير: التسليم لم يحن بعد (ساعتان من القبول، أو «في الطريق»)
+const early = await call('POST', `/market/orders/${ns[0].id}/no-show`, { user: SELLER, expect: 409 });
+check(early.error === 'too-early' && new Date(early.at).getTime() > Date.now() + 3600000, 'no-show right after acceptance is refused until the handover is due');
+await call('POST', `/market/orders/${ns[0].id}/stage`, { body: { stage: 'preparing' }, user: SELLER, expect: 200 });
+check((await call('POST', `/market/orders/${ns[0].id}/no-show`, { user: SELLER, expect: 409 })).error === 'too-early', 'still too early while preparing');
+await pool.query("UPDATE market_orders SET accepted_at=now() - interval '2 hours 1 minute' WHERE id=$1", [ns[0].id]);
 const sBefore = (await stockOf(L1.id)).stock;
 const ns1 = await call('POST', `/market/orders/${ns[0].id}/no-show`, { user: SELLER, expect: 200 });
-check(ns1.noShows === 1 && (await row(ns[0].id)).cancel_reason === 'no_show' && (await stockOf(L1.id)).stock === sBefore + 1, 'no-show: cancelled, counted, stock back');
-check(/1 من 3/.test(lastNote('market_status', BUYER2)?.body ?? '') && /أبلغ عن البائع/.test(lastNote('market_status', BUYER2)?.body ?? ''), 'buyer told about the no-show and how to report');
+check(ns1.noShows === 1 && (await row(ns[0].id)).cancel_reason === 'no_show' && (await stockOf(L1.id)).stock === sBefore + 1, 'no-show two hours after acceptance: cancelled, counted, stock back');
+const nsNote = lastNote('market_status', BUYER2)?.body ?? '';
+check(/1 من 3/.test(nsNote) && /3 بائعين مختلفين خلال 90 يوماً/.test(nsNote) && /أبلغ عن البائع/.test(nsNote) && !/المحفظة/.test(nsNote), 'buyer told the count, the rule and how to report, with no wallet hint');
 await call('POST', `/market/orders/${ns[0].id}/no-show`, { user: SELLER, expect: 409 });
-for (const o of ns.slice(1)) { await call('POST', `/market/orders/${o.id}/accept`, { user: SELLER, expect: 200 }); await call('POST', `/market/orders/${o.id}/no-show`, { user: SELLER, expect: 200 }); }
-check(/توقف الدفع عند الاستلام/.test(lastNote('market_status', BUYER2)?.body ?? ''), 'third no-show tells the buyer pay on receipt is off');
-check((await cod(L1.id, {}, { user: BUYER2, expect: 403 })).error === 'cod-blocked', 'after three no-shows pay on receipt is refused');
+// «في الطريق» يكفي بلا انتظار، لكن البائع نفسه لا يُحسب مرتين
+await call('POST', `/market/orders/${ns[1].id}/accept`, { user: SELLER, expect: 200 });
+await call('POST', `/market/orders/${ns[1].id}/stage`, { body: { stage: 'on_the_way' }, user: SELLER, expect: 200 });
+check((await call('POST', `/market/orders/${ns[1].id}/no-show`, { user: SELLER, expect: 200 })).noShows === 1, 'on the way: no-show allowed at once, and the same seller counts once');
+await call('POST', `/market/orders/${ns[2].id}/accept`, { user: SELLER, expect: 200 });
+await pool.query("UPDATE market_orders SET accepted_at=now() - interval '3 hours' WHERE id=$1", [ns[2].id]);
+check((await call('POST', `/market/orders/${ns[2].id}/no-show`, { user: SELLER, expect: 200 })).noShows === 1, 'a third no-show from the same seller is still one');
+const stillOk = await cod(L1.id, {}, { user: BUYER2, expect: 200 });
+check(stillOk.status === 'requested', 'one seller alone cannot shut pay on receipt for a buyer');
+await call('POST', `/market/orders/${stillOk.id}/cancel`, { user: BUYER2, expect: 200 });
+// بائعان آخران يكملان الثلاثة
+const L2S = await call('POST', '/market', { body: { title: 'ورد طبيعي', kind: 'product', category: 'gifts', price: 6000, placeName: 'التحلية', payOnReceipt: true }, user: SELLER2, expect: 200 });
+const L3S = await call('POST', '/market', { body: { title: 'بخور', kind: 'product', category: 'gifts', price: 7000, placeName: 'الشاطئ', payOnReceipt: true }, user: SELLER3, expect: 200 });
+const noShowBy = async (listing, seller, buyer = BUYER2) => {
+  const o = await cod(listing.id, {}, { user: buyer, expect: 200 });
+  await call('POST', `/market/orders/${o.id}/accept`, { user: seller, expect: 200 });
+  await call('POST', `/market/orders/${o.id}/stage`, { body: { stage: 'on_the_way' }, user: seller, expect: 200 });
+  return { id: o.id, ...(await call('POST', `/market/orders/${o.id}/no-show`, { user: seller, expect: 200 })) };
+};
+const nsB = await noShowBy(L2S, SELLER2);
+check(nsB.noShows === 2, 'a second seller makes two');
+const nsC = await noShowBy(L3S, SELLER3);
+const lastNs = lastNote('market_status', BUYER2)?.body ?? '';
+check(nsC.noShows === 3 && /توقف الدفع عند الاستلام لحسابك\./.test(lastNs) && !/المحفظة/.test(lastNs), 'third seller: buyer told pay on receipt is off, in neutral words');
+const blockedErr = await cod(L1.id, {}, { user: BUYER2, expect: 403 });
+check(blockedErr.error === 'cod-blocked' && blockedErr.noShows === 3 && blockedErr.days === 90, 'after no-shows from three sellers pay on receipt is refused');
+// الإدارة: قائمة «لم يحضر» في نافذة العدّ ومسح الظالم منها
+await call('GET', '/adminapi/market/no-shows', { user: SELLER, expect: 403 });
+const nsList = await call('GET', '/adminapi/market/no-shows', { user: ADMIN, expect: 200 });
+const itC = nsList.items.find((x) => x.order.id === nsC.id);
+check(nsList.days === 90 && nsList.max === 3 && itC && itC.buyerNoShows === 3 && itC.order.cancelReason === 'no_show' && itC.order.code == null, 'admin lists recent no-shows with the buyer count (no buyer code)');
+await call('POST', `/adminapi/market/orders/${nsC.id}/clear-no-show`, { user: SELLER3, expect: 403 });
+const cleared = await call('POST', `/adminapi/market/orders/${nsC.id}/clear-no-show`, { body: { note: 'ثبت أن المشتري حضر' }, user: ADMIN, expect: 200 });
+check(cleared.noShows === 2 && (await row(nsC.id)).cancel_reason === 'no_show_cleared', 'admin cleared a no-show: the buyer is back to two');
+check(lastNote('market_status', BUYER2)?.title === 'أُزيل تسجيل عدم حضورك' && /ثبت أن المشتري حضر/.test(lastNote('market_status', BUYER2)?.body ?? '') && lastNote('market_status', SELLER3)?.data?.orderId === nsC.id, 'both sides told the no-show was removed');
+await call('POST', `/adminapi/market/orders/${nsC.id}/clear-no-show`, { user: ADMIN, expect: 409 });
+check(!(await call('GET', '/adminapi/market/no-shows', { user: ADMIN, expect: 200 })).items.some((x) => x.order.id === nsC.id), 'a cleared no-show leaves the admin list');
+const back = await cod(L1.id, {}, { user: BUYER2, expect: 200 });
+check(back.status === 'requested', 'pay on receipt open again after the admin cleared one');
+await call('POST', `/market/orders/${back.id}/cancel`, { user: BUYER2, expect: 200 });
+// نافذة ٩٠ يوماً: «لم يحضر» أقدم منها لا يُحسب
+await pool.query("UPDATE market_orders SET updated_at=now() - interval '91 days' WHERE id=$1", [nsB.id]);
+check((await noShowBy(L3S, SELLER3)).noShows === 2, 'a no-show older than 90 days no longer counts');
+await cod(L1.id, {}, { user: BUYER2, expect: 200 }).then((o) => call('POST', `/market/orders/${o.id}/cancel`, { user: BUYER2, expect: 200 }));
+await pool.query("UPDATE market_orders SET updated_at=now() WHERE id=$1", [nsB.id]);
+check((await cod(L1.id, {}, { user: BUYER2, expect: 403 })).error === 'cod-blocked', 'three sellers inside the window block again');
 await call('POST', `/market/${L1.id}/order`, { body: { qty: 1 }, user: BUYER2, expect: 200 }); // المحفظة تبقى
 await globalThis.naslifeMarketRecomputeSeller(SELLER);
 const sellerCancelled = (await pool.query('SELECT cancelled FROM market_seller_stats WHERE seller_id=$1', [SELLER])).rows[0].cancelled;
-const expectCancelled = (await pool.query("SELECT count(*)::int AS n FROM market_orders WHERE seller_id=$1 AND status IN ('cancelled','refunded') AND cancel_reason IS DISTINCT FROM 'no_show'", [SELLER])).rows[0].n;
-check(sellerCancelled === expectCancelled, `buyer no-shows are not held against the seller (${sellerCancelled})`);
+const expectCancelled = (await pool.query("SELECT count(*)::int AS n FROM market_orders WHERE seller_id=$1 AND status IN ('cancelled','refunded') AND cancel_reason IS DISTINCT FROM 'no_show' AND NOT (payment='cod' AND accepted_at IS NULL)", [SELLER])).rows[0].n;
+check(sellerCancelled === expectCancelled, `buyer no-shows and never-accepted requests are not held against the seller (${sellerCancelled})`);
 // خدمة بموعد: لا «لم يحضر» قبل الموعد
 const LS = await call('POST', '/market', { body: { title: 'جلسة تصوير', kind: 'service', category: 'photo', price: 20000, placeName: 'الكورنيش', payOnReceipt: true, availability: { days: [0, 1, 2, 3, 4, 5, 6], from: '08:00', to: '22:00', slotMinutes: 60 } }, user: SELLER, expect: 200 });
 const d = new Date(Date.now() + 2 * 86400000); const slot = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 10 - 3, 0));
@@ -253,6 +311,58 @@ await call('POST', `/market/orders/${W.id}/confirm`, { user: BUYER2, expect: 200
 check(await balance(SELLER) === 4500 && await balance(PLATFORM) === 500, 'wallet order still releases net to the seller and commission to the platform');
 const mine = await call('GET', '/market/orders', { user: OTHER, expect: 200 });
 check(mine.some((o) => o.payment === 'cod') && mine.every((o) => ['cod', 'wallet'].includes(o.payment)), 'order list carries the payment method');
+
+// ---------- «من يراسلني»: الطلب الذي لم يُقبل قط لا يُبقي المراسلة مفتوحة ----------
+// BUYER3 مع SELLER2 بلا أي طلب آخر بينهما
+check(!(await allow(BUYER3, SELLER2)), 'message allow: no order, no unlock');
+const M1 = await cod(L2S.id, {}, { user: BUYER3, expect: 200 });
+check(await allow(BUYER3, SELLER2), 'message allow: a live request unlocks messaging');
+await call('POST', `/market/orders/${M1.id}/decline`, { user: SELLER2, expect: 200 });
+check(!(await allow(BUYER3, SELLER2)) && !(await allow(SELLER2, BUYER3)), 'message allow: a declined request no longer unlocks it');
+const M2 = await cod(L2S.id, {}, { user: BUYER3, expect: 200 });
+await call('POST', `/market/orders/${M2.id}/cancel`, { user: BUYER3, expect: 200 });
+check(!(await allow(BUYER3, SELLER2)), 'message allow: a request the buyer cancelled does not unlock it');
+const M3 = await cod(L2S.id, {}, { user: BUYER3, expect: 200 });
+await pool.query("UPDATE market_orders SET created_at=now() - interval '49 hours' WHERE id=$1", [M3.id]);
+await globalThis.naslifeMarketSweep();
+check((await row(M3.id)).cancel_reason === 'expired' && !(await allow(BUYER3, SELLER2)), 'message allow: an expired request does not unlock it');
+const M4 = await cod(L2S.id, {}, { user: BUYER3, expect: 200 });
+await call('POST', `/market/orders/${M4.id}/accept`, { user: SELLER2, expect: 200 });
+await call('POST', `/market/orders/${M4.id}/cancel`, { user: SELLER2, expect: 200 });
+check(await allow(BUYER3, SELLER2), 'message allow: an accepted order cancelled later keeps the 14-day window');
+
+// ---------- الشارات: طلبات بلا مال بين حسابين لا تصنع ثقة، وطلبات المنافس الملغاة لا تُحسب على البائع ----------
+const LF2 = await call('POST', '/market', { body: { title: 'تمر خلاص', kind: 'product', category: 'food', price: 3000, placeName: 'الصفا', payOnReceipt: true }, user: FSELL, expect: 200 });
+for (let i = 0; i < 10; i++) {
+  const o = await cod(LF2.id, {}, { user: FBUY, expect: 200 });
+  await call('POST', `/market/orders/${o.id}/accept`, { user: FSELL, expect: 200 });
+  await call('POST', `/market/orders/${o.id}/cash-received`, { user: FSELL, expect: 200 });
+  if (i < 5) await call('POST', `/market/orders/${o.id}/review`, { body: { rating: 5, text: 'ممتاز' }, user: FBUY, expect: 200 });
+}
+await globalThis.naslifeMarketRecomputeSeller(FSELL);
+const farm = (await pool.query('SELECT * FROM market_seller_stats WHERE seller_id=$1', [FSELL])).rows[0];
+check(farm.completed === 10 && farm.rating_count === 5 && ![...farm.badges].some((b) => ['trusted', 'top', 'fast'].includes(b)), `ten self-dealt pay-on-receipt orders from one account earn no trusted/top/fast badge (${JSON.stringify(farm.badges)})`);
+check(await txCount(FSELL) === 0 && await txCount(FBUY) === 0, 'and moved no money');
+// مشترون مختلفون حقيقيون يُحسبون: ثلاثة مشترين بقبول سريع = «سريع الرد»
+for (const b of [BUYER, BUYER3]) {
+  const o = await cod(LF2.id, {}, { user: b, expect: 200 });
+  await call('POST', `/market/orders/${o.id}/accept`, { user: FSELL, expect: 200 });
+  await call('POST', `/market/orders/${o.id}/confirm`, { user: b, expect: 200 });
+}
+await globalThis.naslifeMarketRecomputeSeller(FSELL);
+check([...(await pool.query('SELECT badges FROM market_seller_stats WHERE seller_id=$1', [FSELL])).rows[0].badges].includes('fast'), 'pay-on-receipt orders from three distinct buyers still count toward a badge');
+// منافس يطلب ويلغي مجاناً، والبائع يعتذر، ومهلة تنتهي: لا شيء منها إلغاء على البائع
+const cancelledOf = async () => { await globalThis.naslifeMarketRecomputeSeller(FSELL); return (await pool.query('SELECT cancelled FROM market_seller_stats WHERE seller_id=$1', [FSELL])).rows[0].cancelled; };
+const c0 = await cancelledOf();
+for (let i = 0; i < 2; i++) { const o = await cod(LF2.id, {}, { user: COMP, expect: 200 }); await call('POST', `/market/orders/${o.id}/cancel`, { user: COMP, expect: 200 }); }
+const cd = await cod(LF2.id, {}, { user: COMP, expect: 200 }); await call('POST', `/market/orders/${cd.id}/decline`, { user: FSELL, expect: 200 });
+const ce = await cod(LF2.id, {}, { user: COMP, expect: 200 });
+await pool.query("UPDATE market_orders SET created_at=now() - interval '49 hours' WHERE id=$1", [ce.id]); await globalThis.naslifeMarketSweep();
+check(await cancelledOf() === c0, `never-accepted requests (buyer cancel, decline, expiry) do not count as seller cancellations (${c0})`);
+const ca = await cod(LF2.id, {}, { user: COMP, expect: 200 });
+await call('POST', `/market/orders/${ca.id}/accept`, { user: FSELL, expect: 200 });
+await call('POST', `/market/orders/${ca.id}/cancel`, { user: FSELL, expect: 200 });
+check(await cancelledOf() === c0 + 1, 'a seller cancelling an accepted order still counts');
 
 console.log(fails ? `\n${fails} FAILED` : '\nALL MARKET COD OK');
 await app.close(); await pool.end();

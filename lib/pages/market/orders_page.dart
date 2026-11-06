@@ -333,6 +333,8 @@ class OrderPage extends ConsumerWidget {
       return switch (x.cancelReason) {
         'declined' => x.mineAsSeller ? 'اعتذرت عن الطلب وعاد المخزون.' : 'اعتذر البائع عن الطلب. لم يُخصم منك شيء.',
         'no_show' => x.mineAsSeller ? 'سجّلت أن المشتري لم يحضر للاستلام، وعاد المخزون.' : 'سجّل البائع أنك لم تحضر للاستلام. إن كان ذلك خطأً فأبلغ عن البائع.',
+        // مسحته الإدارة بعد بلاغ: لم يعد يُحسب على المشتري
+        'no_show_cleared' => x.mineAsSeller ? 'أزالت الإدارة تسجيل «لم يحضر» عن هذا الطلب بعد مراجعته.' : 'أزالت الإدارة تسجيل عدم حضورك عن هذا الطلب، ولا يُحسب عليك.',
         'expired' => 'أُلغي الطلب لأن البائع لم يقبله خلال ٤٨ ساعة.',
         _ => 'أُلغي الطلب. لم يُخصم شيء لأن الدفع عند الاستلام.',
       };
@@ -380,9 +382,10 @@ class OrderPage extends ConsumerWidget {
     if (reason == null || !context.mounted) return;
     try { await ref.read(apiClientProvider).declineOrder(x.id, reason: reason); ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); if (context.mounted) toast(context, 'اعتذرت عن الطلب وأُخطر المشتري'); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
   }
-  /// «لم يحضر المشتري»: يُلغى الطلب ويعود المخزون ويُحسب على المشتري (بعد ٣ مرات يتوقف عنه الدفع عند الاستلام)
+  /// «لم يحضر المشتري»: يُلغى الطلب ويعود المخزون ويُحسب على المشتري (٣ بائعين مختلفين خلال ٩٠ يوماً يوقفون عنه الدفع عند الاستلام).
+  /// الخادم يرفضه قبل أن يحين التسليم (too-early)
   Future<void> _noShow(BuildContext context, WidgetRef ref, Order x) async {
-    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: const Text('لم يحضر المشتري؟'), content: const Text('سيُلغى الطلب ويعود المخزون، ويُحسب على المشتري: بعد ٣ مرات لا يستطيع الطلب بالدفع عند الاستلام. استخدمه فقط إن لم يحضر فعلاً.'),
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: const Text('لم يحضر المشتري؟'), content: const Text('سيُلغى الطلب ويعود المخزون، ويُحسب على المشتري: إن سجّل ذلك ٣ بائعين مختلفين خلال ٩٠ يوماً يتوقف عنه الدفع عند الاستلام. استخدمه فقط إن حان التسليم ولم يحضر فعلاً؛ والإدارة تمسحه إن ثبت خطؤه.'),
       actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('رجوع')), FilledButton(key: const Key('no-show-go'), style: FilledButton.styleFrom(backgroundColor: Joy.danger), onPressed: () => Navigator.pop(ctx, true), child: const Text('لم يحضر'))]));
     if (ok != true || !context.mounted) return;
     try { await ref.read(apiClientProvider).noShowOrder(x.id); ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); if (context.mounted) toast(context, 'سُجّل عدم الحضور وأُلغي الطلب'); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }

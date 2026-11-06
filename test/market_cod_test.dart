@@ -1,6 +1,6 @@
 // الدفع عند الاستلام في السوق (بند 10 من نواقص الإطلاق): علم العرض في النموذج، اختيار طريقة الدفع في صفحة العرض، مسار iOS بدل
 // «الرصيد غير كافٍ»، بطاقات الطلب وصفحته للطرفين (القبول والاعتذار، «استلمت المبلغ»، «لم يحضر المشتري»، لا نزاع بل بلاغ)،
-// وتوجيه الإشعارات الجديدة إلى الطلب.
+// وتوجيه الإشعارات الجديدة إلى الطلب؛ وقاعدة «لم يحضر» (٣ بائعين مختلفين خلال ٩٠ يوماً) ومسحها من الإدارة، ونصوص الأخطاء في iOS بلا المحفظة.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -15,6 +15,7 @@ import 'package:naslook/api/notify_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/core/notify_open.dart';
 import 'package:naslook/core/platform.dart';
+import 'package:naslook/pages/admin/admin_market.dart';
 import 'package:naslook/pages/market/market_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/providers.dart';
@@ -48,6 +49,9 @@ class _Srv {
   bool asSeller = false;
   /// طلب المحفظة يرد 402 (رصيد غير كافٍ)
   bool broke = false;
+  /// مسح المدير «لم يحضر»
+  bool cleared = false;
+  String? cancelReason;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   Future<http.Response> handle(http.Request req) async {
     final key = '${req.method} ${req.url.path}';
@@ -64,13 +68,16 @@ class _Srv {
         if (!isCod && broke) return _json({'error': 'insufficient-funds'}, 402);
         return _json({'ok': true, 'id': _oid, 'total': price, 'discount': 0, 'commission': 0, 'code': '4321', 'payment': isCod ? 'cod' : 'wallet', 'status': isCod ? 'requested' : 'paid'});
       case 'GET /market/orders': return _json([_order(status: status, asSeller: asSeller, payment: payment)]);
-      case 'GET /market/orders/$_oid': return _json(_order(status: status, asSeller: asSeller, payment: payment));
+      case 'GET /market/orders/$_oid': return _json(_order(status: status, asSeller: asSeller, payment: payment, cancelReason: cancelReason));
       case 'POST /market/orders/$_oid/accept': status = 'paid'; return _json({'ok': true, 'status': 'paid'});
       case 'POST /market/orders/$_oid/decline': status = 'cancelled'; return _json({'ok': true, 'status': 'cancelled'});
       case 'POST /market/orders/$_oid/cash-received': status = 'completed'; return _json({'ok': true, 'status': 'completed'});
       case 'POST /market/orders/$_oid/no-show': status = 'cancelled'; return _json({'ok': true, 'status': 'cancelled', 'noShows': 1});
       case 'POST /market/orders/$_oid/cancel': status = 'cancelled'; return _json({'ok': true});
       case 'POST /market/orders/$_oid/confirm': status = 'completed'; return _json({'ok': true, 'status': 'completed'});
+      case 'GET /adminapi/market/overview': return _json({'listings': {}, 'categories': [], 'topSellers': [], 'cities': [], 'pending': [], 'disputes': []});
+      case 'GET /adminapi/market/no-shows': return _json({'days': 90, 'max': 3, 'items': [if (!cleared) {'order': _order(status: 'cancelled', cancelReason: 'no_show'), 'buyerNoShows': 3}]});
+      case 'POST /adminapi/market/orders/$_oid/clear-no-show': cleared = true; return _json({'ok': true, 'noShows': 2});
       case 'GET /wallet': return _json({'balance': 0, 'points': 0, 'upcomingTickets': 0, 'testTopup': false, 'recent': []});
       case 'GET /wishlist/status': return _json({'saved': false});
     }
@@ -320,6 +327,51 @@ void main() {
       await tester.tap(find.byKey(const Key('order-no-show'))); await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('no-show-go'))); await tester.pumpAndSettle();
       expect(s2.calls, contains('POST /market/orders/$_oid/no-show'));
+    });
+  });
+
+  group('no-show rules and admin', () {
+    testWidgets('a no-show the admin cleared reads as cleared to the buyer', (tester) async {
+      final srv = _Srv()..status = 'cancelled'..cancelReason = 'no_show_cleared';
+      await _pump(tester, const OrderPage(_oid), srv: srv);
+      expect(find.text('أزالت الإدارة تسجيل عدم حضورك عن هذا الطلب، ولا يُحسب عليك.'), findsOneWidget);
+    });
+
+    testWidgets('the no-show dialog states the rule: three different sellers within 90 days', (tester) async {
+      final srv = _Srv()..asSeller = true..status = 'preparing';
+      await _pump(tester, const OrderPage(_oid), srv: srv);
+      await tester.ensureVisible(find.byKey(const Key('order-no-show')));
+      await tester.tap(find.byKey(const Key('order-no-show'))); await tester.pumpAndSettle();
+      expect(find.textContaining('٣ بائعين مختلفين خلال ٩٠ يوماً'), findsOneWidget);
+    });
+
+    testWidgets('admin lists recent no-shows with the buyer count and clears one', (tester) async {
+      final srv = await _pump(tester, const Scaffold(body: AdminMarketPage()));
+      expect(find.textContaining('«لم يحضر المشتري» آخر ٩٠ يوماً'), findsOneWidget);
+      expect(find.textContaining('المشتري amr (3 من ٣ · موقوف)'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('am-clear-ns-$_oid')));
+      await tester.tap(find.byKey(const Key('am-clear-ns-$_oid'))); await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'حضر المشتري');
+      await tester.tap(find.text('مسح').last); await tester.pumpAndSettle();
+      expect(srv.bodies['POST /adminapi/market/orders/$_oid/clear-no-show']!.single['note'], 'حضر المشتري');
+      expect(find.byKey(const Key('am-clear-ns-$_oid')), findsNothing);
+    });
+  });
+
+  group('iOS error text', () {
+    const limit = ApiException(429, 'cod-limit', body: {'error': 'cod-limit', 'max': 3});
+    const blocked = ApiException(403, 'cod-blocked', body: {'error': 'cod-blocked', 'noShows': 3, 'days': 90});
+    test('web and Android point to the wallet as the other way to pay', () {
+      iosNativeOverride = false;
+      expect(marketErrText(limit), contains('المحفظة'));
+      expect(marketErrText(blocked), allOf(contains('المحفظة'), contains('٣ بائعين مختلفين')));
+    });
+    test('iOS cannot top up, so the texts leave the wallet out', () {
+      iosNativeOverride = true;
+      expect(marketErrText(limit), isNot(contains('المحفظة')));
+      expect(marketErrText(limit), contains('أكمل أحدها أو ألغه'));
+      expect(marketErrText(blocked), isNot(contains('المحفظة')));
+      expect(marketErrText(blocked), contains('أبلغ عن البائع'));
     });
   });
 

@@ -290,6 +290,7 @@ String ownerErrText(Object e) {
   if (s.contains('code-invalid')) return 'رمز غير صحيح لهذه الدائرة';
   if (s.contains('already-used')) return 'هذا الرمز استُخدم من قبل';
   if (s.contains('already-cancelled')) return 'هذا الطلب ملغى';
+  if (s.contains('already-no_show')) return 'سُجّل هذا الحجز: لم يحضر';
   if (s.contains('not-cancellable')) return 'لا يمكن إلغاء هذا الطلب';
   if (s.contains('insufficient-funds')) return 'الرصيد غير كافٍ';
   if (s.contains('admin-only')) return 'هذا الإجراء لمدير النظام فقط';

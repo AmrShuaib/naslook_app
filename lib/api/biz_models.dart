@@ -73,6 +73,10 @@ enum BizCategory {
   IconData get appointmentIcon => switch (this) { salon => Icons.content_cut_rounded, services => Icons.handyman_outlined, _ => Icons.medical_services_outlined };
 }
 
+/// عدد معدود بصيغته العربية: 1 [one] (يوم واحد)، 2 [two] (يومان/يومين)، 3–10 «n [few]» (أيام)، 11 فأكثر «n [many]» (يوماً).
+String arCount(int n, {required String one, required String two, required String few, required String many}) =>
+    n == 1 ? one : n == 2 ? two : n >= 3 && n <= 10 ? '$n $few' : '$n $many';
+
 /// «HH:MM» بالتوقيت المحلي (لبطاقة «هنا اليوم حتى …»).
 String clockLabel(DateTime t) {
   final l = t.toLocal();
@@ -416,13 +420,17 @@ class BizOrder {
             _ => 'من المحفظة',
           },
       };
-  /// سطر المال كما يراه صاحب الدائرة.
+  /// صاحب الدائرة يلغيه: مؤكد ولا قرار نزاع (بعد الحسم لا إلغاء ينقض القرار، والخادم يرفضه).
+  bool get ownerCancellable => status == 'confirmed' && (dispute == null || dispute!.open) && funds != 'split' && funds != 'refunded';
+  /// «لم يحضر» متاح للفريق: بعد حلول الموعد، أو بعد يوم من الطلب لما لا موعد له (كما يفرض الخادم).
+  bool canNoShowAt(DateTime now) => venueUnpaid && status == 'confirmed' && (startAt != null ? !startAt!.isAfter(now) : createdAt != null && !createdAt!.add(const Duration(days: 1)).isAfter(now));
+  /// سطر المال كما يراه صاحب الدائرة (والإدارة: المبلغ يصل محفظة الدائرة لا محفظة المدير).
   String get ownerMoneyLabel => switch (payment) {
         'at_venue' => paid ? 'دُفع في المكان' : 'الدفع في المكان: لم يُدفع بعد',
         'free' => 'مجاني',
         _ => switch (funds) {
             'held' => disputeOpen ? 'محجوز ومجمّد بنزاع' : releaseAt == null ? 'محجوز حتى الاستلام' : 'محجوز حتى الاستلام أو ${releaseAt!.day}/${releaseAt!.month}',
-            'released' || 'credited' => 'في محفظتك',
+            'released' || 'credited' => viewer == 'admin' ? 'وصل محفظة الدائرة' : 'في محفظتك',
             'refunded' => 'استُرد للعميل',
             'split' => 'قُسم مع العميل',
             _ => 'من المحفظة',

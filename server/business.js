@@ -31,6 +31,9 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const str = (v, max = 200) => String(v ?? "").trim().slice(0, max);
 const num = (v) => (v == null || v === "" ? null : Number(v));
 const isUrl = (v) => typeof v === "string" && (v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/"));
+// ملف رفعه المستخدم عبر /chat/upload: يُحفظ المسار وحده فيُحمَّل من أصلنا دائماً (لا بكسل تتبع خارجي يكشف عنوان من يفتحه)
+const MEDIA_RE = /^(?:https?:\/\/[^/]+)?(\/chat\/media\/[A-Za-z0-9._-]{1,120})$/;
+const mediaPath = (v) => String(v ?? "").trim().match(MEDIA_RE)?.[1] ?? null;
 
 // ---- تطبيع النص العربي للبحث: توحيد الهمزات والتاء المربوطة والألف المقصورة وإزالة التشكيل والتطويل (في SQL وفي JS بالقواعد نفسها)
 export const NORM = (expr) => `regexp_replace(translate(lower(${expr}), 'أإآةى', 'اااهي'), '[ً-ْـ]', '', 'g')`;
@@ -441,8 +444,8 @@ export default async function business(app, opts) {
   const postOut = (p) => ({ id: p.id, bizId: p.biz_id, kind: p.kind, title: p.title, body: p.body, imageUrl: p.image_url, startsAt: p.starts_at, endsAt: p.ends_at, active: p.active, hidden: p.hidden === true, createdAt: p.created_at });
   // الإلغاء من العميل: المنتجات خلال 24 ساعة من الشراء، التذاكر قبل ساعتين من العرض، الغرف والسيارات قبل 24 ساعة من البداية
   function cancellable(o, now = Date.now()) {
-    // النزاع المفتوح يحسمه المدير؛ إلغاء العميل أثناءه يسبق القرار
-    if (o.status !== "confirmed" || o.d_status === "open") return false;
+    // النزاع المفتوح يحسمه المدير؛ إلغاء العميل أثناءه يسبق القرار، وبعد القرار (تقسيم أو تحرير) لا إلغاء ينقضه
+    if (o.status !== "confirmed" || o.d_status) return false;
     const start = o.start_at ? new Date(o.start_at).getTime() : null;
     if (o.kind === "product") return now - new Date(o.created_at).getTime() < DAY;
     if (o.kind === "showtime" || o.kind === "clinic") return start != null && start - now > 2 * 3600000;
@@ -1031,7 +1034,10 @@ export default async function business(app, opts) {
     return tx(async (c) => {
       const o = (await c.query(LOCK_ORDER, [orderId])).rows[0];
       if (!o || (byUser && o.user_id !== byUser)) throw fail("not-found");
-      const disputed = await openDispute(c, o.id);
+      const d = (await c.query("SELECT status FROM biz_disputes WHERE order_id=$1", [o.id])).rows[0];
+      const disputed = d?.status === "open";
+      // قرار الإدارة نهائي: بعد الحسم (والمبلغ مقسوم أو محرَّر أو مسترد) لا إلغاء من أي طرف، وإلا أُعيد المبلغ كاملاً فوق ما قُرّر
+      if ((d && !disputed) || ["split", "refunded"].includes(o.funds)) throw fail("not-cancellable");
       if (force ? o.status !== "confirmed" : (disputed || !cancellable(o))) throw fail("not-cancellable");
       const refunded = await refundWallet(c, o, Number(o.total));
       await c.query("UPDATE biz_orders SET status='cancelled', funds=CASE WHEN $2 THEN 'refunded' ELSE funds END, updated_at=now() WHERE id=$1", [o.id, refunded]);
@@ -1084,7 +1090,8 @@ export default async function business(app, opts) {
       await tx(async (c) => {
         const o = (await c.query(LOCK_ORDER, [found.id])).rows[0];
         if (o.status !== "confirmed") throw fail(`already-${o.status}`);
-        const release = o.funds === "held" && !(await openDispute(c, o.id));
+        // دائرة بلا مالك (حذف حسابه): releaseHeld لا يجد محفظة، فيبقى المبلغ محجوزاً حتى يُسترد أو يعود للدائرة مالك، لا «محرَّراً» إلى العدم
+        const release = o.funds === "held" && !!o.owner_id && !(await openDispute(c, o.id));
         await c.query(`UPDATE biz_orders SET status='used', used_at=now(), updated_at=now(), paid_at=CASE WHEN $2 AND payment='at_venue' THEN COALESCE(paid_at, now()) ELSE paid_at END,
           funds=CASE WHEN $3 THEN 'released' ELSE funds END, released_at=CASE WHEN $3 THEN now() ELSE released_at END WHERE id=$1`, [o.id, markPaid, release]);
         if (release) await releaseHeld(c, o);
@@ -1123,6 +1130,8 @@ export default async function business(app, opts) {
         if (o.payment !== "at_venue" || Number(o.total) <= 0) throw fail("not-venue");
         if (o.status !== "confirmed") throw fail("bad-status");
         if (o.start_at && new Date(o.start_at).getTime() > Date.now()) throw fail("too-early");
+        // المنتج بلا موعد: لا «لم يحضر» قبل يوم من الطلب (مهلة إلغائه نفسها)، فلا يُحظر عميل بثلاث نقرات لحظة طلبه
+        if (!o.start_at && Date.now() - new Date(o.created_at).getTime() < DAY) throw fail("too-early");
         await c.query("UPDATE biz_orders SET status='no_show', updated_at=now() WHERE id=$1", [o.id]);
         await restock(c, o);
         return { o, count: await noShowsOf(c, o.biz_id, o.user_id) };
@@ -1134,7 +1143,7 @@ export default async function business(app, opts) {
     }
     const left = Math.max(0, NO_SHOW_LIMIT - count);
     await notify(o.user_id, { kind: "order_status", title: `سُجّل عدم حضورك · ${bizName(o)}`,
-      body: `${o.item_title} (${o.code})${left > 0 ? ` · بعد ${left} ${left === 1 ? "مرة أخرى" : "مرات أخرى"} لن يتاح لك الدفع في المكان في هذه الدائرة` : " · لم يعد الدفع في المكان متاحاً لك في هذه الدائرة"}`,
+      body: `${o.item_title} (${o.code})${left > 0 ? ` · بعد ${left === 1 ? "مرة واحدة أخرى" : left === 2 ? "مرتين أخريين" : `${left} مرات أخرى`} لن يتاح لك الدفع في المكان في هذه الدائرة` : " · لم يعد الدفع في المكان متاحاً لك في هذه الدائرة"}`,
       data: { bizId: o.biz_id, orderId: o.id, status: "no_show" }, exclude: g.uid });
     const fresh = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [o.id])).rows[0];
     return orderOut(fresh, { customer: await person(fresh.user_id), noShows: count });
@@ -1208,8 +1217,8 @@ export default async function business(app, opts) {
     const reason = str(req.body?.reason, 600);
     if (reason.length < 5) return bad(reply, 400, "bad-reason");
     if (rejectBanned(reply, reason)) return;
-    // الصور روابط رفعها العميل عبر /chat/upload (حتى 4)
-    const photos = (Array.isArray(req.body?.photos) ? req.body.photos : []).filter(isUrl).map((u) => str(u, 500)).slice(0, 4);
+    // الصور ملفات رفعها العميل عبر /chat/upload (حتى 4)، تُحفظ مساراتها على أصلنا
+    const photos = (Array.isArray(req.body?.photos) ? req.body.photos : []).map(mediaPath).filter(Boolean).slice(0, 4);
     let o;
     try {
       o = await tx(async (c) => {
@@ -1336,17 +1345,17 @@ export default async function business(app, opts) {
     const social = (await pool.query("SELECT (SELECT count(*) FROM biz_follows WHERE biz_id=$1)::int AS followers, (SELECT round(avg(rating)::numeric,1) FROM biz_reviews WHERE biz_id=$1) AS rating, (SELECT count(*) FROM biz_reviews WHERE biz_id=$1)::int AS reviews, (SELECT count(*) FROM biz_reviews WHERE biz_id=$1 AND reply IS NULL)::int AS unanswered, (SELECT views FROM biz WHERE id=$1) AS views", [id])).rows[0];
     const upcoming = (await pool.query("SELECT count(*)::int AS n FROM biz_orders WHERE biz_id=$1 AND status='confirmed' AND start_at IS NOT NULL AND start_at BETWEEN now() AND now() + interval '24 hours'", [id])).rows[0].n;
     // المال: المحجوز حتى الاستلام (ومنه ما تجمّد بنزاع)، والمُحرَّر لمحفظة صاحب الدائرة (ومنه الطلبات القديمة التي قُيّدت عند الشراء
-    // وحصته من التقسيم)، والدفع في المكان المستحق والمدفوع (لا يمر عبر المحفظة)
+    // وحصته من التقسيم؛ لا شراء المالك من دائرته لأنه لا يُقيَّد له)، والدفع في المكان المستحق والمدفوع (لا يمر عبر المحفظة)
     const money = (await pool.query(`SELECT
         COALESCE(SUM(o.total) FILTER (WHERE o.funds='held'),0)::bigint AS held,
         COALESCE(SUM(o.total) FILTER (WHERE o.funds='held' AND d.status='open'),0)::bigint AS disputed,
-        COALESCE(SUM(o.total) FILTER (WHERE o.payment='wallet' AND o.total>0 AND ((o.funds IS NULL AND o.status IN ('confirmed','used')) OR o.funds='released')),0)::bigint
-          + COALESCE(SUM(o.total - o.total/2) FILTER (WHERE o.funds='split'),0)::bigint AS released,
+        COALESCE(SUM(o.total) FILTER (WHERE o.payment='wallet' AND o.total>0 AND o.user_id IS DISTINCT FROM b.owner_id AND ((o.funds IS NULL AND o.status IN ('confirmed','used')) OR o.funds='released')),0)::bigint
+          + COALESCE(SUM(o.total - o.total/2) FILTER (WHERE o.funds='split' AND o.user_id IS DISTINCT FROM b.owner_id),0)::bigint AS released,
         COALESCE(SUM(o.total) FILTER (WHERE o.payment='at_venue' AND o.paid_at IS NULL AND o.status IN ('confirmed','used')),0)::bigint AS venue_due,
         COALESCE(SUM(o.total) FILTER (WHERE o.payment='at_venue' AND o.paid_at IS NOT NULL),0)::bigint AS venue_paid,
         count(*) FILTER (WHERE d.status='open')::int AS disputes_open,
         count(*) FILTER (WHERE o.status='no_show')::int AS no_shows
-      FROM biz_orders o LEFT JOIN biz_disputes d ON d.order_id=o.id WHERE o.biz_id=$1`, [id])).rows[0];
+      FROM biz_orders o JOIN biz b ON b.id=o.biz_id LEFT JOIN biz_disputes d ON d.order_id=o.id WHERE o.biz_id=$1`, [id])).rows[0];
     return {
       money: { held: Number(money.held), disputed: Number(money.disputed), released: Number(money.released), venueDue: Number(money.venue_due), venuePaid: Number(money.venue_paid), disputesOpen: money.disputes_open, noShows: money.no_shows, holdDays: holdDays() },
       orders: { total: totals.total, confirmed: totals.confirmed, used: totals.used, cancelled: totals.cancelled, last7: totals.orders7, next24h: upcoming, customers: totals.customers },

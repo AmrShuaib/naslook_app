@@ -44,6 +44,7 @@ const oil = await call('POST', `/biz/${B}/items`, { body: { kind: 'product', tit
 const comb = await call('POST', `/biz/${B}/items`, { body: { kind: 'product', title: 'مشط', price: 2000, stock: 10 }, expect: 200 });
 const cut = await call('POST', `/biz/${B}/items`, { body: { kind: 'clinic', title: 'قص', price: 6000, stock: 1, payAtVenue: true, meta: { times: ['10:00', '18:00'], minutes: 30 } }, expect: 200 });
 const free = await call('POST', `/biz/${B}/items`, { body: { kind: 'product', title: 'استشارة', price: 0 }, expect: 200 });
+const brush = await call('POST', `/biz/${B}/items`, { body: { kind: 'product', title: 'فرشاة', price: 3000, stock: 30 }, expect: 200 });
 const uItem = await call('POST', `/biz/${U}/items`, { body: { kind: 'product', title: 'منتج', price: 3000, payAtVenue: true }, expect: 200 });
 check(oil.payAtVenue === true && comb.payAtVenue === false && cut.payAtVenue === true, 'payAtVenue is per item and off by default');
 const toggled = await call('PATCH', `/biz/${B}/items/${comb.id}`, { body: { payAtVenue: true }, expect: 200 });
@@ -90,6 +91,9 @@ check((await call('POST', `/biz/${B}/orders/${v2.id}/no-show`, { user: STAFF, ex
 const ns = [];
 for (let i = 0; i < 3; i++) {
   const v = await call('POST', `/biz/${B}/orders`, { body: { itemId: oil.id, payment: 'at_venue' }, user: POOR, expect: 200 });
+  // المنتج بلا موعد: «لم يحضر» بعد مهلة يوم من الطلب (مهلة إلغائه نفسها)، لا لحظة الطلب
+  if (i === 0) check((await call('POST', `/biz/${B}/orders/${v.id}/no-show`, { user: STAFF, expect: 409 })).error === 'too-early', 'product no-show right after ordering is too early');
+  await pool.query("UPDATE biz_orders SET created_at=now() - interval '25 hours' WHERE id=$1", [v.id]);
   const before = (await pool.query('SELECT stock FROM biz_items WHERE id=$1', [oil.id])).rows[0].stock;
   const r = await call('POST', `/biz/${B}/orders/${v.id}/no-show`, { user: STAFF, expect: 200 });
   const after = (await pool.query('SELECT stock FROM biz_items WHERE id=$1', [oil.id])).rows[0].stock;
@@ -98,6 +102,8 @@ for (let i = 0; i < 3; i++) {
 }
 check(JSON.stringify(ns) === '[1,2,3]', 'per-customer no-show count at this circle', JSON.stringify(ns));
 check(sent.some((n) => n.kind === 'order_status' && n.ids.includes(POOR) && /عدم حضورك/.test(n.title)), 'customer notified of the no-show');
+const nsBodies = sent.filter((n) => n.kind === 'order_status' && n.ids.includes(POOR) && /عدم حضورك/.test(n.title)).map((n) => n.body);
+check(/بعد مرتين أخريين/.test(nsBodies[0]) && /بعد مرة واحدة أخرى/.test(nsBodies[1]) && /لم يعد الدفع في المكان متاحاً/.test(nsBodies[2]), 'no-show notices count down in proper Arabic', JSON.stringify(nsBodies));
 check((await call('POST', `/biz/${B}/orders`, { body: { itemId: oil.id, payment: 'at_venue' }, user: POOR, expect: 403 })).error === 'venue-blocked', 'after 3 no-shows pay at venue is refused at this circle');
 const teamView = await call('GET', `/biz/orders/${v2.id}`, { user: STAFF, expect: 200 });
 check(teamView.viewer === 'team' && teamView.noShows === 3 && teamView.customer?.id === POOR, 'team order view shows the customer and no-show count');
@@ -172,8 +178,9 @@ console.log('\n--- disputes');
 check((await call('POST', `/biz/orders/${w5.id}/dispute`, { body: { reason: 'قصير' }, user: C, expect: 400 })).error === 'bad-reason', 'reason needs at least 5 characters');
 await call('POST', `/biz/orders/${w5.id}/dispute`, { body: { reason: 'لم أستلم الطلب' }, user: X, expect: 404 });
 sent.length = 0;
-const d1 = await call('POST', `/biz/orders/${w5.id}/dispute`, { body: { reason: 'المنتج وصل مكسوراً', photos: ['/media/a.jpg', 'javascript:alert(1)', 'https://x.test/b.jpg', '/m/c', '/m/d', '/m/e'] }, user: C, expect: 200 });
-check(d1.dispute?.status === 'open' && d1.dispute.photos.length === 4 && !d1.dispute.photos.includes('javascript:alert(1)') && d1.disputable === false && d1.cancellable === false, 'customer opens a dispute with up to 4 photo links', JSON.stringify(d1.dispute?.photos));
+// الصور من /chat/upload فقط: يُحفظ المسار على أصلنا، وأي رابط خارجي (بكسل تتبع) أو مسار آخر يُسقط
+const d1 = await call('POST', `/biz/orders/${w5.id}/dispute`, { body: { reason: 'المنتج وصل مكسوراً', photos: ['/media/a.jpg', 'javascript:alert(1)', 'https://x.test/b.jpg', 'http://tracker.example/pixel.gif?u=1', '/chat/media/abc123-0123456789abcdef01234567.jpg', 'https://naslife.app/chat/media/def456-0123456789abcdef01234567.png', '/chat/media/c.jpg', '/chat/media/d.jpg', '/chat/media/e.jpg'] }, user: C, expect: 200 });
+check(d1.dispute?.status === 'open' && JSON.stringify(d1.dispute.photos) === JSON.stringify(['/chat/media/abc123-0123456789abcdef01234567.jpg', '/chat/media/def456-0123456789abcdef01234567.png', '/chat/media/c.jpg', '/chat/media/d.jpg']) && d1.disputable === false && d1.cancellable === false, 'customer opens a dispute with up to 4 own-media photos (external links dropped)', JSON.stringify(d1.dispute?.photos));
 check(sent.some((n) => n.kind === 'biz_dispute' && n.ids.includes(O) && n.data.side === 'team' && n.data.orderId === w5.id) && sent.some((n) => n.kind === 'biz_dispute' && n.ids.includes('admins') && n.data.side === 'admin'), 'owner and admins notified with the order id');
 check((await call('POST', `/biz/orders/${w5.id}/dispute`, { body: { reason: 'مرة ثانية للمشكلة' }, user: C, expect: 409 })).error === 'already-disputed', 'one dispute per order');
 check((await call('POST', `/biz/orders/${w5.id}/cancel`, { user: C, expect: 409 })).error === 'not-cancellable', 'customer cannot cancel during an open dispute');
@@ -247,6 +254,51 @@ check(fr.payment === 'free' && fr.disputable === false && fr.funds === null, 'fr
 await call('GET', `/biz/orders/${fr.id}`, { user: X, expect: 404 });
 check((await call('GET', `/biz/orders/${fr.id}`, { user: ADMIN, expect: 200 })).viewer === 'admin', 'admin can open any order');
 check((await call('GET', `/biz/${B}/orders?status=disputed`, { user: STAFF, expect: 200 })).length === 0, 'disputed filter empty once all are resolved');
+
+// ================= 4) قرار النزاع نهائي، والدائرة بلا مالك، وشراء المالك من دائرته
+console.log('\n--- after a decision, ownerless circles, self purchases');
+// بعد التقسيم: لا إلغاء من العميل ولا من الدائرة (كان الإلغاء يعيد المبلغ كاملاً فوق النصف)
+const s1 = await call('POST', `/biz/${B}/orders`, { body: { itemId: brush.id }, user: C, expect: 200 });
+await call('POST', `/biz/orders/${s1.id}/dispute`, { body: { reason: 'الفرشاة مكسورة' }, user: C, expect: 200 });
+await call('POST', `/adminapi/biz/disputes/${s1.id}`, { body: { resolution: 'split' }, user: ADMIN, expect: 200 });
+ob = await bal(O); cb = await bal(C);
+const s1v = await call('GET', `/biz/orders/${s1.id}`, { user: C, expect: 200 });
+check(s1v.status === 'confirmed' && s1v.funds === 'split' && s1v.cancellable === false, 'after a split the order is no longer cancellable', JSON.stringify({ s: s1v.status, f: s1v.funds, c: s1v.cancellable }));
+check((await call('POST', `/biz/orders/${s1.id}/cancel`, { user: C, expect: 409 })).error === 'not-cancellable', 'customer cannot cancel after a split');
+check((await call('POST', `/biz/${B}/orders/${s1.id}/cancel`, { expect: 409 })).error === 'not-cancellable', 'owner cannot cancel after a split');
+check(await bal(C) === cb && await bal(O) === ob && JSON.stringify(await txs(C, s1.id)) === '["biz:-3000","biz_refund:1500"]', 'split stays half and half', JSON.stringify(await txs(C, s1.id)));
+// بعد التحرير: الإلغاء لا ينقض قرار الإدارة
+const s2 = await call('POST', `/biz/${B}/orders`, { body: { itemId: brush.id }, user: C, expect: 200 });
+await call('POST', `/biz/orders/${s2.id}/dispute`, { body: { reason: 'تأخر تجهيز الطلب' }, user: C, expect: 200 });
+await call('POST', `/adminapi/biz/disputes/${s2.id}`, { body: { resolution: 'release' }, user: ADMIN, expect: 200 });
+ob = await bal(O); cb = await bal(C);
+check((await call('GET', `/biz/orders/${s2.id}`, { user: C })).cancellable === false, 'after a release the order is no longer cancellable');
+check((await call('POST', `/biz/orders/${s2.id}/cancel`, { user: C, expect: 409 })).error === 'not-cancellable', 'customer cannot cancel after a release');
+check((await call('POST', `/biz/${B}/orders/${s2.id}/cancel`, { expect: 409 })).error === 'not-cancellable', 'owner cannot cancel after a release');
+check(await bal(C) === cb && await bal(O) === ob, 'release decision stands (no money moved by a later cancel)');
+// القرار نهائي لكن الطلب قائم: الاستلام يبقى ممكناً بلا أي قيد جديد
+const s2c = await call('POST', `/biz/${B}/checkin`, { body: { orderId: s2.id }, expect: 200 });
+check(s2c.status === 'used' && s2c.funds === 'released' && await bal(O) === ob && JSON.stringify(await txs(O, s2.id)) === '["biz_sale:3000"]', 'check-in after a release credits nothing again', JSON.stringify(await txs(O, s2.id)));
+// دائرة بلا مالك (حذف المالك حسابه): الاستلام لا يحرّر المبلغ إلى العدم، فيبقى محجوزاً
+const h1 = await call('POST', `/biz/${B}/orders`, { body: { itemId: brush.id }, user: C, expect: 200 });
+await pool.query('UPDATE biz SET owner_id=NULL WHERE id=$1', [B]);
+cb = await bal(C);
+const h1c = await call('POST', `/biz/${B}/checkin`, { body: { orderId: h1.id }, user: STAFF, expect: 200 });
+check(h1c.status === 'used' && h1c.funds === 'held' && !h1c.releasedAt && await bal(C) === cb && (await txs(O, h1.id)).length === 0, 'check-in on an ownerless circle keeps the money held', JSON.stringify({ f: h1c.funds }));
+await pool.query("UPDATE biz_orders SET release_at=now() - interval '1 minute' WHERE id=$1", [h1.id]);
+await globalThis.naslifeBizReleaseDue();
+check((await call('GET', `/biz/orders/${h1.id}`, { user: C })).funds === 'held', 'the sweep skips an ownerless circle');
+await pool.query('UPDATE biz SET owner_id=$2 WHERE id=$1', [B, O]);
+ob = await bal(O);
+await globalThis.naslifeBizReleaseDue();
+check((await call('GET', `/biz/orders/${h1.id}`, { user: C })).funds === 'released' && await bal(O) === ob + 3000, 'once owned again the held money is released once');
+// شراء المالك من دائرته: لا يُقيَّد له عند التحرير، ولا يُحسب في «وصل محفظتك»
+await call('POST', '/wallet/topup', { body: { amount: 100000 }, user: O, expect: 200 });
+const relBefore = (await call('GET', `/biz/${B}/stats`, { expect: 200 })).money.released;
+const self = await call('POST', `/biz/${B}/orders`, { body: { itemId: brush.id }, user: O, expect: 200 });
+await call('POST', `/biz/${B}/checkin`, { body: { orderId: self.id }, expect: 200 });
+const relAfter = (await call('GET', `/biz/${B}/stats`, { expect: 200 })).money.released;
+check(relAfter === relBefore && JSON.stringify(await txs(O, self.id)) === '["biz:-3000"]', 'self purchase is not counted as released to the wallet', JSON.stringify({ relBefore, relAfter }));
 
 await pool.query("DELETE FROM biz_disputes WHERE biz_id LIKE 'bo-%'");
 await app.close(); await pool.end();

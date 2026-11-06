@@ -396,13 +396,16 @@ String marketErrCode(Object e) {
 String marketErrText(Object e) {
   final s = marketErrCode(e);
   if (s.contains('insufficient-funds')) return 'الرصيد غير كافٍ في المحفظة';
-  // الدفع عند الاستلام (قبل فحص blocked أدناه لأن cod-blocked يحتويها)
-  if (s.contains('cod-limit')) return 'لديك ٣ طلبات مفتوحة بالدفع عند الاستلام؛ أكمل أحدها أو ألغه أولاً، أو ادفع من المحفظة';
-  if (s.contains('cod-blocked')) return 'توقف الدفع عند الاستلام لحسابك بعد ٣ مرات لم تحضر فيها للاستلام؛ يبقى الدفع من المحفظة متاحاً';
+  // الدفع عند الاستلام (قبل فحص blocked أدناه لأن cod-blocked يحتويها). في iOS لا شحن للمحفظة داخل التطبيق فلا ندلّ عليها
+  if (s.contains('cod-limit')) return isIosNative ? 'لديك ٣ طلبات مفتوحة بالدفع عند الاستلام؛ أكمل أحدها أو ألغه أولاً' : 'لديك ٣ طلبات مفتوحة بالدفع عند الاستلام؛ أكمل أحدها أو ألغه أولاً، أو ادفع من المحفظة';
+  if (s.contains('cod-blocked')) {
+    const why = 'توقف الدفع عند الاستلام لحسابك لأن ٣ بائعين مختلفين سجّلوا عدم حضورك للاستلام خلال ٩٠ يوماً';
+    return isIosNative ? '$why. إن كان ذلك خطأً فأبلغ عن البائع' : '$why؛ يبقى الدفع من المحفظة متاحاً';
+  }
   if (s.contains('cod-unavailable')) return 'هذا العرض لا يقبل الدفع عند الاستلام';
   if (s.contains('cod-needs-place')) return 'للدفع عند الاستلام فعّل التوصيل أو اكتب مكان الاستلام';
   if (s.contains('cod-no-dispute')) return 'لا نزاع على طلب الدفع عند الاستلام؛ إن واجهت مشكلة فأبلغ عن البائع';
-  if (s.contains('too-early')) return 'لا يُسجَّل عدم الحضور قبل موعد الحجز';
+  if (s.contains('too-early')) return 'لا يُسجَّل عدم الحضور قبل أن يحين التسليم: بعد موعد الحجز، أو والطلب «في الطريق»، أو بعد ساعتين من قبوله';
   if (s.contains('contact-in-text')) return 'لا تكتب أرقام جوال أو روابط في العرض؛ التواصل عبر المراسلة داخل ناس لايف';
   if (s.contains('duplicate-listing')) return 'لديك عرض مطابق بالعنوان والسعر نفسيهما';
   if (s.contains('new-account-limit')) return 'الحساب الجديد يمكنه نشر ٣ عروض في أول يوم';

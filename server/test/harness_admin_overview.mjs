@@ -20,7 +20,8 @@ app.register((await import('../business.js')).default, { pool, auth });
 app.register((await import('../admin.js')).default, { pool, auth, webappDir: dir + 'webapp', opsDir: dir + 'ops' });
 await app.ready(); await new Promise((r) => setTimeout(r, 300));
 await pool.query("INSERT INTO admins(user_id,granted_by) VALUES($1,'test') ON CONFLICT DO NOTHING", [ADMIN]);
-await pool.query('DELETE FROM biz WHERE id = ANY($1)', [OURS]);
+// عناصر دوائرنا بلا مفتاح أجنبي يحذفها مع الدائرة: تُحذف صراحة وإلا فشل التشغيل الثاني على القاعدة نفسها
+await pool.query('DELETE FROM biz_items WHERE biz_id = ANY($1)', [OURS]); await pool.query('DELETE FROM biz WHERE id = ANY($1)', [OURS]);
 const call = async (method, url, { body = {}, user = null, expect } = {}) => {
   const r = await app.inject({ method, url, headers: { ...(user ? { 'x-user': user } : {}), 'content-type': 'application/json' }, payload: method === 'GET' ? undefined : JSON.stringify(body) });
   let j; try { j = r.json(); } catch { j = r.body; }
@@ -77,8 +78,22 @@ if (hiddenCol) {
   check(o3.circles.tiers.published === o2.circles.tiers.published - 1, 'a hidden circle is not published', JSON.stringify(o3.circles.tiers));
 }
 
+// ---- 3) إيراد السوق في «طلبات 7 أيام» والأعمدة اليومية: ما مرّ بالمحفظة فقط. الدفع عند الاستلام (مكتملاً أو بانتظار القبول)
+// يُعدّ طلباً بلا إيراد، والمسترد لا إيراد، والملغى لا يُعدّ أصلاً
+const { randomUUID } = await import('node:crypto');
+const mo = [['paid', 'wallet', 10000], ['requested', 'cod', 5000], ['completed', 'cod', 7000], ['refunded', 'wallet', 2000], ['cancelled', 'wallet', 3000]];
+const MO_IDS = mo.map(() => randomUUID());
+const todayRev = (o) => o.daily[o.daily.length - 1].revenue;
+const { body: m0 } = await call('GET', '/adminapi/overview', { user: ADMIN, expect: 200 });
+for (const [i, [st, pay, total]] of mo.entries()) await pool.query('INSERT INTO market_orders(id,listing_id,buyer_id,seller_id,qty,total,status,payment) VALUES($1,$2,$3,$4,1,$5,$6,$7)', [MO_IDS[i], randomUUID(), OWNER, ADMIN, total, st, pay]);
+const { body: m1 } = await call('GET', '/adminapi/overview', { user: ADMIN, expect: 200 });
+check(m1.orders7.market - m0.orders7.market === 4, 'pay-on-receipt and refunded orders are counted as orders, cancelled is not', `${m0.orders7.market} -> ${m1.orders7.market}`);
+check(m1.orders7.revenue - m0.orders7.revenue === 10000, 'market revenue counts only wallet money (no pay on receipt, no refunds)', `${m0.orders7.revenue} -> ${m1.orders7.revenue}`);
+check(todayRev(m1) - todayRev(m0) === 10000, 'the daily revenue bar follows the same rule', `${todayRev(m0)} -> ${todayRev(m1)}`);
+await pool.query('DELETE FROM market_orders WHERE id = ANY($1::uuid[])', [MO_IDS]);
+
 // ---- تنظيف
-await pool.query('DELETE FROM biz WHERE id = ANY($1)', [OURS]);
+await pool.query('DELETE FROM biz_items WHERE biz_id = ANY($1)', [OURS]); await pool.query('DELETE FROM biz WHERE id = ANY($1)', [OURS]);
 if (!had) await pool.query('ALTER TABLE biz DROP COLUMN IF EXISTS verification');
 await app.close(); await pool.end();
 console.log(fails ? `${fails} FAILED` : 'ALL OK');

@@ -104,6 +104,10 @@ extension CommerceApi on ApiClient {
   Future<void> adminMarketSellerFlags(String id, {required bool licensed, String note = ''}) => patch_('/adminapi/market/sellers/$id/flags', {'licensed': licensed, 'note': note});
   Future<List<Listing>> adminMarketListings({String status = '', String q = ''}) async => asList(await getList('/adminapi/market/listings', query: {'status': status, 'q': q})).map(Listing.fromJson).toList();
   Future<List<Order>> adminMarketOrders({String status = ''}) async => asList(await getList('/adminapi/market/orders', query: {'status': status})).map(Order.fromJson).toList();
+  /// «لم يحضر» في نافذة العدّ (٩٠ يوماً) مع عدّاد المشتري، ومسح الظالم منه بعد بلاغ المشتري
+  Future<List<({Order order, int buyerNoShows})>> adminMarketNoShows() async =>
+      [for (final x in asList((await get('/adminapi/market/no-shows'))['items'])) (order: Order.fromJson(x['order'] as Map), buyerNoShows: (x['buyerNoShows'] as num?)?.toInt() ?? 0)];
+  Future<void> adminClearNoShow(String orderId, {String note = ''}) => post('/adminapi/market/orders/$orderId/clear-no-show', {'note': note});
 
   // ---- المرحلة (ب): مندوب توصيل، بازارات، بوابة دفع، ترقية البائع
   Future<Order> setCourier(String orderId, {required String nickname, String note = ''}) async => Order.fromJson(await post('/market/orders/$orderId/courier', {'nickname': nickname, 'note': note}));

@@ -1,5 +1,5 @@
-// قسم السوق في لوحة الإدارة: أرقام ٣٠ يوماً، عروض بانتظار المراجعة، نزاعات وحسمها، أعلى البائعين، تصنيفات راكدة،
-// منح سبوت لايت، وتمييز بائع مرخّص.
+// قسم السوق في لوحة الإدارة: أرقام ٣٠ يوماً، عروض بانتظار المراجعة، «لم يحضر المشتري» ومسح الظالم منه، نزاعات وحسمها،
+// أعلى البائعين، تصنيفات راكدة، منح سبوت لايت، وتمييز بائع مرخّص.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -48,6 +48,8 @@ class AdminMarketPage extends ConsumerWidget {
               IconButton(key: Key('am-reject-${l.id}'), tooltip: 'رفض', icon: const Icon(Icons.cancel_outlined, color: Joy.danger), onPressed: () => _pending(context, ref, l, false)),
             ]), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingPage(l.id))), divider: i < o.pending.length - 1)])),
         ],
+        // «لم يحضر» في الدفع عند الاستلام: يمسحه المدير إن ثبت أنه ظالم (بعد بلاغ المشتري عن البائع)
+        const _NoShowsAdmin(),
         if (o.disputes.isNotEmpty) ...[
           SectionTitle('النزاعات (${o.disputes.length})'),
           for (final d in o.disputes) JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -136,5 +138,32 @@ class _BazaarsAdmin extends ConsumerWidget {
         trailing: Switch(key: Key('bz-active-${b.id}'), value: b.active && b.state != 'ended', onChanged: (v) async { try { await ref.read(apiClientProvider).adminPatchBazaar(b.id, {'active': v}); ref.invalidate(adminBazaarsProvider); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); } }),
         onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BazaarPage(b.id))), divider: i < list.length - 1)])),
     ]);
+  }
+}
+
+final adminNoShowsProvider = FutureProvider<List<({Order order, int buyerNoShows})>>((ref) => ref.watch(apiClientProvider).adminMarketNoShows());
+
+/// «لم يحضر المشتري» خلال ٩٠ يوماً مع عدّاد كل مشترٍ (٣ بائعين مختلفين يوقفون عنه الدفع عند الاستلام)، وزر مسح لكل واحد
+class _NoShowsAdmin extends ConsumerWidget {
+  const _NoShowsAdmin();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final list = ref.watch(adminNoShowsProvider).valueOrNull ?? const <({Order order, int buyerNoShows})>[];
+    if (list.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SectionTitle('«لم يحضر المشتري» آخر ٩٠ يوماً (${list.length})'),
+      JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, x) in list.indexed) ListRow(
+        leading: Icon(Icons.person_off_outlined, color: x.buyerNoShows >= 3 ? Joy.danger : Joy.warning),
+        title: Text('${x.order.title} · ${money(x.order.total)}'),
+        subtitle: Text('المشتري ${x.order.buyer.nickname} (${x.buyerNoShows} من ٣${x.buyerNoShows >= 3 ? ' · موقوف' : ''}) · البائع ${x.order.seller.nickname} · ${timeAgo(x.order.updatedAt)}'),
+        trailing: TextButton(key: Key('am-clear-ns-${x.order.id}'), onPressed: () => _clear(context, ref, x.order), child: const Text('مسح')),
+        divider: i < list.length - 1)])),
+    ]);
+  }
+
+  Future<void> _clear(BuildContext context, WidgetRef ref, Order o) async {
+    final note = await askText(context, title: 'مسح «لم يحضر»', hint: 'سبب يصل للطرفين (اختياري)', confirm: 'مسح');
+    if (note == null || !context.mounted) return;
+    try { await ref.read(apiClientProvider).adminClearNoShow(o.id, note: note); ref.invalidate(adminNoShowsProvider); if (context.mounted) toast(context, 'مُسح «لم يحضر» ولم يعد يُحسب على المشتري'); } catch (e) { if (context.mounted) toast(context, adminErrText(e), error: true); }
   }
 }

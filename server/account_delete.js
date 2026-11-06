@@ -69,13 +69,20 @@ export default async function accountDelete(app, opts = {}) {
     const add = (arr, code, n) => { if (n > 0) arr.push({ code, count: n }); };
     if (uid === PLATFORM) out.push({ code: "platform-account", count: 1 });
     if (has("market_orders")) {
-      add(out, "open-orders", await count("SELECT count(*)::int AS n FROM market_orders WHERE (buyer_id=$1 OR seller_id=$1) AND status IN ('paid','preparing','on_the_way','delivered','disputed')", [uid]));
+      // requested = طلب بالدفع عند الاستلام ينتظر قبول البائع: يحجز مخزوناً أو موعداً، فيُلغى أو يُعتذر عنه قبل الحذف
+      add(out, "open-orders", await count("SELECT count(*)::int AS n FROM market_orders WHERE (buyer_id=$1 OR seller_id=$1) AND status IN ('requested','paid','preparing','on_the_way','delivered','disputed')", [uid]));
       if (T.get("market_orders").has("courier_id")) add(out, "courier-orders", await count("SELECT count(*)::int AS n FROM market_orders WHERE courier_id=$1 AND status IN ('paid','preparing','on_the_way')", [uid]));
     }
     if (has("events") && has("tickets")) add(out, "hosted-events", await count("SELECT count(*)::int AS n FROM events e WHERE e.host_id=$1 AND NOT e.cancelled AND e.starts_at > now() AND EXISTS (SELECT 1 FROM tickets t WHERE t.event_id=e.id AND t.status='valid')", [uid]));
     if (has("biz_orders")) {
       add(out, "bookings", await count("SELECT count(*)::int AS n FROM biz_orders WHERE user_id=$1 AND status='confirmed' AND start_at > now()", [uid]));
       if (has("biz")) add(out, "circle-bookings", await count("SELECT count(*)::int AS n FROM biz_orders o JOIN biz b ON b.id=o.biz_id WHERE b.owner_id=$1 AND o.status='confirmed' AND (o.start_at IS NULL OR o.start_at > now())", [uid]));
+      // مال عملاء محجوز في دوائره (business.js) أو نزاع مفتوح عليها: الدائرة تعود بلا مالك بعد الحذف فلا يجد المبلغ محفظة يُحرَّر لها؛
+      // يُحرَّر خلال أيام من الموعد، والنزاع تحسمه الإدارة
+      if (has("biz") && T.get("biz_orders").has("funds")) {
+        const disputes = has("biz_disputes") ? " OR EXISTS (SELECT 1 FROM biz_disputes d WHERE d.order_id=o.id AND d.status='open')" : "";
+        add(out, "circle-held-funds", await count(`SELECT count(*)::int AS n FROM biz_orders o JOIN biz b ON b.id=o.biz_id WHERE b.owner_id=$1 AND o.user_id<>$1 AND (o.funds='held'${disputes})`, [uid]));
+      }
     }
     if (has("payments")) add(out, "pending-payment", await count("SELECT count(*)::int AS n FROM payments WHERE user_id=$1 AND status='created' AND created_at > now() - interval '45 minutes'", [uid]));
     let balance = 0;

@@ -106,8 +106,11 @@ class _MoneyStrip extends StatelessWidget {
             cell('يُدفع في المكان', money(m.venueDue), Joy.primary, key: const Key('orders-money-venue')),
           ]),
           const SizedBox(height: 6),
+          // «تجمّد X» فقط حين يجمّد النزاع مالاً محجوزاً (النزاع على مبلغ حُرّر أو طلب قديم لا يجمّد شيئاً)
           Text(
-            'يصل المبلغ محفظتك عند تأكيد الاستلام، أو بعد ${m.holdDays} أيام من الموعد أو الشراء${m.disputesOpen > 0 ? ' · ${m.disputesOpen} مشكلة مفتوحة تجمّد ${money(m.disputed)}' : ''}',
+            'يصل المبلغ محفظتك عند تأكيد الاستلام، أو بعد ${arCount(m.holdDays, one: 'يوم واحد', two: 'يومين', few: 'أيام', many: 'يوماً')} من الموعد أو الشراء'
+            '${m.disputesOpen > 0 ? ' · ${arCount(m.disputesOpen, one: 'مشكلة مفتوحة', two: 'مشكلتان مفتوحتان', few: 'مشكلات مفتوحة', many: 'مشكلة مفتوحة')}${m.disputed > 0 ? ' تجمّد ${money(m.disputed)}' : ''}' : ''}',
+            key: const Key('orders-money-note'),
             style: TextStyle(color: m.disputesOpen > 0 ? Joy.danger : Joy.textMuted, fontSize: 11.5),
           ),
         ]),
@@ -217,9 +220,11 @@ void showOwnerOrderSheet(BuildContext context, WidgetRef ref, Biz biz, BizOrder 
             icon: const Icon(Icons.task_alt_rounded),
             label: Text(o.kind == 'product' ? 'تأكيد التسليم' : isSlotKind(o.kind) ? 'تأكيد الدخول' : 'تأكيد الوصول'),
           ),
-          if (biz.canManage) ...[
+          // بعد قرار الإدارة في نزاع الطلب لا إلغاء ينقضه (الخادم يرفضه 409)
+          if (biz.canManage && o.ownerCancellable) ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
+              key: const Key('owner-cancel-order'),
               onPressed: () async {
                 // المحجوز يعود للعميل بلا مساس بمحفظتك؛ ما وصل محفظتك (طلب قديم أو مبلغ حُرّر) يُخصم منها؛ والدفع في المكان لا استرداد له
                 final content = !o.fromWallet

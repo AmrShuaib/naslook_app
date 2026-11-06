@@ -34,9 +34,17 @@ check(r2.users === 0 && r2.listings === 0 && regCalls === SELLERS.length, 'secon
 await pool.query("DELETE FROM market_listings WHERE id=$1", [row.id]);
 const r3 = await globalThis.naslifeMarketSeed();
 check(r3.listings === 0 && (await n("SELECT 1 FROM market_listings WHERE title=$1", [row.title])) === 0, 'a deleted seeded listing does not come back');
-// القائمة العامة تعرض العروض مع البائع
-const list = (await app.inject({ method: 'GET', url: '/market?category=coffee', headers: { 'x-user': 'SA0000001' } })).json();
-check(Array.isArray(list) && list.length === LISTINGS.filter((l) => l.category === 'coffee').length && list.every((l) => l.seller?.nickname), 'GET /market lists seeded coffee listings with sellers');
+// القائمة العامة تعرض العروض مع البائع. القاعدة مشتركة مع حزم أخرى تترك عروض قهوة (run.sh all)، فتُسأل القائمة لكل بائع
+// مُمهَّد (seller=) وتُقارن بالبيانات عرضاً عرضاً، بدل عدّ كل قهوة في القاعدة
+const seededIds = new Map((await pool.query("SELECT key, user_id FROM market_seed WHERE key LIKE 'user:%'")).rows.map((r) => [r.key.slice(5), r.user_id]));
+const coffee = LISTINGS.filter((l) => l.category === 'coffee');
+const listed = [];
+for (const nick of new Set(coffee.map((l) => l.seller))) {
+  const page = (await app.inject({ method: 'GET', url: `/market?category=coffee&limit=100&seller=${seededIds.get(nick)}`, headers: { 'x-user': 'SA0000001' } })).json();
+  if (Array.isArray(page)) listed.push(...page);
+}
+check(coffee.length > 0 && listed.length === coffee.length && coffee.every((c) => listed.some((l) => l.title === c.title && l.seller?.id === seededIds.get(c.seller) && l.seller?.nickname === c.seller)),
+  `GET /market lists seeded coffee listings with sellers (${listed.length}/${coffee.length})`);
 // مسار الإدارة اليدوي محمي
 globalThis.naslifeIsAdmin = async (id) => id === 'SA0000001';
 check((await app.inject({ method: 'POST', url: '/adminapi/market-seed/run', headers: { 'x-user': 'SA0000002' } })).statusCode === 403, 'manual run is admin-only');

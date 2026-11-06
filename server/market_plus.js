@@ -45,18 +45,25 @@ export default async function marketPlus(app, opts) {
   };
 
   // ---- شارات البائع وإحصاءاته (تُعاد كتابتها بعد كل تقييم أو اكتمال طلب)
+  // الدفع عند الاستلام (commerce.js) طلب بلا مال يُكمله البائع وحده: عتبات الشارات تعدّ طلباته المكتملة وتقييماته مرة لكل مشترٍ
+  // (حساب ثانٍ لا يصنع «بائع موثوق» ولا «الأعلى تقييماً»)، وطلبه الذي لم يُقبل قط (إلغاء المشتري، الاعتذار، انتهاء المهلة) ليس
+  // إلغاءً على البائع (منافس لا يرفع نسبة إلغائه مجاناً). العدد المعروض للمكتمل والتقييم يبقى كما هو
   const recompute = async (sellerId) => {
-    const r = (await pool.query("SELECT avg(rating)::real AS avg, count(*)::int AS n FROM market_reviews WHERE seller_id=$1 AND NOT hidden", [sellerId])).rows[0];
-    const o = (await pool.query(`SELECT count(*) FILTER (WHERE status='completed')::int AS done, count(*) FILTER (WHERE status IN ('cancelled','refunded') AND cancel_reason IS DISTINCT FROM 'no_show' AND updated_at > now() - interval '90 days')::int AS cancelled,
+    const r = (await pool.query(`SELECT avg(r.rating)::real AS avg, count(*)::int AS n,
+        (count(*) FILTER (WHERE o.payment IS DISTINCT FROM 'cod') + count(DISTINCT r.buyer_id) FILTER (WHERE o.payment='cod'))::int AS badge_n
+      FROM market_reviews r LEFT JOIN market_orders o ON o.id=r.order_id WHERE r.seller_id=$1 AND NOT r.hidden`, [sellerId])).rows[0];
+    const o = (await pool.query(`SELECT count(*) FILTER (WHERE status='completed')::int AS done,
+        (count(*) FILTER (WHERE status='completed' AND payment IS DISTINCT FROM 'cod') + count(DISTINCT buyer_id) FILTER (WHERE status='completed' AND payment='cod'))::int AS badge_done,
+        count(*) FILTER (WHERE status IN ('cancelled','refunded') AND cancel_reason IS DISTINCT FROM 'no_show' AND NOT (payment='cod' AND accepted_at IS NULL) AND updated_at > now() - interval '90 days')::int AS cancelled,
       avg(EXTRACT(EPOCH FROM (accepted_at - created_at)) / 3600) FILTER (WHERE accepted_at IS NOT NULL)::real AS resp FROM market_orders WHERE seller_id=$1`, [sellerId])).rows[0];
     let verified = false; try { verified = (await pool.query("SELECT 1 FROM login_aliases WHERE user_id=$1 AND verified", [sellerId])).rowCount > 0; } catch { /* لا جدول */ }
     const flags = (await pool.query("SELECT licensed FROM market_seller_flags WHERE seller_id=$1", [sellerId])).rows[0];
     const badges = [];
     // "verified" = بريد الدخول مؤكد فقط (لا هوية ولا وثيقة)؛ التطبيق يعرضه «بريد مؤكد» والمفتاح باقٍ للتوافق مع النسخ القديمة
     if (verified) badges.push("verified");
-    if (o.done >= 10 && o.cancelled <= Math.max(2, o.done * 0.2)) badges.push("trusted");
-    if (r.n >= 5 && Number(r.avg) >= 4.5) badges.push("top");
-    if (o.resp != null && Number(o.resp) <= 2 && o.done >= 3) badges.push("fast");
+    if (o.badge_done >= 10 && o.cancelled <= Math.max(2, o.badge_done * 0.2)) badges.push("trusted");
+    if (r.badge_n >= 5 && Number(r.avg) >= 4.5) badges.push("top");
+    if (o.resp != null && Number(o.resp) <= 2 && o.badge_done >= 3) badges.push("fast");
     if (flags?.licensed) badges.push("licensed");
     await pool.query(`INSERT INTO market_seller_stats(seller_id, rating_avg, rating_count, completed, cancelled, response_hours, badges, updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,now())
       ON CONFLICT (seller_id) DO UPDATE SET rating_avg=EXCLUDED.rating_avg, rating_count=EXCLUDED.rating_count, completed=EXCLUDED.completed, cancelled=EXCLUDED.cancelled, response_hours=EXCLUDED.response_hours, badges=EXCLUDED.badges, updated_at=now()`,

@@ -26,7 +26,7 @@ String orderErrText(Object e) {
   if (s.contains('bad-reason')) return 'اكتب وصفاً للمشكلة (5 أحرف على الأقل)';
   if (s.contains('bad-text')) return 'اكتب ردك';
   if (s.contains('no-open-dispute')) return 'حُسمت هذه المشكلة';
-  if (s.contains('too-early')) return 'لم يحن موعد الحجز بعد';
+  if (s.contains('too-early')) return 'لا يُسجَّل «لم يحضر» قبل الموعد، ولا قبل يوم من طلب المنتج';
   if (s.contains('already-paid')) return 'سُجّل الدفع من قبل';
   if (s.contains('not-venue')) return 'هذا الطلب ليس بالدفع في المكان';
   if (s.contains('bad-status')) return 'تغيّرت حالة الطلب، حدّث الصفحة';
@@ -88,7 +88,7 @@ class _OrderBody extends ConsumerWidget {
           if (o.startAt != null) kv(isSlotKind(o.kind) ? 'الموعد' : 'من', isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
           kv('المبلغ', money(o.total)),
           kv('الدفع', team ? o.ownerMoneyLabel : o.paymentLabel, key: const Key('order-payment-line')),
-          if (team && (o.noShows ?? 0) > 0) kv('لم يحضر سابقاً', '${o.noShows} ${o.noShows == 1 ? 'مرة' : 'مرات'}'),
+          if (team && (o.noShows ?? 0) > 0) kv('لم يحضر سابقاً', arCount(o.noShows!, one: 'مرة واحدة', two: 'مرتان', few: 'مرات', many: 'مرة'), key: const Key('order-no-shows')),
         ]),
       ),
       if (team && o.venueUnpaid) ...[
@@ -144,8 +144,8 @@ class _VenueActionsState extends ConsumerState<VenueActions> {
   @override
   Widget build(BuildContext context) {
     final o = widget.order;
-    // «لم يحضر» بعد حلول الموعد فقط (الخادم يرفض قبله)، وللطلب المؤكد
-    final canNoShow = o.status == 'confirmed' && (o.startAt == null || !o.startAt!.isAfter(DateTime.now()));
+    // «لم يحضر» بعد حلول الموعد، أو بعد يوم من طلب المنتج (الخادم يرفض قبلهما)، وللطلب المؤكد
+    final canNoShow = o.canNoShowAt(DateTime.now());
     return Container(
       key: const Key('venue-unpaid-banner'),
       padding: const EdgeInsets.all(12),
