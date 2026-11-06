@@ -308,6 +308,66 @@ void main() {
     expect(body['lat'], 21.5);
   });
 
+  /// ثلاث لقطات بوضع «لقطات متعددة» ثم «التالي» إلى شاشة النشر
+  Future<void> threeShots(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('cam-multi')));
+    await _settle(tester);
+    for (var i = 0; i < 3; i++) {
+      await tester.tap(find.byKey(const Key('shutter')));
+      await _settle(tester);
+    }
+    expect(find.text('3 لقطة'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('cam-done')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+  }
+
+  testWidgets('several shots to the map: only the cover is uploaded and the publish screen says so', (tester) async {
+    final srv = await _pump(tester);
+    await threeShots(tester);
+    expect(find.byKey(const Key('dest-map')), findsOneWidget);
+    expect(find.byKey(const Key('pub-map-cover-only')), findsOneWidget);
+    expect(find.text('الخريطة تعرض صورة الغلاف فقط. لعرض كل الصور انشرها في السوق أو مجتمع دائرة.'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.uploads.length, 1, reason: 'الغلاف وحده يُرفع للخريطة؛ calls: ${srv.calls} snack: ${_snack(tester)}');
+    expect(srv.bodies['POST /mapposts']!['mediaUrl'], '/chat/media/img1.jpg');
+    expect(srv.bodies['POST /mapposts']!['kind'], 'image');
+  });
+
+  testWidgets('several shots to a circle keep every photo, and the cover-only note is for the map alone', (tester) async {
+    final srv = await _pump(tester);
+    await threeShots(tester);
+    await tester.tap(find.byKey(const Key('dest-circle')));
+    await _settle(tester);
+    expect(find.byKey(const Key('pub-map-cover-only')), findsNothing);
+    await tester.tap(find.byKey(const Key('circle-biz-brew92')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.uploads.length, 3);
+    expect(srv.bodies['POST /biz/biz-brew92/community']!['images'], ['/chat/media/img1.jpg', '/chat/media/img2.jpg', '/chat/media/img3.jpg']);
+  });
+
+  testWidgets('several shots to the market keep every photo as the listing gallery', (tester) async {
+    final srv = await _pump(tester);
+    await threeShots(tester);
+    await tester.tap(find.byKey(const Key('dest-market')));
+    await _settle(tester);
+    expect(find.byKey(const Key('pub-map-cover-only')), findsNothing);
+    expect(find.text('3 من 8 صور · الأولى هي الغلاف'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('lst-title')), 'طقم فناجين');
+    await tester.enterText(find.byKey(const Key('lst-price')), '90');
+    await tester.ensureVisible(find.byKey(const Key('pub-go')));
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.uploads.length, 3);
+    final body = srv.bodies['POST /market']!;
+    expect(body['images'], ['/chat/media/img1.jpg', '/chat/media/img2.jpg', '/chat/media/img3.jpg']);
+    expect(body['imageUrl'], '/chat/media/img1.jpg');
+  });
+
   testWidgets('zoom chips: 1x 2x 3x drive the camera zoom and follow a pinch; hidden when the camera has no zoom', (tester) async {
     _FakeCamera.fakeMaxZoom = 3;
     addTearDown(() => _FakeCamera.fakeMaxZoom = 3);

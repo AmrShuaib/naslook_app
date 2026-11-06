@@ -105,6 +105,8 @@
 
 مراجِع المتجر يجب أن يرى المحتوى قبل التسجيل. صارت هذه القراءات تعمل بلا جلسة: `GET /market`، `/market/:id`، `/market/home`، `/market/spotlight`، `/market/:id/reviews`، `/market/:id/questions`، `/market/sellers/:id`، `/market/bazaars`، `/market/bazaars/:id`، `/events`، `/events/:id`. تبقى 401 للكتابة والقوائم الشخصية (`/events?mine=1`، `/market/mine`، الطلبات، المحفظة، `/market/wanted`، `/market/spotlight/price`…). مشاهدات سبوت لايت لا تُحسب للضيف.
 
+**البحث للضيف** (6 نوفمبر 2026، البند 14 من تقرير النواقص): شريط البحث في خريطة الزائر (`home-search` في `map_page.dart`) يفتح `SearchPage` بلا دعوة دخول لأن `/search` و`/search/discover` تقبلان بلا جلسة. الزائر لا سجل بحث له ولا بحوث محفوظة (لا يُطلب `/searches/saved`)، و«نبّهني عند ظهور جديد» وفتح نتيجة دائرة (`CircleDetailPage` تقرأ مسارات النواة بجلسة) يمرّان بـ`requireAccount` قبل أي طلب، والشخص يفتح ملفه ببطاقة الزائر، والأنشطة والسوق والفعاليات تفتح كالعادة. الاختبار `test/guest_search_test.dart`.
+
 ## ما على المالك ضبطه
 
 1. **بريد الدعم**: `supportEmail` من إعدادات الإدارة (مثلاً `support@areebd.sa`) حتى يظهر في التطبيق وفي App Store Connect.

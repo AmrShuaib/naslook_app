@@ -7,6 +7,7 @@ import '../../api/commerce_models.dart';
 import '../../api/models.dart';
 import '../../api/search_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/require_account.dart';
 import '../../state/app_state.dart';
 import '../../state/search_providers.dart';
 import '../myspace/saved_searches_page.dart';
@@ -23,6 +24,8 @@ import '../market/market_page.dart';
 import '../profile/user_profile_page.dart';
 
 /// البحث الموحّد: أشخاص ودوائر وأنشطة تجارية وعناصر كتالوجها والسوق والفعاليات، مع اكتشاف (مفتوح الآن، الأعلى تقييماً، فعاليات، دوائر) عند فراغ الحقل.
+/// مفتوح للزائر (الخادم يقبل /search و/search/discover بلا حساب، وأبل 5.1.1 لا تسمح باشتراط حساب لما لا يحتاجه): بلا سجل بحث
+/// ولا بحوث محفوظة له، و«نبّهني» وفتح الدائرة (مسارات النواة تطلب جلسة) يمرّان بدعوة الدخول قبل أي طلب.
 class SearchPage extends ConsumerStatefulWidget {
   final String initialQuery;
   const SearchPage({super.key, this.initialQuery = ''});
@@ -55,7 +58,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _ctl.text = v;
     _ctl.selection = TextSelection.collapsed(offset: v.length);
     setState(() => q = v.trim());
-    rememberSearch(ref, v);
+    // سجل البحث للحساب فقط: الزائر لا يُحفظ له شيء (ولا يرث سجل من خرج في الجلسة نفسها)
+    if (!_isGuest(ref)) rememberSearch(ref, v);
   }
 
   @override
@@ -122,6 +126,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 }
 
+/// زائر بلا حساب (لا «جارٍ التحميل»: كما يقرّر requireAccount).
+bool _isGuest(WidgetRef ref) => ref.read(appStateProvider).status == AuthStatus.signedOut;
+
 /// نتائج مجمّعة حسب النوع مع «عرض الكل» لكل مجموعة ممتلئة.
 class _Results extends StatelessWidget {
   final SearchResults r;
@@ -162,7 +169,8 @@ class _Discover extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final recents = ref.watch(recentSearchesProvider);
+    final guest = ref.watch(appStateProvider.select((s) => s.status == AuthStatus.signedOut));
+    final recents = guest ? const <String>[] : ref.watch(recentSearchesProvider);
     final d = ref.watch(discoverProvider);
     const suggestions = ['سينما', 'فندق', 'تأجير سيارات', 'قهوة', 'إيكيا', 'فعاليات'];
     return RefreshIndicator(
@@ -236,7 +244,11 @@ class VesselResultRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => JoyCard(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleDetailPage(vesselId: v.id, initial: v))),
+        // صفحة الدائرة تقرأ مسارات النواة بجلسة: الزائر يُدعى للدخول بدل صفحة تنتهي بخطأ
+        onTap: () {
+          if (!requireAccount(context)) return;
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => CircleDetailPage(vesselId: v.id, initial: v)));
+        },
         child: Row(children: [
           Container(width: 44, height: 44, decoration: BoxDecoration(color: Joy.sunSoft, borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.groups_rounded, color: Joy.sunText)),
           const SizedBox(width: 10),
@@ -327,7 +339,9 @@ class _SaveSearchBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final saved = ref.watch(savedSearchesProvider).valueOrNull ?? const <SavedSearch>[];
+    // الزائر لا بحوث محفوظة له: لا يُطلب المسار أصلاً، والزر يدعوه للدخول
+    final guest = ref.watch(appStateProvider.select((s) => s.status == AuthStatus.signedOut));
+    final saved = guest ? const <SavedSearch>[] : ref.watch(savedSearchesProvider).valueOrNull ?? const <SavedSearch>[];
     final nq = normalizeArabic(q);
     SavedSearch? existing;
     for (final s in saved) {
@@ -355,6 +369,7 @@ class _SaveSearchBar extends ConsumerWidget {
   }
 
   Future<void> _save(BuildContext context, WidgetRef ref) async {
+    if (!requireAccount(context)) return;
     final radius = await showModalBottomSheet<int>(
       context: context,
       builder: (ctx) => SafeArea(

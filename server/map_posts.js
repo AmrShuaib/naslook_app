@@ -123,6 +123,26 @@ export default async function posts(app, opts) {
   });
   const many = async (rows, uid) => { const cache = new Map(); const res = []; for (const r of rows) { if (!cache.has(r.user_id)) cache.set(r.user_id, await person(r.user_id)); res.push({ ...(await out(r, uid)), user: cache.get(r.user_id) }); } return res; };
 
+  // ---- من يرى اللحظة: جزء SQL واحد تستعمله كل قراءة للحظات (القوائم هنا، والصف والتغذية في row.js، ورابط المشاركة في share.js،
+  // والتفاعلات في moment_extras.js، والمحفوظات في wishlist.js). صاحبها يراها دائماً، ولحظات صاحب الملف الخاص («ملف عام» مطفأ)
+  // لا يراها إلا أصدقاؤه، بقاعدة profile_ext.js (naslifeAuthorVisibleSql). ميزة «الجمهور» لكل لحظة (الافتراضي «الأصدقاء» بقرار
+  // المالك) تضيف شرطها هنا وفي momentAudience وحدهما فتسري على المسارات كلها. alias اسم جدول map_posts في الاستعلام، وviewerExpr
+  // تعبير نصي لمعرّف المشاهد (NULL للضيف). بلا profile_ext (أو بلا عمود الخصوصية في النواة) = الجميع عامّ كما كان.
+  const momentVisibleSql = (alias, viewerExpr) => {
+    const f = globalThis.naslifeAuthorVisibleSql;
+    // البديل يذكر معامل المشاهد: Postgres يرفض معاملاً مرسلاً لا يظهر في الاستعلام (الإعجاب يمرّره لهذا الجزء وحده)
+    return typeof f === "function" ? f(`${alias}.user_id`, viewerExpr) : `(${viewerExpr} IS NULL OR TRUE)`;
+  };
+  globalThis.naslifeMomentVisibleSql = momentVisibleSql;
+  // جمهور البث الحي للحظة جديدة بالقاعدة نفسها: null = الجميع، وإلا من تُسلَّم إليهم فقط (صاحبها وأصدقاؤه). عند الشك (خطأ القاعدة) صاحبها وحده
+  const momentAudience = async (p) => {
+    try {
+      const isPublic = globalThis.naslifeIsPublic;
+      if (typeof isPublic !== "function" || (await isPublic(p.user_id))) return null;
+      return [p.user_id, ...((await globalThis.naslifeFriendIds?.(p.user_id)) ?? [])];
+    } catch { return [p.user_id]; }
+  };
+
   // ---- إنشاء
   app.post("/mapposts", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -150,8 +170,9 @@ export default async function posts(app, opts) {
       [id, uid, kind, mediaUrl, caption, HEX_RE.test(String(b.bg ?? "")) ? String(b.bg) : null, JSON.stringify(overlays), TAGS.has(b.tag) ? b.tag : "moment", str(b.title, 80), price,
        JSON.stringify(cleanCta(b.cta)), lat, lng, str(b.placeName, 80) || null, b.durationSec == null ? null : Math.round(clamp(b.durationSec, 0, 600, 0)), String(ttl), audioUrl, audioSec]);
     const row = (await pool.query(`${SELECT} WHERE p.id=$2`, [uid, id])).rows[0];
-    // بث فوري للتطبيقات المفتوحة (الخط الزمني والخريطة) بصيغة المشاهد نفسها؛ من منظور عام (لا mine ولا liked)
-    try { globalThis.naslifeLive?.emit("post", { ...(await out(row, null)), user: await person(uid) }); } catch { /* البث لا يعطّل النشر */ }
+    // بث فوري للتطبيقات المفتوحة (الخط الزمني والخريطة) بصيغة المشاهد نفسها؛ من منظور عام (لا mine ولا liked)،
+    // ولحظة صاحب الملف الخاص تُسلَّم لجمهورها فقط (live.js يصفّي لكل مستمع)
+    try { globalThis.naslifeLive?.emit("post", { ...(await out(row, null)), user: await person(uid) }, { only: await momentAudience(row) }); } catch { /* البث لا يعطّل النشر */ }
     return out(row, uid);
   });
 
@@ -165,7 +186,7 @@ export default async function posts(app, opts) {
     const blocked = uid ? await (globalThis.naslifeBlockedIds?.(uid) ?? []) : [];
     const rows = (await pool.query(`${SELECT} WHERE p.status='active' AND p.expires_at > now()
       AND ($2::float8 IS NULL OR (p.lat BETWEEN $3 AND $5 AND p.lng BETWEEN $2 AND $4)) AND ($6::text IS NULL OR p.tag=$6)
-      AND NOT (p.user_id = ANY($8::text[]))
+      AND NOT (p.user_id = ANY($8::text[])) AND ${momentVisibleSql("p", "$1::text")}
       ORDER BY p.created_at DESC LIMIT $7`, [uid, bb?.minLng ?? null, bb?.minLat ?? null, bb?.maxLng ?? null, bb?.maxLat ?? null, tag, limit, blocked])).rows;
     return many(rows, uid);
   });
@@ -204,7 +225,7 @@ export default async function posts(app, opts) {
         ${PLACE_KEY} AS place_key, ${PLACE_NAME} AS place_name_r, nb.id AS nb_id, nb.category AS nb_category, nb.logo_url AS nb_logo
         FROM map_posts p ${bizJoin()}
         WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($4::text[])) AND ($5::text IS NULL OR p.tag=$5)
-          AND ($10::text[] IS NULL OR p.user_id = ANY($10::text[]))) x
+          AND ($10::text[] IS NULL OR p.user_id = ANY($10::text[])) AND ${momentVisibleSql("p", "$1::text")}) x
       WHERE (x.dist IS NULL OR x.dist <= $6) AND ($7::text IS NULL OR x.place_key = $7)
       ORDER BY (EXTRACT(EPOCH FROM (now() - x.created_at)) / 3600.0) + COALESCE(x.dist, 0) * 1.5 ASC, x.created_at DESC
       LIMIT $8 OFFSET $9`, [uid, has ? lat : null, has ? lng : null, blocked, tag, radius, place, limit + 1, offset, authors]);
@@ -228,7 +249,8 @@ export default async function posts(app, opts) {
         SELECT p.id, p.kind, p.media_url, p.bg, p.user_id, p.created_at, p.lat, p.lng, $1::text AS viewer, (CASE WHEN $2::float8 IS NULL OR $3::float8 IS NULL THEN NULL ELSE ${DIST_P} END) AS dist,
           ${PLACE_KEY} AS key, ${PLACE_NAME} AS name, nb.id AS biz_id, nb.category, nb.logo_url, nb.blat, nb.blng
         FROM map_posts p ${bizJoin()}
-        WHERE p.status='active' AND p.expires_at > now() AND p.created_at > now() - ($4 || ' hours')::interval AND NOT (p.user_id = ANY($5::text[])))
+        WHERE p.status='active' AND p.expires_at > now() AND p.created_at > now() - ($4 || ' hours')::interval AND NOT (p.user_id = ANY($5::text[]))
+          AND ${momentVisibleSql("p", "$1::text")})
       SELECT key, max(name) AS name, max(biz_id) AS biz_id, max(category) AS category, max(logo_url) AS logo_url,
         COALESCE(max(blat), avg(lat)) AS lat, COALESCE(max(blng), avg(lng)) AS lng, min(dist) AS dist, count(*)::int AS posts, count(DISTINCT user_id)::int AS authors, max(created_at) AS latest,
         (array_agg(id ORDER BY created_at DESC))[1] AS sample_id, (array_agg(kind ORDER BY created_at DESC))[1] AS sample_kind,
@@ -248,9 +270,11 @@ export default async function posts(app, opts) {
   app.get("/mapposts/:id", async (req, reply) => {
     const uid = await optionalAuth(req);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const p = (await pool.query(`${SELECT} WHERE p.id=$2`, [uid, req.params.id])).rows[0];
+    const p = (await pool.query(`${SELECT.replace(" FROM map_posts p", `, ${momentVisibleSql("p", "$1::text")} AS visible FROM map_posts p`)} WHERE p.id=$2`, [uid, req.params.id])).rows[0];
     if (!p) return bad(reply, 404, "not-found");
     if (p.status !== "active" && p.user_id !== uid && !(await isAdmin(uid))) return bad(reply, 404, "not-found");
+    // لحظة صاحب ملف خاص لغير أصدقائه (والضيف) كأنها غير موجودة؛ الإدارة تراها للإشراف على البلاغات
+    if (p.visible === false && p.user_id !== uid && !(await isAdmin(uid))) return bad(reply, 404, "not-found");
     // رابط مباشر لمنشور كاتبه محظور (في أي اتجاه) يُعامل كأنه غير موجود
     if (uid && p.user_id !== uid) { let bl = []; try { bl = (await globalThis.naslifeBlockedIds?.(uid)) ?? []; } catch { bl = []; } if (bl.includes(p.user_id)) return bad(reply, 404, "not-found"); }
     return out(p, uid);
@@ -312,8 +336,9 @@ export default async function posts(app, opts) {
   app.post("/mapposts/:id/like", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
-    const p = (await pool.query("SELECT user_id, caption, title FROM map_posts WHERE id=$1 AND status='active'", [req.params.id])).rows[0];
-    if (!p) return bad(reply, 404, "not-found");
+    const p = (await pool.query(`SELECT user_id, caption, title, ${momentVisibleSql("map_posts", "$2::text")} AS visible FROM map_posts WHERE id=$1 AND status='active'`, [req.params.id, uid])).rows[0];
+    // من لا يرى اللحظة (ملف صاحبها خاص وليس صديقاً) لا يعجب بها
+    if (!p || p.visible === false) return bad(reply, 404, "not-found");
     const del = await pool.query("DELETE FROM map_post_likes WHERE post_id=$1 AND user_id=$2 RETURNING 1", [req.params.id, uid]);
     let liked = false;
     if (!del.rowCount) {
