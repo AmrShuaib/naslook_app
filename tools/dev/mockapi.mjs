@@ -102,7 +102,7 @@ const routes = {
   'GET /wallet/transactions': [],
   'GET /events': [{ id: '22222222-2222-2222-2222-222222222222', host: person('SA0000002', 'sara'), vesselId: null, title: 'لقاء المطورين', description: 'نتكلم عن Flutter', startsAt: new Date(Date.now() + 86400000).toISOString(), endsAt: null, placeName: 'جدة', lat: 21.5, lng: 39.2, cancelled: false, tiers: [{ id: '33333333-3333-3333-3333-333333333333', name: 'عادي', description: '', price: 5000, quantity: 50, sold: 3, left: 47 }], going: 3, myTickets: 0, isHost: false }],
   'GET /tickets': [{ id: 'tk1', code: 'NAS-ABCD1234', status: 'valid', paid: 5000, eventId: '22222222-2222-2222-2222-222222222222', title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tier: 'عادي', createdAt: now, usedAt: null }],
-  'GET /market': [{ id: '55555555-5555-4555-8555-555555555555', seller: me, kind: 'product', category: 'food', title: 'برجر لحم', description: 'طازج', price: 5000, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'hidden', createdAt: now, mine: true }, { id: '44444444-4444-4444-4444-444444444444', seller: person('SA0000002', 'sara'), kind: 'product', category: 'coffee', title: 'قهوة مختصة', description: 'حبوب إثيوبية', price: 4500, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'active', createdAt: now, mine: false }],
+  'GET /market': [{ id: '55555555-5555-4555-8555-555555555555', seller: me, kind: 'product', category: 'food', title: 'برجر لحم', description: 'طازج', price: 5000, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'hidden', createdAt: now, mine: true }, { id: '44444444-4444-4444-4444-444444444444', seller: person('SA0000002', 'sara'), kind: 'product', category: 'coffee', title: 'قهوة مختصة', description: 'حبوب إثيوبية', price: 4500, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'active', createdAt: now, mine: false, payOnReceipt: true }],
   'GET /market/orders': [],
 };
 
@@ -527,6 +527,43 @@ function profileMarketRoute(req, res, url, key) {
   if (key === 'GET /market/mine') return json(200, routes['GET /market'].filter((l) => l.seller.id === me.id));
   let m = key.match(/^GET \/market\/([0-9a-f-]{36})$/); if (m) { const l = routes['GET /market'].find((x) => x.id === m[1]); return l ? json(200, l) : json(404, { error: 'not-found' }); }
   m = key.match(/^PATCH \/market\/([0-9a-f-]{36})$/); if (m) { readBody((b) => { const l = routes['GET /market'].find((x) => x.id === m[1]); if (!l) return json(404, { error: 'not-found' }); if (b.status && l.status === 'blocked') return json(403, { error: 'blocked' }); for (const k of ['title', 'description', 'price', 'kind', 'category', 'placeName', 'status']) if (b[k] !== undefined) l[k] = b[k]; if (b.imageUrl !== undefined) l.imageUrl = b.imageUrl ? (b.imageUrl.startsWith('/') ? 'http://127.0.0.1:8090' + b.imageUrl : b.imageUrl) : null; json(200, l); }); return true; }
+  // ---- الدفع عند الاستلام (stream b2-marketcod) — تحاكي طلبات السوق في server/commerce.js: الطلب بالمحفظة أو عند الاستلام (العرض
+  // يسمح به payOnReceipt)، حد ٣ طلبات مفتوحة، قبول البائع أو اعتذاره، المراحل، «استلمت المبلغ»، «لم يحضر»، الإلغاء، ولا نزاع عليه.
+  // طلب مبذور من sara على عرضي بانتظار قبولي (لرؤية جهة البائع). MOCK_BROKE=1 يرد طلب المحفظة المسعّر بـ 402.
+  {
+    const MO = (globalThis.__marketOrders ??= [{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc01', listingId: '55555555-5555-4555-8555-555555555555', title: 'برجر لحم', imageUrl: null, kind: 'product', qty: 2, total: 10000, discount: 0, coupon: null, commission: 0, status: 'requested', note: 'بدون بصل', variant: null, slot: null, buyer: person('SA0000002', 'sara'), seller: me, payment: 'cod', cancelReason: null, code: '7311', reviewed: false, createdAt: now }]);
+    const OPEN = ['requested', 'paid', 'preparing', 'on_the_way', 'delivered'];
+    const moOut = (o) => ({ ...o, mineAsSeller: o.seller.id === me.id, mineAsCourier: false, code: o.buyer.id === me.id ? o.code : null, commission: o.seller.id === me.id ? o.commission : null });
+    if (key === 'GET /market/orders') return json(200, MO.map(moOut));
+    m = key.match(/^GET \/market\/orders\/([0-9a-f-]{36})$/); if (m) { const o = MO.find((x) => x.id === m[1]); return o ? json(200, moOut(o)) : json(404, { error: 'not-found' }); }
+    m = key.match(/^POST \/market\/([0-9a-f-]{36})\/order$/); if (m) { readBody((b) => {
+      const l = routes['GET /market'].find((x) => x.id === m[1]); if (!l || l.status !== 'active') return json(404, { error: 'not-found' });
+      if (l.seller.id === me.id) return json(400, { error: 'own-listing' });
+      if (b.payment === 'cod' && !l.payOnReceipt) return json(400, { error: 'cod-unavailable' });
+      const qty = Math.max(1, Math.min(20, Number(b.qty) || 1)), total = Number(l.price) * qty, cod = b.payment === 'cod' && total > 0;
+      if (cod && MO.filter((o) => o.payment === 'cod' && o.buyer.id === me.id && OPEN.includes(o.status)).length >= 3) return json(429, { error: 'cod-limit', max: 3 });
+      if (!cod && total > 0 && process.env.MOCK_BROKE) return json(402, { error: 'insufficient-funds' });
+      const o = { id: `cccccccc-cccc-4ccc-8ccc-${String(Date.now()).slice(-12).padStart(12, '0')}`, listingId: l.id, title: l.title, imageUrl: l.imageUrl ?? null, kind: l.kind, qty, total, discount: 0, coupon: null, commission: 0, status: cod ? 'requested' : 'paid', note: String(b.note ?? ''), variant: b.variant ?? null, slot: b.slot ?? null, buyer: me, seller: l.seller, payment: cod ? 'cod' : 'wallet', cancelReason: null, code: String(1000 + Math.floor(Math.random() * 9000)), reviewed: false, createdAt: new Date().toISOString() };
+      MO.unshift(o); json(200, { ok: true, id: o.id, total, discount: 0, commission: 0, code: o.code, payment: o.payment, status: o.status });
+    }); return true; }
+    m = key.match(/^POST \/market\/orders\/([0-9a-f-]{36})\/(accept|decline|cash-received|no-show|cancel|confirm|stage|deliver|dispute)$/); if (m) { readBody((b) => {
+      const o = MO.find((x) => x.id === m[1]); if (!o) return json(404, { error: 'not-found' });
+      const seller = o.seller.id === me.id, act = m[2], active = ['paid', 'preparing', 'on_the_way', 'delivered'].includes(o.status);
+      const done = (status, extra = {}) => { Object.assign(o, { status, ...extra }); json(200, { ok: true, status }); };
+      if (['accept', 'decline', 'cash-received', 'no-show'].includes(act) && !seller) return json(403, { error: 'seller-only' });
+      if (['accept', 'decline', 'cash-received', 'no-show'].includes(act) && o.payment !== 'cod') return json(409, { error: 'not-cod' });
+      if (act === 'accept') return o.status === 'requested' ? done('paid') : json(409, { error: 'bad-status' });
+      if (act === 'decline') return o.status === 'requested' ? done('cancelled', { cancelReason: 'declined' }) : json(409, { error: 'bad-status' });
+      if (act === 'cash-received') return active ? done('completed', { cashReceivedAt: new Date().toISOString() }) : json(409, { error: 'bad-status' });
+      if (act === 'no-show') return ['paid', 'preparing', 'on_the_way'].includes(o.status) ? done('cancelled', { cancelReason: 'no_show' }) : json(409, { error: 'bad-status' });
+      if (act === 'dispute') return o.payment === 'cod' ? json(409, { error: 'cod-no-dispute' }) : active ? done('disputed', { disputeStatus: 'open', disputeReason: String(b.reason ?? '') }) : json(409, { error: 'bad-status' });
+      if (act === 'cancel') return OPEN.includes(o.status) ? done('cancelled', { cancelReason: seller ? 'seller' : 'buyer' }) : json(409, { error: 'bad-status' });
+      if (act === 'confirm') { if (!active) return json(409, { error: 'bad-status' }); if (seller && String(b.code ?? '') !== o.code) return json(400, { error: 'bad-code', left: 4 }); return done('completed', seller && o.payment === 'cod' ? { cashReceivedAt: new Date().toISOString() } : {}); }
+      const stage = act === 'deliver' ? 'delivered' : b.stage; const order = ['paid', 'preparing', 'on_the_way', 'delivered'];
+      return order.indexOf(stage) > order.indexOf(o.status) && order.indexOf(o.status) >= 0 ? done(stage) : json(409, { error: 'bad-status' });
+    }); return true; }
+  }
+  // ---- الدفع عند الاستلام end
   m = key.match(/^DELETE \/stories\/([A-Za-z0-9-]+)$/); if (m) { routes['GET /stories'] = routes['GET /stories'].filter((x) => x.id !== m[1]); return json(200, { ok: true }); }
   m = key.match(/^DELETE \/map\/pins\/([A-Za-z0-9-]+)$/); if (m) { routes['GET /map/pins'] = routes['GET /map/pins'].filter((x) => x.id !== m[1]); return json(200, { ok: true }); }
   return false;
