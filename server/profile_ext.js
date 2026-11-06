@@ -427,6 +427,40 @@ export default async function profileV2(app, opts) {
     return { valid: true, available: true, reason: null };
   });
 
+  // ---- خصوصية الملف للإضافات الأخرى (أولها لحظات الخريطة في map_posts.js وكل ما يقرأ منها): «ملف عام» مطفأ في النواة
+  // (is_public=false في users أو في جدول الملف، كما يقرؤه coreProfile) = ما ينشره صاحبه لا يراه إلا هو وأصدقاؤه.
+  // الصديق بتعريف «من يراسلني» نفسه (hasContact): من أضافه صاحب الحساب إلى جهات اتصاله، فطلب صداقة من الطرف الآخر وحده لا يفتح شيئاً.
+  // بلا عمود الخصوصية في النواة = الجميع عامّ (كما كان قبل)، وبلا جدول جهات اتصال = لا أصدقاء. الأجزاء استعلامات فرعية غير مرتبطة
+  // بالصف فيحسبها Postgres مرة لكل استعلام (hashed subplan) لا مرة لكل لحظة.
+  const typeOf = async (t, c) => { try { return (await pool.query("SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2", [t, c])).rows[0]?.data_type ?? null; } catch { return null; } };
+  // عمود غير نصي (uuid أو رقم) يُحوَّل نصاً حتى يقارن بمعرّف المستخدم؛ النصي يبقى كما هو فيصلح له الفهرس
+  const asText = async (t, c, expr) => (["text", "character varying", "character"].includes(await typeOf(t, c)) ? expr : `${expr}::text`);
+  const privParts = [];
+  if (U.ok && U.isPublic) privParts.push(`SELECT ${await asText("users", "id", "pu.id")} FROM users pu WHERE pu.${q(U.isPublic)} = false AND pu.id IS NOT NULL`);
+  if (P && PC.isPublic) privParts.push(`SELECT ${await asText(P.table, P.key, `pp.${q(P.key)}`)} FROM ${q(P.table)} pp WHERE pp.${q(PC.isPublic)} = false AND pp.${q(P.key)} IS NOT NULL`);
+  const PRIVATE_IDS = privParts.length ? privParts.join(" UNION ALL ") : null;
+  const CA = C ? await asText(C.table, C.a, `pc.${q(C.a)}`) : null, CB = C ? await asText(C.table, C.b, `pc.${q(C.b)}`) : null;
+  // شرط SQL منطقي: يرى viewerExpr (تعبير نصي، NULL للضيف) محتوى authorExpr؟ صاحبه دائماً، والملف العام للجميع، والخاص لأصدقائه فقط.
+  // ميزة «الجمهور» لكل لحظة تبني فوقه في map_posts.js (naslifeMomentVisibleSql) لا هنا.
+  const authorVisibleSql = (authorExpr, viewerExpr) => {
+    // بلا عمود خصوصية: صحيح دائماً، مع ذكر معامل المشاهد حتى لا يرفض Postgres معاملاً مرسلاً لا يظهر في الاستعلام
+    if (!PRIVATE_IDS) return `(${viewerExpr} IS NULL OR TRUE)`;
+    const friend = C ? ` OR ${authorExpr} IN (SELECT ${CA} FROM ${q(C.table)} pc WHERE ${CB} = ${viewerExpr} AND pc.${q(C.a)} IS NOT NULL)` : "";
+    return `COALESCE((${authorExpr} = ${viewerExpr} OR ${authorExpr} NOT IN (${PRIVATE_IDS})${friend}), false)`;
+  };
+  globalThis.naslifeAuthorVisibleSql = authorVisibleSql;
+  globalThis.naslifePrivacyStatus = { privacy: !!PRIVATE_IDS, friends: !!C };
+  // ملف المستخدم عام؟ (true بلا عمود خصوصية). خطأ القاعدة يُرمى ليقرر المستدعي (البث الحي يغلق عند الشك)
+  globalThis.naslifeIsPublic = async (uid) => {
+    const id = String(uid ?? ""); if (!id || !PRIVATE_IDS) return true;
+    return !(await pool.query(`SELECT 1 FROM (${PRIVATE_IDS}) x(id) WHERE x.id = $1 LIMIT 1`, [id])).rowCount;
+  };
+  // أصدقاء المستخدم بالتعريف أعلاه: من أضافهم هو إلى جهات اتصاله (حتى 5000)
+  globalThis.naslifeFriendIds = async (uid) => {
+    const id = String(uid ?? ""); if (!id || !C) return [];
+    return (await pool.query(`SELECT DISTINCT ${CB} AS id FROM ${q(C.table)} pc WHERE ${CA} = $1 AND pc.${q(C.b)} IS NOT NULL LIMIT 5000`, [id])).rows.map((r) => r.id);
+  };
+
   // ---- للإضافات الأخرى وحذف الحساب
   globalThis.naslifeProfileExt = async (uid) => loadExt(String(uid ?? ""));
   globalThis.naslifeCanMessage = async (caller, target) => { const t = String(target ?? ""); return messageGate(String(caller ?? "") || null, t, (await loadExt(t))?.msg_policy ?? "all"); };

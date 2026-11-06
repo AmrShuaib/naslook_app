@@ -100,15 +100,18 @@ class _PublishPageState extends ConsumerState<PublishPage> {
     setState(() => busy = true);
     try {
       final api = ref.read(apiClientProvider);
-      // ١. الوسائط: الغلاف يُخبز بالفلتر والقصّ، وبقية اللقطات كما هي، والفيديو والصوت كما هما
+      // ١. الوسائط: الغلاف يُخبز بالفلتر والقصّ، وبقية اللقطات كما هي، والفيديو والصوت كما هما.
+      // الخريطة تحمل صورة واحدة (mediaUrl): يُرفع الغلاف وحده فلا تُهدر رفعات لا تظهر، والدائرة والسوق يأخذان اللقطات كلها
       final urls = <String>[];
       final cover = d.coverShot;
       if (cover != null) {
         final baked = await bakePhoto(cover.bytes, filter: filterById(d.filter), adjust: d.adjust, frame: d.frame, name: cover.name, mime: cover.mime);
         urls.add((await api.uploadMedia(baked.bytes, contentType: baked.mime, fileName: baked.name)).url);
-        for (final (i, s) in d.shots.indexed) {
-          if (i == d.cover) continue;
-          urls.add((await api.uploadMedia(s.bytes, contentType: s.mime, fileName: s.name)).url);
+        if (d.destination != Destination.map) {
+          for (final (i, s) in d.shots.indexed) {
+            if (i == d.cover) continue;
+            urls.add((await api.uploadMedia(s.bytes, contentType: s.mime, fileName: s.name)).url);
+          }
         }
       }
       String? videoUrl;
@@ -299,6 +302,19 @@ class _PublishPageState extends ConsumerState<PublishPage> {
   }
 
   Widget _mapOptions(String nick) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // عدة لقطات والوجهة الخريطة: المنشور يحمل صورة واحدة، فنقول ذلك قبل النشر بدل أن تختفي البقية بصمت
+        if (!d.isText && !d.isVideo && d.shots.length > 1)
+          Container(
+            key: const Key('pub-map-cover-only'),
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(color: Joy.sunSoft, borderRadius: BorderRadius.circular(12)),
+            child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.photo_library_outlined, size: 18, color: Joy.sunText),
+              SizedBox(width: 8),
+              Expanded(child: Text('الخريطة تعرض صورة الغلاف فقط. لعرض كل الصور انشرها في السوق أو مجتمع دائرة.', style: TextStyle(color: Joy.sunText, fontSize: 12.5, height: 1.5))),
+            ]),
+          ),
         const Text('المدة على الخريطة', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
         const SizedBox(height: 8),
         Wrap(spacing: 8, children: [for (final (h, l) in postTtlOptions) ChoiceChip(key: Key('ttl-$h'), label: Text(l), selected: d.ttlHours == h, showCheckmark: false, selectedColor: Joy.primary, labelStyle: TextStyle(color: d.ttlHours == h ? Colors.white : Joy.text, fontSize: 13), side: BorderSide.none, onSelected: (_) => setState(() => d.ttlHours = h))]),

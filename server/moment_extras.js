@@ -2,7 +2,8 @@
 //   POST   /moments/:id/react {emoji}   يضبط تفاعلي أو يغيّره؛ {emoji:null} يزيله (ومثله DELETE /moments/:id/react)
 //   GET    /moments/:id/reactions       عام؛ mine=null للضيف
 // كلها تعيد {counts:{"😍":n,"😂":n,"🔥":n,"👏":n}, mine:"😍"|null}. صاحب اللحظة يُشعَر مرة على الأكثر لكل (لحظة، متفاعل) في الساعة،
-// ولا إشعار حين أتفاعل مع لحظتي. اللحظة المخفية أو المحجوبة أو المحذوفة = 404، والحظر بين الطرفين = 403.
+// ولا إشعار حين أتفاعل مع لحظتي. اللحظة المخفية أو المحجوبة أو المحذوفة = 404، ولحظة صاحب الملف الخاص لغير أصدقائه = 404،
+// والحظر بين الطرفين = 403.
 // باقي إضافات العارض في غير هذا الملف: رابط المشاركة /m/:id في share.js، و«محفوظاتي» في wishlist.js (النوع post)، والمعاينة في chat_tools.js.
 // التسجيل في register.txt بعد map_posts.js:
 //   await app.register((await import("./moment_extras.js")).default, { pool, auth });
@@ -46,12 +47,16 @@ async function setup(app, opts) {
   };
   const nickname = async (id) => { try { return (await pool.query("SELECT nickname FROM users WHERE id=$1", [id])).rows[0]?.nickname || ""; } catch { return ""; } };
 
-  // اللحظة التي يُتفاعل معها: موجودة ونشطة (إلا قراءة صاحبها للحظته المخفية)، وبلا حظر بين المشاهد وصاحبها
+  // من يرى اللحظة: جزء SQL الواحد من map_posts.js (لحظات الملف الخاص لصاحبها وأصدقائه)؛ بلا الإضافة = الجميع كما كان
+  const momentVisible = (alias, viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, viewerExpr) : `(${viewerExpr} IS NULL OR TRUE)`; };
+  // اللحظة التي يُتفاعل معها: موجودة ونشطة (إلا قراءة صاحبها للحظته المخفية)، يراها المشاهد (من لم يعد صديقاً لصاحب ملف خاص
+  // = 404 كأنها غير موجودة، قراءةً وتفاعلاً)، وبلا حظر بين المشاهد وصاحبها
   async function load(id, uid, { ownerMayRead = false } = {}) {
     if (!UUID_RE.test(id)) return { code: 404, error: "not-found" };
-    const p = (await pool.query("SELECT id, user_id, status FROM map_posts WHERE id=$1", [id])).rows[0];
+    const p = (await pool.query(`SELECT p.id, p.user_id, p.status, ${momentVisible("p", "$2::text")} AS visible FROM map_posts p WHERE p.id=$1`, [id, uid ?? null])).rows[0];
     if (!p) return { code: 404, error: "not-found" };
     if (p.status !== "active" && !(ownerMayRead && uid && p.user_id === uid)) return { code: 404, error: "not-found" };
+    if (p.visible === false && p.user_id !== uid) return { code: 404, error: "not-found" };
     if (uid && (await isBlocked(uid, p.user_id))) return { code: 403, error: "blocked" };
     return { post: p };
   }

@@ -1301,8 +1301,8 @@ class _AreaPanel extends StatelessWidget {
   }
 }
 
-/// بحث زجاجي مع صورة الحساب، وجرس التنبيهات: فوق الخريطة في وضع الرئيسية. الزائر يُدعى للدخول عند البحث أو الجرس
-/// (صفحتاهما تطلبان مسارات حساب).
+/// بحث زجاجي مع صورة الحساب، وجرس التنبيهات: فوق الخريطة في وضع الرئيسية. البحث مفتوح للزائر (الخادم يقبله بلا حساب،
+/// وصفحته تحرس بنفسها ما يحتاج حساباً)، والجرس وحده يدعوه للدخول.
 class _HomeTopBar extends ConsumerWidget {
   final int bell;
   final bool signedIn;
@@ -1320,10 +1320,7 @@ class _HomeTopBar extends ConsumerWidget {
           child: InkWell(
             key: const Key('home-search'),
             borderRadius: BorderRadius.circular(999),
-            onTap: () {
-              if (!requireAccount(context)) return;
-              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage()));
-            },
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage())),
             child: Padding(
               padding: const EdgeInsetsDirectional.fromSTEB(14, 7, 6, 7),
               child: Row(children: [

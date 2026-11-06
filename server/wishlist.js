@@ -85,10 +85,12 @@ export default async function wishlist(app, opts) {
         }
         case "post": {
           if (!tables.post || !UUID_RE.test(refId)) return null;
-          const r = await pool.query("SELECT user_id, title, caption, price, media_url, kind, status, expires_at FROM map_posts WHERE id=$1", [refId]);
+          // visible: قاعدة map_posts.js الواحدة (لحظة صاحب الملف الخاص لا يراها إلا أصدقاؤه)؛ من لم يعد يراها يأخذ البطاقة العامة
+          const vis = typeof globalThis.naslifeMomentVisibleSql === "function" ? globalThis.naslifeMomentVisibleSql("map_posts", "$2::text") : "($2::text IS NULL OR TRUE)";
+          const r = await pool.query(`SELECT user_id, title, caption, price, media_url, kind, status, expires_at, ${vis} AS visible FROM map_posts WHERE id=$1`, [refId, uid ?? null]);
           const p = r.rows[0]; if (!p) return null;
           // صاحب اللحظة يرى لحظته المخفية كما في GET /mapposts/:id
-          if ((p.status !== "active" && p.user_id !== uid) || await blockedWith(uid, p.user_id)) return HIDDEN_POST;
+          if ((p.status !== "active" && p.user_id !== uid) || (p.visible === false && p.user_id !== uid) || await blockedWith(uid, p.user_id)) return HIDDEN_POST;
           return { title: p.title || p.caption || "منشور على الخريطة", subtitle: "منشور على الخريطة", price: p.price == null ? null : Number(p.price), imageUrl: postImage(p), available: p.status === "active" && (!p.expires_at || new Date(p.expires_at) > new Date()) };
         }
         default: return null;

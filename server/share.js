@@ -134,7 +134,9 @@ ${metaTags(meta)}
   // والوصف الناشر والمكان) تحوّل المتصفح إلى /#/m/<id> فيفتح التطبيق عارض اللحظة. التحويل بوسم refresh لا بسكربت لأن
   // CSP في Caddy يمنع السكربتات المضمّنة، والصفحة مستقلة عن index.html فتعمل ولو لم تُنشر حزمة الويب بعد.
   // اللحظة المخفية أو المحجوبة أو المحذوفة تُعرض بوسوم عامة بلا نص ولا صورة.
+  // اللحظة الخاصة (ملف صاحبها غير عام، القاعدة من map_posts.js) كالمخفية: المعاينة من منظور الضيف لأن من يقرأ الوسوم بلا جلسة.
   const MEDIA_NAME = /\/chat\/media\/([a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5})(?:[?#].*)?$/i;
+  const momentVisible = (alias) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, "NULL::text") : "true"; };
   app.get("/m/:id", async (req, reply) => {
     const id = String(req.params.id ?? "").toLowerCase();
     const ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
@@ -144,11 +146,12 @@ ${metaTags(meta)}
     let p = null;
     if (ok) {
       try {
-        p = (await pool.query(`SELECT p.kind, p.media_url, p.caption, p.title, p.place_name, p.status, ${userCols.has("nickname") ? "u.nickname" : "NULL::text AS nickname"}
+        p = (await pool.query(`SELECT p.kind, p.media_url, p.caption, p.title, p.place_name, p.status, ${userCols.has("nickname") ? "u.nickname" : "NULL::text AS nickname"}, ${momentVisible("p")} AS visible
           FROM map_posts p ${userCols.has("nickname") ? "LEFT JOIN users u ON u.id = p.user_id" : ""} WHERE p.id=$1`, [id])).rows[0] ?? null;
       } catch { p = null; }
     }
-    if (p && p.status !== "active") p = null;
+    // المعاينة يقرؤها واتساب وغيره بلا جلسة (ضيف): لحظة صاحب الملف الخاص تُعامل كغير المتاحة، بلا صورة ولا نص ولا مكان
+    if (p && (p.status !== "active" || p.visible === false)) p = null;
     const DEFAULT_TITLE = "لحظة على ناس لايف";
     const oneLine = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
     let meta;

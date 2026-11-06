@@ -85,9 +85,16 @@ profile_events (id BIGSERIAL, user_id, actor_id, kind, created_at)              
 - المتابعون والمتابَعون قوائم عامة.
 - **الإشعار**: عند أول متابعة من مستخدم يُرسل للمتابَع `{kind:'profile_follow', title:'<nickname> يتابعك', data:{userId:<المتابِع>}}` مرة واحدة لكل متابع (سجل `profile_events` بنوع `follow` يمنع التكرار عند إلغاء المتابعة وإعادتها).
 
+- **لحظات الملف الخاص** (6 نوفمبر 2026، الخطأ 2 في القسم 5 من `docs/reports/naslife_gaps_2026-11-05.md`): وعد مفتاح «ملف عام» في `privacy_control_page.dart` («غير العام يخفي منشوراتك عن غير الأصدقاء») صار حقيقياً للحظات الخريطة. صاحب الملف غير العام (`is_public=false` في `users` أو في جدول الملف، كما يقرؤه `coreProfile`) لا يرى لحظاته إلا هو وأصدقاؤه، والإدارة للإشراف. **الصديق هنا بتعريف «من يراسلني» نفسه** (`hasContact`): من أضافه صاحب الملف إلى جهات اتصاله؛ إضافة الطرف الآخر وحده (طلب غير مقبول) لا تفتح شيئاً، بخلاف `isFriend` الذي يحكم عرض الملف نفسه بأي اتجاه. بلا عمود الخصوصية في النواة = الجميع عامّ (السلوك السابق)، وبلا جدول جهات الاتصال = لا أصدقاء. التطبيق والمسارات في `docs/moments.md` «من يرى اللحظة».
+
 ### المساعدات العامة والحذف
 
 - `globalThis.naslifeProfileExt(uid)` → صف `profile_ext` أو `null`.
+- `globalThis.naslifeAuthorVisibleSql(authorExpr, viewerExpr)` → شرط SQL منطقي واحد «هل يرى `viewerExpr` محتوى `authorExpr`؟» (صاحبه، أو ملف عام، أو صديق بالتعريف أعلاه)، مغلّف بـ`COALESCE(..., false)` فيصلح في `WHERE` وفي `SELECT ... AS visible`. التعبيران نصيان (`p.user_id` و`$1::text`؛ `NULL` للضيف). الأجزاء استعلامات فرعية غير مرتبطة بالصف: معرّفات أصحاب الملفات الخاصة (`users` ثم جدول الملف بـ`UNION ALL`) ومن أضافوا المشاهد، فيحسبها Postgres مرة لكل استعلام (`hashed SubPlan` في `EXPLAIN`) لا لكل صف. بلا عمود الخصوصية يعيد `($viewer IS NULL OR TRUE)` (يذكر المعامل حتى لا يرفض Postgres معاملاً مرسلاً غير مستعمل). العمود غير النصي (uuid/رقم) يُحوَّل نصاً عند الإقلاع.
+- `globalThis.naslifeIsPublic(uid)` → `true/false` (`true` بلا عمود خصوصية؛ خطأ القاعدة يُرمى ليقرر المستدعي، والبث الحي يغلق عند الشك).
+- `globalThis.naslifeFriendIds(uid)` → من أضافهم المستخدم إلى جهات اتصاله (حتى 5000)، بالتعريف نفسه.
+- `globalThis.naslifePrivacyStatus` → `{ privacy, friends }`: هل وُجد عمود الخصوصية وجدول جهات الاتصال.
+- ميزة «الجمهور» لكل لحظة القادمة (الافتراضي «الأصدقاء» بقرار المالك) تبني فوق هذه في `map_posts.js` (`naslifeMomentVisibleSql` و`momentAudience`) لا هنا.
 - `globalThis.naslifeProfileV2Delete(uid)` → يحذف `profile_ext` و`user_follows` (الجانبان) و`profile_views` (الجانبان) و`profile_events` (الجانبان)؛ يعيد `true/false`.
 - `server/account_delete.js` يمسح الجداول الأربعة مباشرة داخل معاملة الحذف الناعم (بجانب `user_layouts`) عند وجودها.
 

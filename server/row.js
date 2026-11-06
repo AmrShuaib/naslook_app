@@ -172,6 +172,8 @@ export default async function row(app, opts = {}) {
   // شرط الضيف على الفعاليات من commerce.js (عمود خصوصية الدوائر يُكتشف هناك)؛ إن غابت الإضافة نُخفي فعاليات الدوائر كلها عن الضيف احتياطاً
   const guestEvents = async () => { try { const f = globalThis.naslifeGuestEventsSql; return typeof f === "function" ? String(await f(null, "e")) : " AND e.vessel_id IS NULL"; } catch { return " AND e.vessel_id IS NULL"; } };
   const place = (ctx, r, km) => ({ lat: Number(r.lat), lng: Number(r.lng), distanceKm: ctx.located ? round1(km) : null });
+  // من يرى اللحظة: جزء SQL الواحد من map_posts.js (لحظات الملف الخاص لصاحبها وأصدقائه، وبعدها «الجمهور» لكل لحظة)؛ بلا الإضافة = الجميع كما كان
+  const momentVisible = (alias, viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, viewerExpr) : `(${viewerExpr} IS NULL OR TRUE)`; };
 
   // الحمولة = شكل المنشور كما يعيده GET /mapposts تماماً (ليفتح التطبيق المشاهد بلا طلب آخر)
   const postOut = (p, uid, user) => ({
@@ -186,7 +188,7 @@ export default async function row(app, opts = {}) {
     moment: {
       rows: (ctx) => { const [t, P] = tail(ctx, "moment", [...ctx.geo, ctx.uid, ctx.blocked], "p.created_at DESC"); return q("moment", `SELECT p.*, (SELECT count(*) FROM map_post_likes l WHERE l.post_id=p.id)::int AS likes,
           ($4::text IS NOT NULL AND EXISTS (SELECT 1 FROM map_post_likes l WHERE l.post_id=p.id AND l.user_id=$4)) AS liked, ${KM("p")} AS km${feedMs(ctx, "moment")}
-        FROM map_posts p WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($5::text[])) AND ${WITHIN("p")} ${t}`, P); },
+        FROM map_posts p WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($5::text[])) AND ${momentVisible("p", "$4::text")} AND ${WITHIN("p")} ${t}`, P); },
       userId: (p) => p.user_id,
       item: (p, ctx, who) => ({
         kind: "moment", id: p.id, refId: p.id,
