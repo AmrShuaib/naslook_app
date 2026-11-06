@@ -786,6 +786,8 @@ export default async function admin(app, opts) {
     if (b.spotlightMaxActive !== undefined) patch.spotlightMaxActive = Math.max(1, Math.min(50, Math.round(Number(b.spotlightMaxActive)) || 12));
     if (b.marketReviewNewAccounts !== undefined) patch.marketReviewNewAccounts = b.marketReviewNewAccounts === true;
     if (b.marketBlockContacts !== undefined) patch.marketBlockContacts = b.marketBlockContacts !== false;
+    // طلبات الدوائر (business.js): أيام حجز المبلغ بعد نهاية الموعد أو الشراء قبل تحريره لصاحب الدائرة تلقائياً
+    if (b.bizHoldDays !== undefined) patch.bizHoldDays = Math.max(1, Math.min(30, Math.round(Number(b.bizHoldDays)) || 3));
     // التوظيف
     if (b.jobsEnabled !== undefined) patch.jobsEnabled = b.jobsEnabled !== false;
     if (b.jobsFreeActive !== undefined) patch.jobsFreeActive = Math.max(1, Math.min(100, Math.round(Number(b.jobsFreeActive)) || 3));

@@ -5,6 +5,7 @@ import '../api/models.dart' show Person;
 import '../api/notify_api.dart';
 import '../pages/admin/admin_shell.dart';
 import '../state/admin_providers.dart';
+import '../pages/business/biz_order_page.dart';
 import '../pages/business/business_page.dart';
 import '../pages/business/community_page.dart';
 import '../pages/business/my_bookings_page.dart';
@@ -85,6 +86,11 @@ Widget? notificationTarget(AppNotification n) {
       return const MyOffersPage();
     case 'order_status':
       return const MyBookingsPage();
+    // «لدي مشكلة» على طلب دائرة (business.js): فتحها والرد عليها وحسمها؛ الطلب نفسه لكل طرف (العميل والفريق والإدارة)
+    case 'biz_dispute':
+      if (order != null) return BizOrderPage(orderId: order);
+      if (n.data['side'] == 'admin') return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'market').clamp(0, adminSections.length - 1));
+      return n.data['side'] == 'team' && biz != null ? BusinessDashboardPage(id: biz, initialTab: 1) : const MyBookingsPage();
     case 'ticket_sale':
     case 'event_cancelled':
       return event == null ? const EventsPage() : EventDetailPage(eventId: event);
@@ -269,6 +275,7 @@ Widget? _moderatedTarget(AppNotification n) {
     case 'market_courier':
       return (icon: Icons.delivery_dining_outlined, color: Joy.accent);
     case 'market_dispute':
+    case 'biz_dispute':
       return (icon: Icons.gavel_rounded, color: Joy.danger);
     case 'market_review':
       return (icon: Icons.star_outline_rounded, color: Joy.sunText);

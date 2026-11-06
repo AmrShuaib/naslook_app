@@ -12,6 +12,7 @@ import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
 import '../market/bazaar_page.dart';
 import '../market/market_page.dart';
+import 'admin_biz_disputes.dart';
 import 'admin_shell.dart';
 
 final adminMarketProvider = FutureProvider<MarketAdminOverview>((ref) => ref.watch(apiClientProvider).adminMarketOverview());
@@ -61,6 +62,8 @@ class AdminMarketPage extends ConsumerWidget {
             ]),
           ])),
         ],
+        // نزاعات طلبات الدوائر (business.js) بجانب نزاعات السوق
+        const BizDisputesAdmin(),
         const SectionTitle('أعلى البائعين هذا الشهر'),
         if (o.topSellers.isEmpty) const Text('لا مبيعات مكتملة بعد', style: TextStyle(color: Joy.textMuted)),
         JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, t) in o.topSellers.indexed) ListRow(leading: ProfileAvatar(person: t.seller, size: 36), title: Text(t.seller.nickname), subtitle: Text('${t.orders} طلب مكتمل'), trailing: Text(money(t.revenue), style: const TextStyle(fontWeight: FontWeight.w700)), divider: i < o.topSellers.length - 1)])),

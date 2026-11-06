@@ -20,7 +20,8 @@ extension BizApi on ApiClient {
   Future<void> followBiz(String id) => post('/biz/$id/follow', const {});
   Future<void> unfollowBiz(String id) => delete('/biz/$id/follow', body: const {});
   Future<void> reviewBiz(String id, {required int rating, String text = ''}) => post('/biz/$id/reviews', {'rating': rating, 'text': text});
-  Future<BizOrder> orderBiz(String id, {required String itemId, int qty = 1, DateTime? startAt, DateTime? endAt, int? guests, String note = '', String? offerId, double? lat, double? lng}) async =>
+  /// [payment] = 'at_venue' لـ«احجز الآن وادفع في المكان» (لا خصم من المحفظة)؛ الافتراضي الدفع من المحفظة.
+  Future<BizOrder> orderBiz(String id, {required String itemId, int qty = 1, DateTime? startAt, DateTime? endAt, int? guests, String note = '', String? offerId, double? lat, double? lng, String payment = 'wallet'}) async =>
       BizOrder.fromJson(await post('/biz/$id/orders', {
         'itemId': itemId,
         'qty': qty,
@@ -31,9 +32,16 @@ extension BizApi on ApiClient {
         if (offerId != null) 'offerId': offerId,
         if (lat != null) 'lat': lat,
         if (lng != null) 'lng': lng,
+        if (payment == 'at_venue') 'payment': 'at_venue',
       }));
   Future<List<BizOrder>> myBizOrders() async => asList(await getList('/biz/orders/mine')).map(BizOrder.fromJson).toList();
   Future<void> cancelBizOrder(String id) => post('/biz/orders/$id/cancel', const {});
+  /// طلب واحد بمعرّفه للعميل أو فريق الدائرة أو الإدارة (viewer في الرد).
+  Future<BizOrder> bizOrder(String id) async => BizOrder.fromJson(await get('/biz/orders/$id'));
+  /// «لدي مشكلة»: سبب (5 أحرف على الأقل) وروابط صور رُفعت عبر /chat/upload (حتى 4).
+  Future<BizOrder> openBizDispute(String id, {required String reason, List<String> photos = const []}) async =>
+      BizOrder.fromJson(await post('/biz/orders/$id/dispute', {'reason': reason, 'photos': photos}));
+  Future<BizOrder> replyBizDispute(String id, String text) async => BizOrder.fromJson(await post('/biz/orders/$id/dispute/reply', {'text': text}));
 
   // ---- لوحة صاحب النشاط
   Future<MyBusinesses> myBusinesses() async => MyBusinesses.fromJson(await get('/biz/mine'));
@@ -48,8 +56,17 @@ extension BizApi on ApiClient {
   Future<void> deleteBizItem(String id, String itemId) => delete('/biz/$id/items/$itemId', body: const {});
   Future<List<BizOrder>> bizOrders(String id, {String? status, String q = ''}) async =>
       asList(await getList('/biz/$id/orders', query: {if (status != null && status.isNotEmpty) 'status': status, if (q.isNotEmpty) 'q': q})).map(BizOrder.fromJson).toList();
-  Future<BizOrder> checkinBiz(String id, {String? code, String? orderId}) async => BizOrder.fromJson(await post('/biz/$id/checkin', {if (code != null) 'code': code, if (orderId != null) 'orderId': orderId}));
+  /// [paid] يسجّل «تم الدفع» لطلب الدفع في المكان مع الاستلام في خطوة واحدة.
+  Future<BizOrder> checkinBiz(String id, {String? code, String? orderId, bool paid = false}) async =>
+      BizOrder.fromJson(await post('/biz/$id/checkin', {if (code != null) 'code': code, if (orderId != null) 'orderId': orderId, if (paid) 'paid': true}));
   Future<void> ownerCancelOrder(String id, String orderId) => post('/biz/$id/orders/$orderId/cancel', const {});
+  /// «تم الدفع» لطلب الدفع في المكان (والمؤكد يصير مستخدماً).
+  Future<BizOrder> markVenuePaid(String id, String orderId) async => BizOrder.fromJson(await post('/biz/$id/orders/$orderId/paid', const {}));
+  /// «لم يحضر» لطلب الدفع في المكان بعد حلول موعده؛ noShows في الرد عدد مراته لهذا العميل.
+  Future<BizOrder> markNoShow(String id, String orderId) async => BizOrder.fromJson(await post('/biz/$id/orders/$orderId/no-show', const {}));
+  // ---- نزاعات الدوائر في الإدارة
+  Future<List<BizOrder>> adminBizDisputes({String status = 'open'}) async => asList(await getList('/adminapi/biz/disputes', query: {'status': status})).map(BizOrder.fromJson).toList();
+  Future<void> adminResolveBizDispute(String orderId, {required String resolution, String note = ''}) => post('/adminapi/biz/disputes/$orderId', {'resolution': resolution, 'note': note});
   Future<BizStats> bizStats(String id) async => BizStats.fromJson(await get('/biz/$id/stats'));
   Future<BizPost> createBizPost(String id, Map<String, dynamic> body) async => BizPost.fromJson(await post('/biz/$id/posts', body));
   Future<BizPost> updateBizPost(String id, String postId, Map<String, dynamic> body) async => BizPost.fromJson(await patch_('/biz/$id/posts/$postId', body));

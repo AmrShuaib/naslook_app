@@ -136,7 +136,9 @@ await pool.query(`INSERT INTO biz(id,name,name_ar,category,lat,lng,owner_id,veri
 await pool.query(`INSERT INTO biz_items(id,biz_id,kind,title,price) VALUES('age-paid','age-shop','product','حقيبة',2500),('age-gift','age-shop','product','هدية',0)`);
 adultReq(await call('POST', '/biz/age-shop/orders', { user: MINOR, body: { itemId: 'age-paid', qty: 1 } }), 'paid circle order without attestation');
 await call('POST', '/biz/age-shop/orders', { user: MINOR, body: { itemId: 'age-gift', qty: 1 }, expect: 200 });
-await call('POST', '/biz/age-shop/orders', { user: ADULT, body: { itemId: 'age-paid', qty: 1 }, expect: 200 });
+const ageOrder = await call('POST', '/biz/age-shop/orders', { user: ADULT, body: { itemId: 'age-paid', qty: 1 }, expect: 200 });
+// المبلغ محجوز حتى الاستلام (business.js، نوفمبر 2026): الاستلام يحرّره للبائع الذي يشتري به سبوت لايت أدناه
+await call('POST', '/biz/age-shop/checkin', { user: SELLER, body: { orderId: ageOrder.json.id }, expect: 200 });
 let pub = (await call('GET', '/biz/age-shop', { user: MINOR, expect: 200 })).json;
 check(pub.entity?.kind === 'cr' && pub.entity.number === '4030111222' && !('docUrl' in pub), 'approved circle shows its commercial registration publicly', JSON.stringify(pub.entity));
 pub = (await call('GET', '/biz/age-free', { user: null, expect: 200 })).json;

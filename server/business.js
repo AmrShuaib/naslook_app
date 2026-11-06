@@ -2,7 +2,8 @@
 // مع لوحة صاحب النشاط: الملكية، الكتالوج، الطلبات وتأكيد الاستلام، الإحصاءات، الأخبار والعروض، الرد على التقييمات، الفريق.
 // التسجيل في src/index.js (بعد commerce.js لأن الدفع يمر بجداول المحفظة نفسها):
 //   await app.register((await import("./business.js")).default, { pool, auth });
-// المبالغ بالهللة. الشراء والحجز يخصمان من محفظة ناس لايف ويُستردان عند الإلغاء، ويُقيَّد المبلغ لمحفظة صاحب النشاط.
+// المبالغ بالهللة. الشراء والحجز يخصمان من محفظة ناس لايف ويُستردان عند الإلغاء، ويبقى المبلغ محجوزاً حتى الاستلام أو مهلة بعده
+// ثم يُقيَّد لمحفظة صاحب النشاط؛ أو «الدفع في المكان» بلا محفظة؛ و«لدي مشكلة» يجمّد التحرير حتى تحسمه الإدارة (docs/circle-orders.md).
 import crypto from "node:crypto";
 import http from "node:http";
 import { SEED } from "./business_seed.js";
@@ -20,7 +21,10 @@ const KINDS = new Set(["product", "showtime", "room", "car", "clinic", "info"]);
 const POST_KINDS = new Set(["news", "offer"]);
 const STAFF_ROLES = new Set(["manager", "staff", "hr"]);
 const DAY = 86400000;
-const SHOWTIME_DAYS = 3;            // عدد الأيام القادمة التي تُعرض لها مواعيد السينما
+const NO_SHOW_LIMIT = 3;            // بعد ثلاث مرات «لم يحضر» في الدائرة نفسها لا يُقبل منه حجز بالدفع في المكان
+const DISPUTE_DAYS = 7;             // مهلة فتح النزاع بعد الاستخدام أو تحرير المبلغ
+const DISPUTE_MAX_MSGS = 40;
+const SHOWTIME_DAYS = 3;           // عدد الأيام القادمة التي تُعرض لها مواعيد السينما
 const RIYADH_OFFSET_MIN = 180;      // توقيت السعودية UTC+3 (بلا توقيت صيفي)
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -131,6 +135,22 @@ export default async function business(app, opts) {
     ALTER TABLE biz ADD COLUMN IF NOT EXISTS owner_role TEXT;
     ALTER TABLE biz ADD COLUMN IF NOT EXISTS here JSONB;
     ALTER TABLE biz ADD COLUMN IF NOT EXISTS registered_at TIMESTAMPTZ;
+    -- طلبات الدوائر (نوفمبر 2026): الدفع في المكان لكل صنف (مطفأ افتراضياً)، طريقة الدفع وحالته، المبلغ المحجوز حتى الاستلام
+    -- (funds: NULL = طلب قديم قُيّد لصاحب الدائرة عند الشراء، held، released، refunded، split)، ووقت الاستخدام لمهلة النزاع
+    ALTER TABLE biz_items ADD COLUMN IF NOT EXISTS pay_at_venue BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS payment TEXT NOT NULL DEFAULT 'wallet';
+    ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+    ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS funds TEXT;
+    ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS release_at TIMESTAMPTZ;
+    ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS released_at TIMESTAMPTZ;
+    ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS biz_orders_held ON biz_orders(release_at) WHERE funds='held';
+    -- نزاع واحد لكل طلب: السبب والصور، رسائل الطرفين والإدارة، وقرار الإدارة (refund | release | split)
+    CREATE TABLE IF NOT EXISTS biz_disputes (
+      order_id UUID PRIMARY KEY, biz_id TEXT NOT NULL, user_id TEXT NOT NULL, reason TEXT NOT NULL, photos JSONB NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'open', messages JSONB NOT NULL DEFAULT '[]', resolution TEXT, note TEXT, resolved_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), resolved_at TIMESTAMPTZ);
+    CREATE INDEX IF NOT EXISTS biz_disputes_status ON biz_disputes(status, created_at);
   `);
   // استعلام مستقل حتى لا يُعطّل تعثّره (صلاحية إنشاء الدوال مثلاً) إضافة الدوائر كلها؛ المسارات هنا تكتب العمودين معاً على كل حال
   await pool.query(`
@@ -295,6 +315,9 @@ export default async function business(app, opts) {
     finally { c.release(); }
   }
   const fail = (code, extra = {}) => Object.assign(new Error(code), { code, ...extra });
+  // مهلة حجز المبلغ بالأيام بعد نهاية الموعد أو بعد الشراء لما لا موعد له (bizHoldDays في إعدادات المنصة 1..30، الافتراضي 3)
+  const holdDays = () => { const n = Math.round(Number(globalThis.naslifeSettings?.bizHoldDays)); return Number.isFinite(n) && n >= 1 && n <= 30 ? n : 3; };
+  const noShowsOf = async (c, bizId, uid) => (await c.query("SELECT count(*)::int AS n FROM biz_orders WHERE biz_id=$1 AND user_id=$2 AND status='no_show'", [bizId, uid])).rows[0].n;
 
   // ---- الإشعارات (server/notify.js إن كانت مسجّلة): لا تُفشل الطلب أبداً
   const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch (e) { try { app.log.warn({ err: e?.message }, "business: notify failed"); } catch { /* ignore */ } } };
@@ -383,7 +406,7 @@ export default async function business(app, opts) {
     };
   };
   async function itemOut(it, now = new Date()) {
-    const base = { id: it.id, bizId: it.biz_id, kind: it.kind, title: it.title, description: it.description, price: Number(it.price), unit: it.unit, stock: it.stock, meta: it.meta ?? {}, imageUrl: it.image_url, active: it.active, sort: it.sort };
+    const base = { id: it.id, bizId: it.biz_id, kind: it.kind, title: it.title, description: it.description, price: Number(it.price), unit: it.unit, stock: it.stock, meta: it.meta ?? {}, imageUrl: it.image_url, active: it.active, sort: it.sort, payAtVenue: it.pay_at_venue === true };
     if (it.kind === "showtime" || it.kind === "clinic") {
       const slots = showtimeSlots(it, now);
       const taken = slots.length ? (await pool.query("SELECT start_at, COALESCE(SUM(qty),0)::int AS n FROM biz_orders WHERE item_id=$1 AND status IN ('confirmed','used') AND start_at = ANY($2) GROUP BY start_at", [it.id, slots])).rows : [];
@@ -392,21 +415,42 @@ export default async function business(app, opts) {
     }
     return base;
   }
+  // طريقة الدفع الظاهرة: free للمجاني (والطلبات القديمة المجانية مخزّنة wallet)، at_venue، wallet
+  const paymentOf = (o) => (Number(o.total) <= 0 ? "free" : o.payment === "at_venue" ? "at_venue" : "wallet");
+  // حالة المبلغ لطلب مدفوع من المحفظة: الطلب القديم (funds فارغ) قُيّد لصاحب الدائرة عند الشراء فيظهر credited
+  const fundsOf = (o) => (paymentOf(o) === "wallet" ? (o.funds ?? "credited") : null);
+  const disputeOut = (o) => (o.d_status ? {
+    status: o.d_status, reason: o.d_reason, photos: Array.isArray(o.d_photos) ? o.d_photos : [], resolution: o.d_resolution ?? null, note: o.d_note ?? null,
+    messages: (Array.isArray(o.d_messages) ? o.d_messages : []).map((m) => ({ by: m.by, text: m.text, at: m.at })), createdAt: o.d_created_at, resolvedAt: o.d_resolved_at ?? null,
+  } : null);
+  // النزاع للعميل على طلب دفعه من المحفظة: ما دام المبلغ محجوزاً، أو خلال 7 أيام من الاستخدام أو من تحرير المبلغ (ولا نزاع سابق)
+  function disputable(o, now = Date.now()) {
+    if (paymentOf(o) !== "wallet" || o.d_status || !["confirmed", "used"].includes(o.status)) return false;
+    if (o.funds === "held") return true;
+    const within = (t) => t != null && now - new Date(t).getTime() < DISPUTE_DAYS * DAY;
+    if (o.funds === "released" && within(o.released_at)) return true;
+    return o.status === "used" && within(o.used_at ?? o.updated_at) && (o.funds == null || o.funds === "released");
+  }
   const orderOut = (o, extra = {}) => ({
     id: o.id, bizId: o.biz_id, bizName: o.biz_name ?? null, bizNameAr: o.biz_name_ar ?? null, category: o.category ?? null, itemId: o.item_id, title: o.item_title ?? null, kind: o.kind, qty: o.qty,
     startAt: o.start_at, endAt: o.end_at, units: o.units, total: Number(o.total), status: o.status, code: o.code, note: o.note, meta: o.meta ?? {}, createdAt: o.created_at, updatedAt: o.updated_at,
-    cancellable: cancellable(o), offer: o.meta?.offer ?? null, ...extra,
+    cancellable: cancellable(o), offer: o.meta?.offer ?? null,
+    payment: paymentOf(o), paid: paymentOf(o) !== "at_venue" || o.paid_at != null, paidAt: o.paid_at ?? null, funds: fundsOf(o), releaseAt: o.release_at ?? null, releasedAt: o.released_at ?? null,
+    usedAt: o.used_at ?? null, dispute: disputeOut(o), disputable: disputable(o), ...extra,
   });
   const postOut = (p) => ({ id: p.id, bizId: p.biz_id, kind: p.kind, title: p.title, body: p.body, imageUrl: p.image_url, startsAt: p.starts_at, endsAt: p.ends_at, active: p.active, hidden: p.hidden === true, createdAt: p.created_at });
   // الإلغاء من العميل: المنتجات خلال 24 ساعة من الشراء، التذاكر قبل ساعتين من العرض، الغرف والسيارات قبل 24 ساعة من البداية
   function cancellable(o, now = Date.now()) {
-    if (o.status !== "confirmed") return false;
+    // النزاع المفتوح يحسمه المدير؛ إلغاء العميل أثناءه يسبق القرار
+    if (o.status !== "confirmed" || o.d_status === "open") return false;
     const start = o.start_at ? new Date(o.start_at).getTime() : null;
     if (o.kind === "product") return now - new Date(o.created_at).getTime() < DAY;
     if (o.kind === "showtime" || o.kind === "clinic") return start != null && start - now > 2 * 3600000;
     return start != null && start - now > DAY;
   }
-  const ORDER_JOIN = "SELECT o.*, i.title AS item_title, b.name AS biz_name, b.name_ar AS biz_name_ar, b.category FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id";
+  const ORDER_JOIN = `SELECT o.*, i.title AS item_title, b.name AS biz_name, b.name_ar AS biz_name_ar, b.category, b.owner_id,
+      d.status AS d_status, d.reason AS d_reason, d.photos AS d_photos, d.messages AS d_messages, d.resolution AS d_resolution, d.note AS d_note, d.created_at AS d_created_at, d.resolved_at AS d_resolved_at
+    FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id LEFT JOIN biz_disputes d ON d.order_id=o.id`;
 
   // ---- الموقع الفعلي في SQL: دبوس «هنا اليوم» القائم وإلا موقع الدائرة؛ وتغطية نطاق خدمة الدائرة المتنقلة لنقطة ما
   const HERE_ON = "(b.here IS NOT NULL AND jsonb_typeof(b.here->'until')='string' AND (b.here->>'until')::timestamptz > now())";
@@ -708,6 +752,8 @@ export default async function business(app, opts) {
     if (has("imageUrl")) out.image_url = isUrl(body.imageUrl) ? str(body.imageUrl, 500) : null;
     if (has("sort")) out.sort = Math.round(Number(body.sort) || 0);
     if (has("active")) out.active = body.active !== false;
+    // «الدفع في المكان» يفعّله المالك لكل صنف صراحة؛ لا يمر مال عبر ناس لايف في هذه الطلبات
+    if (has("payAtVenue")) out.pay_at_venue = body.payAtVenue === true;
     return out;
   }
   const unitOf = (kind) => ({ showtime: "ticket", room: "night", car: "day", clinic: "visit" }[kind] ?? "item");
@@ -728,8 +774,8 @@ export default async function business(app, opts) {
     const count = (await pool.query("SELECT count(*)::int AS n FROM biz_items WHERE biz_id=$1", [g.b.id])).rows[0].n;
     if (count >= 300) return bad(reply, 409, "too-many");
     const id = `${g.b.id.replace(/^biz-/, "").slice(0, 20)}-${crypto.randomBytes(3).toString("hex")}`;
-    await pool.query("INSERT INTO biz_items(id,biz_id,kind,title,description,price,unit,stock,meta,image_url,sort,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-      [id, g.b.id, f.kind, f.title, f.description, f.price, unitOf(f.kind), f.stock, f.meta, f.image_url ?? null, f.sort ?? count, f.active ?? true]);
+    await pool.query("INSERT INTO biz_items(id,biz_id,kind,title,description,price,unit,stock,meta,image_url,sort,active,pay_at_venue) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+      [id, g.b.id, f.kind, f.title, f.description, f.price, unitOf(f.kind), f.stock, f.meta, f.image_url ?? null, f.sort ?? count, f.active ?? true, f.pay_at_venue === true]);
     await pool.query("UPDATE biz SET updated_at=now() WHERE id=$1", [g.b.id]);
     return itemOut((await pool.query("SELECT * FROM biz_items WHERE id=$1", [id])).rows[0]);
   });
@@ -860,6 +906,8 @@ export default async function business(app, opts) {
     const note = str(body.note, 300);
     const startAt = body.startAt ? new Date(body.startAt) : null, endAt = body.endAt ? new Date(body.endAt) : null;
     if ((startAt && isNaN(startAt)) || (endAt && isNaN(endAt))) return bad(reply, 400, "bad-date");
+    // «احجز الآن وادفع في المكان»: لا خصم من المحفظة ولا مال يمر عبر ناس لايف؛ الافتراضي الدفع من المحفظة
+    const wantVenue = body.payment === "at_venue";
     // الطلب أو الحجز المدفوع يحتاج إقرار 18+ (legal_pages.js)؛ غياب المساعد أو خطؤه لا يحجب، والمجاني مفتوح (يُفحص المبلغ داخل المعاملة)
     let adultMissing = false;
     try { const f = globalThis.naslifeAdultOk; adultMissing = typeof f === "function" ? !(await f(uid)) : false; } catch { adultMissing = false; }
@@ -906,25 +954,37 @@ export default async function business(app, opts) {
         }
         const code = "NAS-" + crypto.randomBytes(4).toString("hex").toUpperCase();
         const label = `${b.name_ar || b.name} · ${it.title}`;
+        let payment = "free", funds = null, releaseAt = null;
         if (total > 0) {
           // دائرة بلا مالك لا تستقبل مالاً: الخصم من المشتري بلا قيد مقابل يُضيع المبلغ؛ الأصناف المجانية تبقى قابلة للطلب
           if (!b.owner_id) throw fail("no-owner");
           // البيع مغلق حتى يُعتمد السجل التجاري أو وثيقة العمل الحر (قرار المالك، 21 أكتوبر 2026)؛ الأصناف المجانية تبقى قابلة للطلب
           if (verStatus(b) !== "approved") throw fail("not-verified");
           if (adultMissing) throw fail("adult-required");
-          await ledger(c, uid, "biz", -total, { ref: id, note: label, points: Math.floor(total / 1000), peerId: b.owner_id ?? null });
-          // يُقيَّد المبلغ فوراً لمحفظة صاحب النشاط (كالتذاكر)، ويُخصم منه عند الاسترداد
-          if (b.owner_id && b.owner_id !== uid) await ledger(c, b.owner_id, "biz_sale", total, { peerId: uid, ref: id, note: label, allowNegative: true });
+          if (wantVenue) {
+            if (it.pay_at_venue !== true) throw fail("venue-not-allowed");
+            const ns = await noShowsOf(c, b.id, uid);
+            if (ns >= NO_SHOW_LIMIT) throw fail("venue-blocked", { noShows: ns });
+            payment = "at_venue";
+          } else {
+            await ledger(c, uid, "biz", -total, { ref: id, note: label, points: Math.floor(total / 1000), peerId: b.owner_id ?? null });
+            // المبلغ يبقى محجوزاً (لا يُقيَّد لصاحب الدائرة) حتى تأكيد الاستلام أو مرور مهلة بعد الموعد أو الشراء،
+            // فالإلغاء والاسترداد أثناء الحجز يعيدانه للمشتري بلا خصم من صاحب الدائرة، والنزاع يجمّده
+            payment = "wallet"; funds = "held";
+            releaseAt = new Date((e ? e.getTime() : Date.now()) + holdDays() * DAY);
+          }
         }
-        await c.query("INSERT INTO biz_orders(id,biz_id,item_id,user_id,kind,qty,start_at,end_at,units,total,code,note,meta) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
-          [id, b.id, it.id, uid, it.kind, finalQty, s, e, units, total, code, note, JSON.stringify(meta)]);
-        return { id, code, total, b, it, qty: finalQty };
+        await c.query("INSERT INTO biz_orders(id,biz_id,item_id,user_id,kind,qty,start_at,end_at,units,total,code,note,meta,payment,funds,release_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
+          [id, b.id, it.id, uid, it.kind, finalQty, s, e, units, total, code, note, JSON.stringify(meta), payment, funds, releaseAt]);
+        return { id, code, total, b, it, qty: finalQty, payment };
       });
     } catch (err) {
       if (err.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds");
       if (err.code === "no-owner") return bad(reply, 409, "no-owner");
       if (err.code === "not-verified") return bad(reply, 403, "not-verified");
       if (err.code === "adult-required") return bad(reply, 403, "adult-required");
+      if (err.code === "venue-not-allowed") return bad(reply, 409, "venue-not-allowed");
+      if (err.code === "venue-blocked") return bad(reply, 403, "venue-blocked", { noShows: err.noShows ?? NO_SHOW_LIMIT });
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       if (["sold-out", "unavailable"].includes(err.code)) return bad(reply, 409, err.code, { left: err.left ?? 0 });
       if (["bad-slot", "bad-date", "bad-range", "in-past", "too-many", "not-orderable"].includes(err.code)) return bad(reply, 400, err.code);
@@ -932,7 +992,7 @@ export default async function business(app, opts) {
       throw err;
     }
     await notify(await bizTeam(out.b), { kind: "biz_order", title: `${orderNoun(out.it.kind)} جديد · ${bizName(out.b)}`,
-      body: `${await nickOf(uid)}: ${out.it.title}${out.qty > 1 ? " × " + out.qty : ""} بقيمة ${sar(out.total)} · الرمز ${out.code}`, data: { bizId: out.b.id, orderId: out.id }, exclude: uid });
+      body: `${await nickOf(uid)}: ${out.it.title}${out.qty > 1 ? " × " + out.qty : ""} بقيمة ${sar(out.total)}${out.payment === "at_venue" ? " يُدفع في المكان" : ""} · الرمز ${out.code}`, data: { bizId: out.b.id, orderId: out.id }, exclude: uid });
     const r = await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [out.id]);
     return orderOut(r.rows[0]);
   });
@@ -943,21 +1003,42 @@ export default async function business(app, opts) {
     return r.rows.map((o) => orderOut(o));
   });
 
-  // إلغاء من العميل (ضمن المهلة) أو من صاحب النشاط (في أي وقت ما دام الطلب مؤكداً): استرداد كامل
+  // ---- قيود المال على الطلب (داخل معاملة والطلب مقفل بـ LOCK_ORDER)
+  const LOCK_ORDER = "SELECT o.*, i.title AS item_title, i.stock, b.name_ar, b.name, b.owner_id FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id WHERE o.id=$1 FOR UPDATE OF o";
+  const orderLabel = (o) => `${o.name_ar || o.name} · ${o.item_title}`;
+  // يُقرأ بعد قفل الطلب (لا من الربط في الاستعلام نفسه) حتى يرى نزاعاً فُتح في اللحظة نفسها
+  const openDispute = async (c, id) => (await c.query("SELECT 1 FROM biz_disputes WHERE order_id=$1 AND status='open'", [id])).rowCount > 0;
+  // تحرير المبلغ المحجوز لصاحب الدائرة الحالي؛ شراء المالك من دائرته لا يُقيَّد له (كما كان) حتى لا تُجمع النقاط بلا مقابل
+  async function releaseHeld(c, o, amount = Number(o.total)) {
+    if (amount > 0 && o.owner_id && o.owner_id !== o.user_id) await ledger(c, o.owner_id, "biz_sale", amount, { peerId: o.user_id, ref: o.id, note: orderLabel(o), allowNegative: true });
+  }
+  // ردّ مبلغ دفعه العميل من المحفظة: من المحجوز بلا مساس بصاحب الدائرة، أو (طلب قديم قُيّد عند الشراء، أو مبلغ حُرّر) بخصمه من صاحب الدائرة
+  async function refundWallet(c, o, amount) {
+    if (paymentOf(o) !== "wallet" || amount <= 0) return false;
+    const label = orderLabel(o);
+    await ledger(c, o.user_id, "biz_refund", amount, { ref: o.id, note: label, peerId: o.owner_id ?? null });
+    if (o.funds !== "held" && o.owner_id && o.owner_id !== o.user_id) await ledger(c, o.owner_id, "biz_refund_out", -amount, { peerId: o.user_id, ref: o.id, note: label, allowNegative: true });
+    return true;
+  }
+  // إرجاع ما حجزه الطلب: مخزون المنتج واستخدام العرض (المقعد أو الموعد يتحرر بتغيّر الحالة وحده)
+  async function restock(c, o) {
+    if (globalThis.naslifeOffersRelease) await globalThis.naslifeOffersRelease(c, o.id);
+    if (o.kind === "product" && o.stock != null) await c.query("UPDATE biz_items SET stock=stock+$2 WHERE id=$1", [o.item_id, o.qty]);
+  }
+
+  // إلغاء من العميل (ضمن المهلة) أو من صاحب النشاط (في أي وقت ما دام الطلب مؤكداً): استرداد كامل لما دُفع من المحفظة
   async function cancelOrder(orderId, { byUser = null, force = false } = {}) {
     return tx(async (c) => {
-      const o = (await c.query("SELECT o.*, i.title AS item_title, i.stock, b.name_ar, b.name, b.owner_id FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id WHERE o.id=$1 FOR UPDATE OF o", [orderId])).rows[0];
+      const o = (await c.query(LOCK_ORDER, [orderId])).rows[0];
       if (!o || (byUser && o.user_id !== byUser)) throw fail("not-found");
-      if (force ? o.status !== "confirmed" : !cancellable(o)) throw fail("not-cancellable");
-      await c.query("UPDATE biz_orders SET status='cancelled', updated_at=now() WHERE id=$1", [o.id]);
-      if (globalThis.naslifeOffersRelease) await globalThis.naslifeOffersRelease(c, o.id);
-      if (o.kind === "product" && o.stock != null) await c.query("UPDATE biz_items SET stock=stock+$2 WHERE id=$1", [o.item_id, o.qty]);
-      const label = `${o.name_ar || o.name} · ${o.item_title}`;
-      if (Number(o.total) > 0) {
-        await ledger(c, o.user_id, "biz_refund", Number(o.total), { ref: o.id, note: label, peerId: o.owner_id ?? null });
-        if (o.owner_id && o.owner_id !== o.user_id) await ledger(c, o.owner_id, "biz_refund_out", -Number(o.total), { peerId: o.user_id, ref: o.id, note: label, allowNegative: true });
-      }
-      return o;
+      const disputed = await openDispute(c, o.id);
+      if (force ? o.status !== "confirmed" : (disputed || !cancellable(o))) throw fail("not-cancellable");
+      const refunded = await refundWallet(c, o, Number(o.total));
+      await c.query("UPDATE biz_orders SET status='cancelled', funds=CASE WHEN $2 THEN 'refunded' ELSE funds END, updated_at=now() WHERE id=$1", [o.id, refunded]);
+      await restock(c, o);
+      // إلغاء الدائرة أثناء نزاع مفتوح يحسمه لصالح العميل (استرداد كامل)
+      if (disputed) await c.query("UPDATE biz_disputes SET status='resolved', resolution='refund', note=COALESCE(note, 'ألغت الدائرة الطلب واستُرد المبلغ'), resolved_at=now(), updated_at=now() WHERE order_id=$1 AND status='open'", [o.id]);
+      return { ...o, refunded, disputed };
     });
   }
   app.post("/biz/orders/:id/cancel", async (req, reply) => {
@@ -971,38 +1052,92 @@ export default async function business(app, opts) {
       throw err;
     }
     await notify(await bizTeam({ id: o.biz_id, owner_id: o.owner_id }), { kind: "order_cancelled", title: `إلغاء ${orderNoun(o.kind)} · ${bizName(o)}`,
-      body: `${await nickOf(uid)} ألغى ${o.item_title} (${o.code})${Number(o.total) > 0 ? " واستُرد " + sar(o.total) : ""}`, data: { bizId: o.biz_id, orderId: o.id }, exclude: uid });
-    return { ok: true };
+      body: `${await nickOf(uid)} ألغى ${o.item_title} (${o.code})${o.refunded ? " واستُرد " + sar(o.total) : ""}`, data: { bizId: o.biz_id, orderId: o.id }, exclude: uid });
+    return { ok: true, refunded: o.refunded ? Number(o.total) : 0 };
   });
 
   // ---- طلبات الدائرة لصاحبها وطاقمه، مع بيانات العميل وتصفية بالحالة والبحث بالرمز
   app.get("/biz/:id/orders", async (req, reply) => {
     const g = await guard(req, reply, "operate"); if (!g) return;
-    const status = ["confirmed", "used", "cancelled", "upcoming", "today"].includes(req.query?.status) ? req.query.status : null;
+    const status = ["confirmed", "used", "cancelled", "no_show", "upcoming", "today", "disputed"].includes(req.query?.status) ? req.query.status : null;
     const q = str(req.query?.q, 40).toUpperCase();
     const extra = status === "upcoming" ? "AND o.status='confirmed' AND (o.start_at IS NULL OR o.start_at >= now() - interval '6 hours')"
       : status === "today" ? "AND o.status IN ('confirmed','used') AND (((o.start_at IS NOT NULL AND (o.start_at + interval '3 hours')::date = (now() + interval '3 hours')::date)) OR (o.start_at IS NULL AND (o.created_at + interval '3 hours')::date = (now() + interval '3 hours')::date))"
+      : status === "disputed" ? "AND d.status='open'"
       : "";
-    const exact = status && !["upcoming", "today"].includes(status) ? status : null;
+    const exact = status && !["upcoming", "today", "disputed"].includes(status) ? status : null;
     const r = await pool.query(`${ORDER_JOIN} WHERE o.biz_id=$1 AND ($2::text IS NULL OR o.status=$2) ${extra} AND ($3::text = '' OR o.code ILIKE '%' || $3 || '%') ORDER BY o.created_at DESC LIMIT 300`,
       [g.b.id, exact, q]);
     return Promise.all(r.rows.map(async (o) => orderOut(o, { customer: await person(o.user_id) })));
   });
-  // تأكيد الاستلام/الاستخدام برمز الحجز (المالك والمدير والموظف)
+  // تأكيد الاستلام/الاستخدام برمز الحجز (المالك والمدير والموظف): يحرّر المبلغ المحجوز لصاحب الدائرة (إلا أثناء نزاع مفتوح)،
+  // ومع paid:true يسجّل «تم الدفع» لطلب الدفع في المكان في الخطوة نفسها
   app.post("/biz/:id/checkin", async (req, reply) => {
     const g = await guard(req, reply, "operate"); if (!g) return;
     const code = str(req.body?.code, 40).toUpperCase();
     const orderId = UUID_RE.test(req.body?.orderId ?? "") ? req.body.orderId : null;
     if (!code && !orderId) return bad(reply, 400, "bad-code");
-    const r = await pool.query("UPDATE biz_orders SET status='used', updated_at=now() WHERE biz_id=$1 AND status='confirmed' AND (($2 <> '' AND code=$2) OR ($3::uuid IS NOT NULL AND id=$3)) RETURNING id", [g.b.id, code, orderId]);
-    if (!r.rowCount) {
-      const exists = (await pool.query("SELECT status FROM biz_orders WHERE biz_id=$1 AND (($2 <> '' AND code=$2) OR ($3::uuid IS NOT NULL AND id=$3))", [g.b.id, code, orderId])).rows[0];
-      return bad(reply, exists ? 409 : 404, exists ? `already-${exists.status}` : "code-invalid");
-    }
-    const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [r.rows[0].id])).rows[0];
+    const markPaid = req.body?.paid === true;
+    const found = (await pool.query("SELECT id FROM biz_orders WHERE biz_id=$1 AND (($2 <> '' AND code=$2) OR ($3::uuid IS NOT NULL AND id=$3))", [g.b.id, code, orderId])).rows[0];
+    if (!found) return bad(reply, 404, "code-invalid");
+    try {
+      await tx(async (c) => {
+        const o = (await c.query(LOCK_ORDER, [found.id])).rows[0];
+        if (o.status !== "confirmed") throw fail(`already-${o.status}`);
+        const release = o.funds === "held" && !(await openDispute(c, o.id));
+        await c.query(`UPDATE biz_orders SET status='used', used_at=now(), updated_at=now(), paid_at=CASE WHEN $2 AND payment='at_venue' THEN COALESCE(paid_at, now()) ELSE paid_at END,
+          funds=CASE WHEN $3 THEN 'released' ELSE funds END, released_at=CASE WHEN $3 THEN now() ELSE released_at END WHERE id=$1`, [o.id, markPaid, release]);
+        if (release) await releaseHeld(c, o);
+      });
+    } catch (err) { if (String(err.code ?? "").startsWith("already-")) return bad(reply, 409, err.code); throw err; }
+    const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [found.id])).rows[0];
     try { await globalThis.naslifeOffersOnRedeem?.(g.b, o.user_id); } catch { /* المكافأة لا تُفشل الاستلام */ }
     await notify(o.user_id, { kind: "order_status", title: o.kind === "product" ? "تم استلام طلبك" : "تم تأكيد حجزك", body: `${o.biz_name_ar || o.biz_name}: ${o.item_title} (${o.code})`, data: { bizId: o.biz_id, orderId: o.id, status: "used" }, exclude: g.uid });
     return orderOut(o, { customer: await person(o.user_id) });
+  });
+  // «تم الدفع» لطلب الدفع في المكان: الدفع يعني الحضور، فالطلب المؤكد يصير مستخدماً في الخطوة نفسها
+  app.post("/biz/:id/orders/:orderId/paid", async (req, reply) => {
+    const g = await guard(req, reply, "operate"); if (!g) return;
+    if (!UUID_RE.test(req.params.orderId)) return bad(reply, 400, "bad-id");
+    const r = await pool.query(`UPDATE biz_orders SET paid_at=now(), status=CASE WHEN status='confirmed' THEN 'used' ELSE status END, used_at=CASE WHEN status='confirmed' THEN now() ELSE used_at END, updated_at=now()
+      WHERE id=$1 AND biz_id=$2 AND payment='at_venue' AND paid_at IS NULL AND status IN ('confirmed','used') RETURNING id, status`, [req.params.orderId, g.b.id]);
+    if (!r.rowCount) {
+      const cur = (await pool.query("SELECT payment, paid_at, status FROM biz_orders WHERE id=$1 AND biz_id=$2", [req.params.orderId, g.b.id])).rows[0];
+      if (!cur) return bad(reply, 404, "not-found");
+      return bad(reply, 409, cur.payment !== "at_venue" ? "not-venue" : cur.paid_at ? "already-paid" : "bad-status");
+    }
+    const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [req.params.orderId])).rows[0];
+    try { await globalThis.naslifeOffersOnRedeem?.(g.b, o.user_id); } catch { /* ignore */ }
+    await notify(o.user_id, { kind: "order_status", title: "تم تأكيد الدفع", body: `${o.biz_name_ar || o.biz_name}: ${o.item_title} (${o.code}) · ${sar(o.total)} دُفعت في المكان`, data: { bizId: o.biz_id, orderId: o.id, status: o.status }, exclude: g.uid });
+    return orderOut(o, { customer: await person(o.user_id) });
+  });
+  // «لم يحضر» لطلب الدفع في المكان بعد حلول موعده: يتحرر المقعد أو المخزون، ويُحسب على العميل في هذه الدائرة
+  app.post("/biz/:id/orders/:orderId/no-show", async (req, reply) => {
+    const g = await guard(req, reply, "operate"); if (!g) return;
+    if (!UUID_RE.test(req.params.orderId)) return bad(reply, 400, "bad-id");
+    let o, count;
+    try {
+      ({ o, count } = await tx(async (c) => {
+        const o = (await c.query(LOCK_ORDER, [req.params.orderId])).rows[0];
+        if (!o || o.biz_id !== g.b.id) throw fail("not-found");
+        if (o.payment !== "at_venue" || Number(o.total) <= 0) throw fail("not-venue");
+        if (o.status !== "confirmed") throw fail("bad-status");
+        if (o.start_at && new Date(o.start_at).getTime() > Date.now()) throw fail("too-early");
+        await c.query("UPDATE biz_orders SET status='no_show', updated_at=now() WHERE id=$1", [o.id]);
+        await restock(c, o);
+        return { o, count: await noShowsOf(c, o.biz_id, o.user_id) };
+      }));
+    } catch (err) {
+      if (err.code === "not-found") return bad(reply, 404, "not-found");
+      if (["not-venue", "bad-status", "too-early"].includes(err.code)) return bad(reply, 409, err.code);
+      throw err;
+    }
+    const left = Math.max(0, NO_SHOW_LIMIT - count);
+    await notify(o.user_id, { kind: "order_status", title: `سُجّل عدم حضورك · ${bizName(o)}`,
+      body: `${o.item_title} (${o.code})${left > 0 ? ` · بعد ${left} ${left === 1 ? "مرة أخرى" : "مرات أخرى"} لن يتاح لك الدفع في المكان في هذه الدائرة` : " · لم يعد الدفع في المكان متاحاً لك في هذه الدائرة"}`,
+      data: { bizId: o.biz_id, orderId: o.id, status: "no_show" }, exclude: g.uid });
+    const fresh = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [o.id])).rows[0];
+    return orderOut(fresh, { customer: await person(fresh.user_id), noShows: count });
   });
   app.post("/biz/:id/orders/:orderId/cancel", async (req, reply) => {
     const g = await guard(req, reply, "manage"); if (!g) return;
@@ -1016,9 +1151,168 @@ export default async function business(app, opts) {
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       throw err;
     }
-    await notify(o2.user_id, { kind: "order_status", title: `أُلغي ${orderNoun(o2.kind)}ك`, body: `${bizName(o2)}: ${o2.item_title} (${o2.code})${Number(o2.total) > 0 ? " · استُرد " + sar(o2.total) + " إلى محفظتك" : ""}`,
+    await notify(o2.user_id, { kind: "order_status", title: `أُلغي ${orderNoun(o2.kind)}ك`, body: `${bizName(o2)}: ${o2.item_title} (${o2.code})${o2.refunded ? " · استُرد " + sar(o2.total) + " إلى محفظتك" : ""}`,
       data: { bizId: o2.biz_id, orderId: o2.id, status: "cancelled" }, exclude: g.uid });
-    return { ok: true };
+    return { ok: true, refunded: o2.refunded ? Number(o2.total) : 0 };
+  });
+
+  // ---- تحرير المبالغ المحجوزة التي حلّت مهلتها (بعد نهاية الموعد أو الشراء بـ bizHoldDays) ما لم يكن عليها نزاع مفتوح
+  async function releaseDue() {
+    let n = 0;
+    const due = (await pool.query(`SELECT o.id FROM biz_orders o JOIN biz b ON b.id=o.biz_id WHERE o.funds='held' AND o.release_at <= now() AND o.status IN ('confirmed','used')
+      AND b.owner_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM biz_disputes d WHERE d.order_id=o.id AND d.status='open') ORDER BY o.release_at LIMIT 200`)).rows;
+    for (const { id } of due) {
+      try {
+        const ok = await tx(async (c) => {
+          const o = (await c.query(LOCK_ORDER, [id])).rows[0];
+          if (!o || o.funds !== "held" || !["confirmed", "used"].includes(o.status) || !o.owner_id || new Date(o.release_at).getTime() > Date.now()) return false;
+          if (await openDispute(c, id)) return false;
+          // updated_at لا يتغير: التحرير ليس حدثاً للعميل ولا يمدّ نافذة المراسلة بين الطرفين
+          await c.query("UPDATE biz_orders SET funds='released', released_at=now() WHERE id=$1", [id]);
+          await releaseHeld(c, o);
+          return true;
+        });
+        if (ok) n++;
+      } catch (e) { try { app.log.warn({ err: e?.message, id }, "business: release failed"); } catch { /* ignore */ } }
+    }
+    return n;
+  }
+  globalThis.naslifeBizReleaseDue = releaseDue;
+  if (process.env.NODE_ENV !== "test") {
+    const t = setInterval(() => { releaseDue().catch(() => {}); }, 10 * 60000);
+    t.unref?.();
+    app.addHook("onClose", async () => clearInterval(t));
+  }
+
+  // ---- طلب واحد بمعرّفه: للعميل صاحبه ولفريق الدائرة وللإدارة (تفتحه الإشعارات)
+  async function orderViewer(uid, o) {
+    if (o.user_id === uid) return "customer";
+    const role = await roleFor(uid, { id: o.biz_id, owner_id: o.owner_id });
+    return role === "admin" ? "admin" : canOperate(role) ? "team" : null;
+  }
+  app.get("/biz/orders/:id", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [req.params.id])).rows[0];
+    const viewer = o ? await orderViewer(uid, o) : null;
+    if (!viewer) return bad(reply, 404, "not-found");
+    if (viewer === "customer") return orderOut(o, { viewer });
+    return orderOut(o, { viewer, customer: await person(o.user_id), noShows: await noShowsOf(pool, o.biz_id, o.user_id) });
+  });
+
+  // ---- النزاع على طلب دُفع من المحفظة: «لدي مشكلة» من العميل يجمّد تحرير المبلغ، ويرد الطرفان، وتحسمه الإدارة
+  const clip = (t) => (t.length > 100 ? t.slice(0, 100) + "…" : t);
+  app.post("/biz/orders/:id/dispute", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const reason = str(req.body?.reason, 600);
+    if (reason.length < 5) return bad(reply, 400, "bad-reason");
+    if (rejectBanned(reply, reason)) return;
+    // الصور روابط رفعها العميل عبر /chat/upload (حتى 4)
+    const photos = (Array.isArray(req.body?.photos) ? req.body.photos : []).filter(isUrl).map((u) => str(u, 500)).slice(0, 4);
+    let o;
+    try {
+      o = await tx(async (c) => {
+        const o = (await c.query(LOCK_ORDER, [req.params.id])).rows[0];
+        if (!o || o.user_id !== uid) throw fail("not-found");
+        if ((await c.query("SELECT 1 FROM biz_disputes WHERE order_id=$1", [o.id])).rowCount) throw fail("already-disputed");
+        if (!disputable(o)) throw fail("not-disputable");
+        await c.query("INSERT INTO biz_disputes(order_id,biz_id,user_id,reason,photos) VALUES($1,$2,$3,$4,$5)", [o.id, o.biz_id, uid, reason, JSON.stringify(photos)]);
+        await c.query("UPDATE biz_orders SET updated_at=now() WHERE id=$1", [o.id]);
+        return o;
+      });
+    } catch (err) {
+      if (err.code === "not-found") return bad(reply, 404, "not-found");
+      // 23505: نزاعان متزامنان على الطلب نفسه، والمفتاح الأساسي يمنع الثاني
+      if (err.code === "already-disputed" || err.code === "23505") return bad(reply, 409, "already-disputed");
+      if (err.code === "not-disputable") return bad(reply, 409, "not-disputable");
+      throw err;
+    }
+    await notify(await bizTeam({ id: o.biz_id, owner_id: o.owner_id }), { kind: "biz_dispute", title: `مشكلة في ${orderNoun(o.kind)} · ${bizName(o)}`,
+      body: `${await nickOf(uid)}: ${clip(reason)} (${o.code})`, data: { bizId: o.biz_id, orderId: o.id, side: "team" }, exclude: uid });
+    await notifyAdmins({ kind: "biz_dispute", title: "نزاع جديد على طلب دائرة", body: `${bizName(o)} · ${o.item_title} (${sar(o.total)}): ${clip(reason)}`, data: { bizId: o.biz_id, orderId: o.id, side: "admin" } });
+    const fresh = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [o.id])).rows[0];
+    return orderOut(fresh, { viewer: "customer" });
+  });
+  app.post("/biz/orders/:id/dispute/reply", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const text = str(req.body?.text, 600);
+    if (text.length < 2) return bad(reply, 400, "bad-text");
+    if (rejectBanned(reply, text)) return;
+    const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [req.params.id])).rows[0];
+    const viewer = o ? await orderViewer(uid, o) : null;
+    if (!viewer) return bad(reply, 404, "not-found");
+    if (o.d_status !== "open") return bad(reply, 409, "no-open-dispute");
+    const msg = { by: viewer, userId: uid, text, at: new Date().toISOString() };
+    const r = await pool.query("UPDATE biz_disputes SET messages = messages || $2::jsonb, updated_at=now() WHERE order_id=$1 AND status='open' AND jsonb_array_length(messages) < $3 RETURNING 1", [o.id, JSON.stringify([msg]), DISPUTE_MAX_MSGS]);
+    if (!r.rowCount) return bad(reply, 409, "too-many");
+    const who = viewer === "customer" ? await nickOf(uid) : viewer === "team" ? bizName({ name: o.biz_name, name_ar: o.biz_name_ar }) : "إدارة ناس لايف";
+    const data = { bizId: o.biz_id, orderId: o.id };
+    const title = `رد في نزاع ${o.item_title}`;
+    if (viewer !== "customer") await notify(o.user_id, { kind: "biz_dispute", title, body: `${who}: ${clip(text)}`, data: { ...data, side: "customer" }, exclude: uid });
+    if (viewer !== "team") await notify(await bizTeam({ id: o.biz_id, owner_id: o.owner_id }), { kind: "biz_dispute", title, body: `${who}: ${clip(text)}`, data: { ...data, side: "team" }, exclude: uid });
+    const fresh = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [o.id])).rows[0];
+    return viewer === "customer" ? orderOut(fresh, { viewer }) : orderOut(fresh, { viewer, customer: await person(fresh.user_id) });
+  });
+
+  // ---- نزاعات الدوائر في لوحة الإدارة بجانب نزاعات السوق: القائمة والحسم (استرداد / تحرير / تقسيم)
+  app.get("/adminapi/biz/disputes", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
+    const st = req.query?.status === "resolved" ? "resolved" : req.query?.status === "all" ? null : "open";
+    const rows = (await pool.query(`${ORDER_JOIN} WHERE d.status IS NOT NULL AND ($1::text IS NULL OR d.status=$1) ORDER BY d.created_at ${st === "open" ? "ASC" : "DESC"} LIMIT 100`, [st])).rows;
+    return Promise.all(rows.map(async (o) => orderOut(o, { viewer: "admin", customer: await person(o.user_id), owner: o.owner_id ? await person(o.owner_id) : null })));
+  });
+  app.post("/adminapi/biz/disputes/:id", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!(await isAdmin(uid))) return bad(reply, 403, "admin-only");
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const resolution = String(req.body?.resolution ?? "");
+    if (!["refund", "release", "split"].includes(resolution)) return bad(reply, 400, "bad-resolution");
+    const note = str(req.body?.note, 600) || null;
+    let o;
+    try {
+      o = await tx(async (c) => {
+        const o = (await c.query(LOCK_ORDER, [req.params.id])).rows[0];
+        if (!o) throw fail("not-found");
+        // الحسم مرة واحدة: قفل صف النزاع، وحسمان متوازيان ينتهي ثانيهما بـ 409 بلا أي قيد
+        const d = (await c.query("SELECT status FROM biz_disputes WHERE order_id=$1 FOR UPDATE", [o.id])).rows[0];
+        if (!d) throw fail("not-found");
+        if (d.status !== "open") throw fail("bad-status");
+        const total = Number(o.total), half = Math.floor(total / 2), held = o.funds === "held";
+        if (held && resolution !== "refund" && !o.owner_id) throw fail("no-owner");
+        let funds = o.funds;
+        if (resolution === "refund") {
+          await refundWallet(c, o, total); funds = "refunded";
+          // طلب لم يُستخدم بعد يُلغى ويتحرر مقعده أو مخزونه
+          if (o.status === "confirmed") { await c.query("UPDATE biz_orders SET status='cancelled' WHERE id=$1", [o.id]); await restock(c, o); }
+        } else if (resolution === "release") {
+          if (held) { await releaseHeld(c, o); funds = "released"; }
+        } else {
+          // التقسيم: نصف للعميل (من المحجوز، أو بخصمه من صاحب الدائرة إن كان قد قُيّد له) والباقي لصاحب الدائرة
+          await refundWallet(c, o, half);
+          if (held) await releaseHeld(c, o, total - half);
+          funds = "split";
+        }
+        await c.query("UPDATE biz_orders SET funds=$2::text, released_at=CASE WHEN $2::text IN ('released','split') AND released_at IS NULL THEN now() ELSE released_at END, updated_at=now() WHERE id=$1", [o.id, funds]);
+        await c.query("UPDATE biz_disputes SET status='resolved', resolution=$2, note=$3, resolved_by=$4, resolved_at=now(), updated_at=now() WHERE order_id=$1", [o.id, resolution, note, uid]);
+        return o;
+      });
+    } catch (err) {
+      if (err.code === "not-found") return bad(reply, 404, "not-found");
+      if (err.code === "bad-status") return bad(reply, 409, "bad-status");
+      if (err.code === "no-owner") return bad(reply, 409, "no-owner");
+      throw err;
+    }
+    try { await pool.query("INSERT INTO admin_audit(id,admin_id,action,target,details) VALUES($1,$2,$3,$4,$5)", [crypto.randomUUID(), uid, "biz.dispute.resolve", o.id, JSON.stringify({ resolution, note, total: Number(o.total) })]); } catch { /* جدول التدقيق ملك admin.js */ }
+    const total = Number(o.total), half = Math.floor(total / 2);
+    const msg = { refund: `أُعيد ${sar(total)} كاملاً إلى العميل`, release: "حُرِّر المبلغ لصاحب الدائرة", split: `قُسم المبلغ: ${sar(half)} للعميل و${sar(total - half)} لصاحب الدائرة` }[resolution];
+    const body = `${o.item_title} (${o.code}): ${msg}${note ? " · " + note : ""}`;
+    await notify(o.user_id, { kind: "biz_dispute", title: "حُسم النزاع", body, data: { bizId: o.biz_id, orderId: o.id, side: "customer" }, exclude: uid });
+    await notify(await bizTeam({ id: o.biz_id, owner_id: o.owner_id }), { kind: "biz_dispute", title: "حُسم النزاع", body, data: { bizId: o.biz_id, orderId: o.id, side: "team" }, exclude: uid });
+    const fresh = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [o.id])).rows[0];
+    return { ok: true, resolution, order: orderOut(fresh, { viewer: "admin", customer: await person(fresh.user_id) }) };
   });
 
   // ---- الإحصاءات (المالك وطاقمه)
@@ -1041,7 +1335,20 @@ export default async function business(app, opts) {
     const topItems = (await pool.query("SELECT o.item_id, i.title, count(*)::int AS count, COALESCE(SUM(o.total),0)::bigint AS total FROM biz_orders o JOIN biz_items i ON i.id=o.item_id WHERE o.biz_id=$1 AND o.status IN ('confirmed','used') GROUP BY o.item_id, i.title ORDER BY total DESC LIMIT 5", [id])).rows;
     const social = (await pool.query("SELECT (SELECT count(*) FROM biz_follows WHERE biz_id=$1)::int AS followers, (SELECT round(avg(rating)::numeric,1) FROM biz_reviews WHERE biz_id=$1) AS rating, (SELECT count(*) FROM biz_reviews WHERE biz_id=$1)::int AS reviews, (SELECT count(*) FROM biz_reviews WHERE biz_id=$1 AND reply IS NULL)::int AS unanswered, (SELECT views FROM biz WHERE id=$1) AS views", [id])).rows[0];
     const upcoming = (await pool.query("SELECT count(*)::int AS n FROM biz_orders WHERE biz_id=$1 AND status='confirmed' AND start_at IS NOT NULL AND start_at BETWEEN now() AND now() + interval '24 hours'", [id])).rows[0].n;
+    // المال: المحجوز حتى الاستلام (ومنه ما تجمّد بنزاع)، والمُحرَّر لمحفظة صاحب الدائرة (ومنه الطلبات القديمة التي قُيّدت عند الشراء
+    // وحصته من التقسيم)، والدفع في المكان المستحق والمدفوع (لا يمر عبر المحفظة)
+    const money = (await pool.query(`SELECT
+        COALESCE(SUM(o.total) FILTER (WHERE o.funds='held'),0)::bigint AS held,
+        COALESCE(SUM(o.total) FILTER (WHERE o.funds='held' AND d.status='open'),0)::bigint AS disputed,
+        COALESCE(SUM(o.total) FILTER (WHERE o.payment='wallet' AND o.total>0 AND ((o.funds IS NULL AND o.status IN ('confirmed','used')) OR o.funds='released')),0)::bigint
+          + COALESCE(SUM(o.total - o.total/2) FILTER (WHERE o.funds='split'),0)::bigint AS released,
+        COALESCE(SUM(o.total) FILTER (WHERE o.payment='at_venue' AND o.paid_at IS NULL AND o.status IN ('confirmed','used')),0)::bigint AS venue_due,
+        COALESCE(SUM(o.total) FILTER (WHERE o.payment='at_venue' AND o.paid_at IS NOT NULL),0)::bigint AS venue_paid,
+        count(*) FILTER (WHERE d.status='open')::int AS disputes_open,
+        count(*) FILTER (WHERE o.status='no_show')::int AS no_shows
+      FROM biz_orders o LEFT JOIN biz_disputes d ON d.order_id=o.id WHERE o.biz_id=$1`, [id])).rows[0];
     return {
+      money: { held: Number(money.held), disputed: Number(money.disputed), released: Number(money.released), venueDue: Number(money.venue_due), venuePaid: Number(money.venue_paid), disputesOpen: money.disputes_open, noShows: money.no_shows, holdDays: holdDays() },
       orders: { total: totals.total, confirmed: totals.confirmed, used: totals.used, cancelled: totals.cancelled, last7: totals.orders7, next24h: upcoming, customers: totals.customers },
       revenue: { total: Number(totals.revenue), last7: Number(totals.revenue7), last30: Number(totals.revenue30) },
       byKind: byKind.map((k) => ({ kind: k.kind, count: k.count, total: Number(k.total) })),
