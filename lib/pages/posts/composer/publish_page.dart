@@ -364,7 +364,7 @@ class _PublishPageState extends ConsumerState<PublishPage> {
       Wrap(spacing: 8, children: [chip('friends', Icons.people_alt_outlined), chip('all', Icons.public_rounded)]),
       const SizedBox(height: 4),
       Text(
-        aud == 'friends' ? 'يراها من أضفتهم إلى جهات اتصالك فقط' : 'يراها كل من يفتح الخريطة ما دام ملفك عاماً',
+        aud == 'friends' ? 'يراها من أضفتهم أصدقاء فقط' : 'يراها كل من يفتح الخريطة ما دام ملفك عاماً',
         key: const Key('aud-hint'), style: const TextStyle(color: Joy.textMuted, fontSize: 12),
       ),
     ]);

@@ -168,6 +168,8 @@ void main() {
     await tester.tap(chip);
     await _settle(tester);
     expect(find.text('من يرى هذا المنشور؟'), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('aud-set-friends')), matching: find.text('من أضفتهم أصدقاء فقط')), findsOneWidget);
+    expect(find.textContaining('جهات اتصال'), findsNothing);
     await tester.tap(find.byKey(const Key('aud-set-all')));
     await _settle(tester);
     expect(srv.bodies['PATCH /mapposts/$_p2'], {'audience': 'all'});

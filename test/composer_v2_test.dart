@@ -253,7 +253,9 @@ void main() {
     expect(find.text('من يراها؟'), findsOneWidget);
     expect(audChip(tester, 'friends').selected, isTrue);
     expect(audChip(tester, 'all').selected, isFalse);
-    expect(find.text('يراها من أضفتهم إلى جهات اتصالك فقط'), findsOneWidget);
+    // كلمة التطبيق («إضافة صديق») لا «جهات الاتصال» التي تُفهم دفتر عناوين الهاتف
+    expect(find.text('يراها من أضفتهم أصدقاء فقط'), findsOneWidget);
+    expect(find.textContaining('جهات اتصال'), findsNothing);
     await tester.tap(find.byKey(const Key('aud-all')));
     await tester.pump();
     expect(audChip(tester, 'all').selected, isTrue);

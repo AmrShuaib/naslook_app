@@ -3,7 +3,8 @@
 // وملف صاحبها عاماً. هنا صاحبة ملف «عام» تنشر لحظة للأصدقاء ولحظة للجميع، وخمسة مشاهدين (صاحبتها، الصديقة، الغريب، من أضافها من طرفه
 // فقط، والضيف) على كل مسار تتسرب منه لحظة: GET /mapposts و/mapposts/feed و/mapposts/:id و/mapposts/trending (والعدّ فيه) والإعجاب
 // والمشاهدة، /row و/feed (row.js)، البث الحي /live/wait (live.js)، رابط المشاركة /m/:id (share.js)، التفاعلات (moment_extras.js)،
-// المحفوظات (wishlist.js)، بطاقة #post في المحادثة (chat_cards.js)، البحث المحفوظ (saved_search.js)، وعدّ منشورات الملف (profile_ext.js).
+// المحفوظات (wishlist.js)، بطاقة #post في المحادثة (chat_cards.js)، البحث المحفوظ (saved_search.js)، وعدّ منشورات الملف (profile_ext.js)،
+// وإحصاءات منشورات الدائرة /mapposts/stats/biz (الأرقام لصاحب الدائرة، والنص والصاحب لمن يرى اللحظة وحده).
 // ثم الافتراضي عند الإنشاء بلا اختيار، والتعديل بـPATCH (صاحبها فقط) مع أحداثه الحية، والجمع مع الملف الخاص، والكفاءة بـEXPLAIN،
 // والاحتياط المغلق بلا قاعدة profile_ext.js أو بقاعدة قديمة لا تفهم الجمهور، وأخيراً بلا عمود خصوصية في النواة.
 import Fastify from 'fastify';
@@ -193,6 +194,38 @@ check((await call('POST', '/wishlist', { body: { kind: 'post', refId: fo.id }, u
   const count = async (u) => (await call('GET', `/profiles/${AUTHOR}/v2`, { user: u, expect: 200 })).j.stats?.posts;
   const [a, f, s, g] = [await count(AUTHOR), await count(FRIEND), await count(STRANGER), await count(null)];
   check(a === 3 && f === 3 && s === 1 && g === 1, 'profile posts count follows the audience (author/friend 3, stranger/guest 1)', JSON.stringify({ a, f, s, g }));
+}
+// إحصاءات منشورات الدائرة: أي أحد يضع زر دائرة على لحظته، فصاحب الدائرة الغريب يأخذ أرقام لحظة «الأصدقاء» بلا نصها ولا صاحبها
+{
+  // جدول الدوائر لا تنشئه هذه الحزمة: إن غاب أُنشئ بأقل أعمدته ثم يُحذف حتى لا يرثه business.js ناقصاً في قاعدة مشتركة
+  const hadBiz = (await pool.query("SELECT to_regclass('public.biz') AS t")).rows[0].t !== null;
+  if (!hadBiz) await pool.query('CREATE TABLE biz (id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL, lat DOUBLE PRECISION NOT NULL, lng DOUBLE PRECISION NOT NULL, owner_id TEXT)');
+  const SLUG = 'biz-aud-stats', cta = { type: 'biz', value: SLUG };
+  const setOwner = (u) => pool.query("INSERT INTO biz(id, name, category, lat, lng, owner_id) VALUES ($1, 'مقهى', 'cafe', 22.9, 39.9, $2) ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id", [SLUG, u]);
+  await setOwner(STRANGER);
+  const sf = await post({ kind: 'text', caption: 'سر عائلي خاص بالأصدقاء', cta, audience: 'friends' });
+  const sp = await post({ kind: 'text', caption: 'تعالوا للمقهى', cta, audience: 'all' });
+  await call('POST', `/mapposts/${sf.id}/view`, { user: FRIEND, expect: 200 });
+  await call('GET', `/mapposts/${sf.id}`, { user: STRANGER, expect: 404 });
+  const statsFor = async (user) => {
+    const r = await call('GET', `/mapposts/stats/biz/${SLUG}`, { user, expect: 200 });
+    return { body: r.body, n: r.j.posts, f: r.j.byPost?.find((x) => x.id === sf.id), p: r.j.byPost?.find((x) => x.id === sp.id) };
+  };
+  let st = await statsFor(STRANGER);
+  check(st.n === 2 && st.f?.title === 'منشور خاص' && st.f?.author === null && st.f?.views === 1 && !st.body.includes('سر عائلي'), 'circle stats: a stranger owner keeps the friends-only moment\'s numbers but not its caption or author', JSON.stringify(st.f));
+  check(st.p?.title === 'تعالوا للمقهى' && st.p?.author === AUTHOR, 'circle stats: the public moment keeps its caption and author', JSON.stringify(st.p));
+  await setOwner(FRIEND);
+  st = await statsFor(FRIEND);
+  check(st.f?.title === 'سر عائلي خاص بالأصدقاء' && st.f?.author === AUTHOR, 'circle stats: an owner who is the author\'s friend sees the friends-only moment', JSON.stringify(st.f));
+  // الإدارة ترى كل شيء ولو لم تكن من أصدقائها
+  const isAdmin0 = globalThis.naslifeIsAdmin;
+  globalThis.naslifeIsAdmin = async (u) => u === ONEWAY;
+  st = await statsFor(ONEWAY);
+  check(st.f?.title === 'سر عائلي خاص بالأصدقاء' && st.f?.author === AUTHOR, 'circle stats: an admin sees every row', JSON.stringify(st.f));
+  if (isAdmin0 === undefined) delete globalThis.naslifeIsAdmin; else globalThis.naslifeIsAdmin = isAdmin0;
+  await call('GET', `/mapposts/stats/biz/${SLUG}`, { user: STRANGER, expect: 403 });
+  await pool.query('DELETE FROM map_posts WHERE id = ANY($1::uuid[])', [[sf.id, sp.id]]);
+  if (hadBiz) await pool.query('DELETE FROM biz WHERE id=$1', [SLUG]); else await pool.query('DROP TABLE biz');
 }
 
 // ---- التعديل: صاحبها وحده، وقيمة صحيحة فقط، والتطبيقات المفتوحة تتبع التغيير

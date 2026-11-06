@@ -518,7 +518,8 @@ export default async function posts(app, opts) {
   app.get("/mapposts/stats/biz/:slug", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const slug = str(req.params.slug, 64); const days = daysOf(req.query?.days);
-    let allowed = await isAdmin(uid);
+    const admin = await isAdmin(uid);
+    let allowed = admin;
     if (!allowed) {
       try {
         const b = (await pool.query("SELECT owner_id FROM biz WHERE id=$1", [slug])).rows[0];
@@ -526,10 +527,13 @@ export default async function posts(app, opts) {
       } catch { allowed = false; }
     }
     if (!allowed) return bad(reply, 403, "forbidden");
-    const posts = (await pool.query("SELECT * FROM map_posts WHERE cta->>'type'='biz' AND cta->>'value'=$1 AND created_at > now() - interval '90 days' ORDER BY created_at DESC LIMIT 200", [slug])).rows;
+    // أي أحد يضع زر دائرة على لحظته، فصاحب الدائرة ليس بالضرورة ممن يرونها: لحظة لا تفتحها له قاعدة الرؤية (جمهور «الأصدقاء» أو ملف
+    // خاص) تبقى في المجاميع بلا نصها ولا صاحبها، وإلا قرأ هنا ما يرده عنه GET /mapposts/:id بـ404
+    const posts = (await pool.query(`SELECT *, ${momentVisibleSql("map_posts", "$2::text")} AS visible FROM map_posts WHERE cta->>'type'='biz' AND cta->>'value'=$1 AND created_at > now() - interval '90 days' ORDER BY created_at DESC LIMIT 200`, [slug, uid])).rows;
     const ids = posts.map((p) => p.id);
     const agg = await series(ids, days); const per = await perPost(ids, days);
-    return { days, posts: posts.length, ...agg, byPost: posts.map((p) => ({ ...postBrief(p), author: p.user_id, ...per.get(p.id) })) };
+    const brief = (p) => (admin || p.visible === true ? { ...postBrief(p), author: p.user_id } : { ...postBrief(p), title: "منشور خاص", author: null });
+    return { days, posts: posts.length, ...agg, byPost: posts.map((p) => ({ ...brief(p), ...per.get(p.id) })) };
   });
   app.get("/mapposts/:id/stats", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);

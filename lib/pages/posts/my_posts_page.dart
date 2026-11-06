@@ -31,7 +31,7 @@ Future<MapPost?> changePostAudience(BuildContext context, WidgetRef ref, MapPost
     context: context, showDragHandle: true,
     builder: (ctx) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Padding(padding: EdgeInsets.fromLTRB(20, 0, 20, 8), child: Text('من يرى هذا المنشور؟', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16))),
-      for (final (v, icon, hint) in const [('friends', Icons.people_alt_outlined, 'من أضفتهم إلى جهات اتصالك فقط'), ('all', Icons.public_rounded, 'كل من يفتح الخريطة ما دام ملفك عاماً')])
+      for (final (v, icon, hint) in const [('friends', Icons.people_alt_outlined, 'من أضفتهم أصدقاء فقط'), ('all', Icons.public_rounded, 'كل من يفتح الخريطة ما دام ملفك عاماً')])
         ListTile(
           key: Key('aud-set-$v'), leading: Icon(icon, color: p.audience == v ? Joy.primary : Joy.textMuted), title: Text(postAudiences[v]!, style: const TextStyle(fontWeight: FontWeight.w700)), subtitle: Text(hint),
           trailing: p.audience == v ? const Icon(Icons.check_rounded, color: Joy.primary) : null, onTap: () => Navigator.pop(ctx, v),
