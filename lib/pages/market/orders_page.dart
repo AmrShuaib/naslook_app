@@ -85,10 +85,9 @@ Future<void> toggleListingVisibility(BuildContext context, WidgetRef ref, Listin
 
 /// يفتح نموذج التعديل ويرفع الصور الجديدة إن اختيرت ثم يحفظ.
 Future<void> editListing(BuildContext context, WidgetRef ref, Listing x) async {
-  final d = await showListingForm(context, initial: x);
+  // حفظ عرض مسعّر بيعٌ بمقابل: الخادم يطلب إقرار 18+ فنسأله عند الحفظ والنموذج مفتوح، قبل رفع الصور ودون أن تضيع التعديلات
+  final d = await showListingForm(context, initial: x, beforeSave: (ctx, d) async => !listingBodyPriced(d.toBody()) || await requireAdult(ctx, ref));
   if (d == null || !context.mounted) return;
-  // حفظ عرض مسعّر بيعٌ بمقابل: الخادم يطلب إقرار 18+ فنسأله قبل رفع الصور
-  if (listingBodyPriced(d.toBody()) && (!await requireAdult(context, ref) || !context.mounted)) return;
   try {
     final api = ref.read(apiClientProvider);
     final urls = [...d.existingImages];

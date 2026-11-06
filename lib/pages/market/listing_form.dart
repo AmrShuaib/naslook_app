@@ -32,12 +32,17 @@ class ListingDraft {
 
 String _priceText(int halalas) => halalas % 100 == 0 ? '${halalas ~/ 100}' : (halalas / 100).toStringAsFixed(2);
 
+/// فحص عند الحفظ والنموذج مفتوح (إقرار 18+ للعرض المسعّر): false يُبقي النموذج بما فيه.
+typedef ListingBeforeSave = Future<bool> Function(BuildContext context, ListingDraft draft);
+
 /// يفتح النموذج ويعيد المسودة أو null عند الإلغاء
-Future<ListingDraft?> showListingForm(BuildContext context, {Listing? initial}) => Navigator.of(context).push<ListingDraft>(MaterialPageRoute(builder: (_) => ListingFormPage(initial: initial), fullscreenDialog: true));
+Future<ListingDraft?> showListingForm(BuildContext context, {Listing? initial, ListingBeforeSave? beforeSave}) =>
+    Navigator.of(context).push<ListingDraft>(MaterialPageRoute(builder: (_) => ListingFormPage(initial: initial, beforeSave: beforeSave), fullscreenDialog: true));
 
 class ListingFormPage extends StatefulWidget {
   final Listing? initial;
-  const ListingFormPage({super.key, this.initial});
+  final ListingBeforeSave? beforeSave;
+  const ListingFormPage({super.key, this.initial, this.beforeSave});
   @override
   State<ListingFormPage> createState() => _ListingFormPageState();
 }
@@ -60,6 +65,7 @@ class _ListingFormPageState extends State<ListingFormPage> {
   late Availability? availability = widget.initial?.availability;
   DateTime? publishAt;
   bool advanced = false;
+  bool _checking = false;
 
   @override
   void dispose() { for (final c in [title, desc, price, place, city, stock]) { c.dispose(); } super.dispose(); }
@@ -76,15 +82,27 @@ class _ListingFormPageState extends State<ListingFormPage> {
     }
   }
 
-  void _submit(String status) {
+  Future<void> _submit(String status) async {
+    if (_checking) return;
     if (title.text.trim().length < 3) { toast(context, 'اكتب عنواناً واضحاً', error: true); return; }
     final p = parseSar(price.text);
     if (variants.isEmpty && p <= 0 && price.text.trim().isNotEmpty && price.text.trim() != '0') { toast(context, 'السعر غير صالح', error: true); return; }
-    Navigator.pop(context, ListingDraft(
+    final draft = ListingDraft(
       title: title.text.trim(), description: desc.text.trim(), kind: kind, category: category, subcategory: sub, condition: kind == 'product' ? condition : null, price: variants.isNotEmpty ? variants.map((v) => v.price).reduce((a, b) => a < b ? a : b) : p,
       stock: variants.isNotEmpty || stock.text.trim().isEmpty ? null : int.tryParse(stock.text.trim()), delivery: delivery, variants: variants, availability: kind == 'service' ? availability : null, publishAt: publishAt,
       placeName: place.text.trim(), city: city.text.trim(), status: status, existingImages: existing, newImages: picked,
-    ));
+    );
+    // الفحص قبل إغلاق النموذج: رفضه يُبقي الصور والنص كما هي بدل أن يضيع ما كُتب
+    final check = widget.beforeSave;
+    if (check != null) {
+      _checking = true;
+      try {
+        if (!await check(context, draft)) return;
+      } finally {
+        _checking = false;
+      }
+    }
+    if (mounted) Navigator.pop(context, draft);
   }
 
   @override

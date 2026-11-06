@@ -1,6 +1,7 @@
 // إقرار العمر وبيانات المنشأة (5 نوفمبر 2026): legal_pages.js (POST /me/adult-attest، حالة الإقرار في GET /legal/consent، صف age13
 // مع كل موافقة، naslifeAdultOk)، وبوابة 18+ في مسارات المال: الشحن التجريبي وبالبطاقة، التحويل، طلب السوق المدفوع، طلب الدائرة المدفوع،
-// التذكرة المدفوعة، حجز الفندق، وعرض السوق المسعّر والفعالية المسعّرة؛ المجاني مفتوح، وغياب المساعد أو خطؤه يفتح ولا يحجب.
+// التذكرة المدفوعة، حجز الفندق، وعرض السوق المسعّر والفعالية المسعّرة، وشراء سبوت لايت ودفع طلب المحادثة (رصيد دخل بلا فحص)؛
+// المجاني مفتوح، وغياب المساعد أو خطؤه يفتح ولا يحجب.
 // وبيانات المنشأة: تحقق admin.js من الصيغ، /settings/public و/legal/version، التذييل وقسم «من نحن» في الصفحات الثلاث، ورقم الكيان
 // للدائرة الموثقة فقط في bizOut. وسياسة الخصوصية: قسم الذكاء الاصطناعي الدقيق وتاريخ التحديث دون رفع النسخة.
 import Fastify from 'fastify';
@@ -16,7 +17,7 @@ let fails = 0;
 const check = (c, l, extra = '') => { if (!c) fails++; console.log((c ? 'OK  ' : 'FAIL') + ' ' + l + (extra ? ' ' + extra : '')); };
 const ADULT = 'SA0000501', MINOR = 'SA0000502', SELLER = 'SA0000503', ADMIN = 'SA0000504';
 const OURS = [ADULT, MINOR, SELLER, ADMIN];
-const SETTINGS = ['testTopup', 'transfersEnabled', 'companyCr', 'companyVat', 'companyAddress', 'minTopup', 'maxCardTopup'];
+const SETTINGS = ['testTopup', 'transfersEnabled', 'chatPaymentsEnabled', 'companyCr', 'companyVat', 'companyAddress', 'minTopup', 'maxCardTopup'];
 
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
@@ -25,7 +26,8 @@ await pool.query(`INSERT INTO users(id,nickname) VALUES('${ADULT}','agead'),('${
 for (const [sql, args] of [
   ['DELETE FROM legal_consents WHERE user_id = ANY($1)', [OURS]], ['DELETE FROM platform_settings WHERE key = ANY($1)', [SETTINGS]], ['DELETE FROM admins WHERE user_id = ANY($1)', [OURS]],
   ['DELETE FROM wallet_tx WHERE user_id = ANY($1)', [OURS]], ['DELETE FROM wallet_accounts WHERE user_id = ANY($1)', [OURS]], ['DELETE FROM payments WHERE user_id = ANY($1)', [OURS]],
-  ['DELETE FROM market_orders WHERE buyer_id = ANY($1)', [OURS]], ['DELETE FROM market_listings WHERE seller_id = ANY($1)', [OURS]], ['DELETE FROM events WHERE host_id = ANY($1)', [OURS]],
+  ['DELETE FROM market_orders WHERE buyer_id = ANY($1)', [OURS]], ['DELETE FROM market_spotlight WHERE seller_id = ANY($1)', [OURS]], ['DELETE FROM market_listings WHERE seller_id = ANY($1)', [OURS]], ['DELETE FROM events WHERE host_id = ANY($1)', [OURS]],
+  ["DELETE FROM chat_requests WHERE message_id LIKE 'age-%'", []],
   ["DELETE FROM biz_items WHERE id LIKE 'age-%'", []], ["DELETE FROM biz WHERE id LIKE 'age-%'", []], ['DELETE FROM hotel_settings', []], ["DELETE FROM biz_hotel_links WHERE biz_id LIKE 'age-%'", []],
 ]) { try { await pool.query(sql, args); } catch { /* أول تشغيل */ } }
 const auth = async (req) => req.headers['x-user'] || null;
@@ -39,6 +41,7 @@ app.register((await import('../market_plus.js')).default, { pool, auth });
 app.register((await import('../market_b.js')).default, { pool, auth });
 app.register((await import('../legal_pages.js')).default, { pool, auth });
 app.register((await import('../hotels.js')).default, { pool, auth });
+app.register((await import('../chat_cards.js')).default, { pool, auth });
 await app.ready(); await new Promise((r) => setTimeout(r, 300));
 await pool.query("INSERT INTO admins(user_id,granted_by) VALUES($1,'test') ON CONFLICT DO NOTHING", [ADMIN]);
 const call = async (method, url, { body = {}, user = ADULT, expect, headers = {} } = {}) => {
@@ -51,8 +54,8 @@ const adultReq = (r, label) => check(r.code === 403 && r.json?.error === 'adult-
 const html = async (path) => (await app.inject({ method: 'GET', url: path })).body;
 
 // ---- الإعداد: الشحن التجريبي والتحويل مفعّلان من اللوحة (المسارات نفسها تُختبر)
-let s = await call('POST', '/adminapi/settings', { body: { testTopup: true, transfersEnabled: true }, user: ADMIN, expect: 200 });
-check(s.json.testTopup === true && s.json.transfersEnabled === true, 'admin enabled test top-up and transfers for the run');
+let s = await call('POST', '/adminapi/settings', { body: { testTopup: true, transfersEnabled: true, chatPaymentsEnabled: true }, user: ADMIN, expect: 200 });
+check(s.json.testTopup === true && s.json.transfersEnabled === true && s.json.chatPaymentsEnabled === true, 'admin enabled test top-up, transfers and chat payments for the run');
 
 // ================================================================ الإقرار والحالة
 check(LEGAL_VERSION === '2026-09-25', 'consent version unchanged (clarifying update, no re-consent)');
@@ -154,6 +157,24 @@ check(hotelCalls === 0, 'the provider is never called for an unattested booking'
 e = await call('POST', '/biz/age-hotel/hotel/book', { user: ADULT, body: { offerId: 'OFF1', guest }, expect: 409 });
 check(hotelCalls === 1 && e.json.error === 'offer-unavailable', 'attested user passes the gate (provider reached)');
 
+// رصيد دخل المحفظة بلا فحص (تحويل وارد، وكذلك دخل مبيعات الدائرة والاسترداد والرصيد التجريبي القديم) لا يُنفق قبل الإقرار
+await call('POST', '/wallet/transfer', { user: ADULT, body: { to: MINOR, amount: 10000 }, expect: 200 });
+const minorBal = async () => Number((await call('GET', '/wallet', { user: MINOR })).json.balance);
+check(await minorBal() === 10000, 'unattested user received an incoming transfer (no gate on receiving)');
+// سبوت لايت على عرض مجاني: لم يمر البائع ببوابة البيع، والخصم من محفظته
+adultReq(await call('POST', `/market/${freeL.json.id}/spotlight`, { user: MINOR, body: { days: 1 } }), 'spotlight purchase without attestation');
+check(await minorBal() === 10000 && (await pool.query('SELECT count(*)::int AS n FROM market_spotlight WHERE seller_id=$1', [MINOR])).rows[0].n === 0, 'no debit and no spotlight row for the blocked seller');
+const spot = await call('POST', `/market/${sellerFree.json.id}/spotlight`, { user: SELLER, body: { days: 1 }, expect: 200 });
+check(spot.json.paid > 0, 'attested seller buys spotlight on a free listing', JSON.stringify(spot.json));
+// دفع طلب مبلغ في المحادثة: يستدعي transfer() مباشرة لا مسار /wallet/transfer
+await call('POST', '/chat/requests', { user: SELLER, body: { messageId: 'age-req-minor', peerId: MINOR, kind: 'pay', amount: 3000, note: 'قهوة' }, expect: 200 });
+adultReq(await call('POST', '/chat/requests/age-req-minor/pay', { user: MINOR }), 'chat request payment without attestation');
+const reqRow = (await pool.query("SELECT status FROM chat_requests WHERE message_id='age-req-minor'")).rows[0];
+check(await minorBal() === 10000 && reqRow?.status === 'pending', 'no transfer and the request stays pending', JSON.stringify(reqRow));
+await call('POST', '/chat/requests', { user: SELLER, body: { messageId: 'age-req-adult', peerId: ADULT, kind: 'pay', amount: 3000 }, expect: 200 });
+const paid = await call('POST', '/chat/requests/age-req-adult/pay', { user: ADULT, expect: 200 });
+check(paid.json.request?.status === 'paid', 'attested user pays the chat request');
+
 // iOS: الشحن يبقى مرفوضاً بـ unavailable قبل أي فحص عمر (الإخفاء القائم لا يتغير)
 { const r = await app.inject({ method: 'POST', url: '/pay/topup', headers: { 'x-user': MINOR, 'content-type': 'application/json', 'x-naslife-client': 'ios/1.0' }, payload: JSON.stringify({ amount: 15000 }) }); check(r.statusCode === 403 && r.json().error === 'unavailable', 'iOS card top-up still unavailable (money hidden on iOS)'); }
 
@@ -163,6 +184,7 @@ delete globalThis.naslifeAdultOk;
 await call('POST', '/wallet/topup', { user: MINOR, body: { amount: 5000 }, expect: 200 });
 globalThis.naslifeAdultOk = async () => { throw new Error('db down'); };
 await call('POST', `/market/${paidL.json.id}/order`, { user: MINOR, body: { qty: 1 }, expect: 200 });
+await call('POST', '/chat/requests/age-req-minor/pay', { user: MINOR, expect: 200 });
 globalThis.naslifeAdultOk = keep;
 adultReq(await call('POST', '/wallet/topup', { user: MINOR, body: { amount: 1000 } }), 'gate back once the helper returns');
 // الإقرار يفتح فوراً لمن أقرّ للتو (السالب لا يُحفظ في الذاكرة)
@@ -220,7 +242,8 @@ await pool.query('DELETE FROM platform_settings WHERE key = ANY($1)', [SETTINGS]
 await pool.query('DELETE FROM admins WHERE user_id = ANY($1)', [OURS]);
 for (const [sql, args] of [
   ["DELETE FROM biz_orders WHERE biz_id LIKE 'age-%'", []], ["DELETE FROM biz_hotel_links WHERE biz_id LIKE 'age-%'", []], ["DELETE FROM biz_items WHERE id LIKE 'age-%'", []], ["DELETE FROM biz WHERE id LIKE 'age-%'", []],
-  ['DELETE FROM market_orders WHERE buyer_id = ANY($1) OR seller_id = ANY($1)', [OURS]], ['DELETE FROM market_listings WHERE seller_id = ANY($1)', [OURS]],
+  ['DELETE FROM market_orders WHERE buyer_id = ANY($1) OR seller_id = ANY($1)', [OURS]], ['DELETE FROM market_spotlight WHERE seller_id = ANY($1)', [OURS]], ['DELETE FROM market_listings WHERE seller_id = ANY($1)', [OURS]],
+  ["DELETE FROM chat_requests WHERE message_id LIKE 'age-%'", []],
   ['DELETE FROM tickets WHERE user_id = ANY($1)', [OURS]], ['DELETE FROM events WHERE host_id = ANY($1)', [OURS]], ['DELETE FROM payments WHERE user_id = ANY($1)', [OURS]],
 ]) { try { await pool.query(sql, args); } catch { /* جدول غائب */ } }
 delete globalThis.naslifePayFetch; delete globalThis.naslifeHotelFetch;

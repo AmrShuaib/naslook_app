@@ -104,6 +104,8 @@ class _Srv {
   final calls = <String>[];
   final bodies = <String, Map<String, dynamic>>{};
   final uploads = <String>[];
+  /// إقرار 18+: null خادم بلا المسار (الافتراضي، لا يحبس)، false لم يُقرّ بعد
+  bool? adult;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   Map<String, dynamic> _post(Map<String, dynamic> b) => {
         'id': _pid, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'status': 'active', 'views': 0, 'likes': 0, 'liked': false, 'mine': true, 'expired': false, 'createdAt': DateTime.now().toUtc().toIso8601String(),
@@ -135,6 +137,13 @@ class _Srv {
         return _json({'lat': null, 'lng': null, 'visible': false, 'title': ''});
       case 'GET /notify/unread':
         return _json({'unread': 0});
+      case 'GET /legal/consent':
+        if (adult != null) return _json({'needs': false, 'version': '2026-09-25', 'adult': adult});
+      case 'POST /me/adult-attest':
+        if (adult != null) {
+          adult = true;
+          return _json({'ok': true, 'adult': true, 'adultAt': '2026-11-05T10:00:00Z'});
+        }
     }
     return _json({'error': 'not-found'}, 404);
   }
@@ -322,6 +331,36 @@ void main() {
     await tester.tap(find.byKey(const Key('edit-next')));
     await _settle(tester);
   }
+
+  testWidgets('a priced listing asks for the 18+ declaration before any upload; declining keeps the publish screen as filled', (tester) async {
+    final srv = await _pump(tester);
+    srv.adult = false;
+    await tester.tap(find.byKey(const Key('shutter')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('dest-market')));
+    await _settle(tester);
+    await tester.enterText(find.byKey(const Key('lst-title')), 'كيك تخرج');
+    await tester.enterText(find.byKey(const Key('lst-price')), '220');
+    Future<void> go() async {
+      await tester.ensureVisible(find.byKey(const Key('pub-go')));
+      await tester.tap(find.byKey(const Key('pub-go')));
+      await _settle(tester);
+    }
+    await go();
+    expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('adult-cancel')));
+    await _settle(tester);
+    expect(srv.uploads, isEmpty, reason: 'لا رفع قبل الإقرار');
+    expect(srv.calls, isNot(contains('POST /market')));
+    expect(tester.widget<TextField>(find.byKey(const Key('lst-title'))).controller!.text, 'كيك تخرج', reason: 'شاشة النشر باقية بما فيها');
+    await go();
+    await tester.tap(find.byKey(const Key('adult-confirm')));
+    await _settle(tester);
+    expect(srv.calls.indexOf('POST /me/adult-attest'), lessThan(srv.calls.indexOf('POST /chat/upload')));
+    expect(srv.bodies['POST /market']?['price'], 22000);
+  });
 
   testWidgets('several shots to the map: only the cover is uploaded and the publish screen says so', (tester) async {
     final srv = await _pump(tester);

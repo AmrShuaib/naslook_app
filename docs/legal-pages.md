@@ -42,7 +42,7 @@
   - `POST /me/adult-attest {confirm: true, source?}` → `{ok, adult: true, adultAt}`؛ بلا `confirm: true` الحرفية 400 `confirm-required`؛ التكرار يبقي تاريخ الإقرار الأول؛ 503 `unavailable` إن تعذّر جدول الموافقات.
   - الحالة في `GET /legal/consent` (يحمّله التطبيق عند كل إقلاع): `{needs, version, adult, adultAt}`.
   - `globalThis.naslifeAdultOk(uid)`: true لمن أقرّ (يُحفظ الموجب في الذاكرة، والسالب يُقرأ من القاعدة كل مرة فيظهر الإقرار فوراً)، وtrue أيضاً إن تعذّرت القاعدة (لا يحجب المال بسبب عطل). المسارات والبوابة في `docs/money-switches.md`.
-  - التطبيق: `lib/core/require_adult.dart` (`requireAdult(context, ref)` قبل كل فعل مالي، الورقة `adult-sheet` بزر «أقر بأن عمري 18 سنة فأكثر» `adult-confirm` ورابط الشروط `adult-terms` و«ليس الآن» `adult-cancel`، و`AdultGate` المعالج العام لرفض 403 `adult-required` من أي شاشة يثبّته `HomeShell` فيعرض الورقة نفسها مع `adult-retry-note` ثم «تم تأكيد عمرك. أعد المحاولة الآن»).
+  - التطبيق: `lib/core/require_adult.dart` (`requireAdult(context, ref)` قبل الأفعال المالية المعدودة في `docs/money-switches.md`، الورقة `adult-sheet` بزر «أقر بأن عمري 18 سنة فأكثر» `adult-confirm` ورابط الشروط `adult-terms` و«ليس الآن» `adult-cancel`، و`AdultGate` المعالج العام لرفض 403 `adult-required` من أي شاشة يثبّته `HomeShell` فيعرض الورقة نفسها مع `adult-retry-note` ثم «تم تأكيد عمرك. أعد المحاولة الآن»).
 - شاشة الدخول: روابط الشروط والخصوصية ورابط «الدعم والمساعدة».
 - ماي سبيس ← «عن ناس لايف»: تواصل معنا، سياسة الخصوصية، شروط الاستخدام (تُفتح داخل التطبيق على iOS عبر `LegalLinks`)، وبيانات المنشأة.
 

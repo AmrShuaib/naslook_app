@@ -248,6 +248,10 @@ async function setup(app, opts) {
     if (cur.status !== "pending") return bad(reply, 409, "not-pending", { status: cur.status });
     const transfer = globalThis.naslifeWalletTransfer;
     if (typeof transfer !== "function") return bad(reply, 503, "wallet-unavailable");
+    // إقرار 18+ قبل أول عملية مالية (legal_pages.js): transfer() لا تفحصه (الفحص في مسار /wallet/transfer وحده)، فيُفحص هنا؛ غياب المساعد أو خطؤه يفتح
+    let adultMissing = false;
+    try { const f = globalThis.naslifeAdultOk; adultMissing = typeof f === "function" ? !(await f(uid)) : false; } catch { adultMissing = false; }
+    if (adultMissing) return bad(reply, 403, "adult-required");
     const amount = share(r);
     try {
       await transfer({ from: uid, to: r.from_id, amount, note: r.note || (r.kind === "split" ? "نصيبي من الفاتورة" : "طلب عبر المحادثة"), ref: r.message_id });

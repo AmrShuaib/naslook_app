@@ -367,10 +367,9 @@ class ListingCard extends StatelessWidget {
 Future<void> createListing(BuildContext context, WidgetRef ref) async {
   // الزائر يُدعى للدخول قبل نموذج العرض، لا بعد تعبئته
   if (!requireAccount(context)) return;
-  final d = await showListingForm(context);
+  // البيع بمقابل (سعر أو خيار مسعّر) يحتاج إقرار 18+ عند الحفظ والنموذج مفتوح: قبل رفع الصور، ورفضه لا يضيّع ما كُتب؛ العرض المجاني لا
+  final d = await showListingForm(context, beforeSave: (ctx, d) async => !listingBodyPriced(d.toBody()) || await requireAdult(ctx, ref));
   if (d == null || !context.mounted) return;
-  // البيع بمقابل (سعر أو خيار مسعّر) يحتاج إقرار 18+ قبل رفع الصور؛ العرض المجاني لا
-  if (listingBodyPriced(d.toBody()) && (!await requireAdult(context, ref) || !context.mounted)) return;
   try {
     final api = ref.read(apiClientProvider);
     final pos = ref.read(marketPosProvider).valueOrNull;

@@ -1,7 +1,8 @@
 // إقرار العمر وبيانات المنشأة (5 نوفمبر 2026): requireAdult قبل أول فعل مالي (ورقة «أقر بأن عمري 18 سنة فأكثر» برابط الشروط،
 // POST /me/adult-attest، تذكّر الحالة، وتعذّر معرفتها لا يحبس)، والمعالج العام لرفض 403 adult-required من أي طلب، ونقاط الدخول
-// (الشحن التجريبي في المحفظة، الطلب المدفوع في صفحة الدائرة وفي عرض السوق، والتذكرة المدفوعة، والمجاني بلا سؤال)، وإقرار 13+ في ورقة الموافقة، وبيانات المنشأة
-// في «عن ناس لايف» وإعدادات الإدارة، وسطر الكيان للدائرة الموثقة.
+// (الشحن التجريبي وبالبطاقة والتحويل في المحفظة، الطلب المدفوع في صفحة الدائرة وفي عرض السوق، والتذكرة المدفوعة، وإنشاء فعالية بتذاكر مدفوعة،
+// وحجز الفندق، ونشر عرض مسعّر وتعديله، والمجاني بلا سؤال؛ ونقاط النماذج تسأل عند الحفظ والنموذج مفتوح فلا يضيع ما كُتب ولا يُرفع شيء قبل
+// الإقرار)، وإقرار 13+ في ورقة الموافقة، وبيانات المنشأة في «عن ناس لايف» وإعدادات الإدارة، وسطر الكيان للدائرة الموثقة.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -9,19 +10,27 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:naslook/api/admin_api.dart';
 import 'package:naslook/api/biz_models.dart';
 import 'package:naslook/api/client.dart';
 import 'package:naslook/api/commerce_api.dart';
+import 'package:naslook/api/commerce_models.dart';
 import 'package:naslook/api/session.dart';
+import 'package:naslook/core/location.dart';
+import 'package:naslook/core/media/pick_image.dart';
 import 'package:naslook/core/require_adult.dart';
 import 'package:naslook/core/share/legal_links.dart';
 import 'package:naslook/pages/admin/admin_settings.dart';
 import 'package:naslook/pages/business/business_page.dart';
+import 'package:naslook/pages/events/event_create_page.dart';
 import 'package:naslook/pages/events/events_page.dart';
+import 'package:naslook/pages/hotels/hotel_book_page.dart';
 import 'package:naslook/pages/market/listing_page.dart';
+import 'package:naslook/pages/market/market_page.dart' show createListing;
+import 'package:naslook/pages/market/orders_page.dart' show editListing;
 import 'package:naslook/pages/myspace/consent_sheet.dart';
 import 'package:naslook/pages/myspace/myspace_page.dart';
 import 'package:naslook/pages/wallet/wallet_page.dart';
@@ -65,7 +74,7 @@ class _Srv {
     final key = '${req.method} ${req.url.path}';
     calls.add(key);
     Map<String, dynamic>? body;
-    if (req.body.isNotEmpty && req.method != 'GET') {
+    if (req.method != 'GET' && (req.headers['content-type'] ?? '').contains('json') && req.body.isNotEmpty) {
       try {
         body = jsonDecode(req.body) as Map<String, dynamic>;
         bodies[key] = body;
@@ -76,6 +85,7 @@ class _Srv {
       final out = r(req, body);
       return out is http.Response ? out : _json(out);
     }
+    if (key == 'POST /chat/upload') return _json({'url': '/chat/media/img${calls.where((c) => c == key).length}.jpg', 'type': 'image/png', 'kind': 'image', 'size': req.bodyBytes.length});
     if (req.url.path.startsWith('/presence/')) return _json({'online': false});
     return req.method == 'GET' ? _json([]) : _json({'ok': true});
   }
@@ -147,6 +157,19 @@ class _GateHostState extends ConsumerState<_GateHost> {
         ]),
       );
 }
+
+/// صورة PNG صالحة 4×4 لنموذج العرض
+final _png = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR42mM4YaPxHxkzkC4AAJdYIrG6Q2NNAAAAAElFTkSuQmCC');
+
+/// زر يفتح رحلة تحتاج WidgetRef (إنشاء عرض أو تعديله) كما تفعل الشاشات
+class _Launch extends ConsumerWidget {
+  final Future<void> Function(BuildContext context, WidgetRef ref) go;
+  const _Launch(this.go);
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Scaffold(body: Center(child: TextButton(key: const Key('launch'), onPressed: () => go(context, ref), child: const Text('launch'))));
+}
+
+int _at(_Srv srv, String call) => srv.calls.indexOf(call);
 
 Finder _hintContaining(String text) => find.byWidgetPredicate((w) => w is TextField && (w.decoration?.hintText ?? '').contains(text));
 
@@ -460,6 +483,250 @@ void main() {
       expect(find.byKey(const Key('adult-sheet')), findsNothing);
       expect(srv.bodies['POST /events/ev1/tickets']?['tierId'], 't-free');
       expect(srv.calls, isNot(contains('GET /legal/consent')));
+    });
+  });
+
+  group('entry points: wallet card top-up and transfer', () {
+    Map<String, dynamic> wallet() => {'balance': 50000, 'points': 0, 'currency': 'SAR', 'upcomingTickets': 0, 'recent': [], 'testTopup': false, 'maxTopup': 500000};
+
+    testWidgets('card top-up: the declaration comes before the amount; declining sends nothing', (tester) async {
+      final srv = _Srv();
+      srv.routes['GET /wallet'] = (_, __) => wallet();
+      srv.routes['GET /pay/config'] = (_, __) => {'enabled': true, 'provider': 'moyasar', 'methods': ['creditcard'], 'min': 10000, 'max': 500000, 'currency': 'SAR'};
+      srv.routes['POST /pay/topup'] = (_, __) => {'checkoutUrl': 'https://checkout.moyasar.com/invoices/inv1', 'hosted': true};
+      await _pump(tester, srv, const WalletPage(), size: const Size(600, 1500));
+      await tester.tap(find.byKey(const Key('wallet-card-topup')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+      expect(find.text('شحن بالبطاقة'), findsNothing, reason: 'لا نموذج مبلغ قبل الإقرار');
+      await tester.tap(find.byKey(const Key('adult-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.text('شحن بالبطاقة'), findsNothing);
+      expect(srv.calls, isNot(contains('POST /pay/topup')));
+      await tester.tap(find.byKey(const Key('wallet-card-topup')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('adult-confirm')));
+      await tester.pumpAndSettle();
+      expect(find.text('شحن بالبطاقة'), findsOneWidget);
+      await tester.enterText(_hintContaining('المبلغ بالريال'), '150');
+      await tester.tap(find.text('متابعة للدفع'));
+      await tester.pumpAndSettle();
+      expect(srv.bodies['POST /pay/topup'], {'amount': 15000});
+      expect(_at(srv, 'POST /me/adult-attest'), lessThan(_at(srv, 'POST /pay/topup')));
+    });
+
+    testWidgets('transfer: the declaration comes before the recipient form; declining sends nothing', (tester) async {
+      final srv = _Srv();
+      srv.routes['GET /wallet'] = (_, __) => wallet();
+      srv.routes['GET /settings/public'] = (_, __) => {'announcement': '', 'maintenance': false, 'testTopup': false, 'transfersEnabled': true, 'chatPaymentsEnabled': false};
+      srv.routes['POST /wallet/transfer'] = (_, __) => {'ok': true, 'amount': 5000};
+      await _pump(tester, srv, const WalletPage(), size: const Size(600, 1500));
+      final recipient = find.widgetWithText(TextField, 'إلى (النك نيم أو المعرّف)');
+      await tester.tap(find.byKey(const Key('wallet-transfer')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+      expect(recipient, findsNothing);
+      await tester.tap(find.byKey(const Key('adult-cancel')));
+      await tester.pumpAndSettle();
+      expect(recipient, findsNothing);
+      expect(srv.calls, isNot(contains('POST /wallet/transfer')));
+      await tester.tap(find.byKey(const Key('wallet-transfer')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('adult-confirm')));
+      await tester.pumpAndSettle();
+      await tester.enterText(recipient, 'SA0000002');
+      await tester.enterText(find.widgetWithText(TextField, 'المبلغ بالريال'), '50');
+      await tester.tap(find.widgetWithText(FilledButton, 'تحويل'));
+      await tester.pumpAndSettle();
+      expect(srv.bodies['POST /wallet/transfer']?['to'], 'SA0000002');
+      expect(srv.bodies['POST /wallet/transfer']?['amount'], 5000);
+      expect(_at(srv, 'POST /me/adult-attest'), lessThan(_at(srv, 'POST /wallet/transfer')));
+    });
+  });
+
+  group('entry points with a form: asked on save, the form keeps its input', () {
+    setUp(() {
+      DeviceLocation.override = () async => const LatLng(21.5, 39.2);
+      pickImageOverride = ({bool camera = false}) async => (bytes: _png, mime: 'image/png', name: 'gallery.png');
+    });
+    tearDown(() {
+      DeviceLocation.override = null;
+      pickImageOverride = null;
+    });
+
+    Map<String, dynamic> event(Map<String, dynamic>? b) => {
+          'id': 'ev-new', 'title': b?['title'] ?? '', 'description': '', 'host': {'id': 'SA0000001', 'nickname': 'amr'}, 'placeName': b?['placeName'] ?? '', 'startsAt': b?['startsAt'] ?? '2026-12-01T18:00:00Z', 'isHost': true,
+          'going': 0, 'myTickets': 0,
+          'tiers': [for (final (i, t) in ((b?['tiers'] as List?) ?? const []).indexed) {'id': 't$i', 'name': t['name'], 'description': '', 'price': t['price'], 'quantity': t['quantity'], 'sold': 0, 'left': t['quantity']}],
+        };
+    Future<void> openEventForm(WidgetTester tester, _Srv srv) async {
+      srv.routes['POST /events'] = (_, b) => event(b);
+      await _pump(tester, srv, Builder(builder: (ctx) => Scaffold(body: TextButton(key: const Key('launch'), onPressed: () => EventCreatePage.open(ctx), child: const Text('launch')))), size: const Size(600, 1600));
+      await tester.tap(find.byKey(const Key('launch')));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> createEvent(WidgetTester tester) async {
+      await tester.ensureVisible(find.byKey(const Key('ev-create')));
+      await tester.tap(find.byKey(const Key('ev-create')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('event with a paid tier: the sheet comes on «إنشاء»; declining keeps the page and its fields and sends nothing', (tester) async {
+      final srv = _Srv();
+      await openEventForm(tester, srv);
+      await tester.enterText(find.byKey(const Key('ev-title')), 'أمسية شعرية');
+      await tester.enterText(find.byKey(const Key('ev-place')), 'الكورنيش');
+      await tester.enterText(find.byKey(const Key('ev-tier-price')), '15');
+      await createEvent(tester);
+      expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('adult-cancel')));
+      await tester.pumpAndSettle();
+      expect(srv.calls, isNot(contains('POST /events')));
+      expect(tester.widget<TextField>(find.byKey(const Key('ev-title'))).controller!.text, 'أمسية شعرية', reason: 'الرفض لا يغلق النموذج ولا يضيّع ما كُتب');
+      expect(tester.widget<TextField>(find.byKey(const Key('ev-tier-price'))).controller!.text, '15');
+      await createEvent(tester);
+      await tester.tap(find.byKey(const Key('adult-confirm')));
+      await tester.pumpAndSettle();
+      expect(_at(srv, 'POST /me/adult-attest'), lessThan(_at(srv, 'POST /events')));
+      expect((srv.bodies['POST /events']?['tiers'] as List).single['price'], 1500);
+      expect(find.byKey(const Key('ev-create')), findsNothing, reason: 'الصفحة تُغلق بعد الإنشاء');
+    });
+
+    testWidgets('a free event is created without the declaration', (tester) async {
+      final srv = _Srv();
+      await openEventForm(tester, srv);
+      await tester.enterText(find.byKey(const Key('ev-title')), 'لقاء مجاني');
+      await createEvent(tester);
+      expect(find.byKey(const Key('adult-sheet')), findsNothing);
+      expect(srv.calls, isNot(contains('GET /legal/consent')));
+      expect((srv.bodies['POST /events']?['tiers'] as List).single['price'], 0);
+    });
+
+    Map<String, dynamic> listingJson(Map<String, dynamic>? b) => {
+          'id': '22222222-2222-4222-8222-222222222222', 'seller': {'id': 'SA0000001', 'nickname': 'amr', 'avatarUrl': null}, 'kind': b?['kind'] ?? 'product', 'category': b?['category'] ?? 'other',
+          'title': b?['title'] ?? 'سماعة', 'description': b?['description'] ?? '', 'price': b?['price'] ?? 2500, 'images': b?['images'] ?? [], 'status': 'active', 'variants': [], 'mine': true, 'createdAt': '2026-11-05T08:00:00Z',
+        };
+    Future<void> submitListing(WidgetTester tester) async {
+      await tester.ensureVisible(find.byKey(const Key('lf-submit')));
+      await tester.tap(find.byKey(const Key('lf-submit')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('new priced listing: asked on «نشر» with the form open; declining keeps the photo and text, uploads nothing', (tester) async {
+      final srv = _Srv();
+      srv.routes['POST /market'] = (_, b) => listingJson(b);
+      await _pump(tester, srv, const _Launch(createListing), size: const Size(600, 2000));
+      await tester.tap(find.byKey(const Key('launch')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('lf-add-image')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('lf-title')), 'سماعة جديدة');
+      await tester.enterText(find.byKey(const Key('lf-price')), '25');
+      await submitListing(tester);
+      expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('adult-cancel')));
+      await tester.pumpAndSettle();
+      expect(srv.calls, isNot(contains('POST /chat/upload')), reason: 'لا رفع قبل الإقرار');
+      expect(srv.calls, isNot(contains('POST /market')));
+      expect(find.byKey(const Key('lf-submit')), findsOneWidget, reason: 'النموذج باقٍ');
+      expect(tester.widget<TextField>(find.byKey(const Key('lf-title'))).controller!.text, 'سماعة جديدة');
+      expect(find.text('1 من ٨ صور · الأولى هي الغلاف'), findsOneWidget, reason: 'الصورة المختارة باقية');
+      await submitListing(tester);
+      await tester.tap(find.byKey(const Key('adult-confirm')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('lf-submit')), findsNothing, reason: 'النموذج يُغلق بعد الإقرار');
+      expect(_at(srv, 'POST /me/adult-attest'), lessThan(_at(srv, 'POST /chat/upload')));
+      expect(_at(srv, 'POST /chat/upload'), lessThan(_at(srv, 'POST /market')));
+      expect(srv.bodies['POST /market']?['price'], 2500);
+      expect(srv.bodies['POST /market']?['images'], ['/chat/media/img1.jpg']);
+    });
+
+    testWidgets('new free listing publishes without the declaration', (tester) async {
+      final srv = _Srv();
+      srv.routes['POST /market'] = (_, b) => listingJson(b);
+      await _pump(tester, srv, const _Launch(createListing), size: const Size(600, 2000));
+      await tester.tap(find.byKey(const Key('launch')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('lf-title')), 'كتب مجانية');
+      await tester.enterText(find.byKey(const Key('lf-price')), '0');
+      await submitListing(tester);
+      expect(find.byKey(const Key('adult-sheet')), findsNothing);
+      expect(srv.calls, isNot(contains('GET /legal/consent')));
+      expect(srv.bodies['POST /market']?['price'], 0);
+    });
+
+    testWidgets('editing a priced listing: asked on «حفظ» with the form open; declining keeps the edits and saves nothing', (tester) async {
+      final srv = _Srv();
+      final initial = Listing.fromJson(listingJson({'title': 'سماعة', 'price': 2500}));
+      srv.routes['PATCH /market/${initial.id}'] = (_, b) => listingJson({'title': 'سماعة', 'price': 2500, ...?b});
+      await _pump(tester, srv, _Launch((context, ref) => editListing(context, ref, initial)), size: const Size(600, 2000));
+      await tester.tap(find.byKey(const Key('launch')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('lf-title')), 'سماعة مستعملة نظيفة');
+      await submitListing(tester);
+      expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('adult-cancel')));
+      await tester.pumpAndSettle();
+      expect(srv.calls, isNot(contains('PATCH /market/${initial.id}')));
+      expect(tester.widget<TextField>(find.byKey(const Key('lf-title'))).controller!.text, 'سماعة مستعملة نظيفة', reason: 'التعديلات باقية');
+      await submitListing(tester);
+      await tester.tap(find.byKey(const Key('adult-confirm')));
+      await tester.pumpAndSettle();
+      expect(_at(srv, 'POST /me/adult-attest'), lessThan(_at(srv, 'PATCH /market/${initial.id}')));
+      expect(srv.bodies['PATCH /market/${initial.id}']?['title'], 'سماعة مستعملة نظيفة');
+    });
+
+    const hid = 'biz-hotel';
+    void hotelRoutes(_Srv srv) {
+      srv.routes['GET /biz/$hid/hotel'] = (_, __) => {'linked': true, 'bizId': hid, 'hotelId': 'HL1', 'hotelName': 'Hilton Jeddah', 'cityCode': 'JED', 'env': 'test', 'configured': true};
+      srv.routes['GET /hotel/status'] = (_, __) => {'ok': true, 'provider': 'liteapi', 'configured': true, 'env': 'test', 'source': 'panel', 'linked': 1, 'cardRequired': false, 'testCard': null};
+      srv.routes['GET /me/profile'] = (_, __) => {'id': 'SA0000001', 'nickname': 'amr'};
+      srv.routes['GET /biz/$hid/hotel/offers'] = (req, __) => {
+            'hotel': {'hotelId': 'HL1', 'name': 'Hilton Jeddah', 'cityCode': 'JED'}, 'checkIn': req.url.queryParameters['checkIn'], 'checkOut': req.url.queryParameters['checkOut'], 'nights': 2, 'adults': 2, 'rooms': 1,
+            'currency': 'SAR', 'env': 'test', 'available': true,
+            'offers': [
+              {'id': 'OFF1', 'roomName': 'غرفة ديلوكس', 'roomCode': 'DLX', 'bedType': 'سرير كينغ', 'beds': 1, 'description': '', 'boardType': 'إفطار', 'total': 125000, 'currency': 'SAR', 'totalText': '1,250 ر.س', 'perNightText': '625 ر.س/ليلة',
+                'refundable': true, 'cancelText': '', 'paymentType': 'guarantee', 'paymentText': ''},
+            ],
+          };
+      srv.routes['POST /biz/$hid/hotel/book'] = (_, __) => {
+            'id': 'hb1', 'bizId': hid, 'bizName': 'فندق', 'hotelId': 'HL1', 'hotelName': 'Hilton Jeddah', 'orderId': 'ORD1', 'confirmation': 'CONF-1', 'status': 'confirmed', 'checkIn': '2026-12-10', 'checkOut': '2026-12-12',
+            'nights': 2, 'adults': 2, 'rooms': 1, 'roomName': 'غرفة ديلوكس', 'total': 125000, 'currency': 'SAR', 'totalText': '1,250 ر.س', 'guestName': 'Amr Shuaib', 'guestEmail': 'amr@example.com', 'env': 'test', 'upcoming': true,
+            'createdAt': '2026-11-05T10:00:00Z',
+          };
+    }
+
+    Future<void> book(WidgetTester tester) async {
+      await tester.ensureVisible(find.byKey(const Key('hotel-book')));
+      await tester.tap(find.byKey(const Key('hotel-book')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('hotel booking: asked on «احجز» after the guest form; declining keeps the form and never calls the provider', (tester) async {
+      final srv = _Srv();
+      hotelRoutes(srv);
+      await _pump(tester, srv, const HotelBookPage(bizId: hid, title: 'فندق'), size: const Size(800, 2400));
+      await tester.tap(find.byKey(const Key('hotel-search')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('hotel-pick-OFF1')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('hotel-first')), 'Amr');
+      await tester.enterText(find.byKey(const Key('hotel-last')), 'Shuaib');
+      await tester.enterText(find.byKey(const Key('hotel-phone')), '+966500000000');
+      await tester.enterText(find.byKey(const Key('hotel-email')), 'amr@example.com');
+      await book(tester);
+      expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('adult-cancel')));
+      await tester.pumpAndSettle();
+      expect(srv.calls, isNot(contains('POST /biz/$hid/hotel/book')));
+      expect(find.byKey(const Key('hotel-confirm')), findsOneWidget);
+      expect(tester.widget<TextField>(find.byKey(const Key('hotel-email'))).controller!.text, 'amr@example.com');
+      await book(tester);
+      await tester.tap(find.byKey(const Key('adult-confirm')));
+      await tester.pumpAndSettle();
+      expect(_at(srv, 'POST /me/adult-attest'), lessThan(_at(srv, 'POST /biz/$hid/hotel/book')));
+      expect(find.byKey(const Key('hotel-done')), findsOneWidget);
     });
   });
 

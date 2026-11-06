@@ -354,6 +354,10 @@ export default async function marketPlus(app, opts) {
     const maxActive = Math.max(1, Number(settings().spotlightMaxActive) || 12);
     if (active >= maxActive && !(l.spotlight_until && new Date(l.spotlight_until) > new Date())) return bad(reply, 409, "spotlight-full", { maxActive });
     const cost = spotPrice() * days;
+    // إقرار 18+ قبل أول عملية مالية (legal_pages.js): العرض قد يكون مجانياً فلم يمر البائع ببوابة البيع، والخصم من محفظته؛ غياب المساعد أو خطؤه يفتح
+    let adultMissing = false;
+    try { const f = globalThis.naslifeAdultOk; adultMissing = cost > 0 && typeof f === "function" ? !(await f(uid)) : false; } catch { adultMissing = false; }
+    if (adultMissing) return bad(reply, 403, "adult-required");
     let s; try { s = await grantSpotlight(l, uid, days, { paid: cost, payer: uid }); } catch (e) { if (e.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds", { cost }); throw e; }
     return { ok: true, id: s.id, endsAt: s.ends_at, paid: cost };
   });
