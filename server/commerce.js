@@ -228,7 +228,9 @@ export default async function commerce(app, opts) {
     const title = String(b.title ?? "").trim(); if (!title || title.length > 120) return bad(reply, 400, "bad-title");
     const startsAt = new Date(b.startsAt); if (isNaN(startsAt)) return bad(reply, 400, "bad-date");
     const endsAt = b.endsAt ? new Date(b.endsAt) : null;
-    const lat = b.lat == null ? null : Number(b.lat), lng = b.lng == null ? null : Number(b.lng);
+    const lat = b.lat == null || b.lat === "" ? null : Number(b.lat), lng = b.lng == null || b.lng === "" ? null : Number(b.lng);
+    // الإحداثيات اختيارية لكن معاً وضمن المدى: NaN كان يُحفظ في العمود فتختفي الفعالية من الخريطة والصف
+    if ((lat == null) !== (lng == null) || (lat != null && (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180))) return bad(reply, 400, "bad-location");
     const tiers = Array.isArray(b.tiers) && b.tiers.length ? b.tiers : [{ name: "عادي", price: 0, quantity: 100 }];
     if (tiers.length > 6) return bad(reply, 400, "too-many-tiers");
     if (await isSuspended(uid)) return bad(reply, 403, "suspended");

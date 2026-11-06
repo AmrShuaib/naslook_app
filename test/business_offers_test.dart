@@ -56,6 +56,7 @@ class _Srv {
   bool following;
   bool member;
   bool offerFails = false;
+  // مستوى قديم من خادم سابق: يُعرض «كل العروض» لأن الخادم الآن يرسل له كل العروض
   String notify = 'near';
   _Srv({this.following = false}) : member = following;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
@@ -156,6 +157,17 @@ void main() {
     expect(offerUnavailableText('near'), contains('الموقع'));
   });
 
+  test('notify levels: two choices; no row and legacy near read as all', () {
+    expect(notifyLevels.map((l) => l.$1).toList(), ['all', 'none']);
+    expect(effectiveNotifyLevel(null), 'all');
+    expect(effectiveNotifyLevel('near'), 'all');
+    expect(effectiveNotifyLevel('all'), 'all');
+    expect(effectiveNotifyLevel('none'), 'none');
+    expect(notifyLevelLabel('near'), 'كل العروض');
+    expect(notifyLevelLabel(null), 'كل العروض');
+    expect(notifyLevelLabel('none'), 'بلا تنبيهات');
+  });
+
   testWidgets('circle page: join button, offers entry card, deal price with members chip', (tester) async {
     final srv = _Srv();
     await _pump(tester, srv, const BusinessPage(id: 'biz-brew92'));
@@ -172,10 +184,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(srv.calls, contains('POST /biz/biz-brew92/follow'));
     expect(find.textContaining('انضممت إلى برو 92'), findsOneWidget);
+    // الإخبار يطابق ما يفعله الخادم: العضو الجديد يصله كل عرض (لا وعد بتنبيه القرب)
+    expect(find.textContaining('يصلك تنبيه بعروضها الجديدة'), findsOneWidget);
+    expect(find.textContaining('قريباً'), findsNothing);
     expect(find.text('تغيير'), findsOneWidget);
     await tester.tap(find.text('تغيير'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('notify-all')), findsOneWidget);
+    expect(find.byKey(const Key('notify-near')), findsNothing);
     await tester.tap(find.byKey(const Key('notify-none')));
     await tester.pumpAndSettle();
     expect(srv.bodies['PUT /biz/biz-brew92/notify']!['notify'], 'none');
@@ -204,13 +220,24 @@ void main() {
     expect(srv.calls, contains('POST /biz/biz-brew92/follow'));
     expect(find.text('أنت عضو · العروض تظهر في محفظتك'), findsOneWidget);
     expect(find.textContaining('يُطبّق تلقائياً'), findsWidgets);
-    // مستوى التنبيه
-    await tester.tap(find.byKey(const Key('notify-level')));
+    // مستوى التنبيه: «near» القديم يظهر «كل العروض»، والورقة بخيارين فقط
+    final level = find.byKey(const Key('notify-level'));
+    expect(find.descendant(of: level, matching: find.text('كل العروض')), findsOneWidget);
+    await tester.tap(level);
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('notify-near')), findsNothing);
+    expect(find.text('القريبة فقط'), findsNothing);
+    expect(find.byKey(const Key('notify-all')), findsOneWidget);
+    // الحالي محدد: اختيار «كل العروض» نفسه لا يرسل شيئاً
     await tester.tap(find.byKey(const Key('notify-all')));
     await tester.pumpAndSettle();
-    expect(srv.bodies['PUT /biz/biz-brew92/notify']!['notify'], 'all');
-    expect(find.text('كل العروض'), findsOneWidget);
+    expect(srv.bodies.containsKey('PUT /biz/biz-brew92/notify'), isFalse);
+    await tester.tap(level);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('notify-none')));
+    await tester.pumpAndSettle();
+    expect(srv.bodies['PUT /biz/biz-brew92/notify']!['notify'], 'none');
+    expect(find.descendant(of: level, matching: find.text('بلا تنبيهات')), findsOneWidget);
     // إرسال لصديق بالنك نيم: يُحلّ إلى المعرّف ثم يُرسل
     await tester.tap(find.byKey(const Key('offer-send-off-1')));
     await tester.pumpAndSettle();

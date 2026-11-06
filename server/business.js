@@ -13,7 +13,7 @@ const ID_RE = /^[A-Z]{2}\d{7}$/;
 // الفئات الست الأخيرة أُضيفت مع تسجيل الدوائر (21 أكتوبر 2026): متجر، خدمات وورش، صالون وتجميل، عيادة، ترفيه، أخرى
 export const CATEGORIES = new Set(["brand", "cinema", "hotel", "car_rental", "hospital", "airport", "cafe", "restaurant", "company", "university", "shop", "services", "salon", "clinic", "entertainment", "other"]);
 export const CATEGORY_AR = { brand: "براند", cinema: "سينما", hotel: "فندق", car_rental: "تأجير سيارات", hospital: "مستشفى", airport: "مطار", cafe: "مقهى", restaurant: "مطعم", company: "شركة", university: "جامعة", shop: "متجر", services: "خدمات وورش", salon: "صالون وتجميل", clinic: "عيادة", entertainment: "ترفيه", other: "أخرى" };
-// نوع الصنف الافتراضي في كتالوج كل فئة (ما ليس هنا فمنتج)
+// نوع الصنف الافتراضي في كتالوج كل فئة (ما ليس هنا فمنتج). المالك يرسل kind صراحة فيختار غيره: الصالون والخدمات يجمعان المنتج والموعد (clinic)
 export const ITEM_KIND_OF = { cinema: "showtime", hotel: "room", car_rental: "car", hospital: "clinic", airport: "info", salon: "clinic", clinic: "clinic", entertainment: "showtime", other: "info" };
 // clinic: عيادة بمواعيد (كالعرض السينمائي لكن مجاناً غالباً)، info: خدمة أو قسم تعريفي لا يُطلب
 const KINDS = new Set(["product", "showtime", "room", "car", "clinic", "info"]);
@@ -697,6 +697,8 @@ export default async function business(app, opts) {
     if (!partial || has("meta")) {
       const m = body.meta && typeof body.meta === "object" ? { ...body.meta } : {};
       if (Array.isArray(m.times)) m.times = [...new Set(m.times.map((t) => str(t, 5)).filter((t) => TIME_RE.test(t)))].sort();
+      // أيام العمل بترقيم getUTCDay لتاريخ السعودية (0=الأحد … 6=السبت) كما يقرؤها showtimeSlots؛ قائمة فارغة بعد التنقية تُرفض في المسار
+      if (m.days !== undefined) m.days = Array.isArray(m.days) ? [...new Set(m.days.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b) : [];
       if (m.oldPrice != null) m.oldPrice = Math.max(0, Math.round(Number(m.oldPrice) || 0)) || undefined;
       out.meta = JSON.stringify(m);
     }
@@ -706,12 +708,19 @@ export default async function business(app, opts) {
     return out;
   }
   const unitOf = (kind) => ({ showtime: "ticket", room: "night", car: "day", clinic: "visit" }[kind] ?? "item");
+  // الصنف بموعد يحتاج وقتاً يومياً واحداً على الأقل، وإن حُددت أيامه فيوماً واحداً (لا تعني القائمة الفارغة «كل الأيام» هنا)
+  const slotMetaError = (kind, metaJson) => {
+    if (kind !== "showtime" && kind !== "clinic") return null;
+    const m = JSON.parse(metaJson);
+    if (!(m.times ?? []).length) return "bad-times";
+    return Array.isArray(m.days) && !m.days.length ? "bad-days" : null;
+  };
   app.post("/biz/:id/items", async (req, reply) => {
     const g = await guard(req, reply, "manage"); if (!g) return;
     const f = itemFieldsFrom(req.body ?? {}, { category: g.b.category });
     if (!f.title) return bad(reply, 400, "bad-title");
     if (rejectBanned(reply, f.title, f.description)) return;
-    if ((f.kind === "showtime" || f.kind === "clinic") && !(JSON.parse(f.meta).times ?? []).length) return bad(reply, 400, "bad-times");
+    const slotErr = slotMetaError(f.kind, f.meta); if (slotErr) return bad(reply, 400, slotErr);
     if (f.kind !== "product" && f.stock == null) f.stock = f.kind === "showtime" ? 100 : f.kind === "clinic" ? 6 : 1;
     const count = (await pool.query("SELECT count(*)::int AS n FROM biz_items WHERE biz_id=$1", [g.b.id])).rows[0].n;
     if (count >= 300) return bad(reply, 409, "too-many");
@@ -729,7 +738,7 @@ export default async function business(app, opts) {
     const f = itemFieldsFrom(req.body ?? {}, { partial: true });
     if ("title" in f && !f.title) delete f.title;
     if (rejectBanned(reply, f.title, f.description)) return;
-    if ((it.kind === "showtime" || it.kind === "clinic") && "meta" in f && !(JSON.parse(f.meta).times ?? []).length) return bad(reply, 400, "bad-times");
+    const slotErr = "meta" in f ? slotMetaError(it.kind, f.meta) : null; if (slotErr) return bad(reply, 400, slotErr);
     const keys = Object.keys(f);
     if (keys.length) {
       const sets = keys.map((k, i) => `${k}=$${i + 2}`).join(", ");

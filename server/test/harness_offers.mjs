@@ -9,8 +9,10 @@ const check = (c, l, extra = '') => { if (!c) fails++; console.log((c ? 'OK  ' :
 check(TEMPLATES.length === 6 && TEMPLATES.some((t) => t.id === 'here_now' && t.kind === 'checkin'), 'templates exported');
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
-await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara'),('SA0000003','khalid'),('SA0000004','nora') ON CONFLICT DO NOTHING");
+await pool.query("INSERT INTO users(id,nickname) VALUES('SA0000001','amr'),('SA0000002','sara'),('SA0000003','khalid'),('SA0000004','nora'),('SA0000005','layla'),('SA0000006','omar') ON CONFLICT DO NOTHING");
 for (const sql of ['DROP TABLE IF EXISTS biz_offers, biz_offer_uses, biz_offer_grants, biz_member_prefs, biz_offer_views', "DELETE FROM biz_orders WHERE biz_id LIKE 'off-%'", "DELETE FROM biz_items WHERE biz_id LIKE 'off-%'", "DELETE FROM biz_follows WHERE biz_id LIKE 'off-%'", "DELETE FROM biz_posts WHERE biz_id LIKE 'off-%'", "DELETE FROM biz WHERE id LIKE 'off-%'", 'DELETE FROM app_notifications', "UPDATE wallet_accounts SET balance=0 WHERE user_id IN ('SA0000002','SA0000003','SA0000004')"]) { try { await pool.query(sql); } catch { /* first run */ } }
+// جدول التفضيلات بمخطط ما قبل نوفمبر 2026 (الافتراضي near): الإضافة تغيّر الافتراضي إلى all عند الإقلاع
+await pool.query("CREATE TABLE biz_member_prefs (biz_id TEXT NOT NULL, user_id TEXT NOT NULL, notify TEXT NOT NULL DEFAULT 'near', last_notified_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (biz_id, user_id))");
 const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
 const dir = new URL('.', import.meta.url).pathname;
@@ -26,7 +28,7 @@ const call = async (method, url, { body = {}, user = 'SA0000001', expect } = {})
   return j;
 };
 const notes = async (kind, user) => (await pool.query("SELECT user_id, title, body, data FROM app_notifications WHERE kind=$1 AND user_id=$2 ORDER BY created_at", [kind, user])).rows;
-const OWNER = 'SA0000001', SARA = 'SA0000002', KHALID = 'SA0000003', NORA = 'SA0000004';
+const OWNER = 'SA0000001', SARA = 'SA0000002', KHALID = 'SA0000003', NORA = 'SA0000004', LAYLA = 'SA0000005', OMAR = 'SA0000006';
 const h = (n) => new Date(Date.now() + n * 3600000).toISOString();
 
 // ---- الدائرة والمنتجات والمحافظ
@@ -44,7 +46,16 @@ await call('PUT', `/biz/${B}/notify`, { body: { notify: 'all' }, user: SARA, exp
 await call('PUT', `/biz/${B}/notify`, { body: { notify: 'weird' }, user: SARA, expect: 400 });
 await call('PUT', `/biz/${B}/notify`, { body: { notify: 'all' }, user: NORA, expect: 409 });
 let pf = await call('GET', `/biz/${B}/notify`, { user: KHALID, expect: 200 });
-check(pf.member === true && pf.notify === 'near', 'default notify level is near');
+check(pf.member === true && pf.notify === 'all', 'default notify level is all (no row)', JSON.stringify(pf));
+// ليلى على المستوى القديم «القريبة فقط» (يُعامل كـ all حتى تُبنى تنبيهات القرب)، وعمر اختار «بلا تنبيهات»
+await call('POST', `/biz/${B}/follow`, { user: LAYLA, expect: 200 });
+await call('POST', `/biz/${B}/follow`, { user: OMAR, expect: 200 });
+pf = await call('PUT', `/biz/${B}/notify`, { body: { notify: 'near' }, user: LAYLA, expect: 200 });
+check(pf.notify === 'all' && (await pool.query("SELECT notify FROM biz_member_prefs WHERE biz_id=$1 AND user_id=$2", [B, LAYLA])).rows[0]?.notify === 'near', 'legacy near is stored as sent and reported as all');
+check((await call('GET', `/biz/${B}/notify`, { user: LAYLA, expect: 200 })).notify === 'all', 'legacy near reads back as all');
+await call('PUT', `/biz/${B}/notify`, { body: { notify: 'none' }, user: OMAR, expect: 200 });
+check((await call('GET', `/biz/${B}/notify`, { user: OMAR, expect: 200 })).notify === 'none', 'none stays none');
+check((await pool.query("SELECT column_default FROM information_schema.columns WHERE table_name='biz_member_prefs' AND column_name='notify'")).rows[0]?.column_default?.includes("'all'"), 'old notify column default (near) altered to all at boot');
 
 // ---- الإدارة: التحقق
 await call('POST', `/biz/${B}/manage/offers`, { body: { kind: 'coupon', title: 'x', value: { type: 'percent', amount: 10 }, endsAt: h(24) }, user: SARA, expect: 403 });
@@ -57,8 +68,10 @@ await call('POST', `/biz/${B}/manage/offers`, { body: { kind: 'coupon', title: '
 
 // ---- عرض عام: كورتادو بـ 10 بدل 14 (للجميع)
 const deal = await call('POST', `/biz/${B}/manage/offers`, { body: { kind: 'deal', title: 'كورتادو بـ 10', value: { type: 'price', amount: 1000 }, itemId: cortado.id, endsAt: h(5), template: 'product_week' }, expect: 200 });
-check(deal.kind === 'deal' && deal.membersOnly === false && deal.state === 'active' && deal.itemTitle === 'كورتادو' && deal.notified === 1, 'deal created, public, notified the one all-level member', JSON.stringify([deal.membersOnly, deal.state, deal.notified]));
-check((await notes('biz_offer', SARA)).length === 1 && (await notes('biz_offer', KHALID)).length === 0, 'only members on "all" get the offer notification');
+check(deal.kind === 'deal' && deal.membersOnly === false && deal.state === 'active' && deal.itemTitle === 'كورتادو' && deal.notified === 3, 'deal created, public, notified every member except "none"', JSON.stringify([deal.membersOnly, deal.state, deal.notified]));
+check((await notes('biz_offer', SARA)).length === 1 && (await notes('biz_offer', KHALID)).length === 1 && (await notes('biz_offer', LAYLA)).length === 1 && (await notes('biz_offer', OMAR)).length === 0 && (await notes('biz_offer', NORA)).length === 0,
+  'explicit all, no row (default) and legacy near get the offer; none and non-members do not');
+check((await pool.query("SELECT notify FROM biz_member_prefs WHERE biz_id=$1 AND user_id=$2", [B, KHALID])).rows[0]?.notify === 'all', 'cap row created for a member without prefs keeps level all');
 let d = await call('GET', `/biz/${B}`, { user: NORA, expect: 200 });
 const cIt = d.items.find((i) => i.id === cortado.id);
 check(cIt.deal && cIt.deal.price === 1000 && cIt.deal.title === 'كورتادو بـ 10' && !d.items.find((i) => i.id === latte.id).deal && d.offers === 1, 'circle detail annotates the item with the deal price and counts offers', JSON.stringify(cIt.deal));
@@ -192,7 +205,7 @@ check(list.past.some((x) => x.id === here.id) && !list.active.some((x) => x.id =
 // ---- الإدارة: الإحصاءات، التعديل، الإنهاء، التكرار، الحذف
 let mg = await call('GET', `/biz/${B}/manage/offers`, { expect: 200 });
 const dealRow = mg.offers.find((x) => x.id === deal.id);
-check(mg.members === 2 && mg.templates.length === 6 && dealRow.stats.uses === 2 && dealRow.stats.discount === 1200 && dealRow.stats.revenue === 2000 + 1000 && dealRow.stats.views >= 1, 'owner stats: uses, discount, revenue, views', JSON.stringify(dealRow.stats));
+check(mg.members === 4 && mg.templates.length === 6 && dealRow.stats.uses === 2 && dealRow.stats.discount === 1200 && dealRow.stats.revenue === 2000 + 1000 && dealRow.stats.views >= 1, 'owner stats: uses, discount, revenue, views', JSON.stringify(dealRow.stats));
 const firstRow = mg.offers.find((x) => x.id === first.id);
 check(firstRow.stats.sent === 1 && firstRow.stats.uses === 0, 'transfer counted separately from uses');
 await call('GET', `/biz/${B}/manage/offers`, { user: SARA, expect: 403 });
@@ -209,10 +222,10 @@ check(del.archived === true, 'used offer is archived, not deleted');
 del = await call('DELETE', `/biz/${B}/manage/offers/${dup.id}`, { expect: 200 });
 check(del.archived === false, 'unused offer deleted');
 await call('DELETE', `/biz/${B}/manage/offers/${dup.id}`, { expect: 404 });
-// تحديث (منشور) يُشعر الأعضاء على "all" بسقف يومي
+// تحديث (منشور) يُشعر الأعضاء عدا «بلا تنبيهات» بسقف يومي
 await pool.query("UPDATE biz_member_prefs SET last_notified_at=NULL WHERE biz_id=$1", [B]);
 await call('POST', `/biz/${B}/posts`, { body: { kind: 'update', title: 'منيو جديد', body: 'أضفنا الكولد برو' }, expect: 200 });
-check((await notes('biz_update', SARA)).length === 1 && (await notes('biz_update', KHALID)).length === 0, 'update post notifies members on all only');
+check((await notes('biz_update', SARA)).length === 1 && (await notes('biz_update', KHALID)).length === 1 && (await notes('biz_update', LAYLA)).length === 1 && (await notes('biz_update', OMAR)).length === 0, 'update post notifies every member except none');
 await call('POST', `/biz/${B}/posts`, { body: { kind: 'update', title: 'ثانٍ', body: 'x' }, expect: 200 });
 check((await notes('biz_update', SARA)).length === 1, 'daily cap: second update the same day is silent');
 // ---- طبقة الخريطة و«عروض اليوم»: عرض نشط جديد يظهر ضمن الحدود وبالقرب، ولا يظهر خارجها ولا بعد انتهائه

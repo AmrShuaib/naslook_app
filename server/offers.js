@@ -2,7 +2,8 @@
 // الانضمام (biz_follows) ضغطة واحدة يفتح العروض والخصومات والتحديثات. أربعة أنواع: deal (سعر مخفض على منتج، للجميع افتراضياً)،
 // coupon (كوبون للأعضاء بحدود)، checkin (خصم لحظي لمن هو في المكان: يحتاج موقعاً قريباً وقت الطلب)، loyalty (كل N طلب مستلم منتج مجاني).
 // لا حفظ: المحفظة نافذة على المتاح لك من دوائرك. الاستخدام تلقائي على الطلب داخل التطبيق فقط (business.js يستدعي naslifeOffersApply).
-// الكوبون يُرسل لصاحب حساب مرة واحدة وينتقل كاملاً. إشعارات لكل دائرة: all | near | none (near تُنفَّذ في مرحلة القرب).
+// الكوبون يُرسل لصاحب حساب مرة واحدة وينتقل كاملاً. إشعارات لكل دائرة: all (الافتراضي، ولمن لا صف له) | none.
+// near قيمة قديمة تُعامل كـ all حتى تُبنى تنبيهات القرب (التطبيق لم يعد يعرضها).
 // التسجيل في src/index.js بعد business.js:
 //   await app.register((await import("./offers.js")).default, { pool, auth });
 import crypto from "node:crypto";
@@ -13,6 +14,8 @@ const ID_RE = /^[A-Z]{2}\d{7}$/;
 const KINDS = ["deal", "coupon", "checkin", "loyalty"];
 const VALUE_TYPES = { deal: ["price", "percent"], coupon: ["percent", "amount", "free_item"], checkin: ["percent", "amount", "free_item"], loyalty: ["free_item"] };
 const NOTIFY = ["all", "near", "none"];
+// المستوى الفعلي للعضو: لا صف = all، و near القديم = all (لا شيء يرسل تنبيهات القرب بعد، فكان العضو لا يصله شيء)
+const effectiveNotify = (v) => (v === "none" ? "none" : "all");
 const DAY = 86400000;
 const str = (v, max) => String(v ?? "").trim().slice(0, max);
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -52,7 +55,8 @@ export default async function offers(app, opts = {}) {
       milestone INT, expires_at TIMESTAMPTZ, used_at TIMESTAMPTZ, order_id UUID, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS biz_offer_grants_user ON biz_offer_grants(user_id, used_at);
     CREATE UNIQUE INDEX IF NOT EXISTS biz_offer_grants_milestone ON biz_offer_grants(offer_id, user_id, milestone) WHERE milestone IS NOT NULL;
-    CREATE TABLE IF NOT EXISTS biz_member_prefs (biz_id TEXT NOT NULL, user_id TEXT NOT NULL, notify TEXT NOT NULL DEFAULT 'near', last_notified_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (biz_id, user_id));
+    CREATE TABLE IF NOT EXISTS biz_member_prefs (biz_id TEXT NOT NULL, user_id TEXT NOT NULL, notify TEXT NOT NULL DEFAULT 'all', last_notified_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (biz_id, user_id));
+    ALTER TABLE biz_member_prefs ALTER COLUMN notify SET DEFAULT 'all';
     CREATE TABLE IF NOT EXISTS biz_offer_views (offer_id UUID NOT NULL, user_id TEXT NOT NULL, day DATE NOT NULL, PRIMARY KEY (offer_id, user_id, day));
   `);
 
@@ -63,7 +67,7 @@ export default async function offers(app, opts = {}) {
   const bizName = (b) => b?.name_ar || b?.name || b?.id || "";
   const loadBiz = async (id) => (SLUG_RE.test(id ?? "") ? (await pool.query("SELECT * FROM biz WHERE id=$1", [id])).rows[0] ?? null : null);
   const isMember = async (bizId, uid) => !!uid && (await pool.query("SELECT 1 FROM biz_follows WHERE biz_id=$1 AND user_id=$2", [bizId, uid])).rowCount > 0;
-  const members = async (bizId) => (await pool.query("SELECT f.user_id, COALESCE(p.notify,'near') AS notify, p.last_notified_at FROM biz_follows f LEFT JOIN biz_member_prefs p ON p.biz_id=f.biz_id AND p.user_id=f.user_id WHERE f.biz_id=$1", [bizId])).rows;
+  const members = async (bizId) => (await pool.query("SELECT f.user_id, COALESCE(p.notify,'all') AS notify, p.last_notified_at FROM biz_follows f LEFT JOIN biz_member_prefs p ON p.biz_id=f.biz_id AND p.user_id=f.user_id WHERE f.biz_id=$1", [bizId])).rows;
   /// صلاحية الإدارة على الدائرة عبر business.js (المالك، المدير، مدير النظام)
   async function manageGuard(req, reply) {
     const uid = await auth(req); if (!uid) { bad(reply, 401, "auth"); return null; }
@@ -179,10 +183,10 @@ export default async function offers(app, opts = {}) {
     }
     return out;
   }
-  /// إشعار الأعضاء (all فقط الآن؛ near في مرحلة القرب) بسقف إشعار واحد لكل دائرة يومياً
-  async function notifyMembers(biz, payload, { level = "all" } = {}) {
+  /// إشعار كل الأعضاء عدا من اختار «بلا تنبيهات» (ومن لا صف له يُعدّ all)، بسقف إشعار واحد لكل دائرة يومياً
+  async function notifyMembers(biz, payload) {
     const rows = await members(biz.id);
-    const ids = rows.filter((m) => m.notify === level && (!m.last_notified_at || Date.now() - new Date(m.last_notified_at).getTime() > DAY)).map((m) => m.user_id);
+    const ids = rows.filter((m) => effectiveNotify(m.notify) === "all" && (!m.last_notified_at || Date.now() - new Date(m.last_notified_at).getTime() > DAY)).map((m) => m.user_id);
     if (!ids.length) return 0;
     await notify(ids, payload);
     await pool.query("INSERT INTO biz_member_prefs(biz_id,user_id,notify,last_notified_at) SELECT $1, unnest($2::text[]), 'all', now() ON CONFLICT (biz_id,user_id) DO UPDATE SET last_notified_at=now()", [biz.id, ids]);
@@ -243,7 +247,7 @@ export default async function offers(app, opts = {}) {
     for (const o of rows) { const st = state(o); const out = await offerOut(o, viewer); (st === "active" ? active : st === "upcoming" ? upcoming : past).push(out); }
     if (uid && active.length) { const today = new Date().toISOString().slice(0, 10); for (const o of active) pool.query("INSERT INTO biz_offer_views(offer_id,user_id,day) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", [o.id, uid, today]).catch(() => {}); }
     const pref = uid ? (await pool.query("SELECT notify FROM biz_member_prefs WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0] : null;
-    return { bizId: b.id, member, notify: member ? (pref?.notify ?? "near") : null, active, upcoming, past };
+    return { bizId: b.id, member, notify: member ? effectiveNotify(pref?.notify) : null, active, upcoming, past };
   });
   // ---- طبقة «عروض» على الخريطة وقسم «عروض اليوم» في الرئيسية: العروض النشطة مع إحداثيات دوائرها (عام، بلا أهلية)
   const DIST = "(6371*acos(least(1, cos(radians($1))*cos(radians(b.lat))*cos(radians(b.lng)-radians($2))+sin(radians($1))*sin(radians(b.lat)))))";
@@ -272,15 +276,16 @@ export default async function offers(app, opts = {}) {
     const b = await loadBiz(req.params.id); if (!b) return bad(reply, 404, "not-found");
     const member = await isMember(b.id, uid);
     const pref = (await pool.query("SELECT notify FROM biz_member_prefs WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0];
-    return { member, notify: pref?.notify ?? "near" };
+    return { member, notify: effectiveNotify(pref?.notify) };
   });
   app.put("/biz/:id/notify", async (req, reply) => {
     const uid = await auth(req); if (!uid) return bad(reply, 401, "auth");
     const b = await loadBiz(req.params.id); if (!b) return bad(reply, 404, "not-found");
     if (!(await isMember(b.id, uid))) return bad(reply, 409, "not-member");
+    // near ما زال مقبولاً من نسخ قديمة مفتوحة، ويُحفظ كما أُرسل ويعمل كـ all
     const level = str(req.body?.notify, 8); if (!NOTIFY.includes(level)) return bad(reply, 400, "bad-level");
     await pool.query("INSERT INTO biz_member_prefs(biz_id,user_id,notify) VALUES($1,$2,$3) ON CONFLICT (biz_id,user_id) DO UPDATE SET notify=EXCLUDED.notify, updated_at=now()", [b.id, uid, level]);
-    return { member: true, notify: level };
+    return { member: true, notify: effectiveNotify(level) };
   });
   // ---- عروضي: نافذة على المتاح لي من دوائري (وما أُهدي لي)، وما استخدمته، وما فاتني
   app.get("/offers/mine", async (req, reply) => {
