@@ -123,6 +123,8 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   bool _recoveryShown = false;
   StreamSubscription<Map<String, dynamic>>? _socketSub;
+  // نقرة إشعار دفع والتطبيق مفتوح: تُفتح وجهته الآن (لا ننتظر إقلاعاً جديداً يقرأ #/n/<id>)
+  StreamSubscription<String>? _pushOpenSub;
   // القسم يُبنى أول مرة يُفتح فقط: لا يطلب السوق موقعه ولا تُجلب الفعاليات والملف قبل زيارتها
   final _visited = <int>{};
   late final MessageBell _bell = MessageBell(ref.read);
@@ -134,6 +136,10 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowRecovery());
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingNotification());
+    _pushOpenSub = PushService.openRequests.listen((id) {
+      pendingNotificationId = id;
+      scheduleMicrotask(() { if (mounted) _openPendingNotification(); });
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingLink());
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAskConsent());
     // جرس الرسائل: يُفتح سياق الصوت عند أول لمسة، ويُقرع عند وصول رسالة عبر الاتصال المباشر
@@ -143,7 +149,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     Future.microtask(() {
       if (!mounted) return;
       _socketSub = ref.read(socketProvider)?.events.listen(_onSocket);
-      PushService.resubscribeIfGranted(ref.read(apiClientProvider));
+      PushService.resubscribeIfGranted(ref.read(apiClientProvider), userId: ref.read(appStateProvider).session?.user.id);
     });
   }
 
@@ -162,6 +168,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   void dispose() {
     _socketSub?.cancel();
+    _pushOpenSub?.cancel();
     _life.dispose();
     super.dispose();
   }

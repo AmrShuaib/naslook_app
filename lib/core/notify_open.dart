@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/models.dart' show Person;
 import '../api/notify_api.dart';
 import '../pages/admin/admin_shell.dart';
 import '../state/admin_providers.dart';
@@ -8,6 +9,9 @@ import '../pages/business/business_page.dart';
 import '../pages/business/community_page.dart';
 import '../pages/business/my_bookings_page.dart';
 import '../pages/business/offers_page.dart';
+import '../pages/chat/chat_thread_page.dart';
+import '../pages/circles/circle_detail_page.dart';
+import '../pages/profile/user_profile_page.dart';
 import '../pages/wallet/my_offers_page.dart';
 import '../pages/business/owner/business_dashboard_page.dart';
 import '../pages/business/owner/job_candidate_page.dart';
@@ -138,21 +142,52 @@ Widget? notificationTarget(AppNotification n) {
       return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'tasks').clamp(0, adminSections.length - 1));
     case 'inbox_message':
     case 'inbox_assigned':
+    case 'inbox_note':
+    case 'inbox_send_failed':
+    case 'inbox_unsnoozed':
       return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'inbox').clamp(0, adminSections.length - 1));
     case 'post_blocked':
       return const MyPostsPage();
-    // تفاعل على لحظتي: تُفتح اللحظة نفسها في العارض
+    // تفاعل أو إعجاب على لحظتي (moment_extras.js وmap_posts.js): تُفتح اللحظة نفسها في العارض
     case 'moment_react':
+    case 'post_like':
       final post = n.str('postId');
       return post == null ? const MyPostsPage() : MomentLinkPage(id: post);
+    // حجز فندق مؤكد (hotels.js): «حجوزاتي» وفيها الحجز برقم تأكيده
+    case 'hotel_booked':
+      return const MyBookingsPage();
+    // متابع جديد (profile_ext.js): ملف المتابِع؛ الاسم من الحمولة (أو من العنوان في الإشعارات الأقدم) حتى يُحمَّل الملف
+    case 'profile_follow':
+      final user = n.str('userId');
+      return user == null ? null : UserProfilePage(person: Person(id: user, nickname: n.str('nickname') ?? _nameFromTitle(n.title, ' يتابعك', user)));
+    // قبول موعد «نتقابل» (chat_cards.js): المحادثة مع الطرف الآخر عند بطاقة الموعد
+    case 'meet_accepted':
+      final peer = n.str('peerId');
+      return peer == null ? null : ChatThreadPage(peer: Person(id: peer, nickname: n.str('peerNickname') ?? peer), initialMessageId: n.str('messageId'));
+    // أزال مشرف الدائرة منشوري (vessel_mod.js أو الإدارة عبر safety.js): الدائرة نفسها
+    case 'vessel_post_hidden':
+      final vessel = n.str('vesselId');
+      return vessel == null ? null : CircleDetailPage(vesselId: vessel);
+    // أُعيد إظهار محتوى بعد المراجعة، أو أُخفي محتوى نوعه بلا إشعار خاص (safety.js): المحتوى نفسه أو موضعه
+    case 'content_restored':
+    case 'content_hidden':
+      return _moderatedTarget(n);
+    // بلاغات كثيرة على دائرة (لا تُخفى تلقائياً): طابور البلاغات في الإدارة
+    case 'content_reported_many':
+      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'reports').clamp(0, adminSections.length - 1));
+    // استرداد رصيد حساب محذوف (account_delete.js): المالية في الإدارة
+    case 'account_refund':
+      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'finance').clamp(0, adminSections.length - 1));
     case 'wish_price_drop':
     case 'wish_available':
     case 'wish_event_reminder':
       return const WishlistPage();
     case 'saved_search_match':
       return SearchPage(initialQuery: n.str('q') ?? '');
+    // إخفاء تلقائي بعد بلاغات، أو بلاغات محتوى جديدة (notify.js): طابور البلاغات (كان الفهرس 5 = المالية بعد إعادة ترتيب الأقسام)
     case 'content_autohidden':
-      return const AdminShell(standalone: false, initialSection: 5);
+    case 'content_reports_new':
+      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'reports').clamp(0, adminSections.length - 1));
     case 'community_post':
     case 'community_reply':
     case 'community_hidden':
@@ -168,6 +203,49 @@ Widget? notificationTarget(AppNotification n) {
     case 'job_answers':
     case 'job_apply':
       return biz == null || job == null ? null : (match == null ? JobCandidatesPage(bizId: biz, jobId: job) : JobCandidatePage(bizId: biz, jobId: job, matchId: match));
+  }
+  return null;
+}
+
+/// الاسم من عنوان إشعار قديم بلا الاسم في حمولته («sara يتابعك» ← sara).
+String _nameFromTitle(String title, String suffix, String fallback) {
+  final t = title.endsWith(suffix) ? title.substring(0, title.length - suffix.length).trim() : '';
+  return t.isEmpty ? fallback : t;
+}
+
+/// وجهة محتوى أُعيد بعد المراجعة (أو أُخفي) حسب نوعه في safety.js (`targetType`/`targetId` ومعرّفات الأصل في الحمولة).
+Widget? _moderatedTarget(AppNotification n) {
+  final type = n.str('targetType'), id = n.str('targetId');
+  final biz = n.str('bizId'), vessel = n.str('vesselId'), listing = n.str('listingId'), wanted = n.str('wantedId');
+  final post = n.str('postId'), parent = n.str('parentId');
+  switch (type) {
+    case 'post':
+      final m = post ?? id;
+      return m == null ? const MyPostsPage() : MomentLinkPage(id: m);
+    case 'listing':
+    case 'listing-question':
+    case 'listing-review':
+      final l = listing ?? (type == 'listing' ? id : null);
+      return l == null ? const OrdersPage(initialTab: 0) : ListingPage(l);
+    case 'community':
+    case 'community-reply':
+      return biz == null ? null : CommunityPage(bizId: biz, initialPostId: type == 'community' ? (post ?? id) : parent);
+    case 'vessel-post':
+    case 'vessel-comment':
+    case 'vessel':
+      final v = vessel ?? (type == 'vessel' ? id : null);
+      return v == null ? null : CircleDetailPage(vesselId: v, focusPostId: type == 'vessel-post' ? (post ?? id) : type == 'vessel-comment' ? parent : null);
+    case 'wanted':
+    case 'wanted-reply':
+      final w = wanted ?? (type == 'wanted' ? id : null);
+      return w == null ? const WantedPage() : WantedDetailPage(w);
+    case 'biz':
+    case 'biz-review':
+    case 'biz-post':
+      final b = biz ?? (type == 'biz' ? id : null);
+      return b == null ? null : BusinessPage(id: b);
+    case 'event':
+      return id == null ? const EventsPage() : EventDetailPage(eventId: id);
   }
   return null;
 }
@@ -222,6 +300,8 @@ Widget? notificationTarget(AppNotification n) {
     case 'account_warning':
     case 'account_suspended':
     case 'content_autohidden':
+    case 'content_reports_new':
+    case 'content_reported_many':
     case 'post_blocked':
       return (icon: Icons.report_gmailerrorred_outlined, color: Joy.danger);
     case 'admin_granted':
@@ -239,6 +319,19 @@ Widget? notificationTarget(AppNotification n) {
       return (icon: Icons.bookmark_added_outlined, color: Joy.accent);
     case 'moment_react':
       return (icon: Icons.add_reaction_outlined, color: Joy.accent);
+    case 'post_like':
+      return (icon: Icons.favorite_border_rounded, color: Joy.accent);
+    case 'hotel_booked':
+      return (icon: Icons.hotel_outlined, color: Joy.primary);
+    case 'profile_follow':
+      return (icon: Icons.person_add_alt_1_outlined, color: Joy.primary);
+    case 'meet_accepted':
+      return (icon: Icons.event_available_outlined, color: Joy.success);
+    case 'vessel_post_hidden':
+    case 'content_hidden':
+      return (icon: Icons.visibility_off_outlined, color: Joy.danger);
+    case 'content_restored':
+      return (icon: Icons.visibility_outlined, color: Joy.success);
     case 'saved_search_match':
       return (icon: Icons.saved_search_rounded, color: Joy.primary);
     case 'community_post':

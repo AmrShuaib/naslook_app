@@ -47,7 +47,7 @@ app.*.map.json
 # أدوات الجلسة
 .wb/
 .scratch/
-server/test/node_modules/
+server/test/node_modules
 server/test/ops-test/
 server/test/package-lock.json
 

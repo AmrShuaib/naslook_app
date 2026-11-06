@@ -373,7 +373,7 @@ export default async function profileV2(app, opts) {
       try { await pool.query("INSERT INTO profile_events(user_id, actor_id, kind) VALUES($1,$2,'follow')", [t.u.id, t.uid]); } catch { /* ignore */ }
       if (!before) {
         const me = await findUser(t.uid);
-        try { await globalThis.naslifeNotify?.([t.u.id], { kind: "profile_follow", title: `${me?.nickname || t.uid} يتابعك`, body: "", data: { userId: t.uid } }); } catch { /* ignore */ }
+        try { await globalThis.naslifeNotify?.([t.u.id], { kind: "profile_follow", title: `${me?.nickname || t.uid} يتابعك`, body: "", data: { userId: t.uid, nickname: me?.nickname ?? null } }); } catch { /* ignore */ }
       }
     }
     return { ok: true, following: true, followers: await followersOf(t.u.id) };

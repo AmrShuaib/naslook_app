@@ -20,7 +20,9 @@ const app = Fastify();
 // ---- نواة وهمية: حسابات في الذاكرة بكلمة سر وعبارة استرداد وجلسات
 const accounts = { jeddahh: { id: 'SA9954961', password: 'TestPass#2026', phrase: 'حلوى موج فندق شكل كمان بطاطس' }, sara: { id: 'SA0000002', password: 'secret', phrase: 'a b c d e f' } };
 const sessions = new Map(); let seq = 10; let phraseSeq = 0;
-const issue = (nick) => { for (const [t, n] of sessions) if (n === nick) sessions.delete(t); const t = 'tok-' + nick + '-' + (++seq); sessions.set(t, nick); return t; };
+// multiSession: نواة تبقي الجلسات الأخرى عند الدخول (لفحص أن الإضافة تلغي جلسة الطلب القديمة بنفسها)
+let multiSession = false;
+const issue = (nick) => { if (!multiSession) for (const [t, n] of sessions) if (n === nick) sessions.delete(t); const t = 'tok-' + nick + '-' + (++seq); sessions.set(t, nick); return t; };
 const newPhrase = () => 'عبارة جديدة رقم ' + (++phraseSeq) + ' كلمات ست';
 app.post('/register', async (req, reply) => { const { nickname, password } = req.body ?? {}; if (!/^[a-z0-9_]{3,32}$/.test(nickname ?? '')) return reply.code(400).send({ error: 'invalid-nickname' }); if (accounts[nickname]) return reply.code(409).send({ error: 'nickname-taken' }); if (String(password ?? '').length < 8) return reply.code(400).send({ error: 'weak-password' }); const id = 'SA00000' + (++seq); accounts[nickname] = { id, password, phrase: newPhrase() }; await pool.query('INSERT INTO users(id,nickname) VALUES($1,$2)', [id, nickname]); return { id, nickname, token: issue(nickname), recoveryPhrase: accounts[nickname].phrase, hasRecovery: true }; });
 app.post('/login', async (req, reply) => { const { handle, password } = req.body ?? {}; const a = accounts[handle]; if (a && a.password === password) return { id: a.id, nickname: handle, token: issue(handle) }; return reply.code(401).send({ error: 'bad-credentials' }); });
@@ -218,19 +220,77 @@ check(r.code === 410 && r.json.error === 'code-expired', 'expired reset code rep
 await pool.query("UPDATE login_aliases SET reset_hash='x', reset_exp = now() + interval '10 minute', reset_attempts=5 WHERE alias='new@example.com'");
 r = await call('POST', '/auth/reset', { body: { email: 'new@example.com', code: '123456', password: 'Whatever123' } });
 check(r.code === 429 && r.json.error === 'too-many-attempts', 'exhausted attempts refused');
-// ---- بريد الدخول (كما قبل)
+// ---- بريد الدخول: التغيير والإزالة يتطلبان كلمة السر الحالية، والبريد القديم المؤكد يصله تنبيه
 r = await call('GET', '/me/login-email', ADMIN);
 check(r.code === 200 && r.json.email === 'jeddahh@gmail.com' && r.json.verified === true, 'my login email');
-r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'jeddahh@gmail.com' } });
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'jeddahh@gmail.com', password: 'secret' } });
 check(r.code === 409 && r.json.error === 'email-taken', 'cannot take another user\'s email');
 r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara@example.com' } });
-check(r.code === 200 && r.json.email === 'sara@example.com' && r.json.codeSent === true, 'set my login email sends a code');
+check(r.code === 403 && r.json.error === 'password-required', 'adding a first email (a reset channel) needs the password: a session alone is not enough');
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara@example.com', password: 'nope' } });
+check(r.code === 403 && r.json.error === 'bad-password', 'adding a first email with a wrong password: bad-password');
+check((await call('GET', '/me/login-email', SARA)).json.email === null, 'nothing saved after the refused attempts');
+let mailsBefore = smtp.messages.length;
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara@example.com', password: 'secret' } });
+check(r.code === 200 && r.json.email === 'sara@example.com' && r.json.codeSent === true && r.json.noticeSent === false && typeof r.json.token === 'string' && smtp.messages.length === mailsBefore + 1, 'set my first login email with the password sends a code (no old address to notify) and returns the fresh core session', JSON.stringify(r.json));
 r = await call('POST', '/me/login-email/send-code', { ...SARA, body: {} });
 check(r.code === 429 && r.json.error === 'too-soon', 'resend within 60s refused');
 r = await call('POST', '/me/login-email/verify', { ...SARA, body: { code: codeOf(smtp.messages.length - 1) } });
 check(r.code === 200 && r.json.verified === true, 'verify my email');
+// المسار الذي أغلقناه: جلسة مفتوحة تغيّر البريد المؤكد ثم «نسيت كلمة السر» يرسل الرمز للبريد الجديد
+mailsBefore = smtp.messages.length;
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'thief@example.com' } });
+check(r.code === 403 && r.json.error === 'password-required' && smtp.messages.length === mailsBefore, 'verified email: change without the password refused, nothing sent');
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'thief@example.com', password: 'wrong' } });
+check(r.code === 403 && r.json.error === 'bad-password', 'verified email: change with a wrong password refused');
+r = await call('GET', '/me/login-email', SARA);
+check(r.json.email === 'sara@example.com' && r.json.verified === true, 'verified email untouched after refused changes');
+r = await call('POST', '/auth/forgot', { body: { email: 'thief@example.com' } });
+check(r.code === 200 && smtp.messages.length === mailsBefore, 'forgot for the attacker address sends nothing (it never became the login email)');
 r = await call('DELETE', '/me/login-email', SARA);
-check(r.code === 200 && (await call('POST', '/auth/login', { body: { handle: 'sara@example.com', password: 'secret' } })).code === 401, 'delete my login email');
+check(r.code === 403 && r.json.error === 'password-required', 'verified email: removal without the password refused');
+r = await call('DELETE', '/me/login-email', { ...SARA, body: { password: 'x' } });
+check(r.code === 403 && r.json.error === 'bad-password', 'verified email: removal with a wrong password refused');
+// تغيير صحيح بجلسة رمز ونواة متعددة الجلسات: جلسة الطلب القديمة تُلغى ويعتمد التطبيق الجديدة
+multiSession = true;
+r = await call('POST', '/auth/login', { body: { handle: 'sara', password: 'secret' } });
+const saraOld = r.json.token;
+{ // كلمة سر خاطئة في نواة متعددة الجلسات: لا جلسة جديدة ولا تُلغى القديمة
+  const n = sessions.size;
+  r = await call('PUT', '/me/login-email', { token: saraOld, body: { email: 'Sara.New@Example.com', password: 'wrong-again' } });
+  check(r.code === 403 && r.json.error === 'bad-password' && sessions.has(saraOld) && sessions.size === n, 'wrong password: the request session stays live and no extra session is left behind');
+}
+mailsBefore = smtp.messages.length;
+r = await call('PUT', '/me/login-email', { token: saraOld, body: { email: 'Sara.New@Example.com', password: ' secret ' } });
+check(r.code === 200 && r.json.email === 'sara.new@example.com' && r.json.verified === false && r.json.codeSent === true && r.json.noticeSent === true && r.json.token && r.json.token !== saraOld, 'verified email changed with the password (trimmed like login): code to the new address, notice to the old', JSON.stringify(r.json));
+const saraFresh = r.json.token;
+check(!sessions.has(saraOld) && sessions.get(saraFresh) === 'sara', 'the request session is revoked and the fresh one is live (one session for this device)');
+check((await call('GET', '/me/login-email', { token: saraFresh })).json.email === 'sara.new@example.com', 'the fresh token works');
+multiSession = false;
+{ const sent = smtp.messages.slice(mailsBefore); const notice = sent.find((m) => m.to[0] === 'sara@example.com'); const code = sent.find((m) => m.to[0] === 'sara.new@example.com');
+  const txt = notice ? plainTextOf(notice.raw) : '';
+  check(sent.length === 2 && !!notice && !!code, 'two mails: notice to the old address and a code to the new one', JSON.stringify(sent.map((m) => m.to)));
+  check(txt.includes('غُيّر بريد الدخول') && txt.includes('sara') && txt.includes('sa***@e***.com') && !txt.includes('sara.new@example.com') && txt.includes('support@naslife.app') && !/\b\d{6}\b/.test(txt), 'notice in Arabic: names the account, masks the new address, points to support, carries no code', txt.slice(0, 300).replace(/\n/g, ' | ')); }
+// البريد الجديد غير مؤكد والبوابة مفعّلة: استبداله بلا كلمة سر (شاشة التأكيد بعد التسجيل بجلسة محفوظة) يبقى يعمل، ولا تنبيه
+mailsBefore = smtp.messages.length;
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara2@example.com' } });
+check(r.code === 200 && r.json.email === 'sara2@example.com' && r.json.codeSent === true && r.json.noticeSent === false && !r.json.token && smtp.messages.length === mailsBefore + 1, 'unverified email with the gate on: replaced without a password (registration verify screen), no notice to an unproven address', JSON.stringify(r.json));
+// البوابة مطفأة: الحساب غير المؤكد يعمل بجلسة كاملة، فالتغيير يتطلب كلمة السر
+globalThis.naslifeSettings = { requireEmailVerification: false };
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara3@example.com' } });
+check(r.code === 403 && r.json.error === 'password-required', 'gate off: an unverified email is a full account, so changing it needs the password');
+r = await call('DELETE', '/me/login-email', SARA);
+check(r.code === 200 && r.json.ok === true && r.json.noticeSent === false, 'gate off: removing an unverified email needs no password and notifies no one');
+delete globalThis.naslifeSettings;
+r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara@example.com', password: 'secret' } });
+await call('POST', '/me/login-email/verify', { ...SARA, body: { code: codeOf(smtp.messages.length - 1) } });
+mailsBefore = smtp.messages.length;
+r = await call('DELETE', '/me/login-email', { ...SARA, body: { password: 'secret' } });
+check(r.code === 200 && r.json.noticeSent === true && smtp.messages.length === mailsBefore + 1 && smtp.messages[mailsBefore].to[0] === 'sara@example.com' && plainTextOf(smtp.messages[mailsBefore].raw).includes('أُزيل هذا البريد'), 'verified email removed with the password: the old address is told');
+check((await call('POST', '/auth/login', { body: { handle: 'sara@example.com', password: 'secret' } })).code === 401, 'delete my login email');
+// حد المحاولات لكلمة السر
+for (let i = 0; i < 12; i++) r = await call('PUT', '/me/login-email', { ...SARA, body: { email: 'sara9@example.com', password: 'guess' + i } });
+check(r.code === 429 && r.json.error === 'too-many-attempts', 'password guesses on the login email are rate limited');
 r = await call('GET', '/auth/alias/status');
 check(r.json.recoverable === 7, 'status counts recoverable accounts (3 original + third, second2, second3, locker from the gate checks)', JSON.stringify(r.json));
 console.log(fails ? `\n${fails} FAILED` : '\nALL AUTH ALIAS TESTS PASSED');

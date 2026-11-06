@@ -493,45 +493,110 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
     return s.replaceFirst(RegExp(r'^ApiException\(\d+\): '), '');
   }
 
+  /// تعديل بريد الدخول أو إزالته. بريد الدخول قناة استعادة كلمة السر، فالخادم يطلب كلمة السر الحالية لتغييره أو إزالته
+  /// متى كان مؤكداً (أو لإضافة أول بريد)، حتى لا يكفي جوال مفتوح لسرقة الحساب (server/auth_alias.js). الطلب يُرسل من داخل
+  /// المربع فتظهر الأخطاء تحت الحقل المعني ولا يضيع ما كُتب.
   Future<void> _edit() async {
     final c = TextEditingController(text: _info.email ?? '');
-    final ok = await showDialog<bool>(
+    final pw = TextEditingController();
+    final api = ref.read(apiClientProvider);
+    final appState = ref.read(appStateProvider.notifier);
+    // الاستثناء الوحيد: بريد غير مؤكد والبوابة مفعّلة يُستبدل بلا كلمة سر (الخادم يقبلها إن أُرسلت)
+    final saveNeedsPassword = !(_info.email != null && !_info.verified && _info.required);
+    final removeNeedsPassword = _info.verified;
+    String? emailError, pwError;
+    var busy = false;
+    LoginEmailInfo? saved;
+    final result = await showDialog<bool>(
       context: context,
-      builder: (d) => AlertDialog(
-        title: const Text('بريد الدخول'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(_info.mailConfigured ? 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها، وتصلك عليه رموز التأكيد واستعادة كلمة السر.' : 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها.', style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
-          const SizedBox(height: 10),
-          TextField(key: const Key('login-email-field'), controller: c, autofocus: true, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, autocorrect: false, decoration: const InputDecoration(hintText: 'name@example.com')),
-        ]),
-        actions: [
-          if (_info.email != null) TextButton(key: const Key('login-email-clear'), onPressed: () => Navigator.pop(d, false), child: const Text('إزالة البريد', style: TextStyle(color: Joy.danger))),
-          TextButton(onPressed: () => Navigator.pop(d), child: const Text('إلغاء')),
-          FilledButton(key: const Key('login-email-save'), onPressed: () => Navigator.pop(d, true), child: const Text('حفظ')),
-        ],
-      ),
-    );
-    if (ok == null) return;
-    try {
-      if (ok) {
-        final i = await ref.read(apiClientProvider).setLoginEmail(c.text);
-        setState(() => _info = i);
-        if (!mounted) return;
-        if (i.codeSent) {
-          toast(context, 'أرسلنا رمز التأكيد إلى ${i.email}');
-          await _verifyDialog();
-        } else if (i.sendError != null) {
-          toast(context, 'حُفظ البريد لكن تعذّر إرسال رمز التأكيد الآن', error: true);
-        } else {
-          toast(context, 'صار بإمكانك الدخول بـ ${i.email}');
+      builder: (d) => StatefulBuilder(builder: (d, setD) {
+        Future<void> submit({required bool remove}) async {
+          if (busy) return;
+          final email = c.text.trim(), password = pw.text;
+          if (!remove && !RegExp(r'^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$').hasMatch(email)) {
+            setD(() { emailError = 'صيغة البريد غير صحيحة'; pwError = null; });
+            return;
+          }
+          if ((remove ? removeNeedsPassword : saveNeedsPassword) && password.trim().isEmpty) {
+            setD(() { pwError = 'أدخل كلمة السر الحالية لتأكيد أنك صاحب الحساب'; emailError = null; });
+            return;
+          }
+          setD(() { busy = true; emailError = null; pwError = null; });
+          try {
+            final p = password.trim().isEmpty ? null : password;
+            if (remove) {
+              await appState.adoptToken(await api.clearLoginEmail(password: p));
+            } else {
+              saved = await api.setLoginEmail(email, password: p);
+              // النواة أصدرت جلسة جديدة عند التحقق وأُلغيت القديمة: تُحفظ الجديدة حتى لا يخرج المستخدم
+              await appState.adoptToken(saved!.token);
+            }
+            if (d.mounted) Navigator.pop(d, !remove);
+          } catch (e) {
+            final code = e is ApiException ? (e.body?['error']?.toString() ?? '') : '';
+            setD(() {
+              busy = false;
+              switch (code) {
+                case 'password-required':
+                  pwError = 'أدخل كلمة السر الحالية لتأكيد أنك صاحب الحساب';
+                case 'bad-password':
+                  pwError = 'كلمة السر غير صحيحة';
+                case 'too-many-attempts':
+                  pwError = 'محاولات كثيرة؛ انتظر ربع ساعة ثم حاول مجدداً';
+                case 'email-unverified':
+                  emailError = 'أكّد البريد الحالي أولاً أو استبدله ببريد صحيح';
+                default:
+                  emailError = _err(e);
+              }
+            });
+          }
         }
-      } else {
-        await ref.read(apiClientProvider).clearLoginEmail();
-        setState(() => _info = LoginEmailInfo(mailConfigured: _info.mailConfigured));
-        if (mounted) toast(context, 'أُزيل بريد الدخول');
-      }
-    } catch (e) {
-      if (mounted) toast(context, _err(e), error: true);
+
+        return AlertDialog(
+          title: const Text('بريد الدخول'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(_info.mailConfigured ? 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها، وتصلك عليه رموز التأكيد واستعادة كلمة السر.' : 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها.', style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
+              const SizedBox(height: 10),
+              TextField(key: const Key('login-email-field'), controller: c, autofocus: true, enabled: !busy, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, autocorrect: false, decoration: InputDecoration(hintText: 'name@example.com', errorText: emailError, errorMaxLines: 2)),
+              // بريد غير مؤكد خلف البوابة: لا شيء يُحمى بعد، فلا يُعرض الحقل
+              if (saveNeedsPassword || removeNeedsPassword) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  key: const Key('login-email-password'), controller: pw, obscureText: true, enabled: !busy, textDirection: TextDirection.ltr, autocorrect: false, enableSuggestions: false,
+                  decoration: InputDecoration(labelText: 'كلمة السر الحالية', helperText: 'لحماية حسابك: لا يتغير بريد الدخول بدونها', helperMaxLines: 2, errorText: pwError, errorMaxLines: 2),
+                  onSubmitted: (_) => submit(remove: false),
+                ),
+              ],
+              if (_info.verified && _info.mailConfigured) ...[
+                const SizedBox(height: 8),
+                const Text('سنرسل تنبيهاً إلى بريدك الحالي بعد التغيير.', key: Key('login-email-notice-hint'), style: TextStyle(color: Joy.textMuted, fontSize: 12)),
+              ],
+            ]),
+          ),
+          actions: [
+            if (_info.email != null) TextButton(key: const Key('login-email-clear'), onPressed: busy ? null : () => submit(remove: true), child: const Text('إزالة البريد', style: TextStyle(color: Joy.danger))),
+            TextButton(onPressed: busy ? null : () => Navigator.pop(d), child: const Text('إلغاء')),
+            FilledButton(key: const Key('login-email-save'), onPressed: busy ? null : () => submit(remove: false), child: Text(busy ? '…' : 'حفظ')),
+          ],
+        );
+      }),
+    );
+    if (result == null || !mounted) return;
+    if (!result) {
+      setState(() => _info = LoginEmailInfo(mailConfigured: _info.mailConfigured, required: _info.required));
+      toast(context, 'أُزيل بريد الدخول');
+      return;
+    }
+    final i = saved!;
+    setState(() => _info = i);
+    if (i.codeSent) {
+      toast(context, 'أرسلنا رمز التأكيد إلى ${i.email}');
+      await _verifyDialog();
+    } else if (i.sendError != null) {
+      toast(context, 'حُفظ البريد لكن تعذّر إرسال رمز التأكيد الآن', error: true);
+    } else {
+      toast(context, 'صار بإمكانك الدخول بـ ${i.email}');
     }
   }
 
