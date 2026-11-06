@@ -10,6 +10,7 @@ import '../../api/naslife_api.dart';
 import '../../api/session.dart';
 import '../../core/app_theme.dart';
 import '../../core/platform.dart';
+import '../../core/require_adult.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
@@ -121,6 +122,8 @@ class WalletPage extends ConsumerWidget {
   }
 
   Future<void> _transfer(BuildContext context, WidgetRef ref, {String? to}) async {
+    // إرسال المال عملية مالية: إقرار 18+ مرة واحدة قبلها
+    if (!await requireAdult(context, ref) || !context.mounted) return;
     final contacts = ref.read(contactsProvider).value ?? const <Person>[];
     final handle = TextEditingController(text: to ?? ''), amount = TextEditingController(), note = TextEditingController();
     final ok = await showDialog<bool>(
@@ -163,6 +166,7 @@ class WalletPage extends ConsumerWidget {
 
   /// شحن بالبطاقة عبر بوابة الدفع: يطلب المبلغ ثم يفتح صفحة الدفع في المتصفح؛ الرصيد يُضاف بعد تأكيد المزوّد
   Future<void> _cardTopup(BuildContext context, WidgetRef ref, PayConfig cfg) async {
+    if (!await requireAdult(context, ref) || !context.mounted) return;
     final v = await askText(context, title: 'شحن بالبطاقة', hint: 'المبلغ بالريال (من ${money(cfg.min)} إلى ${money(cfg.max)})', confirm: 'متابعة للدفع', maxLines: 1, keyboardType: const TextInputType.numberWithOptions(decimal: true));
     if (v == null) return;
     final halalas = parseSar(v);
@@ -178,6 +182,7 @@ class WalletPage extends ConsumerWidget {
   }
   /// الشحن التجريبي: سقفه maxTopup يأتي مع /wallet (يضبطه المدير) لا ثابتاً في التطبيق
   Future<void> _topup(BuildContext context, WidgetRef ref, Wallet wallet) async {
+    if (!await requireAdult(context, ref) || !context.mounted) return;
     final max = wallet.maxTopup;
     final v = await askText(context, title: 'شحن تجريبي', hint: 'المبلغ بالريال (حتى ${money(max)})', confirm: 'شحن', maxLines: 1, keyboardType: const TextInputType.numberWithOptions(decimal: true));
     if (v == null) return;

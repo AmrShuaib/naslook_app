@@ -10,6 +10,7 @@ import '../../core/app_theme.dart';
 import '../../core/location.dart';
 import '../../core/platform.dart';
 import '../../core/require_account.dart';
+import '../../core/require_adult.dart';
 import '../../api/client.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
@@ -368,6 +369,8 @@ Future<void> createListing(BuildContext context, WidgetRef ref) async {
   if (!requireAccount(context)) return;
   final d = await showListingForm(context);
   if (d == null || !context.mounted) return;
+  // البيع بمقابل (سعر أو خيار مسعّر) يحتاج إقرار 18+ قبل رفع الصور؛ العرض المجاني لا
+  if (listingBodyPriced(d.toBody()) && (!await requireAdult(context, ref) || !context.mounted)) return;
   try {
     final api = ref.read(apiClientProvider);
     final pos = ref.read(marketPosProvider).valueOrNull;

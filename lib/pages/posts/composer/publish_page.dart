@@ -12,6 +12,7 @@ import '../../../api/community_api.dart';
 import '../../../api/posts_api.dart';
 import '../../../core/app_theme.dart';
 import '../../../core/media/filters.dart';
+import '../../../core/require_adult.dart';
 import '../../../state/app_state.dart';
 import '../../../state/biz_providers.dart';
 import '../../../state/posts_providers.dart';
@@ -94,6 +95,8 @@ class _PublishPageState extends ConsumerState<PublishPage> {
     if (d.destination == Destination.market) {
       if (d.listingTitle.isEmpty) return toast(context, 'اكتب عنوان العرض', error: true);
       if (d.isText || d.isVideo && d.video == null) return toast(context, 'عرض السوق يحتاج صورة واحدة على الأقل', error: true);
+      // البيع بمقابل يحتاج إقرار 18+ مرة واحدة قبل رفع الوسائط؛ العرض المجاني لا
+      if ((double.tryParse(d.listingPrice.replaceAll('،', '.')) ?? 0) > 0 && (!await requireAdult(context, ref) || !mounted)) return;
     }
     if (d.destination == Destination.map && d.isText && d.overlays.every((o) => o.isSticker) && d.caption.isEmpty && d.voice == null) return toast(context, 'أضف نصاً أو تعليقاً أو تسجيلاً', error: true);
     if (d.ctaType == 'link' && d.ctaValue.isNotEmpty && !d.ctaValue.startsWith('http')) return toast(context, 'الرابط يجب أن يبدأ بـ https://', error: true);

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/require_account.dart';
+import '../../core/require_adult.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
@@ -116,6 +117,8 @@ class _EventsPageState extends ConsumerState<EventsPage> {
       )),
     );
     if (ok != true || title.text.trim().isEmpty || !mounted) return;
+    // تذاكر مدفوعة = بيع بمقابل: إقرار 18+ أولاً؛ الفعالية المجانية لا
+    if ((double.tryParse(tierPrice.text) ?? 0) > 0 && (!await requireAdult(context, ref) || !mounted)) return;
     final gps = await DeviceLocation.browse();
     final pres = ref.read(myPresenceProvider).value;
     try {
@@ -277,6 +280,7 @@ class _TierState extends ConsumerState<_Tier> {
 
   Future<void> _buy() async {
     if (!requireAccount(context)) return;
+    if (widget.t.price > 0 && (!await requireAdult(context, ref) || !mounted)) return;
     setState(() => busy = true);
     try {
       final tickets = await ref.read(apiClientProvider).buyTickets(widget.e.id, widget.t.id, qty);

@@ -13,6 +13,7 @@ import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/platform.dart';
+import '../../core/require_adult.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
@@ -86,6 +87,8 @@ Future<void> toggleListingVisibility(BuildContext context, WidgetRef ref, Listin
 Future<void> editListing(BuildContext context, WidgetRef ref, Listing x) async {
   final d = await showListingForm(context, initial: x);
   if (d == null || !context.mounted) return;
+  // حفظ عرض مسعّر بيعٌ بمقابل: الخادم يطلب إقرار 18+ فنسأله قبل رفع الصور
+  if (listingBodyPriced(d.toBody()) && (!await requireAdult(context, ref) || !context.mounted)) return;
   try {
     final api = ref.read(apiClientProvider);
     final urls = [...d.existingImages];

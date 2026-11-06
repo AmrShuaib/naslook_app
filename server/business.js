@@ -365,7 +365,8 @@ export default async function business(app, opts) {
     return complete && approved ? "verified" : complete ? "complete" : "published";
   };
 
-  // ---- المخرجات: الموقع الظاهر هو دبوس «هنا اليوم» إن قام وإلا موقع الدائرة؛ نوع الكيان لطاقم الإدارة فقط ورقمه ووثيقته لا يخرجان هنا أبداً
+  // ---- المخرجات: الموقع الظاهر هو دبوس «هنا اليوم» إن قام وإلا موقع الدائرة؛ entityKind قبل الاعتماد للطاقم فقط، وentity (النوع والرقم)
+  // للعامة بعد اعتماد التوثيق، والوثيقة لا تخرج هنا أبداً
   const bizOut = (b, extra = {}) => {
     const here = hereOf(b), vs = verStatus(b), role = extra.myRole ?? b.my_role ?? null;
     return {
@@ -376,7 +377,9 @@ export default async function business(app, opts) {
       itemsCount: Number(b.items_count ?? 0), following: b.following === true, myRole: b.my_role ?? null, createdAt: b.created_at,
       openNow: isOpenNow(b.hours), distanceKm: roundKm(b.distance_km),
       presence: b.presence === "mobile" ? "mobile" : "fixed", serviceArea: serviceAreaOf(b), here, verificationStatus: vs, canSell: vs === "approved", tier: tierOf(b),
-      entityKind: canManage(role) ? (b.entity_kind ?? null) : null, phoneVerified: b.phone_verified === true, ...extra,
+      entityKind: canManage(role) ? (b.entity_kind ?? null) : null, phoneVerified: b.phone_verified === true,
+      // إفصاح نظامي (نظام التجارة الإلكترونية): نوع الكيان ورقمه للعامة بعد اعتماد التوثيق فقط؛ الوثيقة وسبب الرفض لا يخرجان أبداً
+      entity: vs === "approved" && b.entity_kind && b.entity_number ? { kind: b.entity_kind, number: b.entity_number } : null, ...extra,
     };
   };
   async function itemOut(it, now = new Date()) {
@@ -845,6 +848,9 @@ export default async function business(app, opts) {
     const note = str(body.note, 300);
     const startAt = body.startAt ? new Date(body.startAt) : null, endAt = body.endAt ? new Date(body.endAt) : null;
     if ((startAt && isNaN(startAt)) || (endAt && isNaN(endAt))) return bad(reply, 400, "bad-date");
+    // الطلب أو الحجز المدفوع يحتاج إقرار 18+ (legal_pages.js)؛ غياب المساعد أو خطؤه لا يحجب، والمجاني مفتوح (يُفحص المبلغ داخل المعاملة)
+    let adultMissing = false;
+    try { const f = globalThis.naslifeAdultOk; adultMissing = typeof f === "function" ? !(await f(uid)) : false; } catch { adultMissing = false; }
     const id = crypto.randomUUID();
     let out;
     try {
@@ -893,6 +899,7 @@ export default async function business(app, opts) {
           if (!b.owner_id) throw fail("no-owner");
           // البيع مغلق حتى يُعتمد السجل التجاري أو وثيقة العمل الحر (قرار المالك، 21 أكتوبر 2026)؛ الأصناف المجانية تبقى قابلة للطلب
           if (verStatus(b) !== "approved") throw fail("not-verified");
+          if (adultMissing) throw fail("adult-required");
           await ledger(c, uid, "biz", -total, { ref: id, note: label, points: Math.floor(total / 1000), peerId: b.owner_id ?? null });
           // يُقيَّد المبلغ فوراً لمحفظة صاحب النشاط (كالتذاكر)، ويُخصم منه عند الاسترداد
           if (b.owner_id && b.owner_id !== uid) await ledger(c, b.owner_id, "biz_sale", total, { peerId: uid, ref: id, note: label, allowNegative: true });
@@ -905,6 +912,7 @@ export default async function business(app, opts) {
       if (err.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds");
       if (err.code === "no-owner") return bad(reply, 409, "no-owner");
       if (err.code === "not-verified") return bad(reply, 403, "not-verified");
+      if (err.code === "adult-required") return bad(reply, 403, "adult-required");
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       if (["sold-out", "unavailable"].includes(err.code)) return bad(reply, 409, err.code, { left: err.left ?? 0 });
       if (["bad-slot", "bad-date", "bad-range", "in-past", "too-many", "not-orderable"].includes(err.code)) return bad(reply, 400, err.code);

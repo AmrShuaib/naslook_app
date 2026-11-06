@@ -29,6 +29,10 @@ class ConsentSheet extends StatelessWidget {
             const Text('لمتابعة استخدام ناس لايف نحتاج موافقتك على الشروط وسياسة الخصوصية. لا تسامح مع المحتوى المسيء أو المستخدمين المسيئين، ونراجع البلاغات خلال 24 ساعة.',
                 textAlign: TextAlign.center, style: TextStyle(color: Joy.textMuted, height: 1.6)),
             const SizedBox(height: 8),
+            // «أوافق» تشمل إقرار العمر (الخادم يحفظه مع الموافقة: age13)
+            const Text('بالضغط على «أوافق» أوافق على الشروط وسياسة الخصوصية وأقر أن عمري 13 سنة فأكثر.',
+                key: Key('consent-age'), textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.w600, height: 1.5)),
+            const SizedBox(height: 8),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               TextButton(key: const Key('consent-terms'), onPressed: () => LegalLinks.open('terms'), child: const Text('شروط الاستخدام')),
               TextButton(key: const Key('consent-privacy'), onPressed: () => LegalLinks.open('privacy'), child: const Text('سياسة الخصوصية')),

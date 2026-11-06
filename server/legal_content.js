@@ -3,8 +3,11 @@
 // فيُطلب من المستخدمين الموافقة من جديد داخل التطبيق. النص يحتاج مراجعة مستشار قانوني قبل الإطلاق التجاري.
 
 export const LEGAL_VERSION = "2026-09-25";
-export const LEGAL_UPDATED_AR = "25 سبتمبر 2026";
-export const LEGAL_UPDATED_EN = "25 September 2026";
+// 6 نوفمبر 2026: تحديث إيضاحي بلا رفع LEGAL_VERSION (فلا تُطلب موافقة جديدة): لا جمع جديداً ولا استخداماً أوسع للبيانات، بل
+// تضييق (المحادثات الخاصة لا تصل أي ذكاء اصطناعي بعد إيقاف الردود الذكية) وإفصاح أدق عن معالجتين قائمتين يطلبهما صاحبهما
+// صراحة (مساعد صندوق الدعم لفريقنا، وصياغة نص الوظيفة لفريق الدائرة)، وبيانات المنشأة، ونص إقرار العمر الموجود أصلاً (13 و18).
+export const LEGAL_UPDATED_AR = "6 نوفمبر 2026";
+export const LEGAL_UPDATED_EN = "6 November 2026";
 export const COMPANY_AR = "شركة أريب الرقمية";
 // الاسم القانوني كما في السجل التجاري؛ «Areeb Digital» اسم تجاري فقط
 export const COMPANY_EN = "Areeb Alraqmiah Company (Areeb Digital)";
@@ -12,8 +15,25 @@ export const COMPANY_EN = "Areeb Alraqmiah Company (Areeb Digital)";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const mail = (e) => `<a href="mailto:${esc(e)}" dir="ltr">${esc(e)}</a>`;
 
+/// بيانات المنشأة النظامية (نظام التجارة الإلكترونية، المادة السادسة) من إعدادات المنصة: كل سطر يظهر فقط حين يُضبط.
+/// company = { cr, vat, address } نصوص مُتحقق منها في legal_pages.js (فارغة إن لم تُضبط).
+export function companyLines(company = {}) {
+  const c = company ?? {};
+  const ar = [`الاسم النظامي: ${COMPANY_AR} (<span dir="ltr">Areeb Alraqmiah Company</span>)`];
+  const en = ["Legal name: Areeb Alraqmiah Company (trading as Areeb Digital)"];
+  if (c.cr) { ar.push(`السجل التجاري رقم <span dir="ltr">${esc(c.cr)}</span>`); en.push(`Commercial registration No. ${esc(c.cr)}`); }
+  if (c.vat) { ar.push(`الرقم الضريبي <span dir="ltr">${esc(c.vat)}</span>`); en.push(`VAT No. ${esc(c.vat)}`); }
+  if (c.address) { ar.push(`العنوان الوطني: ${esc(c.address)}`); en.push(`National address: ${esc(c.address)}`); }
+  return { ar, en };
+}
+const aboutAr = (company) => `
+<h2 id="about">من نحن</h2>
+<p>ناس لايف منصة تشغّلها ${COMPANY_AR}، شركة مسجّلة في المملكة العربية السعودية.</p>
+<ul>${companyLines(company).ar.map((l) => `<li>${l}</li>`).join("")}</ul>`;
+const aboutEn = (company) => `<li><b>About us:</b> ${companyLines(company).en.join(" · ")}</li>`;
+
 /// صفحة سياسة الخصوصية.
-export function privacyBody({ supportEmail }) {
+export function privacyBody({ supportEmail, company }) {
   const m = mail(supportEmail);
   return `
 <h1>سياسة الخصوصية</h1>
@@ -49,9 +69,18 @@ export function privacyBody({ supportEmail }) {
 <li><b>ميسر</b> (بوابة دفع مرخّصة): لإتمام الدفع بالبطاقة على صفحتها المستضافة.</li>
 <li><b>مزوّد البريد الإلكتروني</b>: لإرسال رموز التأكيد والاستعادة ورسائل الخدمة.</li>
 <li><b>مزوّد الاستضافة</b>: خوادم تشغيل المنصة وقاعدة بياناتها.</li>
-<li><b>Anthropic</b>: عند تفعيل المساعد الذكي في صندوق الدعم فقط، تُرسل نصوص رسائل الدعم لاقتراح ردود يراجعها موظف قبل الإرسال.</li>
+<li><b>Anthropic</b> (مزوّد نموذج الذكاء الاصطناعي Claude): في حالتين فقط موضّحتين في قسم <a href="#ai">الذكاء الاصطناعي</a>.</li>
 <li><b>الجهات الرسمية</b>: عند طلب نظامي ملزم.</li>
 </ul>
+
+<h2 id="ai">الذكاء الاصطناعي</h2>
+<p><b>محادثاتك الخاصة لا تُرسل إلى أي ذكاء اصطناعي.</b> الردود المقترحة فوق حقل الكتابة تأتي من قواعد ثابتة تعمل على خوادمنا، ولا يقرأ رسائلك أي نموذج.</p>
+<p>نستخدم نموذج Claude من شركة Anthropic في حالتين فقط، ولا تعمل أي منهما إلا حين يطلبها موظف الدعم أو فريق الدائرة بنفسه. تعالج Anthropic النص المرسل على خوادم خارج المملكة:</p>
+<ul>
+<li><b>صندوق الدعم</b> (رسائل البريد الإلكتروني التي ترسلها إلى عناويننا، ومنها بريد الدعم): حين يكون المساعد الذكي مفعّلاً ويطلب موظف من فريقنا ملخصاً لمراسلة أو مسودة رد عليها، تُرسل نصوص رسائل تلك المراسلة ووقت كل رسالة واسم مرسلها (أو بريده إن لم يذكر اسماً)، ولا تُرسل الملاحظات الداخلية للفريق. الملخص للفريق وحده، والمسودة لا تصلك إلا بعد أن يراجعها الموظف ويعدّلها إن لزم ثم يرسلها بنفسه.</li>
+<li><b>صياغة عرض وظيفي</b>: حين يكون المساعد الذكي مفعّلاً ويضغط فريق دائرة «اكتب لي العرض» تُرسل بيانات العرض التي كتبها فقط: اسم الدائرة وفئتها، المسمّى الوظيفي، القسم، نوع الدوام، المدينة، النقاط التي كتبها، ونطاق الراتب إن حدّده. لا تُحفظ المسودة حتى يراجعها الفريق ويحفظها بنفسه. لا تُرسل أي بيانات عن المرشحين ولا ملفات التوظيف.</li>
+</ul>
+<p>إن أضفنا مستقبلاً اقتراحات ذكية في المحادثات فلن تعمل إلا بعد موافقتك الصريحة، ونحدّث هذه السياسة قبلها.</p>
 
 <h2>الاحتفاظ بالبيانات</h2>
 <ul>
@@ -71,10 +100,12 @@ export function privacyBody({ supportEmail }) {
 <p>نستخدم اتصالاً مشفّراً (HTTPS)، ونحفظ كلمات السر وعبارات الاسترداد مشفّرة، ونقصر الوصول إلى البيانات على من يحتاجه من فريقنا.</p>
 
 <h2>الأعمار</h2>
-<p>ناس لايف لمن أعمارهم 13 عاماً فأكثر. المحفظة والسوق والمدفوعات للبالغين 18 عاماً فأكثر.</p>
+<p>ناس لايف لمن أعمارهم 13 عاماً فأكثر، ونطلب منك الإقرار بذلك عند التسجيل. شحن المحفظة والشراء والبيع بمقابل للبالغين 18 عاماً فأكثر، ونطلب منك الإقرار بذلك مرة واحدة قبل أول عملية مالية. نحفظ تاريخ الإقرار مع حسابك.</p>
 
 <h2>تعديل السياسة</h2>
 <p>ننشر أي تعديل على هذه الصفحة مع تاريخه، ونطلب موافقتك داخل التطبيق إن كان التعديل جوهرياً.</p>
+
+${aboutAr(company)}
 
 <h2>التواصل</h2>
 <p>${COMPANY_AR} · البريد: ${m}</p>
@@ -91,17 +122,19 @@ export function privacyBody({ supportEmail }) {
 <li><b>Content and chats:</b> posts, photos, videos, audio, comments, reviews, listings and messages, shown where you choose to publish them; messages go only to their participants.</li>
 <li><b>Transactions:</b> in-app wallet balance, orders, bookings, tickets and top-ups. Card payments happen on the hosted page of Moyasar, a licensed payment gateway; we never receive card data.</li>
 <li><b>Usage and technical data:</b> views, clicks and likes shown as statistics to content owners; IP address and device type in server logs for security.</li>
-<li><b>Processors:</b> Moyasar (payments), our email provider, our hosting provider, and Anthropic only when the AI assistant is enabled in the support inbox (support messages, reviewed by staff).</li>
+<li><b>Processors:</b> Moyasar (payments), our email provider and our hosting provider.</li>
+<li><b>AI:</b> your private chats are never sent to any AI; suggested replies in chat come from fixed rules on our servers. We use Anthropic's Claude, processed outside Saudi Arabia, in two cases only, each run only when a support agent or a circle's team asks for it: (1) in the support inbox (emails you send to our addresses, including support), when the assistant is enabled and an agent asks for a summary or a draft reply, the messages of that thread are sent with their times and the sender's name (or email address when no name is given), never the team's internal notes, and an agent reviews (and edits where needed) every draft and sends it personally; (2) when the assistant is enabled and a circle's team taps "Write the job offer for me", only the job details they typed are sent (circle name and category, title, department, job type, city, their bullet points and salary range); no candidate data is sent. Any future AI feature in chat will require your explicit opt-in first.</li>
 <li><b>Retention:</b> while your account exists. On deletion we remove your email, profile, photo and push subscriptions immediately and hide your content, which is erased within 30 days. Financial records are kept as required by law under an anonymous identifier. Messages already delivered stay with their recipients and show "Deleted user".</li>
 <li><b>Delete your account</b> in the app: My Space → Account → Delete account. If you cannot sign in, email us from your account address.</li>
-<li><b>Ages:</b> 13 and over; wallet, marketplace and payments are for users 18 and over.</li>
+<li><b>Ages:</b> 13 and over, declared at sign-up; wallet top-ups, buying and selling for money are for users 18 and over, declared once before the first financial action.</li>
+${aboutEn(company)}
 <li><b>Contact:</b> ${m}</li>
 </ul>
 </section>`;
 }
 
 /// صفحة شروط الاستخدام (فيها بند عدم التسامح مع المحتوى المسيء الذي تشترطه متاجر التطبيقات).
-export function termsBody({ supportEmail }) {
+export function termsBody({ supportEmail, company }) {
   const m = mail(supportEmail);
   return `
 <h1>شروط الاستخدام</h1>
@@ -112,7 +145,7 @@ export function termsBody({ supportEmail }) {
 <ul>
 <li>أنت مسؤول عن سرية كلمة السر وعن كل ما يتم من حسابك.</li>
 <li>تلتزم بتقديم بيانات صحيحة وعدم انتحال شخصية أحد أو جهة.</li>
-<li>العمر الأدنى 13 عاماً، و18 عاماً للمحفظة والسوق والمدفوعات.</li>
+<li>العمر الأدنى 13 عاماً وتقرّ بذلك عند التسجيل. شحن المحفظة والشراء والبيع بمقابل لمن عمره 18 عاماً فأكثر، وتقرّ بذلك مرة واحدة قبل أول عملية مالية. الإقرار غير الصحيح مخالفة لهذه الشروط تجيز لنا إيقاف الحساب.</li>
 </ul>
 
 <h2 id="community">2. قواعد المجتمع</h2>
@@ -165,6 +198,7 @@ export function termsBody({ supportEmail }) {
 
 <h2>10. التعديل والتواصل</h2>
 <p>قد نعدّل الشروط وننشر التعديل هنا مع تاريخه، ونطلب موافقتك داخل التطبيق عند التعديل الجوهري. للتواصل: ${m}</p>
+${aboutAr(company)}
 
 <section id="en" lang="en" dir="ltr">
 <h1>Terms of Use</h1>
@@ -178,14 +212,16 @@ export function termsBody({ supportEmail }) {
 <li><b>Marketplace:</b> Naslife is a venue. Sellers are responsible for their listings. Physical goods and services are paid from the in-app wallet, which is topped up by card through Moyasar, a licensed payment gateway. Disputes can be opened from the order page.</li>
 <li><b>Wallet:</b> an in-app balance for Naslife services, not a bank account or deposit. Cancelled or refunded orders return to the wallet; any remaining balance on account deletion is refunded to the original payment method within 30 days.</li>
 <li><b>Account deletion:</b> My Space → Account → Delete account, at any time.</li>
+<li><b>Ages:</b> 13 and over, declared at sign-up; 18 and over for wallet top-ups, buying and selling for money, declared once before the first financial action. A false declaration breaches these terms.</li>
 <li><b>Governing law:</b> the laws of the Kingdom of Saudi Arabia.</li>
+${aboutEn(company)}
 <li><b>Contact:</b> ${m}</li>
 </ul>
 </section>`;
 }
 
 /// صفحة الدعم والتواصل (رابط الدعم المطلوب في متجر التطبيقات).
-export function supportBody({ supportEmail, supportHandle }) {
+export function supportBody({ supportEmail, supportHandle, company }) {
   const m = mail(supportEmail);
   const chat = supportHandle ? `<li>داخل التطبيق: راسل حساب الدعم <b dir="ltr">@${esc(supportHandle)}</b> من المحادثات.</li>` : "";
   return `
@@ -198,6 +234,7 @@ export function supportBody({ supportEmail, supportHandle }) {
 ${chat}
 <li>نرد على البلاغات خلال 24 ساعة، وعلى بقية الطلبات خلال يومي عمل.</li>
 </ul>
+${aboutAr(company)}
 
 <h2 id="report">الإبلاغ عن محتوى أو مستخدم</h2>
 <ol>
@@ -231,6 +268,7 @@ ${chat}
 <li><b>Block a user:</b> from their profile or the chat menu, choose "Block".</li>
 <li><b>Delete your account:</b> My Space → Account → Delete account, then type the confirmation word and your password. If you cannot sign in, email us from your account address.</li>
 <li><b>Payments:</b> card payments are processed by Moyasar. Open a dispute from the order page or email us with the order number.</li>
+${aboutEn(company)}
 <li><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Use</a></li>
 </ul>
 </section>`;

@@ -87,7 +87,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         final ok = await notifier.login(_handle.text.trim().toLowerCase(), pin);
         if (!ok) _showStateError();
       case _Mode.register:
-        if (!_terms) { _toast('يلزم الموافقة على شروط الاستخدام وسياسة الخصوصية', error: true); return; }
+        if (!_terms) { _toast('يلزم الموافقة على شروط الاستخدام وسياسة الخصوصية والإقرار بأن عمرك 13 سنة فأكثر', error: true); return; }
         final ok = await notifier.register(_nickname.text.trim().toLowerCase(), pin, email: _email.text.trim().toLowerCase(), acceptTerms: true);
         if (!ok) _showStateError();
       case _Mode.forgot:
@@ -269,6 +269,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 _link('شروط الاستخدام', 'terms', const Key('reg-terms-link')),
                 const Text(' و', style: TextStyle(height: 1.5)),
                 _link('سياسة الخصوصية', 'privacy', const Key('reg-privacy-link')),
+                // إقرار العمر ضمن الموافقة نفسها (قرار المالك: إقرار لا تاريخ ميلاد)؛ الخادم يحفظه مع الموافقة (age13)
+                const Text('، وأقر أن عمري 13 سنة فأكثر', key: Key('reg-age'), style: TextStyle(height: 1.5)),
                 const Text('، وأتعهد بعدم نشر أي محتوى مسيء. لا تسامح مع المحتوى المسيء أو المستخدمين المسيئين.', style: TextStyle(height: 1.5, fontSize: 12.5, color: Colors.black54)),
               ]),
             ),

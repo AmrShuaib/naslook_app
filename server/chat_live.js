@@ -4,8 +4,9 @@
 // وتتوقف تلقائياً عند انقضاء المدة أو بإيقاف صاحبها (DELETE)؛ جلسة واحدة نشطة لكل زوج (من → إلى): بدء جديدة يوقف السابقة.
 // وPOST /chat/live/stop-all يوقف كل مشاركات المتصل (يستدعيه التطبيق قبل تسجيل الخروج).
 // الموقع لا يبقى بعد الانتهاء: الإيقاف والكنس يمسحان الإحداثيات من الصف، وGET لا يعيد موقعاً لجلسة غير نشطة.
-// الردود المقترحة: POST /chat/suggest يعيد ثلاث جمل عربية قصيرة عبر مفتاح Anthropic المخزَّن في صندوق البريد
-// (globalThis.naslifeAskClaude من inbox.js) أو قواعد محلية حين لا مفتاح أو عند أي خطأ؛ لا تُرسل معرّفات ولا أسماء إلى النموذج.
+// الردود المقترحة: POST /chat/suggest يعيد ثلاث جمل عربية قصيرة من قواعد محلية فقط. الذكاء الاصطناعي موقوف (قرار المالك،
+// 5 نوفمبر 2026): نص المحادثات الخاصة لا يُرسل إلى أي نموذج ولو ضُبط مفتاح صندوق البريد. إعادته تحتاج أولاً موافقة صريحة
+// من كل مستخدم (اختيارية ومطفأة افتراضياً)، وتحديث سياسة الخصوصية، وتحديث ملصق الخصوصية في App Store Connect.
 // التسجيل في register.txt:
 //   await app.register((await import("./chat_live.js")).default, { pool, auth });
 import crypto from "node:crypto";
@@ -25,7 +26,7 @@ export const SUGGEST_TEXT_MAX = 300;
 const clamp = (s, n) => { const a = Array.from(String(s ?? "")); return (a.length > n ? a.slice(0, n) : a).join(""); };
 const finite = (v) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "")) && Number.isFinite(Number(v)) ? Number(v) : null;
 
-// ---- محرّك القواعد: يُستعمل حين لا مفتاح أو عند فشل النموذج؛ يُختبر وحده
+// ---- محرّك القواعد: المصدر الوحيد للاقتراحات الآن؛ يُختبر وحده
 // توحيد الرسم: بلا تشكيل ولا تطويل، الهمزات ألفاً، التاء المربوطة هاءً، الألف المقصورة ياءً (تجي بكرة؟ = بكره)
 const strip = (s) => String(s ?? "").replace(/[\u064B-\u0652\u0640]/g, "").replace(/[إأآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي").toLowerCase();
 const RULES = [
@@ -49,7 +50,8 @@ export function rulesFor(messages) {
   for (const r of RULES) if (r.re.test(t)) return [...r.out];
   return [...DEFAULT_REPLIES];
 }
-/// ينظّف ما أعاده النموذج: مصفوفة JSON من نصوص قصيرة، بلا تكرار، ثلاثة على الأكثر؛ null إن لم يُفهم
+/// ينظّف ما أعاده نموذج: مصفوفة JSON من نصوص قصيرة، بلا تكرار، ثلاثة على الأكثر؛ null إن لم يُفهم.
+/// لا يُستدعى الآن (الاقتراحات قواعد فقط)؛ يبقى مختبراً ليوم تعود فيه الاقتراحات الذكية بعد الموافقة.
 export function parseSuggestions(text) {
   const s = String(text ?? ""); const a = s.indexOf("["), b = s.lastIndexOf("]");
   if (a < 0 || b <= a) return null;
@@ -121,7 +123,8 @@ async function setup(app, opts) {
   app.addHook("onClose", async () => clearInterval(timer));
   globalThis.naslifeChatLive = { sweep };
 
-  app.get("/chat/live/status", async () => ({ ok: true, minutes: LIVE_MINUTES, pushMinMs: PUSH_MIN_MS, suggest: { ai: typeof globalThis.naslifeAskClaude === "function", perMin: SUGGEST_PER_MIN } }));
+  // ai:false دائماً: الاقتراحات قواعد محلية ولو كان مفتاح الذكاء مضبوطاً (paused يشرح السبب)
+  app.get("/chat/live/status", async () => ({ ok: true, minutes: LIVE_MINUTES, pushMinMs: PUSH_MIN_MS, suggest: { ai: false, paused: "consent-required", perMin: SUGGEST_PER_MIN } }));
 
   app.post("/chat/live", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -194,8 +197,8 @@ async function setup(app, opts) {
     if (list.length >= SUGGEST_PER_MIN) { rate.set(uid, list); return false; }
     list.push(now); rate.set(uid, list); return true;
   };
-  const SYSTEM = "أنت تقترح ردوداً جاهزة لمستخدم في تطبيق دردشة سعودي (ناس لايف). أعد مصفوفة JSON فقط فيها ثلاث جمل عربية قصيرة (أربعون حرفاً على الأكثر لكل جملة) تصلح رداً تالياً من «أنا» على آخر رسالة من الطرف الآخر، بلهجة ودّية طبيعية ومتنوّعة (موافقة، سؤال، تأجيل). لا شرح ولا ترقيم ولا أي نص خارج المصفوفة.";
-  const transcript = (turns) => turns.map((m) => `${m.mine ? "أنا" : "الطرف الآخر"}: ${m.text}`).join("\n");
+  // قواعد فقط: لا نداء لأي نموذج ذكاء اصطناعي (globalThis.naslifeAskClaude لا يُلمس هنا أبداً). إعادة الاقتراحات الذكية تحتاج
+  // موافقة صريحة لكل مستخدم مطفأة افتراضياً، وتحديث سياسة الخصوصية (القسم «الذكاء الاصطناعي» #ai في legal_content.js)، وتحديث ملصق أبل للخصوصية
   app.post("/chat/suggest", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!allow(uid)) return bad(reply, 429, "rate-limit", { perMin: SUGGEST_PER_MIN });
@@ -205,19 +208,6 @@ async function setup(app, opts) {
     const turns = (Array.isArray(b.messages) ? b.messages : []).slice(-SUGGEST_TURNS)
       .map((m) => ({ mine: m?.mine === true, text: clamp(String(m?.text ?? "").replace(/\s+/g, " ").trim(), SUGGEST_TEXT_MAX) }))
       .filter((m) => m.text);
-    const rules = rulesFor(turns);
-    const ask = globalThis.naslifeAskClaude;
-    if (typeof ask !== "function" || !turns.length) return { suggestions: rules, source: "rules" };
-    try {
-      // لا معرّفات ولا أسماء: النص فقط بصفة «أنا» و«الطرف الآخر»
-      const text = await ask({ system: SYSTEM, user: transcript(turns), maxTokens: 200, effort: "low" });
-      const got = parseSuggestions(text);
-      if (!got) return { suggestions: rules, source: "rules" };
-      for (const r of rules) { if (got.length === 3) break; if (!got.includes(r)) got.push(r); }
-      return { suggestions: got.slice(0, 3), source: "ai" };
-    } catch (e) {
-      app.log?.warn?.({ err: e?.message }, "chat_live: suggest fell back to rules");
-      return { suggestions: rules, source: "rules" };
-    }
+    return { suggestions: rulesFor(turns), source: "rules" };
   });
 }

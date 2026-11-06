@@ -36,6 +36,8 @@ app.register((await import('../safety.js')).default, { pool, auth });
 app.register((await import('../admin.js')).default, { pool, auth, webappDir: dir + 'webapp', opsDir: dir + 'ops' });
 app.register((await import('../legal_pages.js')).default, { pool, auth });
 await app.ready(); await new Promise((r) => setTimeout(r, 500));
+// إقرار 18+ (legal_pages.js مسجّلة هنا): عروض السوق المسعّرة أدناه تحتاجه منذ 5 نوفمبر 2026
+await pool.query("INSERT INTO legal_consents(user_id, doc, version, source) SELECT u, 'adult18', '1', 'app' FROM unnest($1::text[]) u ON CONFLICT DO NOTHING", [['SA0000001', 'SA0000002', 'SA0000003', 'SA0000004']]);
 const call = async (method, url, { body = {}, user = 'SA0000001', expect } = {}) => {
   const r = await app.inject({ method, url, headers: { ...(user ? { 'x-user': user } : {}), 'content-type': 'application/json', host: 'naslife.app' }, payload: method === 'GET' ? undefined : JSON.stringify(body) });
   let j; try { j = r.json(); } catch { j = r.body; }

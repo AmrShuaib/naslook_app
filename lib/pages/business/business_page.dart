@@ -14,6 +14,7 @@ import '../../core/location.dart';
 import '../../core/nav_provider.dart';
 import '../../core/platform.dart';
 import '../../core/require_account.dart';
+import '../../core/require_adult.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
@@ -402,6 +403,8 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
   Future<void> _order(Biz b, BizItem it, {required int qty, DateTime? startAt, DateTime? endAt, int? guests}) async {
     // مواعيد العيادة والعروض تطلب مباشرة، لكن قد تطلب الموقع قبل الطلب: لا نطلبه من زائر
     if (!requireAccount(context)) return;
+    // الطلب أو الحجز المدفوع يحتاج إقرار 18+ مرة واحدة؛ الصنف المجاني لا
+    if (it.price > 0 && (!await requireAdult(context, ref) || !mounted)) return;
     try {
       // موقع الجهاز يُرسل مع الطلب فقط حين تكون للدائرة عروض، ليُفتح عرض «لمن هنا الآن» تلقائياً؛ مهلة قصيرة ثم آخر موقع معروف
       final loc = b.offers > 0 ? await DeviceLocation.current(precise: true, timeout: const Duration(seconds: 3)) : null;
@@ -710,6 +713,8 @@ class _InfoCard extends StatelessWidget {
           if (biz.hours.isNotEmpty) _row(Icons.schedule_outlined, biz.hours),
           if (biz.phone != null && biz.phone!.isNotEmpty) _row(Icons.call_outlined, biz.phone!, onTap: () => launchUrl(Uri(scheme: 'tel', path: biz.phone))),
           if (biz.website != null && biz.website!.isNotEmpty) _row(Icons.language_rounded, biz.website!.replaceFirst(RegExp(r'^https?://(www\.)?'), ''), onTap: () => launchUrl(Uri.parse(biz.website!), mode: LaunchMode.externalApplication)),
+          // إفصاح نظامي عن هوية التاجر بعد اعتماد التوثيق (نظام التجارة الإلكترونية)
+          if (biz.entity != null) KeyedSubtree(key: const Key('info-entity'), child: _row(Icons.verified_outlined, biz.entity!.label)),
         ]),
       );
 

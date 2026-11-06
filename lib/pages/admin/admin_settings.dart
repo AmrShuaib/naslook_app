@@ -26,6 +26,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
   final maxTopup = TextEditingController(), minTopup = TextEditingController(), maxCardTopup = TextEditingController(), announcement = TextEditingController(), support = TextEditingController(), supportEmail = TextEditingController(), bannedWords = TextEditingController(), threshold = TextEditingController();
   final commission = TextEditingController(), spotPrice = TextEditingController(), spotMaxDays = TextEditingController(), spotMaxActive = TextEditingController();
   final jobsFree = TextEditingController(), jobsCap = TextEditingController();
+  final companyCr = TextEditingController(), companyVat = TextEditingController(), companyAddress = TextEditingController();
   bool? testTopup, maintenance, reviewNew, blockContacts, transfers, chatPayments, bannedDefault, requireVerify, jobsEnabled, jobsApproval;
   double? jobsScore;
   bool loaded = false, busy = false;
@@ -39,6 +40,9 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
     announcement.text = s.announcement;
     support.text = s.supportHandle;
     supportEmail.text = s.supportEmail;
+    companyCr.text = s.companyCr;
+    companyVat.text = s.companyVat;
+    companyAddress.text = s.companyAddress;
     transfers = s.transfersEnabled;
     chatPayments = s.chatPaymentsEnabled;
     bannedDefault = s.bannedWordsDefault;
@@ -106,6 +110,17 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
             TextField(key: const Key('set-support-email'), controller: supportEmail, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'بريد الدعم', helperText: 'يظهر في «تواصل معنا» داخل التطبيق وفي صفحات الدعم والخصوصية والشروط على naslife.app (مثل support@areebd.sa)', helperMaxLines: 3)),
             SwitchListTile(contentPadding: EdgeInsets.zero, value: maintenance ?? s.maintenance, onChanged: (v) => setState(() => maintenance = v), title: const Text('وضع الصيانة'), subtitle: const Text('يعرض تنبيه صيانة للمستخدمين دون إيقاف الخدمة')),
           ])),
+          // نظام التجارة الإلكترونية يلزم بإظهار اسم المنشأة ورقم سجلها وعنوانها؛ الفارغ يُخفى، والصيغة يتحقق منها الخادم أيضاً
+          const SectionTitle('بيانات المنشأة'),
+          JoyCard(child: Column(children: [
+            const Text('تظهر للعامة في تذييل صفحات الخصوصية والشروط والدعم وقسم «من نحن»، وفي «عن ناس لايف» داخل التطبيق. اتركها فارغة لإخفائها.', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.5)),
+            const SizedBox(height: 8),
+            TextField(key: const Key('set-company-cr'), controller: companyCr, keyboardType: TextInputType.number, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'رقم السجل التجاري أو الرقم الموحّد', helperText: '10 أرقام')),
+            const SizedBox(height: 8),
+            TextField(key: const Key('set-company-vat'), controller: companyVat, keyboardType: TextInputType.number, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'الرقم الضريبي (إن وُجد)', helperText: '15 رقماً يبدأ بـ3 وينتهي بـ3')),
+            const SizedBox(height: 8),
+            TextField(key: const Key('set-company-address'), controller: companyAddress, maxLength: 200, decoration: const InputDecoration(labelText: 'العنوان الوطني', helperText: 'مثل: الرمز المختصر، رقم المبنى، الشارع، الحي، المدينة، الرمز البريدي', helperMaxLines: 2)),
+          ])),
           const SectionTitle('الأمان والإشراف'),
           JoyCard(child: Column(children: [
             TextField(controller: bannedWords, maxLines: 4, decoration: const InputDecoration(labelText: 'كلمات محظورة (كلمة في كل سطر أو مفصولة بفواصل)', helperText: 'تُرفض المنشورات والعروض والتقييمات التي تحتويها، ويُنبَّه المرسل قبل إرسال رسالة تحتويها')),
@@ -161,6 +176,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
                 // فلا يُعطَّل حفظ بقية الإعدادات ما دام المفتاح على حاله
                 await ref.read(apiClientProvider).adminSaveSettings({if (testTopup != null && testTopup != s.testTopup) 'testTopup': testTopup, 'maxTopup': parseSar(maxTopup.text), 'minTopup': parseSar(minTopup.text), 'maxCardTopup': parseSar(maxCardTopup.text), 'announcement': announcement.text.trim(), 'supportHandle': support.text.trim(), 'maintenance': maintenance ?? s.maintenance, 'marketCommissionPct': double.tryParse(commission.text.trim()) ?? s.marketCommissionPct, 'spotlightPricePerDay': parseSar(spotPrice.text), 'spotlightMaxDays': int.tryParse(spotMaxDays.text.trim()) ?? s.spotlightMaxDays, 'spotlightMaxActive': int.tryParse(spotMaxActive.text.trim()) ?? s.spotlightMaxActive, 'marketReviewNewAccounts': reviewNew ?? s.marketReviewNewAccounts, 'marketBlockContacts': blockContacts ?? s.marketBlockContacts, 'bannedWords': bannedWords.text.trim(), 'reportThreshold': int.tryParse(threshold.text.trim()) ?? s.reportThreshold,
                   'supportEmail': supportEmail.text.trim(), 'transfersEnabled': transfers ?? s.transfersEnabled, 'chatPaymentsEnabled': chatPayments ?? s.chatPaymentsEnabled, 'bannedWordsDefault': bannedDefault ?? s.bannedWordsDefault, 'requireEmailVerification': requireVerify ?? s.requireEmailVerification,
+                  'companyCr': companyCr.text.trim(), 'companyVat': companyVat.text.trim(), 'companyAddress': companyAddress.text.trim(),
                   'jobsEnabled': jobsEnabled ?? s.jobsEnabled, 'jobsRequireApproval': jobsApproval ?? s.jobsRequireApproval, 'jobsFreeActive': int.tryParse(jobsFree.text.trim()) ?? s.jobsFreeActive, 'jobsWeeklyCap': int.tryParse(jobsCap.text.trim()) ?? s.jobsWeeklyCap, 'jobsMinScore': _snapScore(jobsScore ?? s.jobsMinScore)});
                 loaded = false;
                 invalidateAdmin(ref);
@@ -168,7 +184,7 @@ class _AdminSettingsPageState extends ConsumerState<AdminSettingsPage> {
                 if (context.mounted) toast(context, 'حُفظت الإعدادات');
               } catch (e) {
                 final err = '${e is ApiException ? e.body : e}';
-                if (context.mounted) toast(context, err.contains('bad-email') ? 'بريد الدعم غير صحيح' : err.contains('test-topup-live') ? 'لا يمكن تفعيل الشحن التجريبي ومفاتيح ميسر الحية مضبوطة' : err.contains('bad-topup-limits') ? 'أدنى شحن بالبطاقة يجب ألا يتجاوز أقصاه' : adminErrText(e), error: true);
+                if (context.mounted) toast(context, err.contains('bad-email') ? 'بريد الدعم غير صحيح' : err.contains('test-topup-live') ? 'لا يمكن تفعيل الشحن التجريبي ومفاتيح ميسر الحية مضبوطة' : err.contains('bad-topup-limits') ? 'أدنى شحن بالبطاقة يجب ألا يتجاوز أقصاه' : err.contains('bad-cr') ? 'رقم السجل التجاري 10 أرقام' : err.contains('bad-vat') ? 'الرقم الضريبي 15 رقماً يبدأ بـ3 وينتهي بـ3' : err.contains('bad-address') ? 'العنوان الوطني سطر واحد حتى 200 حرف' : adminErrText(e), error: true);
               } finally {
                 if (mounted) setState(() => busy = false);
               }

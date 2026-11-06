@@ -10,6 +10,7 @@ import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../core/require_account.dart';
+import '../../core/require_adult.dart';
 import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../state/safety_providers.dart';
@@ -150,6 +151,8 @@ class _ListingPageState extends ConsumerState<ListingPage> {
   Future<void> _order(Listing x) async {
     // الزائر يُدعى للدخول قبل ورقة الملاحظة، لا بعد كتابتها
     if (!requireAccount(context)) return;
+    // الشراء المدفوع يحتاج إقرار 18+ مرة واحدة؛ الطلب المجاني لا
+    if (_subtotal(x) > 0 && (!await requireAdult(context, ref) || !mounted)) return;
     final note = await askText(context, title: 'ملاحظة للبائع', hint: 'مثال: الاستلام بعد المغرب', confirm: 'تأكيد الطلب', maxLines: 2);
     if (note == null || !mounted) return;
     try {

@@ -13,6 +13,7 @@ import '../core/notify/message_sound.dart';
 import '../api/notify_api.dart';
 import '../core/notify_open.dart';
 import '../core/require_account.dart';
+import '../core/require_adult.dart' show AdultGate;
 import '../core/share/legal_links.dart';
 import '../core/share/share_links.dart';
 import '../pages/business/business_list.dart';
@@ -142,6 +143,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingLink());
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAskConsent());
+    // رفض 403 adult-required من أي شاشة يعرض ورقة إقرار 18+ نفسها
+    AdultGate.install(context, ref);
     // جرس الرسائل: يُفتح سياق الصوت عند أول لمسة، ويُقرع عند وصول رسالة عبر الاتصال المباشر
     MessageSound.prepare();
     _life; // يُنشأ المستمع مع الشاشة
@@ -170,6 +173,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     _socketSub?.cancel();
     _pushOpenSub?.cancel();
     _life.dispose();
+    AdultGate.uninstall();
     super.dispose();
   }
 

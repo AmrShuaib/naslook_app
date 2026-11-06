@@ -174,6 +174,10 @@ export default async function hotels(app, opts) {
     const offerId = str(b.offerId, 2000); if (!offerId) return bad(reply, 400, "bad-offer");
     const guest = { firstName: str(g.firstName, 60), lastName: str(g.lastName, 60), phone: str(g.phone, 30).replace(/[^\d+]/g, ""), email: str(g.email, 120).toLowerCase() };
     if (!guest.firstName || !guest.lastName || !/^\S+@\S+\.\S+$/.test(guest.email) || guest.phone.replace(/\D/g, "").length < 8) return bad(reply, 400, "bad-guest");
+    // حجز الفندق شراء: إقرار 18+ أولاً (legal_pages.js) قبل أي نداء للمزوّد؛ غياب المساعد أو خطؤه لا يحجب
+    let adultMissing = false;
+    try { const f = globalThis.naslifeAdultOk; adultMissing = typeof f === "function" ? !(await f(uid)) : false; } catch { adultMissing = false; }
+    if (adultMissing) return bad(reply, 403, "adult-required");
     let pre;
     try { pre = await api("POST", `${BOOK_BASE}/rates/prebook`, { body: { offerId, usePaymentSdk: false } }); } catch (e) { return providerFail(reply, e); }
     if (!pre.ok || !pre.json?.data?.prebookId) { if (isNoAvailability(pre) || pre.status === 400 || pre.status === 404) return bad(reply, 409, "offer-unavailable", { message: errText(pre) }); return bad(reply, 502, "provider-error", { message: errText(pre) }); }

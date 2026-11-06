@@ -411,6 +411,9 @@ void main() {
     expect(find.byKey(const Key('suggestion-chips')), findsOneWidget);
     expect(find.text('كم السعر؟'), findsOneWidget);
     expect(find.text('فيه خصم؟'), findsOneWidget);
+    // الاقتراحات قواعد ثابتة (الذكاء موقوف حتى موافقة كل مستخدم): أيقونة «رد سريع» لا شرارة الذكاء
+    expect(find.byIcon(Icons.quickreply_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.auto_awesome_rounded), findsNothing);
     await tester.tap(find.byKey(const Key('suggest-chip-0')));
     await tester.pump();
     expect(picked, 'كم السعر؟');

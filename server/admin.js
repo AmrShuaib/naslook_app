@@ -9,6 +9,11 @@ import fs from "node:fs";
 import path from "node:path";
 // بريد الدعم: نفس التعبير في legal_pages.js حرفياً، فكل عنوان تقبله الإعدادات هو ما يظهر في /support (لا يُستبدل بالافتراضي بصمت)
 export const SUPPORT_EMAIL_RE = /^[^\s@<>"']+@[^\s@<>"']+\.[a-z]{2,}$/i;
+// بيانات المنشأة: نفس تعبيري legal_pages.js حرفياً (سجل تجاري أو رقم وطني موحّد 10 أرقام؛ رقم ضريبي 15 رقماً يبدأ وينتهي بـ3)
+export const COMPANY_CR_RE = /^\d{10}$/;
+export const COMPANY_VAT_RE = /^3\d{13}3$/;
+// الأرقام العربية الهندية والفارسية إلى لاتينية، وحذف المسافات والشرطات (يكتبها المدير كما في الشهادة)
+const latinDigits = (v) => String(v ?? "").replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x6f0)).replace(/[\s\-]/g, "");
 const LAYOUT_LIST_RE = /^[a-z0-9_,\s-]*$/; // قوائم معرّفات تخصيص الرئيسية (homeLayoutOrder/homeLayoutPinned)
 
 const ID_RE = /^[A-Z]{2}\d{7}$/;
@@ -160,7 +165,9 @@ export default async function admin(app, opts) {
     // التوظيف (jobs.js): التفعيل، حد العروض النشطة للباقة المجانية، حد البطاقات الأسبوعي للمستخدم، أدنى درجة مطابقة، موافقة الإدارة قبل النشر
     jobsEnabled: true, jobsFreeActive: 3, jobsWeeklyCap: 5, jobsMinScore: 0.45, jobsRequireApproval: false,
     // تخصيص الرئيسية (layout.js): الترتيب الافتراضي للكتل (فارغ = المدمج) والكتل المثبّتة التي لا تُخفى، معرّفات مفصولة بفواصل
-    homeLayoutOrder: "", homeLayoutPinned: "announce" };
+    homeLayoutOrder: "", homeLayoutPinned: "announce",
+    // بيانات المنشأة النظامية (نظام التجارة الإلكترونية): تظهر للعامة في الصفحات القانونية و«عن ناس لايف» متى ضُبطت
+    companyCr: "", companyVat: "", companyAddress: "" };
   async function loadSettings() {
     const rows = (await pool.query("SELECT key, value FROM platform_settings")).rows;
     const s = { ...DEFAULT_SETTINGS };
@@ -180,7 +187,9 @@ export default async function admin(app, opts) {
     const s = globalThis.naslifeSettings ?? DEFAULT_SETTINGS;
     // مفتاحا المال يُقرآن «=== true»: أي قيمة ناقصة أو غير منطقية تعني مطفأ (الافتراضي التنظيمي)
     return { announcement: s.announcement ?? "", maintenance: s.maintenance === true, supportHandle: s.supportHandle ?? "", supportEmail: s.supportEmail ?? "", testTopup: s.testTopup === true,
-      transfersEnabled: s.transfersEnabled === true, chatPaymentsEnabled: s.chatPaymentsEnabled === true, requireEmailVerification: s.requireEmailVerification !== false, jobsEnabled: s.jobsEnabled !== false };
+      transfersEnabled: s.transfersEnabled === true, chatPaymentsEnabled: s.chatPaymentsEnabled === true, requireEmailVerification: s.requireEmailVerification !== false, jobsEnabled: s.jobsEnabled !== false,
+      // بيانات المنشأة عامة بطبيعتها (يلزم إظهارها نظاماً)؛ غير المطابق للصيغة يُعاد فارغاً
+      companyCr: COMPANY_CR_RE.test(String(s.companyCr ?? "")) ? String(s.companyCr) : "", companyVat: COMPANY_VAT_RE.test(String(s.companyVat ?? "")) ? String(s.companyVat) : "", companyAddress: str(s.companyAddress, 200) };
   });
 
   const audit = async (adminId, action, target, details = {}) => { try { await pool.query("INSERT INTO admin_audit(id,admin_id,action,target,details) VALUES($1,$2,$3,$4,$5)", [crypto.randomUUID(), adminId, action, target, JSON.stringify(details)]); } catch { /* ignore */ } };
@@ -785,6 +794,16 @@ export default async function admin(app, opts) {
     if (b.jobsRequireApproval !== undefined) patch.jobsRequireApproval = b.jobsRequireApproval === true;
     // تخصيص الرئيسية: قوائم معرّفات مفصولة بفواصل؛ الأحرف خارج النمط تُرفض حتى لا يُحقن شيء في الافتراضيات
     for (const k of ["homeLayoutOrder", "homeLayoutPinned"]) if (b[k] !== undefined) { const v = str(b[k], 400); if (!LAYOUT_LIST_RE.test(v)) return bad(reply, 400, "bad-layout"); patch[k] = v; }
+    // بيانات المنشأة: الفارغ مسموح (يخفيها)، وغير ذلك بالصيغة النظامية؛ العنوان نص سطر واحد حتى 200 حرف بلا رموز تحكم
+    if (b.companyCr !== undefined) { const v = latinDigits(str(b.companyCr, 40)); if (v && !COMPANY_CR_RE.test(v)) return bad(reply, 400, "bad-cr"); patch.companyCr = v; }
+    if (b.companyVat !== undefined) { const v = latinDigits(str(b.companyVat, 40)); if (v && !COMPANY_VAT_RE.test(v)) return bad(reply, 400, "bad-vat"); patch.companyVat = v; }
+    if (b.companyAddress !== undefined) {
+      const raw = String(b.companyAddress ?? "");
+      // eslint-disable-next-line no-control-regex
+      if (raw.length > 400 || /[\u0000-\u0008\u000b-\u001f\u007f]/.test(raw)) return bad(reply, 400, "bad-address");
+      const v = raw.replace(/\s+/g, " ").trim(); if (v.length > 200) return bad(reply, 400, "bad-address");
+      patch.companyAddress = v;
+    }
     const s = await saveSettings(patch);
     await audit(uid, "settings.update", "platform", patch);
     return s;

@@ -78,7 +78,7 @@
 
 ## حقول المخرجات الجديدة (`bizOut`)
 
-`presence`، `serviceArea` (`{lat, lng, radiusKm, districts}` أو `null`)، `here` (`{lat, lng, until}` ما دام `until` في المستقبل وإلا `null`)، `verificationStatus`، `canSell` (= معتمدة)، `tier`، `entityKind` (للمالك والمدير ومدير النظام فقط، وإلا `null`)، `phoneVerified`. **`lat/lng` في المخرجات هما الموقع الفعلي**: موقع دبوس «هنا اليوم» ما دام قائماً، وإلا موقع الدائرة (مركز النطاق للمتنقلة). رقم الكيان ووثيقته وسبب الرفض **لا يخرجان أبداً** للعامة؛ للطاقم عبر `GET /biz/:id/verification` وللإدارة عبر قائمتها.
+`presence`، `serviceArea` (`{lat, lng, radiusKm, districts}` أو `null`)، `here` (`{lat, lng, until}` ما دام `until` في المستقبل وإلا `null`)، `verificationStatus`، `canSell` (= معتمدة)، `tier`، `entityKind` (للمالك والمدير ومدير النظام فقط، وإلا `null`)، `phoneVerified`. **`lat/lng` في المخرجات هما الموقع الفعلي**: موقع دبوس «هنا اليوم» ما دام قائماً، وإلا موقع الدائرة (مركز النطاق للمتنقلة). الوثيقة وسبب الرفض **لا يخرجان أبداً** للعامة؛ للطاقم عبر `GET /biz/:id/verification` وللإدارة عبر قائمتها. **بعد اعتماد التوثيق فقط** يُعاد للعامة (والزائر) `entity: {kind: cr|freelance, number}` إفصاحاً نظامياً عن هوية التاجر (نظام التجارة الإلكترونية، المادة السادسة؛ 5 نوفمبر 2026)، وقبل الاعتماد أو بعد الرفض `entity: null`.
 
 ## نظام الاكتمال
 
@@ -229,7 +229,7 @@ NASLIFE_TEST_DB=naslife_test_reg server/test/run.sh harness_biz_onboard.mjs
 - تبويب «الملف»: سطرا «التوثيق» و«الحضور» وزر `profile-verify`.
 
 ### الصفحة العامة `business_page.dart`
-شارات في الترويسة: `badge-verified` «موثّق»، `badge-mobile` «متنقل · يخدم ضمن N كم»، `badge-here` «هنا اليوم حتى HH:MM». للمتنقلة يحل `info-service-area` («يخدم ضمن N كم · الأحياء») محل سطر العنوان، ويظهر `info-here` أثناء الدبوس. `bizErrText('not-verified')` = «هذه الدائرة لم تُوثَّق بعد فلا يمكن الطلب منها الآن».
+شارات في الترويسة: `badge-verified` «موثّق»، `badge-mobile` «متنقل · يخدم ضمن N كم»، `badge-here` «هنا اليوم حتى HH:MM». للمتنقلة يحل `info-service-area` («يخدم ضمن N كم · الأحياء») محل سطر العنوان، ويظهر `info-here` أثناء الدبوس، و`info-entity` «سجل تجاري رقم …» أو «وثيقة عمل حر رقم …» للدائرة المعتمدة (`Biz.entity`، `BizEntity.label`). `bizErrText('not-verified')` = «هذه الدائرة لم تُوثَّق بعد فلا يمكن الطلب منها الآن».
 
 ### مداخل أخرى
 - `circles_page.dart`: لافتة `register-banner` «هل تملك نشاطاً؟ سجّل دائرتك في دقيقتين» أعلى تبويب «اكتشف»، وزر `register-mine` «سجّل نشاطك» في الحالة الفارغة لتبويب «دوائري». ومنذ 22 أكتوبر 2026 الزر العائم `circles-fab` «دائرة جديدة» يفتح أولاً ورقة «ما نوع الدائرة؟» (`new-circle-biz` إلى المعالج، `new-circle-community` إلى ورقة «دائرة مجتمع جديدة») لأن المالك أنشأ دائرة مجتمع وهو يقصد نشاطه؛ وفي مقطع «تجارية» يصبح الزر «سجّل نشاطك» إلى المعالج مباشرة.

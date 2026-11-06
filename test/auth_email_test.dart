@@ -102,7 +102,9 @@ void main() {
     await tester.tap(find.byKey(const Key('auth-submit')));
     await settle(tester);
     expect(calls, isNot(contains('POST /auth/register')));
-    expect(find.text('يلزم الموافقة على شروط الاستخدام وسياسة الخصوصية'), findsOneWidget);
+    expect(find.text('يلزم الموافقة على شروط الاستخدام وسياسة الخصوصية والإقرار بأن عمرك 13 سنة فأكثر'), findsOneWidget);
+    // إقرار العمر جزء من نص مربع الموافقة نفسه (لا تاريخ ميلاد)
+    expect(find.text('، وأقر أن عمري 13 سنة فأكثر'), findsOneWidget);
     await tester.ensureVisible(find.byKey(const Key('reg-terms')));
     await tester.tap(find.byKey(const Key('reg-terms')));
     await tester.pump();
