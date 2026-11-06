@@ -255,6 +255,11 @@ check(r.code === 403 && r.json.error === 'bad-password', 'verified email: remova
 multiSession = true;
 r = await call('POST', '/auth/login', { body: { handle: 'sara', password: 'secret' } });
 const saraOld = r.json.token;
+{ // كلمة سر خاطئة في نواة متعددة الجلسات: لا جلسة جديدة ولا تُلغى القديمة
+  const n = sessions.size;
+  r = await call('PUT', '/me/login-email', { token: saraOld, body: { email: 'Sara.New@Example.com', password: 'wrong-again' } });
+  check(r.code === 403 && r.json.error === 'bad-password' && sessions.has(saraOld) && sessions.size === n, 'wrong password: the request session stays live and no extra session is left behind');
+}
 mailsBefore = smtp.messages.length;
 r = await call('PUT', '/me/login-email', { token: saraOld, body: { email: 'Sara.New@Example.com', password: ' secret ' } });
 check(r.code === 200 && r.json.email === 'sara.new@example.com' && r.json.verified === false && r.json.codeSent === true && r.json.noticeSent === true && r.json.token && r.json.token !== saraOld, 'verified email changed with the password (trimmed like login): code to the new address, notice to the old', JSON.stringify(r.json));

@@ -559,12 +559,15 @@ class _LoginEmailTileState extends ConsumerState<_LoginEmailTile> {
               Text(_info.mailConfigured ? 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها، وتصلك عليه رموز التأكيد واستعادة كلمة السر.' : 'تدخل بهذا البريد بدل اسم المستخدم وبكلمة السر نفسها.', style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
               const SizedBox(height: 10),
               TextField(key: const Key('login-email-field'), controller: c, autofocus: true, enabled: !busy, keyboardType: TextInputType.emailAddress, textDirection: TextDirection.ltr, autocorrect: false, decoration: InputDecoration(hintText: 'name@example.com', errorText: emailError, errorMaxLines: 2)),
-              const SizedBox(height: 10),
-              TextField(
-                key: const Key('login-email-password'), controller: pw, obscureText: true, enabled: !busy, textDirection: TextDirection.ltr, autocorrect: false, enableSuggestions: false,
-                decoration: InputDecoration(labelText: 'كلمة السر الحالية', helperText: 'لحماية حسابك: لا يتغير بريد الدخول بدونها', helperMaxLines: 2, errorText: pwError, errorMaxLines: 2),
-                onSubmitted: (_) => submit(remove: false),
-              ),
+              // بريد غير مؤكد خلف البوابة: لا شيء يُحمى بعد، فلا يُعرض الحقل
+              if (saveNeedsPassword || removeNeedsPassword) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  key: const Key('login-email-password'), controller: pw, obscureText: true, enabled: !busy, textDirection: TextDirection.ltr, autocorrect: false, enableSuggestions: false,
+                  decoration: InputDecoration(labelText: 'كلمة السر الحالية', helperText: 'لحماية حسابك: لا يتغير بريد الدخول بدونها', helperMaxLines: 2, errorText: pwError, errorMaxLines: 2),
+                  onSubmitted: (_) => submit(remove: false),
+                ),
+              ],
               if (_info.verified && _info.mailConfigured) ...[
                 const SizedBox(height: 8),
                 const Text('سنرسل تنبيهاً إلى بريدك الحالي بعد التغيير.', key: Key('login-email-notice-hint'), style: TextStyle(color: Joy.textMuted, fontSize: 12)),

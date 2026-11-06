@@ -459,8 +459,9 @@ export default async function authAlias(app, opts = {}) {
   // ولا تملك كلمة السر)؛ البريد غير المؤكد لم يثبت ملكيته أحد فلا شيء يُحمى بعد، والحساب محجوب بالبوابة حتى يُؤكَّد.
   const needsProof = (row) => !(row && !row.verified && gateOn());
   const tokenOf = (req) => { const t = req.headers["x-token"]; if (t) return String(t); const a = String(req.headers.authorization ?? ""); return a.toLowerCase().startsWith("bearer ") ? a.slice(7).trim() : null; };
-  /// يتحقق من كلمة السر الحالية. النواة تصدر جلسة عند النجاح: نسلّمها للتطبيق ليعتمدها ونلغي جلسة الطلب القديمة، فيبقى
-  /// للجهاز جلسة واحدة صالحة أياً كان سلوك النواة مع الجلسات الأخرى (لو ألغينا الجديدة ونواة بجلسة واحدة لخرج المستخدم).
+  /// يتحقق من كلمة السر الحالية عبر /login في النواة. النواة تصدر جلسة عند النجاح: تُسلَّم للتطبيق ليعتمدها وتُلغى جلسة الطلب
+  /// القديمة **بعد** نجاح التغيير (withProof)، فيبقى للجهاز جلسة واحدة صالحة أياً كان سلوك النواة مع الجلسات الأخرى
+  /// (لو ألغينا الجديدة ونواة بجلسة واحدة لكل حساب لخرج المستخدم). كلمة السر الخاطئة لا تصدر جلسة ولا تلغي شيئاً.
   async function provePassword(req, uid, password) {
     if (!password) return { code: 403, error: "password-required" };
     if (limited("lemail:" + uid, 10, 15 * 60000) || limited("lemail-ip:" + ipOf(req), 30, 15 * 60000)) return { code: 429, error: "too-many-attempts" };
@@ -468,10 +469,28 @@ export default async function authAlias(app, opts = {}) {
     if (!nickname) return { code: 404, error: "not-found" };
     const l = await coreLogin(req, nickname, password);
     if (l.statusCode !== 200) return { code: 403, error: "bad-password" };
-    const fresh = parseBody(l).token ?? null;
-    const old = tokenOf(req);
-    if (fresh && old && old !== fresh) await coreLogout(old);
-    return { ok: true, token: fresh };
+    return { ok: true, token: parseBody(l).token ?? null, old: tokenOf(req) };
+  }
+  /// ينفّذ التغيير بعد إثبات كلمة السر: نجاحه يلغي جلسة الطلب القديمة، وفشله يلغي الجديدة (فتبقى القديمة في نواة متعددة الجلسات).
+  async function withProof(proof, change) {
+    let out;
+    try { out = await change(); }
+    catch (e) { if (proof?.token && proof.token !== proof.old) await coreLogout(proof.token); throw e; }
+    if (proof?.old && proof.token && proof.old !== proof.token) await coreLogout(proof.old);
+    return out;
+  }
+  /// يستبدل بريد الحساب في معاملة واحدة: حذف القديم وإدراج الجديد معاً، فلا يبقى الحساب بلا بريد إن سبقه أحد إلى العنوان.
+  async function replaceAlias(uid, email, nickname) {
+    const c = await pool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query("DELETE FROM login_aliases WHERE user_id=$1", [uid]);
+      if (email) await c.query("INSERT INTO login_aliases(alias, user_id, nickname) VALUES($1,$2,$3)", [email, uid, nickname]);
+      await c.query("COMMIT");
+    } catch (e) {
+      try { await c.query("ROLLBACK"); } catch { /* ignore */ }
+      throw e;
+    } finally { c.release(); }
   }
   const maskEmail = (e) => {
     const [local = "", domain = ""] = String(e ?? "").split("@");
@@ -511,19 +530,19 @@ export default async function authAlias(app, opts = {}) {
     if (taken && taken.user_id !== uid) return bad(reply, 409, "email-taken");
     const current = await rowOf(uid);
     if (current?.alias === email) return { ...info(current), codeSent: false };
-    let token = null;
+    let proof = null;
     if (needsProof(current)) {
-      const p = await provePassword(req, uid, String(req.body?.password ?? "").trim());
-      if (!p.ok) return bad(reply, p.code, p.error);
-      token = p.token;
+      // كلمة السر تُقص كما يفعل التطبيق عند الدخول (lib/api/client.dart)، فالتي تُدخل بها هي التي تُقبل هنا
+      proof = await provePassword(req, uid, String(req.body?.password ?? "").trim());
+      if (!proof.ok) return bad(reply, proof.code, proof.error);
     }
-    const nickname = (await nickOf(uid)) ?? "";
-    await pool.query("DELETE FROM login_aliases WHERE user_id=$1", [uid]);
-    await pool.query("INSERT INTO login_aliases(alias, user_id, nickname) VALUES($1,$2,$3)", [email, uid, nickname]);
-    const noticeSent = await noticeOldEmail(current, email, nickname || current?.nickname || "");
+    const nickname = (await nickOf(uid)) ?? current?.nickname ?? "";
+    try { await withProof(proof, () => replaceAlias(uid, email, nickname)); }
+    catch (e) { if (e?.code === "23505") return bad(reply, 409, "email-taken"); throw e; }
+    const noticeSent = await noticeOldEmail(current, email, nickname);
     let codeSent = false, sendError = null;
     if (mailOn()) { try { await sendVerifyCode(email); codeSent = true; } catch (e) { sendError = String(e?.message ?? e).slice(0, 200); } }
-    return { ...info(await rowOf(uid)), codeSent, noticeSent, ...(token ? { token } : {}), ...(sendError ? { sendError } : {}) };
+    return { ...info(await rowOf(uid)), codeSent, noticeSent, ...(proof?.token ? { token: proof.token } : {}), ...(sendError ? { sendError } : {}) };
   });
   app.delete("/me/login-email", async (req, reply) => {
     const uid = await me(req, reply); if (!uid) return;
@@ -531,15 +550,15 @@ export default async function authAlias(app, opts = {}) {
     // جلسة قائمة لحساب غير مؤكد لا تحذف بريدها لتصبح حساباً «قديماً» بلا بوابة
     if (gateOn() && row && !row.verified) return bad(reply, 403, "email-unverified");
     if (!row) return { ok: true };
-    let token = null;
+    // إزالة بريد مؤكد تقطع قناة الاستعادة عن صاحبها: كلمة السر أولاً. غير المؤكد (والبوابة مطفأة) لا يحمي شيئاً بعد
+    let proof = null;
     if (row.verified) {
-      const p = await provePassword(req, uid, String(req.body?.password ?? "").trim());
-      if (!p.ok) return bad(reply, p.code, p.error);
-      token = p.token;
+      proof = await provePassword(req, uid, String(req.body?.password ?? "").trim());
+      if (!proof.ok) return bad(reply, proof.code, proof.error);
     }
-    await pool.query("DELETE FROM login_aliases WHERE user_id=$1", [uid]);
+    await withProof(proof, () => replaceAlias(uid, null, ""));
     const noticeSent = await noticeOldEmail(row, null, (await nickOf(uid)) ?? row.nickname ?? "");
-    return { ok: true, noticeSent, ...(token ? { token } : {}) };
+    return { ok: true, noticeSent, ...(proof?.token ? { token: proof.token } : {}) };
   });
   /// إرسال رمز التأكيد (أو إعادته): مرة كل 60 ثانية.
   app.post("/me/login-email/send-code", async (req, reply) => {
