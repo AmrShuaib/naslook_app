@@ -1,6 +1,6 @@
 // إقرار العمر وبيانات المنشأة (5 نوفمبر 2026): requireAdult قبل أول فعل مالي (ورقة «أقر بأن عمري 18 سنة فأكثر» برابط الشروط،
 // POST /me/adult-attest، تذكّر الحالة، وتعذّر معرفتها لا يحبس)، والمعالج العام لرفض 403 adult-required من أي طلب، ونقاط الدخول
-// (الشحن التجريبي في المحفظة، الطلب المدفوع في صفحة الدائرة، والمجاني بلا سؤال)، وإقرار 13+ في ورقة الموافقة، وبيانات المنشأة
+// (الشحن التجريبي في المحفظة، الطلب المدفوع في صفحة الدائرة وفي عرض السوق، والتذكرة المدفوعة، والمجاني بلا سؤال)، وإقرار 13+ في ورقة الموافقة، وبيانات المنشأة
 // في «عن ناس لايف» وإعدادات الإدارة، وسطر الكيان للدائرة الموثقة.
 import 'dart:convert';
 
@@ -20,6 +20,8 @@ import 'package:naslook/core/require_adult.dart';
 import 'package:naslook/core/share/legal_links.dart';
 import 'package:naslook/pages/admin/admin_settings.dart';
 import 'package:naslook/pages/business/business_page.dart';
+import 'package:naslook/pages/events/events_page.dart';
+import 'package:naslook/pages/market/listing_page.dart';
 import 'package:naslook/pages/myspace/consent_sheet.dart';
 import 'package:naslook/pages/myspace/myspace_page.dart';
 import 'package:naslook/pages/wallet/wallet_page.dart';
@@ -391,6 +393,73 @@ void main() {
       srv.routes['GET /biz/biz-shop'] = (_, __) => biz();
       await _pump(tester, srv, const BusinessPage(id: 'biz-shop'), size: const Size(800, 2600));
       expect(find.byKey(const Key('info-entity')), findsNothing);
+    });
+
+    const lid = '11111111-1111-4111-8111-111111111111';
+    Map<String, dynamic> listing(int price) => {
+          'id': lid, 'seller': {'id': 'SA0000002', 'nickname': 'sara', 'avatarUrl': null}, 'sellerRating': null, 'sellerRatingCount': 0, 'sellerBadges': [], 'kind': 'product', 'category': 'other',
+          'title': 'سماعة', 'description': 'جديدة', 'price': price, 'imageUrl': null, 'images': [], 'placeName': 'الروضة', 'city': 'جدة', 'lat': 21.5, 'lng': 39.1, 'status': 'active', 'stock': null, 'sold': 0,
+          'views': 1, 'variants': [], 'availability': null, 'spotlight': false, 'mine': false, 'createdAt': '2026-11-05T08:00:00Z',
+        };
+
+    testWidgets('market listing: a paid order asks for the declaration before the note to the seller', (tester) async {
+      final srv = _Srv();
+      srv.routes['GET /market/$lid'] = (_, __) => listing(2500);
+      srv.routes['POST /market/$lid/order'] = (_, __) => {'ok': true, 'id': 'o1', 'total': 2500, 'discount': 0, 'commission': 0, 'code': '4321'};
+      await _pump(tester, srv, const ListingPage(lid), size: const Size(600, 2000));
+      await tester.tap(find.byKey(const Key('order-btn')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+      expect(find.text('ملاحظة للبائع'), findsNothing, reason: 'الإقرار قبل أن يكتب المشتري شيئاً');
+      await tester.tap(find.byKey(const Key('adult-confirm')));
+      await tester.pumpAndSettle();
+      expect(find.text('ملاحظة للبائع'), findsOneWidget);
+      await tester.tap(find.text('تأكيد الطلب'));
+      await tester.pumpAndSettle();
+      expect(srv.calls.indexOf('POST /me/adult-attest'), lessThan(srv.calls.indexOf('POST /market/$lid/order')));
+    });
+
+    testWidgets('market listing: a free order goes straight to the note', (tester) async {
+      final srv = _Srv();
+      srv.routes['GET /market/$lid'] = (_, __) => listing(0);
+      await _pump(tester, srv, const ListingPage(lid), size: const Size(600, 2000));
+      await tester.tap(find.byKey(const Key('order-btn')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('adult-sheet')), findsNothing);
+      expect(find.text('ملاحظة للبائع'), findsOneWidget);
+      expect(srv.calls, isNot(contains('GET /legal/consent')));
+    });
+
+    Map<String, dynamic> event() => {
+          'id': 'ev1', 'title': 'حفلة', 'description': '', 'host': {'id': 'SA0000002', 'nickname': 'sara'}, 'placeName': 'المسرح', 'startsAt': '2026-12-01T18:00:00Z', 'isHost': false, 'going': 0, 'myTickets': 0,
+          'tiers': [
+            {'id': 't-paid', 'name': 'عادي', 'description': '', 'price': 1500, 'quantity': 10, 'sold': 0, 'left': 10},
+            {'id': 't-free', 'name': 'مجانية', 'description': '', 'price': 0, 'quantity': 10, 'sold': 0, 'left': 10},
+          ],
+        };
+
+    testWidgets('event: a paid ticket asks for the declaration; declining sends nothing', (tester) async {
+      final srv = _Srv();
+      srv.routes['GET /events/ev1'] = (_, __) => event();
+      await _pump(tester, srv, const EventDetailPage(eventId: 'ev1'), size: const Size(600, 1600));
+      await tester.tap(find.textContaining('ادفع'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('adult-sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('adult-cancel')));
+      await tester.pumpAndSettle();
+      expect(srv.calls, isNot(contains('POST /events/ev1/tickets')));
+    });
+
+    testWidgets('event: a free ticket is booked without the declaration', (tester) async {
+      final srv = _Srv();
+      srv.routes['GET /events/ev1'] = (_, __) => event();
+      srv.routes['POST /events/ev1/tickets'] = (_, __) => {'data': []};
+      await _pump(tester, srv, const EventDetailPage(eventId: 'ev1'), size: const Size(600, 1600));
+      await tester.tap(find.text('احجز'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('adult-sheet')), findsNothing);
+      expect(srv.bodies['POST /events/ev1/tickets']?['tierId'], 't-free');
+      expect(srv.calls, isNot(contains('GET /legal/consent')));
     });
   });
 

@@ -592,7 +592,7 @@ class AdminSettings {
   final double jobsMinScore;
   /// بيانات المنشأة النظامية (السجل التجاري، الرقم الضريبي، العنوان الوطني): تظهر للعامة متى ضُبطت
   final String companyCr, companyVat, companyAddress;
-  const AdminSettings({this.companyCr = '', this.companyVat = '', this.companyAddress = '',this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.minTopup = 10000, this.maxCardTopup = 500000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
+  const AdminSettings({this.companyCr = '', this.companyVat = '', this.companyAddress = '', this.testTopup = false, this.maintenance = false, this.setupCodePresent = false, this.maxTopup = 10000000, this.minTopup = 10000, this.maxCardTopup = 500000, this.announcement = '', this.supportHandle = '', this.supportEmail = '', this.bannedWords = '', this.reportThreshold = 3,
       this.transfersEnabled = false, this.chatPaymentsEnabled = false, this.bannedWordsDefault = true, this.requireEmailVerification = true,
       this.marketCommissionPct = 0, this.spotlightPricePerDay = 2000, this.spotlightMaxDays = 30, this.spotlightMaxActive = 12, this.marketReviewNewAccounts = false, this.marketBlockContacts = true,
       this.jobsEnabled = true, this.jobsRequireApproval = false, this.jobsFreeActive = 3, this.jobsWeeklyCap = 5, this.jobsMinScore = .45});
