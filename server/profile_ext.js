@@ -116,17 +116,21 @@ export default async function profileV2(app, opts) {
   };
   // شرط SQL منطقي: يرى viewerExpr (تعبير نصي، NULL للضيف) محتوى authorExpr؟ صاحبه دائماً، والملف العام للجميع، والخاص لأصدقائه فقط.
   // single: true لاستعلام يقرأ صفاً واحداً (أو صفوف صاحب واحد): فحوص مفاتيح بدل بناء المجموعة كلها. فحص جهات الاتصال آخراً فلا يُقيَّم
-  // إلا لصف صاحبه خاص. ميزة «الجمهور» لكل لحظة تبني فوقه في map_posts.js لا هنا.
-  const authorVisibleSql = (authorExpr, viewerExpr, { single = false } = {}) => {
-    // بلا عمود خصوصية: صحيح دائماً، مع ذكر معامل المشاهد حتى لا يرفض Postgres معاملاً مرسلاً لا يظهر في الاستعلام
-    if (!PRIVATE_IDS) return `(${viewerExpr} IS NULL OR TRUE)`;
-    if (single) {
-      const friend = C ? ` OR EXISTS (SELECT 1 FROM ${q(C.table)} vis_c WHERE ${CA} = ${authorExpr} AND ${CB} = ${viewerExpr})` : "";
-      return `COALESCE((${authorExpr} = ${viewerExpr} OR NOT ${privateSql(authorExpr)}${friend}), false)`;
-    }
-    const friend = C ? ` OR ${authorExpr} IN (SELECT ${CA} FROM ${q(C.table)} vis_c WHERE ${CB} = ${viewerExpr} AND vis_c.${q(C.a)} IS NOT NULL)` : "";
-    return `COALESCE((${authorExpr} = ${viewerExpr} OR ${authorExpr} NOT IN (${PRIVATE_IDS})${friend}), false)`;
+  // إلا لصف لم يُفتح قبله. publicWhen (اختياري، شرط SQL على الصف نفسه): يقيّد فرع «الملف العام» وحده، والأصدقاء يرون المحتوى مهما كان؛
+  // عليه تبني ميزة «الجمهور» لكل لحظة في map_posts.js (publicWhen = «الجمهور: الجميع»)، فيبقى فحص الأصدقاء هنا حيث يُعرف جدولهم.
+  const authorVisibleSql = (authorExpr, viewerExpr, { single = false, publicWhen = null } = {}) => {
+    // بلا عمود خصوصية ولا شرط جمهور: صحيح دائماً، مع ذكر معامل المشاهد حتى لا يرفض Postgres معاملاً مرسلاً لا يظهر في الاستعلام
+    if (!PRIVATE_IDS && !publicWhen) return `(${viewerExpr} IS NULL OR TRUE)`;
+    const open = !PRIVATE_IDS ? "TRUE" : single ? `NOT ${privateSql(authorExpr)}` : `${authorExpr} NOT IN (${PRIVATE_IDS})`;
+    // الشرط الرخيص (عمود في الصف) قبل مجموعة الملفات الخاصة
+    const pub = publicWhen ? `((${publicWhen}) AND ${open})` : open;
+    const friend = !C ? "" : single
+      ? ` OR EXISTS (SELECT 1 FROM ${q(C.table)} vis_c WHERE ${CA} = ${authorExpr} AND ${CB} = ${viewerExpr})`
+      : ` OR ${authorExpr} IN (SELECT ${CA} FROM ${q(C.table)} vis_c WHERE ${CB} = ${viewerExpr} AND vis_c.${q(C.a)} IS NOT NULL)`;
+    return `COALESCE((${authorExpr} = ${viewerExpr} OR ${pub}${friend}), false)`;
   };
+  // علامة قدرة: map_posts.js لا يمرّر شرط الجمهور إلا لقاعدة تفهمه، وإلا عمل احتياطه المغلق (نسخة قديمة كانت ستتجاهله فتفتح لحظات الأصدقاء)
+  authorVisibleSql.publicWhen = true;
   globalThis.naslifeAuthorVisibleSql = authorVisibleSql;
   globalThis.naslifePrivacyStatus = { privacy: !!PRIVATE_IDS, friends: !!C };
   // ملف المستخدم عام؟ (true بلا عمود خصوصية). خطأ القاعدة يُرمى ليقرر المستدعي (البث الحي يغلق عند الشك)
@@ -265,8 +269,10 @@ export default async function profileV2(app, opts) {
   const EXT_DEFAULTS = { cover_url: null, display_name: "", job_title: "", city: "", district: "", links: [], intro_kind: null, intro_url: null, intro_sec: null, intro_at: null, intro_visibility: "all", msg_policy: "all", show_online: true, show_city: true, show_friends: false, account_type: null };
   const followersOf = (id) => count("SELECT count(*)::int AS n FROM user_follows WHERE user_id=$1", [id]);
   // عدد اللحظات بقاعدة الرؤية نفسها (map_posts.js، وإلا قاعدة هذا الملف) حتى يطابق ما يفتحه الزائر في تبويب المنشورات، ويتبع «الجمهور»
-  // لكل لحظة حين يأتي. single: لحظات صاحب واحد، ففحص مفتاح لكل لحظة لا بناء مجموعة أصحاب الملفات الخاصة كلها
-  const momentVisible = (viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f("map_posts", viewerExpr, { single: true }) : authorVisibleSql("map_posts.user_id", viewerExpr, { single: true }); };
+  // لكل لحظة. single: لحظات صاحب واحد، ففحص مفتاح لكل لحظة لا بناء مجموعة أصحاب الملفات الخاصة كلها. بلا map_posts.js (نادر) وبعمود
+  // الجمهور: لحظة «الأصدقاء» لا تُعدّ لغيرهم
+  const audOk = postsOk && (await has("map_posts", "audience"));
+  const momentVisible = (viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f("map_posts", viewerExpr, { single: true }) : authorVisibleSql("map_posts.user_id", viewerExpr, { single: true, publicWhen: audOk ? "map_posts.audience = 'all'" : null }); };
   const stats = async (id, viewer = null) => {
     const [posts, followers, following, circles, friends, completedOrders] = await Promise.all([
       postsOk ? count(`SELECT count(*)::int AS n FROM map_posts WHERE user_id=$1 AND status='active' AND expires_at > now() AND ${momentVisible("$2::text")}`, [id, viewer ?? null]) : 0,

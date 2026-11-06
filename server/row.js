@@ -182,6 +182,8 @@ export default async function row(app, opts = {}) {
     price: p.price == null ? null : Number(p.price), cta: p.cta ?? null, lat: p.lat, lng: p.lng, placeName: p.place_name, durationSec: p.duration_sec, status: p.status,
     views: Number(p.views ?? 0), likes: Number(p.likes ?? 0), liked: p.liked === true, mine: p.user_id === uid, expiresAt: p.expires_at, createdAt: p.created_at,
     expired: new Date(p.expires_at).getTime() < Date.now(), audioUrl: p.audio_url ?? null, audioSec: p.audio_sec ?? null,
+    // جمهور اللحظة كما في map_posts.js (العارض يضع «للأصدقاء» على لحظة الأصدقاء)؛ بلا العمود = الجميع كما كانت
+    audience: p.audience == null || p.audience === "all" ? "all" : "friends",
   });
 
   // ---- المصادر الستة: استعلام مرشّحين (الصف: بحد CAND الأقرب أولاً ثم الأحدث؛ التغذية: الأحدث أولاً بحد الصفحة) ثم تحويل الصف إلى بطاقة

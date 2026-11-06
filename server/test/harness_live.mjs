@@ -71,7 +71,7 @@ t0 = Date.now(); h = await call('GET', '/live/wait?after=0&timeout=0', { expect:
 t0 = Date.now();
 const pending = call('GET', '/live/wait?after=0&timeout=5', { user: null, expect: 200 });
 await sleep(80);
-const made = await call('POST', '/mapposts', { body: { kind: 'image', mediaUrl: '/chat/media/a.jpg', caption: 'كورنيش الليلة', lat: 21.54, lng: 39.17, placeName: 'الكورنيش' }, user: 'SA0000002', expect: 200 });
+const made = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'image', mediaUrl: '/chat/media/a.jpg', caption: 'كورنيش الليلة', lat: 21.54, lng: 39.17, placeName: 'الكورنيش' }, user: 'SA0000002', expect: 200 });
 const got = await pending;
 check(Date.now() - t0 < 2500, 'pending wait resolves as soon as a post is published', `${Date.now() - t0}ms`);
 check(got.seq === 1 && got.events.length === 1 && got.events[0].kind === 'post' && got.events[0].seq === 1, 'event post #1');
@@ -83,7 +83,7 @@ h = await call('GET', '/live/wait?after=0&timeout=0', { expect: 200 }); check(h.
 h = await call('GET', '/live/wait?after=1&timeout=0', { expect: 200 }); check(h.events.length === 0 && h.seq === 1, 'after=1 has nothing pending');
 
 // ---- الحذف والإخفاء الإداري
-const p2 = await call('POST', '/mapposts', { body: { kind: 'text', caption: 'نص', lat: 21.5, lng: 39.1 }, user: 'SA0000002', expect: 200 });
+const p2 = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', caption: 'نص', lat: 21.5, lng: 39.1 }, user: 'SA0000002', expect: 200 });
 await call('DELETE', `/mapposts/${made.id}`, { user: 'SA0000002', expect: 200 });
 h = await call('GET', '/live/wait?after=1&timeout=0', { expect: 200 });
 check(h.seq === 3 && h.events.map((e) => e.kind).join(',') === 'post,post_removed' && h.events[1].data.id === made.id, 'delete emits post_removed after the second post', h.events.map((e) => e.kind).join(','));

@@ -77,7 +77,7 @@ e = await call('POST', '/market', { body: { kind: 'product', category: 'food', t
 check(e.error === 'banned-words', 'market listing rejected');
 e = await call('POST', '/biz/biz-ikea/reviews', { body: { rating: 4, text: 'احتيال' }, expect: 400 });
 check(e.error === 'banned-words', 'review rejected');
-const okPost = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000000', caption: 'عرض نظيف', lat: 21.5, lng: 39.2 }, user: 'SA0000002', expect: 200 });
+const okPost = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', bg: '#000000', caption: 'عرض نظيف', lat: 21.5, lng: 39.2 }, user: 'SA0000002', expect: 200 });
 e = await call('PATCH', `/mapposts/${okPost.id}`, { body: { caption: 'صار نصب' }, user: 'SA0000002', expect: 400 });
 check(e.error === 'banned-words', 'patch rejected');
 await call('POST', '/adminapi/settings', { body: { bannedWords: '' }, user: 'SA0000004', expect: 200 });
@@ -111,7 +111,7 @@ sp = await app.inject({ method: 'GET', url: '/support', headers: { host: 'naslif
 check(sp.body.includes('support@naslife.app'), 'empty support email falls back to the default on /support');
 
 // ---- تصفية المحظورين في قائمة المنشورات
-const p3 = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000000', caption: 'من خالد', lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 });
+const p3 = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', bg: '#000000', caption: 'من خالد', lat: 21.5, lng: 39.2 }, user: 'SA0000003', expect: 200 });
 list = await call('GET', '/mapposts', { expect: 200 });
 check(list.some((p) => p.id === p3.id) && list.some((p) => p.id === okPost.id), 'both posts visible before block');
 await pool.query("INSERT INTO user_blocks(user_id,blocked_id) VALUES('SA0000001','SA0000003')");
@@ -128,7 +128,7 @@ await call('GET', `/mapposts/${p3.id}`, { user: 'SA0000001', expect: 404 });
 await call('GET', `/mapposts/${p3.id}`, { user: 'SA0000003', expect: 200 });
 await call('GET', `/mapposts/${p3.id}`, { user: 'SA0000002', expect: 200 });
 await call('GET', `/mapposts/${p3.id}`, { user: null, expect: 200 });
-const p1 = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000000', caption: 'من عمرو', lat: 21.5, lng: 39.2 }, user: 'SA0000001', expect: 200 });
+const p1 = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', bg: '#000000', caption: 'من عمرو', lat: 21.5, lng: 39.2 }, user: 'SA0000001', expect: 200 });
 await call('GET', `/mapposts/${p1.id}`, { user: 'SA0000003', expect: 404 });
 
 // ---- بلاغات المحتوى والإخفاء التلقائي (الحد 2)

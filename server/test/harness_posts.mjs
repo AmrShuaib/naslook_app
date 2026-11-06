@@ -40,7 +40,7 @@ const p1 = await call('POST', '/mapposts', { body: { kind: 'image', mediaUrl: '/
   tag: 'offer', title: 'عرض القهوة', price: 1500, cta: { type: 'whatsapp', value: '0501234567' }, lat: 21.5433, lng: 39.1728, placeName: 'الكورنيش', ttlHours: 72 }, user: 'SA0000002', expect: 200 });
 check(p1.mediaUrl === 'https://naslife.app/chat/media/a.jpg' && p1.overlays.length === 2 && p1.tag === 'offer' && p1.price === 1500 && p1.cta.type === 'whatsapp' && p1.cta.value === '0501234567' && p1.cta.label === 'واتساب' && p1.user.nickname === 'sara' && p1.mine && !p1.expired, 'offer post created', JSON.stringify({ media: p1.mediaUrl, cta: p1.cta }));
 const ttlH = (new Date(p1.expiresAt) - new Date(p1.createdAt)) / 3600000; check(Math.abs(ttlH - 72) < 0.1, 'ttl 72h', ttlH.toFixed(1));
-const p2 = await call('POST', '/mapposts', { body: { kind: 'audio', mediaUrl: 'https://naslife.app/chat/media/v.weba', durationSec: 42.7, caption: 'رسالة صوتية', lat: 21.55, lng: 39.18, ttlHours: 999 }, user: 'SA0000003', expect: 200 });
+const p2 = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'audio', mediaUrl: 'https://naslife.app/chat/media/v.weba', durationSec: 42.7, caption: 'رسالة صوتية', lat: 21.55, lng: 39.18, ttlHours: 999 }, user: 'SA0000003', expect: 200 });
 check(p2.kind === 'audio' && p2.durationSec === 43 && p2.tag === 'moment', 'audio post, bad ttl → 24h');
 const p3 = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#0A6E78', overlays: [{ type: 'text', text: 'صباح الخير جدة' }], lat: 24.7, lng: 46.7 }, user: 'SA0000002', expect: 200 });   // الرياض
 check(p3.kind === 'text' && p3.bg === '#0A6E78' && p3.mediaUrl === null, 'text post with bg');

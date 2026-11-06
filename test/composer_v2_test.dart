@@ -21,6 +21,7 @@ import 'package:naslook/core/media/pick_image.dart';
 import 'package:naslook/core/media/voice_player.dart';
 import 'package:naslook/core/media/voice_record.dart';
 import 'package:naslook/pages/posts/post_composer.dart';
+import 'package:naslook/pages/posts/composer/publish_page.dart' show composerDraftKey, composerDraftKeyV2, restoreComposerDraft;
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
 import 'package:naslook/state/providers.dart';
@@ -234,7 +235,94 @@ void main() {
     expect(body['ttlHours'], 72);
     expect(body['tag'], 'moment');
     expect(body['placeName'], 'الكورنيش');
+    expect(body['audience'], 'friends', reason: 'اللحظة الشخصية للأصدقاء افتراضياً (قرار المالك)');
     expect(find.text('open'), findsOneWidget, reason: 'يعود إلى الصفحة السابقة بعد النشر');
+  });
+
+  ChoiceChip audChip(WidgetTester tester, String v) => tester.widget<ChoiceChip>(find.byKey(Key('aud-$v')));
+  Future<void> toPublish(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('shutter')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+  }
+
+  testWidgets('audience: a moment defaults to friends with a one-line hint; choosing everyone is what gets published', (tester) async {
+    final srv = await _pump(tester);
+    await toPublish(tester);
+    expect(find.text('من يراها؟'), findsOneWidget);
+    expect(audChip(tester, 'friends').selected, isTrue);
+    expect(audChip(tester, 'all').selected, isFalse);
+    expect(find.text('يراها من أضفتهم إلى جهات اتصالك فقط'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('aud-all')));
+    await tester.pump();
+    expect(audChip(tester, 'all').selected, isTrue);
+    expect(find.text('يراها كل من يفتح الخريطة ما دام ملفك عاماً'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.bodies['POST /mapposts']!['audience'], 'all');
+  });
+
+  testWidgets('audience: an offer from the professional details defaults to everyone until the author picks friends', (tester) async {
+    final srv = await _pump(tester);
+    await toPublish(tester);
+    await tester.tap(find.byKey(const Key('pub-pro')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('tag-offer')));
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(const Key('pro-save')));
+    await tester.tap(find.byKey(const Key('pro-save')));
+    await _settle(tester);
+    expect(audChip(tester, 'all').selected, isTrue, reason: 'المنشور التجاري للجميع افتراضياً');
+    await tester.tap(find.byKey(const Key('aud-friends')));
+    await tester.pump();
+    expect(audChip(tester, 'friends').selected, isTrue);
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    final body = srv.bodies['POST /mapposts']!;
+    expect(body['tag'], 'offer');
+    expect(body['audience'], 'friends', reason: 'اختيار الناشر الصريح يغلب الافتراضي');
+  });
+
+  testWidgets('audience: the draft keeps an explicit choice across the edit step and in the saved draft', (tester) async {
+    await _pump(tester);
+    await toPublish(tester);
+    await tester.tap(find.byKey(const Key('aud-all')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('pub-back')));
+    await _settle(tester);
+    expect(find.byKey(const Key('edit-next')), findsOneWidget);
+    final saved = (await SharedPreferences.getInstance()).getString(composerDraftKey);
+    expect(saved, startsWith('map|24|moment||all|'));
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    expect(audChip(tester, 'all').selected, isTrue);
+  });
+
+  test('restoring a draft: v3 carries the audience, the older v2 draft has none and keeps its caption', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({composerDraftKey: 'map|72|moment||all|غداء|اليوم'});
+    var d = ComposerDraft(lat: 21.5, lng: 39.2);
+    await restoreComposerDraft(d);
+    expect((d.ttlHours, d.audience, d.effectiveAudience, d.caption), (72, 'all', 'all', 'غداء|اليوم'));
+    SharedPreferences.setMockInitialValues({composerDraftKeyV2: 'map|24|offer||عرض اليوم'});
+    d = ComposerDraft(lat: 21.5, lng: 39.2);
+    await restoreComposerDraft(d);
+    expect((d.tag, d.audience, d.effectiveAudience, d.caption), ('offer', null, 'all', 'عرض اليوم'));
+    SharedPreferences.setMockInitialValues({composerDraftKey: 'map|24|moment||bogus|x'});
+    d = ComposerDraft(lat: 21.5, lng: 39.2);
+    await restoreComposerDraft(d);
+    expect((d.audience, d.effectiveAudience), (null, 'friends'));
+  });
+
+  test('the draft default mirrors the server rule: a moment is for friends; a type, a price or a call-to-action make it for everyone', () {
+    ComposerDraft d() => ComposerDraft(lat: 0, lng: 0);
+    expect(d().effectiveAudience, 'friends');
+    expect((d()..tag = 'event').effectiveAudience, 'all');
+    expect((d()..price = '15').effectiveAudience, 'all');
+    expect((d()..ctaType = 'chat').effectiveAudience, 'all');
+    expect((d()..ctaType = 'link').effectiveAudience, 'friends', reason: 'زر بلا قيمة لا يُرسل');
+    expect((d()..tag = 'offer'..audience = 'friends').effectiveAudience, 'friends');
   });
 
   testWidgets('text mode: template, board colour and a voice layer publish as a text post with audio', (tester) async {
@@ -518,6 +606,20 @@ void main() {
     // بلا تسجيل جديد لا يُرسل الصوت فيبقى تسجيل اللحظة (كان null يحذفه في الخادم)
     expect(body.containsKey('audioUrl'), isFalse);
     expect(body.containsKey('audioSec'), isFalse);
+    expect(body['audience'], 'all', reason: 'المنشور القائم بلا حقل جمهور كان عاماً ويبقى كذلك');
+  });
+
+  testWidgets('editing a friends-only moment shows its current audience and saves a switch to everyone', (tester) async {
+    final post = MapPost.fromJson({'id': _pid, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'kind': 'image', 'mediaUrl': '/chat/media/old.jpg', 'caption': 'عشاء', 'overlays': [], 'tag': 'moment', 'lat': 21.5, 'lng': 39.2, 'status': 'active', 'mine': true, 'audience': 'friends'});
+    final srv = await _pump(tester, edit: post);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    expect(audChip(tester, 'friends').selected, isTrue);
+    await tester.tap(find.byKey(const Key('aud-all')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.bodies['PATCH /mapposts/$_pid']!['audience'], 'all');
   });
 
   test('the bake clamps the long side to 2048 and encodes JPEG', () async {

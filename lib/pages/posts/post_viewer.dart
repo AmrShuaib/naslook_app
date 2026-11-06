@@ -802,21 +802,45 @@ class PostView extends ConsumerWidget {
             ]),
             const SizedBox(height: 6),
             Row(children: [
-              InkWell(
-                onTap: () => openProfile(context, p.user),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  ProfileAvatar(person: p.user, size: 38),
+              // الاسم والوقت يتقلّصان (بنقاط) قبل العلامات وأزرار التنقل حتى لا يفيض الصف على شاشة ضيقة: المجموعة تأخذ الفراغ كله
+              // والاسم وحده مرن داخلها
+              Expanded(
+                child: Row(children: [
+                  Flexible(
+                    child: InkWell(
+                      onTap: () => openProfile(context, p.user),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        ProfileAvatar(person: p.user, size: 38),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(p.user.nickname, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14, shadows: [Shadow(color: Colors.black54, blurRadius: 4)])),
+                            Text('${timeAgo(p.createdAt)}${p.placeName != null && p.placeName!.isNotEmpty ? ' · ${p.placeName}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 11.5, shadows: [Shadow(color: Colors.black54, blurRadius: 4)])),
+                          ]),
+                        ),
+                      ]),
+                    ),
+                  ),
                   const SizedBox(width: 8),
-                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(p.user.nickname, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14, shadows: [Shadow(color: Colors.black54, blurRadius: 4)])),
-                    Text('${timeAgo(p.createdAt)}${p.placeName != null && p.placeName!.isNotEmpty ? ' · ${p.placeName}' : ''}', style: const TextStyle(color: Colors.white70, fontSize: 11.5, shadows: [Shadow(color: Colors.black54, blurRadius: 4)])),
-                  ]),
+                  if (p.tag != 'moment') _pill(p.tagLabel, Joy.sun, Joy.sunText),
+                  // لحظة «الأصدقاء»: لا تصل إلا صاحبها وأصدقاءه، فالعلامة تذكّرهم أنها ليست عامة
+                  if (p.friendsOnly)
+                    Padding(
+                      padding: EdgeInsetsDirectional.only(start: p.tag != 'moment' ? 6 : 0),
+                      child: Container(
+                        key: const Key('moment-friends-mark'),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(999)),
+                        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.people_alt_rounded, size: 13, color: Colors.white),
+                          SizedBox(width: 4),
+                          Text('للأصدقاء', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                        ]),
+                      ),
+                    ),
+                  if (p.mine && p.status != 'active') Padding(padding: const EdgeInsetsDirectional.only(start: 6), child: _pill(p.status == 'blocked' ? 'أخفته الإدارة' : 'مخفي', Colors.white24, Colors.white)),
                 ]),
               ),
-              const SizedBox(width: 8),
-              if (p.tag != 'moment') _pill(p.tagLabel, Joy.sun, Joy.sunText),
-              if (p.mine && p.status != 'active') Padding(padding: const EdgeInsetsDirectional.only(start: 6), child: _pill(p.status == 'blocked' ? 'أخفته الإدارة' : 'مخفي', Colors.white24, Colors.white)),
-              const Spacer(),
               if (total > 1) ...[
                 IconButton(tooltip: 'السابق', onPressed: onPrev, icon: const Icon(Icons.chevron_right_rounded, color: Colors.white)),
                 IconButton(tooltip: 'التالي', onPressed: onNext, icon: const Icon(Icons.chevron_left_rounded, color: Colors.white)),

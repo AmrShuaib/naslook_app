@@ -72,13 +72,13 @@ await sleep(50);
 
 // ---- النشر: لحظة خاصة لهدى ولحظة عامة لعمرو في جدة، بمكانين مكتوبين للرائج
 const t0 = Date.now();
-const priv = (await call('POST', '/mapposts', { body: { kind: 'image', mediaUrl: '/chat/media/abcdef-0123456789abcdef01234567.jpg', caption: 'سرّ البيت', placeName: 'بيت هدى', lat: 22.901, lng: 39.901 }, user: AUTHOR, expect: 200 })).j;
+const priv = (await call('POST', '/mapposts', { body: { kind: 'image', mediaUrl: '/chat/media/abcdef-0123456789abcdef01234567.jpg', caption: 'سرّ البيت', placeName: 'بيت هدى', audience: 'all', lat: 22.901, lng: 39.901 }, user: AUTHOR, expect: 200 })).j;
 const fr = await friendWait;
 check(Date.now() - t0 < 2000 && fr.j.events.some((e) => e.kind === 'post' && e.data.id === priv.id), 'live: the friend waiting is woken with the private moment', `${Date.now() - t0}ms`);
 check(!fr.body.includes('"only"'), 'live: the audience list is never serialised');
 const sw = await strangerWait;
 check(Date.now() - t0 >= 800 && sw.j.events.length === 0 && sw.j.seq > hs, 'live: the stranger is not woken by the private moment; its wait times out with the cursor moved on', `${Date.now() - t0}ms ${JSON.stringify(sw.j)}`);
-const pub = (await call('POST', '/mapposts', { body: { kind: 'text', bg: '#0A6E78', caption: 'صباح الخير', placeName: 'الكورنيش', lat: 22.903, lng: 39.903 }, user: PUB, expect: 200 })).j;
+const pub = (await call('POST', '/mapposts', { body: { kind: 'text', bg: '#0A6E78', caption: 'صباح الخير', placeName: 'الكورنيش', audience: 'all', lat: 22.903, lng: 39.903 }, user: PUB, expect: 200 })).j;
 const seen = {};
 for (const [k, u] of Object.entries(VIEWERS)) {
   const r = (await call('GET', `/live/wait?after=${hs}&timeout=0`, { user: u, expect: 200 })).j;
@@ -175,12 +175,13 @@ await pool.query('UPDATE profiles SET is_public=false WHERE user_id=$1', [AUTHOR
   check(fp.flags.isFriend === true && fFeed >= 1 && fp.stats.posts === fFeed, 'profile: the friend sees the full profile and a posts count equal to the moments she can open', `${fp.stats?.posts} vs ${fFeed}`);
 }
 
-// ---- الكفاءة بشكلين للجزء نفسه. القوائم: استعلامات فرعية غير مرتبطة بالصف (تذكر p.user_id وحده) يجزّئها Postgres مرة لكل استعلام،
+// ---- الكفاءة بشكلين للجزء نفسه. القوائم: استعلامات فرعية غير مرتبطة بالصف (تذكر p.user_id وحده، وشرط الجمهور عمود في الصف نفسه) يجزّئها Postgres مرة لكل استعلام،
 // وكلفتها المقدّرة تبقى صغيرة مع آلاف اللحظات (الشكل المرتبط يُقدَّر بفحص لكل صف فتكبر كلفته مع عدد اللحظات حتى تتجاوز عتبة JIT). صف واحد ({ single: true }، في
 // /mapposts/:id والإعجاب والتفاعلات و«محفوظاتي» وبطاقة المحادثة ورابط المشاركة وعدّ منشورات الملف): فحوص مفاتيح مرتبطة بالصف فلا يُمسح
 // جدول الملفات كله في كل قراءة
 const frag = globalThis.naslifeMomentVisibleSql('p', '$1::text');
-check(!/\bp\.(?!user_id)/.test(frag.replace(/\bp\.user_id\b/g, '')) && (frag.match(/p\.user_id/g) || []).length === 3, 'list fragment references the row only through p.user_id (uncorrelated subqueries)', frag);
+check(!/\bp\.(?!user_id|audience)/.test(frag.replace(/\bp\.user_id\b/g, '')) && (frag.match(/p\.user_id/g) || []).length === 3 && (frag.match(/p\.audience = 'all'/g) || []).length === 1,
+  'list fragment references the row only through p.user_id and its own audience column (uncorrelated subqueries)', frag);
 const plan = (await pool.query(`EXPLAIN SELECT p.id FROM map_posts p WHERE ${frag}`, [STRANGER])).rows.map((r) => r['QUERY PLAN']).join('\n');
 check((plan.match(/hashed SubPlan/g) || []).length === 2, 'list: the planner hashes the private-id and friend sets once per query', plan.replace(/\n/g, ' | ').slice(0, 300));
 const one = globalThis.naslifeMomentVisibleSql('p', '$1::text', { single: true });
@@ -264,7 +265,7 @@ const closedSweep = async (label) => {
   check(meta(await getHtml(`/m/${priv.id}`), 'og:title') === 'لحظة على ناس لايف' && meta(await getHtml(`/m/${pub.id}`), 'og:title') === 'صباح الخير', 'fallback share /m/: private generic, public keeps its preview');
   // البث الحي: لحظة خاصة جديدة لا تصل إلا صاحبها
   const h0 = (await call('GET', '/live/wait', { user: null, expect: 200 })).j.seq;
-  const p2 = (await call('POST', '/mapposts', { body: { kind: 'text', bg: '#0A6E78', caption: 'سرّ آخر', lat: 22.902, lng: 39.902 }, user: AUTHOR, expect: 200 })).j;
+  const p2 = (await call('POST', '/mapposts', { body: { kind: 'text', bg: '#0A6E78', caption: 'سرّ آخر', audience: 'all', lat: 22.902, lng: 39.902 }, user: AUTHOR, expect: 200 })).j;
   for (const [k, u] of Object.entries(VIEWERS)) {
     const evs = (await call('GET', `/live/wait?after=${h0}&timeout=0`, { user: u, expect: 200 })).j.events.filter((e) => e.kind === 'post').map((e) => e.data.id);
     check(evs.includes(p2.id) === (k === 'author'), `fallback live: ${k} ${k === 'author' ? 'gets' : 'does not get'} the new private moment`, JSON.stringify(evs));
@@ -307,12 +308,13 @@ await call('POST', '/wishlist', { body: { kind: 'post', refId: priv.id }, user: 
 check(meta(await getHtml(`/m/${priv.id}`), 'og:title') === 'سرّ البيت', 'no privacy column → share preview as before');
 await app.close();
 
-// بلا عمود خصوصية وبلا profile_ext.js أيضاً: الجميع عامّ كما كان (الاحتياط لا يغلق ما لا خصوصية له) ولا تنبيه
+// بلا عمود خصوصية وبلا profile_ext.js أيضاً: كل ملف عام (الاحتياط لا يغلق ما جمهوره «الجميع»)، والتنبيه عن لحظات «الأصدقاء» وحدها
+// (لا أصدقاء بلا القاعدة فتبقى لصاحبها؛ harness_audience.mjs يختبرها)
 {
   dropRule();
   const r = await bootWarned(true, { profileExt: false });
   app = r.a;
-  check(r.warns.length === 0, 'no privacy column, no profile_ext: no warning', JSON.stringify(r.warns));
+  check(r.warns.length === 1 && r.warns[0].includes('friends-only moments are shown') && !r.warns[0].includes('private profiles'), 'no privacy column, no profile_ext: one warning, about friends-only moments only', JSON.stringify(r.warns));
   ids = (await call('GET', '/mapposts', { user: null, expect: 200 })).j.map((p) => p.id);
   check(ids.includes(priv.id) && ids.includes(pub.id), 'no privacy column, no profile_ext → guests see every moment');
   await call('GET', `/mapposts/${priv.id}`, { user: STRANGER, expect: 200 });

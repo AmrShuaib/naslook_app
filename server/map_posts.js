@@ -4,6 +4,8 @@
 // المسارات تحت /mapposts (النواة تستخدم /posts لمنشورات الدوائر) والملف map_posts.js (النواة تملك posts.js).
 // البث العمودي: GET /mapposts/feed?lat&lng&radiusKm&cursor&limit&place&tag&authors (مرتّب بالقرب والحداثة) وGET /mapposts/trending?lat&lng&hours
 // (الأماكن الأكثر لحظاتٍ: دائرة تجارية قريبة أو اسم المكان المكتوب).
+// «الجمهور» لكل لحظة (audience: friends | all، قرار المالك: الافتراضي «الأصدقاء» للحظة الشخصية) يدخل قاعدة الرؤية الواحدة
+// momentVisibleSql أدناه فيسري على كل مسار يقرأ اللحظات، وعلى البث الحي (momentAudience).
 // التسجيل في src/index.js:
 //   await app.register((await import("./map_posts.js")).default, { pool, auth });
 import crypto from "node:crypto";
@@ -15,6 +17,7 @@ const KINDS = new Set(["text", "image", "video", "audio"]);
 const TAGS = new Set(["moment", "offer", "ad", "invest", "event", "job"]);
 const CTA_TYPES = new Set(["link", "whatsapp", "call", "biz", "market", "chat"]);
 const TTL_HOURS = new Set([24, 72, 168]);
+export const AUDIENCES = new Set(["friends", "all"]);
 const MAX_OVERLAYS = 30;
 const str = (v, max = 200) => String(v ?? "").trim().slice(0, max);
 const num = (v) => (v == null || v === "" ? null : Number(v));
@@ -55,6 +58,13 @@ export function cleanCta(c) {
   return { type: c.type, value, label: label || ({ link: "افتح الرابط", whatsapp: "واتساب", call: "اتصال", biz: "زيارة الدائرة", market: "اطلب الآن", chat: "راسلني" })[c.type] };
 }
 
+/// جمهور اللحظة حين لا يختاره الناشر صراحةً (تطبيق قديم أو عميل آخر): اللحظة الشخصية (نوع «لحظة») لأصدقائه، والمنشور التجاري
+/// (نوع غير «لحظة»: عرض، إعلان، استثمار، فعالية، وظيفة؛ أو بسعر؛ أو بزر إجراء) للجميع لأن غايته الوصول. المدخلات بعد تنظيفها.
+/// التطبيق يحسب الافتراضي نفسه ويعرضه قبل النشر (ComposerDraft.defaultAudience) فلا يختلف ما يراه الناشر عمّا يُحفظ.
+export function defaultAudience({ tag = "moment", price = null, cta = null } = {}) {
+  return (tag && tag !== "moment") || price != null || cta != null ? "all" : "friends";
+}
+
 export default async function posts(app, opts) {
   const { pool, auth } = opts;
   if (!pool || !auth) throw new Error("posts: pool and auth are required");
@@ -72,6 +82,8 @@ export default async function posts(app, opts) {
     CREATE TABLE IF NOT EXISTS map_post_likes (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
     CREATE TABLE IF NOT EXISTS map_post_views (post_id UUID NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (post_id, user_id));
     ALTER TABLE map_posts ADD COLUMN IF NOT EXISTS audio_url TEXT, ADD COLUMN IF NOT EXISTS audio_sec INT;
+    -- الجمهور: ما نُشر قبل الميزة نُشر للعموم فيبقى 'all' (افتراضي العمود)؛ الجديد يحدده POST /mapposts صراحةً
+    ALTER TABLE map_posts ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'all';
   `);
   // سجل أحداث المنشورات للإحصاءات: مشاهدة (كل فتح)، ضغطة زر الإجراء، مراسلة الناشر، إعجاب
   await pool.query(`
@@ -120,20 +132,24 @@ export default async function posts(app, opts) {
     expired: new Date(p.expires_at).getTime() < Date.now(),
     // طبقة صوتية اختيارية على منشور صورة أو نص (تعليق صوتي يُشغَّل مع المنشور)
     audioUrl: p.audio_url ?? null, audioSec: p.audio_sec ?? null,
+    // من يرى اللحظة يعرف جمهورها (لحظة «الأصدقاء» لا تصل غيرهم أصلاً)؛ قيمة غير معروفة تُعرض «الأصدقاء» كما تعاملها القاعدة
+    audience: p.audience === "all" ? "all" : "friends",
   });
   const many = async (rows, uid) => { const cache = new Map(); const res = []; for (const r of rows) { if (!cache.has(r.user_id)) cache.set(r.user_id, await person(r.user_id)); res.push({ ...(await out(r, uid)), user: cache.get(r.user_id) }); } return res; };
 
   // ---- من يرى اللحظة: جزء SQL واحد تستعمله كل قراءة للحظات (القوائم هنا، والصف والتغذية في row.js، ورابط المشاركة في share.js،
   // والتفاعلات في moment_extras.js، والمحفوظات في wishlist.js، وبطاقة المحادثة في chat_cards.js، والبحث المحفوظ في saved_search.js، وعدّ
-  // المنشورات في profile_ext.js). صاحبها يراها دائماً، ولحظات صاحب الملف الخاص («ملف عام» مطفأ) لا يراها إلا أصدقاؤه، بقاعدة
-  // profile_ext.js (naslifeAuthorVisibleSql). ميزة «الجمهور» لكل لحظة (الافتراضي «الأصدقاء» بقرار المالك) تضيف شرطها هنا وفي
-  // momentAudience وحدهما فتسري على المسارات كلها. alias اسم جدول map_posts في الاستعلام، وviewerExpr تعبير نصي لمعرّف المشاهد
-  // (NULL للضيف)، و{ single: true } لاستعلام يقرأ لحظة واحدة (فحص مفتاح مرتبط بالصف بدل مجموعة تُجزَّأ للقائمة كلها؛ السبب في
-  // profile_ext.js). بلا عمود الخصوصية في النواة = الجميع عامّ كما كان.
+  // المنشورات في profile_ext.js). يراها: صاحبها دائماً، أو صديقه (من أضافه صاحبها إلى جهات اتصاله، تعريف «من يراسلني»)، أو أي أحد حين
+  // يكون جمهورها «الجميع» وملف صاحبها عاماً. فلحظة «الأصدقاء» لا يراها غريب ولا ضيف ولو كان الملف عاماً، ولحظات الملف الخاص («ملف عام»
+  // مطفأ) لأصدقائه وحدهم مهما كان جمهورها. الأصدقاء والملف الخاص من قاعدة profile_ext.js (naslifeAuthorVisibleSql) وشرط الجمهور يُمرَّر
+  // إليها (publicWhen) فيقيّد فرع «الملف العام» وحده. alias اسم جدول map_posts في الاستعلام (يُقرأ منه user_id وaudience)، وviewerExpr تعبير
+  // نصي لمعرّف المشاهد (NULL للضيف)، و{ single: true } لاستعلام يقرأ لحظة واحدة (فحص مفتاح مرتبط بالصف بدل مجموعة تُجزَّأ للقائمة كلها؛
+  // السبب في profile_ext.js). بلا عمود الخصوصية في النواة = كل ملف عام، فيبقى شرط الجمهور وحده.
   //
-  // احتياط مغلق: هذه الإضافة تُقلع قبل profile_ext.js، ولو غابت قاعدته (لم تُسجَّل، أو تعثّرت قبل نشرها لو غُلّفت يوماً بـtry/catch) لا
-  // تصير لحظات الملفات الخاصة عامة. نكتشف عمود الخصوصية بأنفسنا عند الإقلاع (users.is_public، وجدول ملف بمفتاح مستخدم: profiles وما يشبهه كما في
-  // profile_ext.js) ونبني جزءاً محافظاً: صاحبها، أو صاحب ملف ليس خاصاً. أصدقاء صاحب الملف الخاص لا يرونها حتى تعود القاعدة (إغلاق عند الشك).
+  // احتياط مغلق: هذه الإضافة تُقلع قبل profile_ext.js، ولو غابت قاعدته (لم تُسجَّل، أو تعثّرت قبل نشرها لو غُلّفت يوماً بـtry/catch، أو
+  // نسخة قديمة لا تفهم شرط الجمهور) لا تصير لحظات الملفات الخاصة ولا لحظات «الأصدقاء» عامة. نكتشف عمود الخصوصية بأنفسنا عند الإقلاع
+  // (users.is_public، وجدول ملف بمفتاح مستخدم: profiles وما يشبهه كما في profile_ext.js) ونبني جزءاً محافظاً: صاحبها، أو جمهورها «الجميع»
+  // وصاحبها ليس ملفه خاصاً. الأصدقاء لا يرون لحظات «الأصدقاء» ولا لحظات الملف الخاص حتى تعود القاعدة (إغلاق عند الشك).
   const TEXTY = new Set(["text", "character varying", "character"]);
   const qi = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
   const privProbes = [];
@@ -164,29 +180,38 @@ export default async function posts(app, opts) {
   }
   const privateOf = (who) => (privProbes.length ? `(${privProbes.map((x) => x.one(who)).join(" OR ")})` : null);
   const PRIVATE_IDS = privProbes.length ? privProbes.map((x) => x.ids).join(" UNION ALL ") : null;
+  // «الجمهور: الجميع» شرط على الصف نفسه؛ أي قيمة أخرى (ومنها NULL) = «الأصدقاء» (إغلاق عند الشك)
+  const audienceAll = (alias) => `${alias}.audience = 'all'`;
   const closedVisibleSql = (alias, viewerExpr, { single = false } = {}) => {
-    // البديل يذكر معامل المشاهد: Postgres يرفض معاملاً مرسلاً لا يظهر في الاستعلام (الإعجاب يمرّره لهذا الجزء وحده)
-    if (!PRIVATE_IDS) return `(${viewerExpr} IS NULL OR TRUE)`;
-    const notPrivate = single ? `NOT ${privateOf(`${alias}.user_id`)}` : `${alias}.user_id NOT IN (${PRIVATE_IDS})`;
-    return `COALESCE((${alias}.user_id = ${viewerExpr} OR ${notPrivate}), false)`;
+    // يذكر معامل المشاهد دائماً: Postgres يرفض معاملاً مرسلاً لا يظهر في الاستعلام (الإعجاب يمرّره لهذا الجزء وحده)
+    const open = !PRIVATE_IDS ? audienceAll(alias)
+      : `(${audienceAll(alias)} AND ${single ? `NOT ${privateOf(`${alias}.user_id`)}` : `${alias}.user_id NOT IN (${PRIVATE_IDS})`})`;
+    return `COALESCE((${alias}.user_id = ${viewerExpr} OR ${open}), false)`;
   };
+  // القاعدة تفهم شرط الجمهور؟ (علامة publicWhen في profile_ext.js) نسخة لا تفهمه كانت ستتجاهله فتفتح لحظات «الأصدقاء» للعموم
+  const fullRule = () => { const f = globalThis.naslifeAuthorVisibleSql; return typeof f === "function" && f.publicWhen === true ? f : null; };
   const momentVisibleSql = (alias, viewerExpr, opts = {}) => {
-    const f = globalThis.naslifeAuthorVisibleSql;
-    return typeof f === "function" ? f(`${alias}.user_id`, viewerExpr, opts) : closedVisibleSql(alias, viewerExpr, opts);
+    const f = fullRule();
+    return f ? f(`${alias}.user_id`, viewerExpr, { ...opts, publicWhen: audienceAll(alias) }) : closedVisibleSql(alias, viewerExpr, opts);
   };
   globalThis.naslifeMomentVisibleSql = momentVisibleSql;
-  // بعد تحميل الإضافات كلها: عمود خصوصية بلا قاعدة profile_ext.js = الاحتياط المغلق يعمل، فننبّه في السجل
+  // بعد تحميل الإضافات كلها: بلا قاعدة profile_ext.js يعمل الاحتياط المغلق (لحظات «الأصدقاء» لصاحبها وحده، ولحظات الملف الخاص كذلك
+  // إن وُجد عمود الخصوصية)، فننبّه في السجل
   app.addHook("onReady", async () => {
-    if (privProbes.length && typeof globalThis.naslifeAuthorVisibleSql !== "function") {
-      console.warn("map_posts: profile privacy column found but profile_ext.js rule (naslifeAuthorVisibleSql) is missing; private profiles' moments are shown to their authors only until it loads");
+    if (!fullRule()) {
+      console.warn(`map_posts: profile_ext.js rule (naslifeAuthorVisibleSql with audience support) is missing; friends-only moments${privProbes.length ? " and private profiles' moments" : ""} are shown to their authors only until it loads`);
     }
   });
-  // جمهور البث الحي للحظة جديدة بالقاعدة نفسها: null = الجميع، وإلا من تُسلَّم إليهم فقط (صاحبها وأصدقاؤه). بلا قاعدة profile_ext.js
-  // فالاحتياط نفسه (صاحب الملف الخاص وحده)، وعند الشك (خطأ القاعدة) صاحبها وحده
+  // جمهور البث الحي للحظة جديدة بالقاعدة نفسها: null = الجميع، وإلا من تُسلَّم إليهم فقط (صاحبها وأصدقاؤه). لحظة «الأصدقاء» أو ملف
+  // خاص = صاحبها وأصدقاؤه. بلا قاعدة profile_ext.js فالاحتياط نفسه (صاحبها وحده لغير العام)، وعند الشك (خطأ القاعدة) صاحبها وحده
   const momentAudience = async (p) => {
     try {
-      const isPublic = globalThis.naslifeIsPublic;
-      if (typeof isPublic === "function") return (await isPublic(p.user_id)) ? null : [p.user_id, ...((await globalThis.naslifeFriendIds?.(p.user_id)) ?? [])];
+      const everyone = p.audience === "all";
+      if (fullRule() && typeof globalThis.naslifeIsPublic === "function") {
+        if (everyone && (await globalThis.naslifeIsPublic(p.user_id))) return null;
+        return [p.user_id, ...((await globalThis.naslifeFriendIds?.(p.user_id)) ?? [])];
+      }
+      if (!everyone) return [p.user_id];
       const priv = privateOf("$1::text");
       if (!priv) return null;
       return (await pool.query(`SELECT ${priv} AS priv`, [p.user_id])).rows[0]?.priv === false ? null : [p.user_id];
@@ -210,18 +235,23 @@ export default async function posts(app, opts) {
     if (banned) return reply.code(400).send({ error: "banned-words", word: banned });
     const ttl = TTL_HOURS.has(Number(b.ttlHours)) ? Number(b.ttlHours) : 24;
     const price = b.price == null || b.price === "" ? null : Math.max(0, Math.round(Number(b.price) || 0));
+    const tag = TAGS.has(b.tag) ? b.tag : "moment", cta = cleanCta(b.cta);
+    // الجمهور: اختيار الناشر إن أرسله، وإلا الافتراضي بنوع المنشور (defaultAudience أعلاه)
+    const missing = b.audience == null || b.audience === "";
+    if (!missing && !AUDIENCES.has(b.audience)) return bad(reply, 400, "bad-audience");
+    const audience = missing ? defaultAudience({ tag, price, cta }) : b.audience;
     const id = crypto.randomUUID();
     const audioUrl = kind === "image" || kind === "text" ? absUrl(req, b.audioUrl) : null;
     const audioSec = audioUrl && b.audioSec != null ? Math.round(clamp(b.audioSec, 1, 600, 0)) || null : null;
     // منشور نصي بلا نص لكن بتسجيل صوتي: مقبول (لوحة صوتية)
     if (kind === "text" && !caption && !overlays.some((o) => o.type === "text") && !audioUrl) return bad(reply, 400, "empty");
-    await pool.query(`INSERT INTO map_posts(id,user_id,kind,media_url,caption,bg,overlays,tag,title,price,cta,lat,lng,place_name,duration_sec,expires_at,audio_url,audio_sec)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now() + ($16 || ' hours')::interval,$17,$18)`,
-      [id, uid, kind, mediaUrl, caption, HEX_RE.test(String(b.bg ?? "")) ? String(b.bg) : null, JSON.stringify(overlays), TAGS.has(b.tag) ? b.tag : "moment", str(b.title, 80), price,
-       JSON.stringify(cleanCta(b.cta)), lat, lng, str(b.placeName, 80) || null, b.durationSec == null ? null : Math.round(clamp(b.durationSec, 0, 600, 0)), String(ttl), audioUrl, audioSec]);
+    await pool.query(`INSERT INTO map_posts(id,user_id,kind,media_url,caption,bg,overlays,tag,title,price,cta,lat,lng,place_name,duration_sec,expires_at,audio_url,audio_sec,audience)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now() + ($16 || ' hours')::interval,$17,$18,$19)`,
+      [id, uid, kind, mediaUrl, caption, HEX_RE.test(String(b.bg ?? "")) ? String(b.bg) : null, JSON.stringify(overlays), tag, str(b.title, 80), price,
+       JSON.stringify(cta), lat, lng, str(b.placeName, 80) || null, b.durationSec == null ? null : Math.round(clamp(b.durationSec, 0, 600, 0)), String(ttl), audioUrl, audioSec, audience]);
     const row = (await pool.query(`${SELECT} WHERE p.id=$2`, [uid, id])).rows[0];
     // بث فوري للتطبيقات المفتوحة (الخط الزمني والخريطة) بصيغة المشاهد نفسها؛ من منظور عام (لا mine ولا liked)،
-    // ولحظة صاحب الملف الخاص تُسلَّم لجمهورها فقط (live.js يصفّي لكل مستمع)
+    // ولحظة «الأصدقاء» أو لحظة صاحب الملف الخاص تُسلَّم لجمهورها فقط (live.js يصفّي لكل مستمع)
     try { globalThis.naslifeLive?.emit("post", { ...(await out(row, null)), user: await person(uid) }, { only: await momentAudience(row) }); } catch { /* البث لا يعطّل النشر */ }
     return out(row, uid);
   });
@@ -336,7 +366,7 @@ export default async function posts(app, opts) {
     const p = (await pool.query(`${SELECT.replace(" FROM map_posts p", `, ${momentVisibleSql("p", "$1::text", { single: true })} AS visible FROM map_posts p`)} WHERE p.id=$2`, [uid, req.params.id])).rows[0];
     if (!p) return bad(reply, 404, "not-found");
     if (p.status !== "active" && p.user_id !== uid && !(await isAdmin(uid))) return bad(reply, 404, "not-found");
-    // لحظة صاحب ملف خاص لغير أصدقائه (والضيف) كأنها غير موجودة؛ الإدارة تراها للإشراف على البلاغات
+    // لحظة «الأصدقاء» أو لحظة صاحب ملف خاص لغير أصدقائه (والضيف) كأنها غير موجودة؛ الإدارة تراها للإشراف على البلاغات
     if (p.visible === false && p.user_id !== uid && !(await isAdmin(uid))) return bad(reply, 404, "not-found");
     // رابط مباشر لمنشور كاتبه محظور (في أي اتجاه) يُعامل كأنه غير موجود
     if (uid && p.user_id !== uid) { let bl = []; try { bl = (await globalThis.naslifeBlockedIds?.(uid)) ?? []; } catch { bl = []; } if (bl.includes(p.user_id)) return bad(reply, 404, "not-found"); }
@@ -366,12 +396,29 @@ export default async function posts(app, opts) {
     if (b.audioUrl !== undefined && (p.kind === "image" || p.kind === "text")) { const u = absUrl(req, b.audioUrl); set("audio_url", u); set("audio_sec", u && b.audioSec != null ? Math.round(clamp(b.audioSec, 1, 600, 0)) || null : null); }
     if (b.status !== undefined) { if (!["active", "hidden"].includes(b.status)) return bad(reply, 400, "bad-status"); if (p.status === "blocked") return bad(reply, 403, "blocked"); set("status", b.status); }
     if (b.ttlHours !== undefined) { if (!TTL_HOURS.has(Number(b.ttlHours))) return bad(reply, 400, "bad-ttl"); vals.push(String(Number(b.ttlHours))); sets.push(`expires_at=now() + ($${vals.length} || ' hours')::interval`); }
+    // الجمهور يغيّره صاحبها وحده (فحص الملكية أعلاه)؛ القيمة إما «الأصدقاء» أو «الجميع» صراحةً
+    if (b.audience !== undefined) { if (!AUDIENCES.has(b.audience)) return bad(reply, 400, "bad-audience"); set("audience", b.audience); }
     if (!sets.length) return bad(reply, 400, "empty");
     sets.push("updated_at=now()");
     vals.push(p.id);
     await pool.query(`UPDATE map_posts SET ${sets.join(", ")} WHERE id=$${vals.length}`, vals);
-    return out((await pool.query(`${SELECT} WHERE p.id=$2`, [uid, p.id])).rows[0], uid);
+    const row = (await pool.query(`${SELECT} WHERE p.id=$2`, [uid, p.id])).rows[0];
+    if (b.audience !== undefined && b.audience !== (p.audience === "all" ? "all" : "friends")) await liveAudienceChanged(row);
+    return out(row, uid);
   });
+  // تغيّر جمهور لحظة ظاهرة: التطبيقات المفتوحة تتبع القاعدة بلا انتظار تحديث. التضييق إلى «الأصدقاء» يُزيلها من كل قائمة مفتوحة
+  // (post_removed للجميع: معرّف بلا محتوى) ثم يعيد جلب جمهورها الجديد (post_restored لصاحبها وأصدقائه) فتعود عندهم؛ والتوسيع إلى
+  // «الجميع» يعيد الجلب عند من صار يراها (الجميع إن كان الملف عاماً، وإلا لا جديد: أصدقاؤه كانوا يرونها)
+  const liveAudienceChanged = async (row) => {
+    try {
+      if (!row || row.status !== "active" || new Date(row.expires_at).getTime() < Date.now()) return;
+      const only = await momentAudience(row);
+      if (row.audience !== "all") {
+        globalThis.naslifeLive?.emit("post_removed", { id: row.id });
+        globalThis.naslifeLive?.emit("post_restored", { id: row.id }, { only });
+      } else if (only === null) globalThis.naslifeLive?.emit("post_restored", { id: row.id });
+    } catch { /* البث لا يعطّل الحفظ */ }
+  };
   app.delete("/mapposts/:id", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
@@ -385,10 +432,17 @@ export default async function posts(app, opts) {
     return { ok: true };
   });
 
+  // يرى المشاهد هذه اللحظة؟ (القاعدة الواحدة بفحص مفتاح)؛ خطأ القاعدة = لا (إغلاق عند الشك)
+  const canSee = async (id, uid) => {
+    try { return (await pool.query(`SELECT ${momentVisibleSql("map_posts", "$2::text", { single: true })} AS v FROM map_posts WHERE id=$1`, [id, uid ?? null])).rows[0]?.v === true; } catch { return false; }
+  };
+
   // ---- مشاهدة (مرة لكل مستخدم) وإعجاب (تبديل) وحجب إداري
   app.post("/mapposts/:id/view", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    // من لا يرى اللحظة (جمهورها «الأصدقاء» أو ملف صاحبها خاص) لا يُحسب مشاهداً ولا يأخذ عدد مشاهداتها
+    if (!(await canSee(req.params.id, uid))) return bad(reply, 404, "not-found");
     const r = await pool.query("INSERT INTO map_post_views(post_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING 1", [req.params.id, uid]);
     if (r.rowCount) await pool.query("UPDATE map_posts SET views=views+1 WHERE id=$1 AND user_id<>$2", [req.params.id, uid]);
     const own = (await pool.query("SELECT 1 FROM map_posts WHERE id=$1 AND user_id=$2", [req.params.id, uid])).rowCount > 0;
@@ -420,7 +474,8 @@ export default async function posts(app, opts) {
       if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
       const p = (await pool.query("SELECT user_id FROM map_posts WHERE id=$1", [req.params.id])).rows[0];
       if (!p) return bad(reply, 404, "not-found");
-      if (p.user_id !== uid) await logEvent(req.params.id, uid, kind);
+      // إحصاءات الناشر تعدّ من يرى اللحظة فقط
+      if (p.user_id !== uid && (await canSee(req.params.id, uid))) await logEvent(req.params.id, uid, kind);
       return { ok: true };
     });
   }

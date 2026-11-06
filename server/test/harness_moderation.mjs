@@ -111,7 +111,7 @@ for (const [m, u, b] of [['POST', '/biz', { nameAr: 'دائرة موقوف', lat
 
 // ================= تصفية المحظورين (huda حظرت منى) =================
 await pool.query('INSERT INTO user_blocks(user_id,blocked_id) VALUES($1,$2)', [R2, AUTHOR]);
-const MP = await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000000', caption: 'منشور منى', lat: 21.5, lng: 39.2 }, expect: 200 });
+const MP = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', bg: '#000000', caption: 'منشور منى', lat: 21.5, lng: 39.2 }, expect: 200 });
 await call('GET', `/mapposts/${MP.id}`, { user: R2, expect: 404 });
 await call('GET', `/mapposts/${MP.id}`, { user: R1, expect: 200 });
 check(!(await call('GET', `/market/${LR1.id}/questions`, { user: R2, expect: 200 })).some((x) => x.id === Q.id) && (await call('GET', `/market/${LR1.id}/questions`, { user: R1, expect: 200 })).some((x) => x.id === Q.id), 'questions exclude blocked authors');

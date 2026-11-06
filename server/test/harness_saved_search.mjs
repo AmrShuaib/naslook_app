@@ -44,9 +44,9 @@ check(!(await call('GET', '/searches/saved', { user: 'SA0000002', expect: 200 })
 // مطابقات
 let sw = await sweep();
 check(sw.searches === 2 && sw.notified === 0, 'nothing new yet', JSON.stringify(sw));
-await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000', caption: 'شقه للايجار قرب الكورنيش', lat: 21.51, lng: 39.19 }, user: 'SA0000002', expect: 200 });
-await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000', caption: 'شقة للإيجار في الرياض', lat: 24.7, lng: 46.7 }, user: 'SA0000002', expect: 200 });
-await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000', caption: 'شقة للإيجار مني أنا', lat: 21.5, lng: 39.2 }, user: 'SA0000001', expect: 200 });
+await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', bg: '#000', caption: 'شقه للايجار قرب الكورنيش', lat: 21.51, lng: 39.19 }, user: 'SA0000002', expect: 200 });
+await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', bg: '#000', caption: 'شقة للإيجار في الرياض', lat: 24.7, lng: 46.7 }, user: 'SA0000002', expect: 200 });
+await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', bg: '#000', caption: 'شقة للإيجار مني أنا', lat: 21.5, lng: 39.2 }, user: 'SA0000001', expect: 200 });
 await call('POST', '/market', { body: { kind: 'product', category: 'food', title: 'قهوة مختصة', price: 4500 }, user: 'SA0000002', expect: 200 });
 sw = await sweep();
 check(sw.notified === 1 && sw.found === 1, 'post nearby matches (normalized), far and own excluded; listing ignored for events-only search', JSON.stringify(sw));
@@ -65,7 +65,7 @@ const got = await call('GET', '/searches/saved', { expect: 200 });
 check(got.find((x) => x.id === s1.id).matches === 2 && got.find((x) => x.id === s1.id).lastMatchAt, 'match counters updated');
 // تعطيل ثم إعادة تفعيل
 await call('PATCH', `/searches/saved/${s1.id}`, { body: { active: false }, expect: 200 });
-await call('POST', '/mapposts', { body: { kind: 'text', bg: '#000', caption: 'شقة للإيجار جديدة', lat: 21.5, lng: 39.2 }, user: 'SA0000002', expect: 200 });
+await call('POST', '/mapposts', { body: { audience: 'all', kind: 'text', bg: '#000', caption: 'شقة للإيجار جديدة', lat: 21.5, lng: 39.2 }, user: 'SA0000002', expect: 200 });
 sw = await sweep();
 check(sw.searches === 1 && (await notes()).length === 3, 'inactive search skipped');
 await call('PATCH', `/searches/saved/${s1.id}`, { body: { active: true }, expect: 200 });

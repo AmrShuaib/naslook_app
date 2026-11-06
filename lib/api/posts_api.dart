@@ -9,6 +9,8 @@ DateTime? _t(dynamic v) => v == null ? null : DateTime.tryParse(v.toString())?.t
 const postTags = {'moment': 'لحظة', 'offer': 'عرض', 'ad': 'إعلان', 'invest': 'فرصة استثمار', 'event': 'فعالية', 'job': 'وظيفة'};
 const postCtaTypes = {'link': 'رابط', 'whatsapp': 'واتساب', 'call': 'اتصال', 'biz': 'دائرة تجارية', 'market': 'عرض في السوق', 'chat': 'مراسلة'};
 const postTtlOptions = <(int, String)>[(24, '24 ساعة'), (72, '3 أيام'), (168, 'أسبوع')];
+/// جمهور المنشور على الخريطة: الأصدقاء (من أضافهم الناشر إلى جهات اتصاله) أو الجميع.
+const postAudiences = {'friends': 'الأصدقاء', 'all': 'الجميع'};
 
 /// طبقة فوق الوسائط: نص أو ملصق (إيموجي) بموضع نسبي (0..1) ومقياس ودوران ولون.
 class PostOverlay {
@@ -53,10 +55,12 @@ class MapPost {
   /// طبقة صوتية اختيارية (تعليق صوتي يُشغَّل مع الصورة أو النص)
   final String? audioUrl;
   final int? audioSec;
+  /// من يراه: 'friends' أو 'all' (خادم أقدم بلا الحقل = 'all' كما كانت كل اللحظات)
+  final String audience;
   const MapPost({
     required this.id, required this.user, required this.kind, this.mediaUrl, this.caption = '', this.bg, this.overlays = const [], this.tag = 'moment', this.title = '', this.price, this.cta,
     required this.lat, required this.lng, this.placeName, this.durationSec, this.status = 'active', this.views = 0, this.likes = 0, this.liked = false, this.mine = false, this.expired = false, this.expiresAt, this.createdAt,
-    this.distanceKm, this.place, this.audioUrl, this.audioSec,
+    this.distanceKm, this.place, this.audioUrl, this.audioSec, this.audience = 'all',
   });
   factory MapPost.fromJson(Map m) => MapPost(
         id: m['id'].toString(), user: Person.fromJson(asMap(m['user'])), kind: m['kind']?.toString() ?? 'text', mediaUrl: m['mediaUrl']?.toString(), caption: m['caption']?.toString() ?? '', bg: m['bg']?.toString(),
@@ -65,11 +69,15 @@ class MapPost {
         status: m['status']?.toString() ?? 'active', views: _i(m['views']), likes: _i(m['likes']), liked: m['liked'] == true, mine: m['mine'] == true, expired: m['expired'] == true, expiresAt: _t(m['expiresAt']), createdAt: _t(m['createdAt']),
         distanceKm: m['distanceKm'] == null ? null : _d(m['distanceKm']), place: m['place'] is Map ? PostPlace.fromJson(asMap(m['place'])) : null,
         audioUrl: m['audioUrl']?.toString(), audioSec: m['audioSec'] == null ? null : _i(m['audioSec']),
+        audience: m['audience']?.toString() == 'friends' ? 'friends' : 'all',
       );
-  MapPost copyWith({int? likes, bool? liked, int? views, String? status}) => MapPost(
+  MapPost copyWith({int? likes, bool? liked, int? views, String? status, String? audience}) => MapPost(
         id: id, user: user, kind: kind, mediaUrl: mediaUrl, caption: caption, bg: bg, overlays: overlays, tag: tag, title: title, price: price, cta: cta, lat: lat, lng: lng, placeName: placeName,
-        durationSec: durationSec, status: status ?? this.status, views: views ?? this.views, likes: likes ?? this.likes, liked: liked ?? this.liked, mine: mine, expired: expired, expiresAt: expiresAt, createdAt: createdAt, distanceKm: distanceKm, place: place, audioUrl: audioUrl, audioSec: audioSec);
+        durationSec: durationSec, status: status ?? this.status, views: views ?? this.views, likes: likes ?? this.likes, liked: liked ?? this.liked, mine: mine, expired: expired, expiresAt: expiresAt, createdAt: createdAt, distanceKm: distanceKm, place: place, audioUrl: audioUrl, audioSec: audioSec,
+        audience: audience ?? this.audience);
   String get tagLabel => postTags[tag] ?? tag;
+  bool get friendsOnly => audience == 'friends';
+  String get audienceLabel => postAudiences[audience] ?? audience;
   String get kindLabel => switch (kind) { 'image' => 'صورة', 'video' => 'فيديو', 'audio' => 'تسجيل صوتي', _ => 'نص' };
   /// نص مختصر للقوائم: العنوان أو التعليق أو أول نص في الطبقات.
   String get summary => title.isNotEmpty ? title : caption.isNotEmpty ? caption : (overlays.where((o) => !o.isSticker).map((o) => o.text).firstOrNull ?? kindLabel);
@@ -126,6 +134,8 @@ extension PostsApi on ApiClient {
   Future<List<MapPost>> myPosts() async => asList(await getList('/mapposts/mine')).map(MapPost.fromJson).toList();
   Future<MapPost> mapPost(String id) async => MapPost.fromJson(await get('/mapposts/$id'));
   Future<MapPost> updatePost(String id, Map<String, dynamic> patch) async => MapPost.fromJson(await patch_('/mapposts/$id', patch));
+  /// يغيّر جمهور منشوري ('friends' | 'all') ويعيده محدّثاً.
+  Future<MapPost> setPostAudience(String id, String audience) => updatePost(id, {'audience': audience});
   Future<void> deletePost(String id) => delete('/mapposts/$id');
   Future<int> viewPost(String id) async => _i((await post('/mapposts/$id/view', const {}, prompt: false))['views']);
   Future<({bool liked, int likes})> likePost(String id) async {
