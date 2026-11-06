@@ -52,6 +52,7 @@ export default async function marketPlus(app, opts) {
     let verified = false; try { verified = (await pool.query("SELECT 1 FROM login_aliases WHERE user_id=$1 AND verified", [sellerId])).rowCount > 0; } catch { /* لا جدول */ }
     const flags = (await pool.query("SELECT licensed FROM market_seller_flags WHERE seller_id=$1", [sellerId])).rows[0];
     const badges = [];
+    // "verified" = بريد الدخول مؤكد فقط (لا هوية ولا وثيقة)؛ التطبيق يعرضه «بريد مؤكد» والمفتاح باقٍ للتوافق مع النسخ القديمة
     if (verified) badges.push("verified");
     if (o.done >= 10 && o.cancelled <= Math.max(2, o.done * 0.2)) badges.push("trusted");
     if (r.n >= 5 && Number(r.avg) >= 4.5) badges.push("top");

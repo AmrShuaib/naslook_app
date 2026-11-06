@@ -234,7 +234,7 @@ void main() {
     final srv = _Srv();
     await _pump(tester, srv, const BusinessDashboardPage(id: _id));
     expect(find.byKey(const Key('completeness-card')), findsOneWidget);
-    expect(find.text('تأكيد استلام برمز'), findsOneWidget, reason: 'الإجراءات السريعة ظاهرة');
+    expect(find.text('إدخال رمز الاستلام'), findsOneWidget, reason: 'الإجراءات السريعة ظاهرة');
     expect(find.byKey(const Key('here-today')), findsNothing, reason: 'الخادم يرفض الدبوس للدائرة الثابتة (409 not-mobile)');
     expect(hereErrText(const ApiException(409, 'رفض الخادم الطلب (not-mobile)', body: {'error': 'not-mobile'})), startsWith('«أنا هنا اليوم» للدوائر المتنقلة فقط'));
     expect(hereErrText(const ApiException(400, 'رفض الخادم الطلب (bad-location)', body: {'error': 'bad-location'})), 'حدّد موقعاً صحيحاً على الخريطة', reason: 'بقية الأخطاء كما في لوحة المالك');

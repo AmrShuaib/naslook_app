@@ -14,7 +14,7 @@ const ID_RE = /^[A-Z]{2}\d{7}$/i;
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
 const CORE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export const TARGET_TYPES = ["post", "listing", "community", "vessel-post", "community-reply", "listing-question", "listing-review", "wanted", "wanted-reply",
-  "biz", "biz-review", "biz-post", "event", "vessel-comment", "vessel"];
+  "biz", "biz-review", "biz-post", "event", "vessel-comment", "vessel", "job"];
 const TARGETS = new Set(TARGET_TYPES);
 export const MOD_ACTIONS = ["dismiss", "hide", "restore", "suspend-owner"];
 const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
@@ -138,6 +138,7 @@ export default async function safety(app, opts) {
     post: "منشور", listing: "عرض", community: "منشور مجتمع", "vessel-post": "منشور دائرة", "community-reply": "رد في مساحة الدائرة",
     "listing-question": "سؤال على عرض", "listing-review": "تقييم في السوق", wanted: "طلب «أبحث عن»", "wanted-reply": "رد على طلب",
     biz: "دائرة تجارية", "biz-review": "تقييم دائرة", "biz-post": "خبر دائرة", event: "فعالية", "vessel-comment": "تعليق في دائرة", vessel: "دائرة",
+    job: "عرض وظيفي",
   };
   const typeName = (type) => TYPE_NAMES[type] ?? "محتوى";
 
@@ -228,6 +229,9 @@ export default async function safety(app, opts) {
       }
       case "biz-post": return one("SELECT b.owner_id AS owner, p.title, p.body AS text, p.image_url AS media, CASE WHEN p.hidden THEN 'blocked' ELSE 'active' END AS status, p.biz_id FROM biz_posts p JOIN biz b ON b.id=p.biz_id WHERE p.id=$1", [id]);
       case "event": return one("SELECT host_id AS owner, title, description AS text, CASE WHEN hidden THEN 'blocked' ELSE 'active' END AS status FROM events WHERE id=$1", [id]);
+      // الوظيفة (jobs.js): المسؤول عنها مالك الدائرة (وإلا من أنشأها)؛ الإخفاء = الحالة blocked كمنشورات الخريطة وعروض السوق
+      case "job": return one(`SELECT COALESCE(b.owner_id, j.created_by) AS owner, j.title, j.description AS text, b.logo_url AS media,
+        CASE WHEN j.status='blocked' THEN 'blocked' ELSE 'active' END AS status, j.biz_id, j.id AS job_id FROM jobs j LEFT JOIN biz b ON b.id=j.biz_id WHERE j.id=$1`, [id]);
       case "vessel-post": case "vessel-comment": {
         // المحتوى في النواة: المعلومات من vessel_mod.js إن وُجد، وإلا يُقبل البلاغ بلا تفاصيل
         const fn = type === "vessel-post" ? globalThis.naslifeVesselPostInfo : globalThis.naslifeVesselCommentInfo;
@@ -301,6 +305,11 @@ export default async function safety(app, opts) {
       case "biz-review": { const [bizId, userId] = id.split(":"); return upd("UPDATE biz_reviews SET hidden=$3 WHERE biz_id=$1 AND user_id=$2 AND hidden<>$3", [bizId, userId, hide]); }
       case "biz-post": return flag("biz_posts");
       case "event": return flag("events");
+      case "job":
+        // blocked يُخرج العرض من القوائم العامة وصندوق العروض والتقديم والمطابقة (كلها تشترط status='open')،
+        // و«إعادة الإظهار» ترجع حالته قبل الإخفاء (منشور أو موقوف أو مسودة…)
+        if (hide) { await savePrev(type, id, "SELECT status AS v FROM jobs WHERE id=$1"); return upd("UPDATE jobs SET status='blocked', updated_at=now() WHERE id=$1 AND status<>'blocked'", [id]); }
+        return upd("UPDATE jobs SET status=$2, updated_at=now() WHERE id=$1 AND status='blocked'", [id, await takePrev(type, id, ["draft", "pending", "open", "paused", "closed", "filled"], "open")]);
       case "vessel-post": {
         try {
           return hide ? !!(await globalThis.naslifeVesselPostHide?.(id, { vesselId: info?.vessel_id ?? "", by, reason })) : !!(await globalThis.naslifeVesselPostUnhide?.(id));
@@ -351,11 +360,13 @@ export default async function safety(app, opts) {
     if (info.post_id) data.parentId = info.post_id;
     if (type === "post" || type === "community" || type === "vessel-post") data.postId = id;
     if (type === "listing") data.listingId = id;
+    // الوظيفة: نوع job_review الموسوم manage يفتحه التطبيق على تبويب التوظيف في لوحة الدائرة
+    if (type === "job") { data.jobId = id; data.manage = true; }
     if (!hidden) {
-      await notify([info.owner], { kind: "content_restored", title: `أُعيد إظهار ${name}`, body: `«${info.title}» ظاهر من جديد بعد المراجعة`, data });
+      await notify([info.owner], { kind: type === "job" ? "job_review" : "content_restored", title: `أُعيد إظهار ${name}`, body: `«${info.title}» ظاهر من جديد بعد المراجعة`, data });
       return;
     }
-    const kind = { post: "post_blocked", listing: "listing_hidden", community: "community_hidden", "vessel-post": "vessel_post_hidden" }[type] ?? "content_hidden";
+    const kind = { post: "post_blocked", listing: "listing_hidden", community: "community_hidden", "vessel-post": "vessel_post_hidden", job: "job_review" }[type] ?? "content_hidden";
     const why = byAdmin ? "أخفته الإدارة بعد مراجعة البلاغات" : "قيد مراجعة الإدارة";
     await notify([info.owner], { kind, title: byAdmin ? `أخفت الإدارة ${name}` : `أُخفي ${name} بعد عدة بلاغات`, body: `«${info.title}» ${why}${note ? ` — ${note}` : ""}`, data });
   }
@@ -432,7 +443,7 @@ export default async function safety(app, opts) {
         owner: info?.owner ? personIn(pm, info.owner) : null,
         title: info?.title ?? null, text: info?.text ? String(info.text).slice(0, 300) : null, mediaUrl: info?.media ?? null,
         status: info ? (info.status === "blocked" ? "hidden" : "visible") : "missing", hidden: info?.status === "blocked",
-        bizId: info?.biz_id ?? null, listingId: info?.listing_id ?? null, wantedId: info?.wanted_id ?? null, vesselId: info?.vessel_id ?? null, parentId: info?.post_id ?? null,
+        bizId: info?.biz_id ?? null, listingId: info?.listing_id ?? null, wantedId: info?.wanted_id ?? null, vesselId: info?.vessel_id ?? null, parentId: info?.post_id ?? null, jobId: info?.job_id ?? null,
         action: r.action ? { action: r.action, note: r.note, by: personIn(pm, r.admin_id), at: r.action_at } : null,
       };
     });

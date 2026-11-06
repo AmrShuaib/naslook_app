@@ -15,7 +15,11 @@ const jobTypes = <String, String>{'full': 'دوام كامل', 'part': 'دوام
 const jobEducation = <String, String>{'none': 'غير محدد', 'secondary': 'ثانوية', 'diploma': 'دبلوم', 'bachelor': 'بكالوريوس', 'master': 'ماجستير', 'phd': 'دكتوراه'};
 const jobAvailability = <String, String>{'now': 'فوراً', '2w': 'خلال أسبوعين', '1m': 'خلال شهر', '3m': 'خلال ثلاثة أشهر'};
 const jobStages = <String, String>{'new': 'جديد', 'screening': 'فرز', 'answered': 'أجاب', 'interview': 'مقابلة', 'offer': 'عرض', 'hired': 'تعيين', 'rejected': 'معتذر'};
-const jobStatuses = <String, String>{'draft': 'مسودة', 'pending': 'بانتظار الموافقة', 'open': 'منشور', 'paused': 'موقوف', 'closed': 'مغلق', 'filled': 'شُغلت'};
+// blocked: أخفاه الإشراف بعد البلاغات أو بقرار الإدارة (server/safety.js)
+const jobStatuses = <String, String>{'draft': 'مسودة', 'pending': 'بانتظار الموافقة', 'open': 'منشور', 'paused': 'موقوف', 'closed': 'مغلق', 'filled': 'شُغلت', 'blocked': 'مخفي بالإشراف'};
+
+/// سطر الأمان الثابت على الوظيفة وبطاقتها وصفحة العرض: إعلانات التوظيف الوهمية تنتهي غالباً بطلب رسوم أو صورة هوية.
+const jobSafetyLine = 'لا تدفع أي رسوم ولا ترسل صورة هويتك قبل المقابلة. ناس لايف لا تطلب رسوماً للتوظيف.';
 const matchStatuses = <String, String>{'sent': 'جديد', 'viewed': 'شوهد', 'accepted': 'قبلت', 'declined': 'رفضت', 'later': 'لاحقاً', 'answered': 'أجبت', 'withdrawn': 'انسحبت', 'expired': 'انتهى'};
 String jobTypeLabel(String t) => jobTypes[t] ?? t;
 String jobStageLabel(String s) => jobStages[s] ?? s;
@@ -113,8 +117,11 @@ class JobCounts {
 class JobMatched {
   final int sent, considered;
   final bool capped;
-  const JobMatched({this.sent = 0, this.considered = 0, this.capped = false});
-  factory JobMatched.fromJson(Map m) => JobMatched(sent: _i(m['sent']), considered: _i(m['considered']), capped: m['capped'] == true);
+  /// not-verified: الدائرة غير موثّقة فلم تُرسل بطاقات (العرض في القائمة العامة فقط حتى التوثيق).
+  final String? skipped;
+  const JobMatched({this.sent = 0, this.considered = 0, this.capped = false, this.skipped});
+  factory JobMatched.fromJson(Map m) => JobMatched(sent: _i(m['sent']), considered: _i(m['considered']), capped: m['capped'] == true, skipped: m['skipped']?.toString());
+  bool get notVerified => skipped == 'not-verified';
 }
 
 /// العرض الوظيفي (للعامة أو للإدارة؛ الحقول الإدارية فارغة في العام).
@@ -132,11 +139,13 @@ class Job {
   final JobCounts? counts;
   final JobMatched? matched;
   final Person? assignee;
+  /// توثيق الدائرة الناشرة (bizVerified من الخادم، وإلا biz.verified)؛ null حين لا يُعرف (إخراج لوحة الدائرة).
+  final bool? bizVerified;
   const Job({
     required this.id, required this.bizId, required this.title, this.titleEn = '', this.department = '', this.description = '', this.descriptionEn = '', this.city = '', this.district = '', this.type = 'full',
     this.education = 'none', this.status = 'draft', this.must = const [], this.nice = const [], this.skills = const [], this.experienceMin = 0, this.openings = 1, this.views = 0, this.salaryMin, this.salaryMax,
     this.salaryVisible = false, this.public = true, this.deadline, this.publishedAt, this.closedAt, this.createdAt, this.updatedAt, this.questions = const [], this.createdBy, this.assigneeId, this.draftSource,
-    this.bizName, this.plan, this.biz, this.mine, this.counts, this.matched, this.assignee,
+    this.bizName, this.plan, this.biz, this.mine, this.counts, this.matched, this.assignee, this.bizVerified,
   });
   factory Job.fromJson(Map m) {
     final req = _m(m['requirements']);
@@ -149,8 +158,11 @@ class Job {
       questions: asList(m['questions']).map(JobQuestion.fromJson).toList(), createdBy: m['createdBy']?.toString(), assigneeId: m['assigneeId']?.toString(), draftSource: m['draftSource']?.toString(),
       bizName: m['bizName']?.toString(), plan: m['plan']?.toString(), biz: m['biz'] is Map ? JobBiz.fromJson(_m(m['biz'])) : null, mine: m['mine'] is Map ? JobMine.fromJson(_m(m['mine'])) : null,
       counts: m['counts'] is Map ? JobCounts.fromJson(_m(m['counts'])) : null, matched: m['matched'] is Map ? JobMatched.fromJson(_m(m['matched'])) : null, assignee: m['assignee'] is Map ? Person.fromJson(_m(m['assignee'])) : null,
+      bizVerified: m['bizVerified'] is bool ? m['bizVerified'] as bool : (m['biz'] is Map ? _m(m['biz'])['verified'] == true : null),
     );
   }
+  /// تُعرض «دائرة غير موثّقة» على الوظيفة وبطاقتها: لا مطابقة تلقائية لها، والتحذير يسبق التقديم.
+  bool get unverifiedCircle => bizVerified == false;
   String get typeLabel => jobTypeLabel(type);
   String get statusLabel => jobStatusLabel(status);
   bool get isOpen => status == 'open';
@@ -316,10 +328,12 @@ class JobsBoard {
   final String role;
   final bool enabled, requireApproval, aiAvailable;
   final int upcomingInterviews;
-  const JobsBoard({this.items = const [], this.plan = const JobPlan(), this.team = const [], this.role = '', this.enabled = true, this.requireApproval = false, this.aiAvailable = false, this.upcomingInterviews = 0});
+  /// الدائرة موثّقة؟ غير الموثّقة تنشر في القائمة العامة فقط، والمطابقة التلقائية تبدأ بعد التوثيق.
+  final bool verified;
+  const JobsBoard({this.items = const [], this.plan = const JobPlan(), this.team = const [], this.role = '', this.enabled = true, this.requireApproval = false, this.aiAvailable = false, this.upcomingInterviews = 0, this.verified = true});
   factory JobsBoard.fromJson(Map m) => JobsBoard(
         items: asList(m['items']).map(Job.fromJson).toList(), plan: JobPlan.fromJson(_m(m['plan'])), team: asList(m['team']).map(Person.fromJson).toList(), role: m['role']?.toString() ?? '', enabled: m['enabled'] != false,
-        requireApproval: m['requireApproval'] == true, aiAvailable: m['aiAvailable'] == true, upcomingInterviews: _i(m['upcomingInterviews']));
+        requireApproval: m['requireApproval'] == true, aiAvailable: m['aiAvailable'] == true, upcomingInterviews: _i(m['upcomingInterviews']), verified: m['verified'] != false);
 }
 
 /// مسودة من محرك الصياغة (ai أو template).
@@ -342,8 +356,10 @@ class JobDraft {
 class JobPreview {
   final int strong, good, weak, profiles;
   final double threshold;
-  const JobPreview({this.strong = 0, this.good = 0, this.weak = 0, this.profiles = 0, this.threshold = .45});
-  factory JobPreview.fromJson(Map m) => JobPreview(strong: _i(m['strong']), good: _i(m['good']), weak: _i(m['weak']), profiles: _i(m['profiles']), threshold: _d(m['threshold'], .45));
+  /// false للدائرة غير الموثّقة: الأعداد للعلم، ولا تُرسل البطاقات حتى التوثيق.
+  final bool autoMatch;
+  const JobPreview({this.strong = 0, this.good = 0, this.weak = 0, this.profiles = 0, this.threshold = .45, this.autoMatch = true});
+  factory JobPreview.fromJson(Map m) => JobPreview(strong: _i(m['strong']), good: _i(m['good']), weak: _i(m['weak']), profiles: _i(m['profiles']), threshold: _d(m['threshold'], .45), autoMatch: m['autoMatch'] != false);
   int get reach => strong + good;
 }
 

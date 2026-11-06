@@ -8,6 +8,7 @@ import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../jobs/job_page.dart';
 import 'admin_shell.dart';
 import 'admin_users.dart';
 
@@ -243,6 +244,9 @@ class _ModerationCardState extends ConsumerState<_ModerationCard> {
           if (it.hidden)
             FilledButton.tonalIcon(key: Key('mod-restore-$k'), onPressed: busy ? null : () => _act('restore'), icon: const Icon(Icons.visibility_outlined, size: 18), label: const Text('إعادة الإظهار')),
           FilledButton.tonalIcon(key: Key('mod-dismiss-$k'), onPressed: busy ? null : () => _act('dismiss'), icon: const Icon(Icons.done_rounded, size: 18), label: const Text('تجاهل')),
+          // الوظيفة المبلّغ عنها: صفحتها تُفتح للإدارة حتى وهي مخفية (الخادم يعرضها للمدير)
+          if (it.targetType == 'job' && !it.missing)
+            TextButton.icon(key: Key('mod-open-$k'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => JobPage(id: it.jobId ?? it.targetId))), icon: const Icon(Icons.work_outline_rounded, size: 18), label: const Text('فتح الوظيفة')),
           if (it.owner != null && !it.missing) ...[
             OutlinedButton.icon(key: Key('mod-suspend-$k'), style: OutlinedButton.styleFrom(foregroundColor: Joy.danger), onPressed: busy ? null : () => _act('suspend-owner'), icon: const Icon(Icons.block_rounded, size: 18), label: const Text('إيقاف الناشر')),
             TextButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AdminUserPage(id: it.owner!.id))), icon: const Icon(Icons.person_search_outlined, size: 18), label: const Text('ملف الناشر')),

@@ -8,6 +8,7 @@ import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import 'job_offer_page.dart';
 import 'job_profile_page.dart';
+import 'job_trust.dart';
 
 /// «عروض التوظيف»: الواردة (بطاقات بانتظار الرد ثم المؤجّلة) وطلباتي (الجارية ثم السابقة).
 class JobOffersPage extends ConsumerStatefulWidget {
@@ -101,7 +102,8 @@ class _JobOffersPageState extends ConsumerState<JobOffersPage> {
       );
 }
 
-/// بطاقة عرض وظيفي: شعار الدائرة واسمها، المسمّى، المدينة · الدوام، الراتب إن كان معلناً، أسباب المطابقة، الحالة والمقابلة.
+/// بطاقة عرض وظيفي: شعار الدائرة واسمها، المسمّى، المدينة · الدوام، الراتب إن كان معلناً، أسباب المطابقة، الحالة والمقابلة،
+/// وسطر الأمان الثابت (لا رسوم ولا صورة هوية قبل المقابلة) وشارة «دائرة غير موثّقة» إن لزمت.
 /// [actions] يعرض أزرار الرد داخل البطاقة (تبويب «الطلبات» وصندوق الواردة)؛ اللمس يفتح صفحة العرض دائماً.
 class JobOfferCard extends ConsumerWidget {
   final JobMatch m;
@@ -129,6 +131,7 @@ class JobOfferCard extends ConsumerWidget {
               Text(j?.title ?? 'عرض وظيفي', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
               if (meta.isNotEmpty) Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
               if (salary.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 2), child: Text(salary, style: const TextStyle(color: Joy.accent, fontSize: 12.5, fontWeight: FontWeight.w600))),
+              if (j?.unverifiedCircle == true) const Padding(padding: EdgeInsets.only(top: 4), child: UnverifiedCircleTag()),
             ]),
           ),
           const SizedBox(width: 8),
@@ -151,6 +154,7 @@ class JobOfferCard extends ConsumerWidget {
               Expanded(child: Text('مقابلة ${iv.modeLabel} · ${jobWhen(iv.at)}${iv.place.isNotEmpty ? ' · ${iv.place}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600))),
             ]),
           ),
+        const Padding(padding: EdgeInsets.only(top: 8), child: JobSafetyNote(compact: true)),
         if (canAct)
           Padding(
             padding: const EdgeInsets.only(top: 10),

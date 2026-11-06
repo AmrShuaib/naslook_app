@@ -622,18 +622,18 @@ class ModerationItem {
   final int reports;
   final List<String> reasons;
   final Person? owner;
-  final String? title, text, mediaUrl, bizId, listingId, wantedId, vesselId, parentId;
+  final String? title, text, mediaUrl, bizId, listingId, wantedId, vesselId, parentId, jobId;
   final DateTime? firstAt, lastAt;
   final ModerationAction? action;
   const ModerationItem({required this.targetType, required this.targetId, this.typeName = '', this.status = 'visible', this.reports = 0, this.reasons = const [], this.owner, this.title, this.text, this.mediaUrl,
-      this.bizId, this.listingId, this.wantedId, this.vesselId, this.parentId, this.firstAt, this.lastAt, this.action});
+      this.bizId, this.listingId, this.wantedId, this.vesselId, this.parentId, this.jobId, this.firstAt, this.lastAt, this.action});
   factory ModerationItem.fromJson(Map m) => ModerationItem(
         targetType: m['targetType']?.toString() ?? '', targetId: m['targetId']?.toString() ?? '', typeName: m['typeName']?.toString() ?? '',
         status: m['status']?.toString() ?? (m['hidden'] == true ? 'hidden' : 'visible'), reports: _i(m['reports']),
         reasons: [for (final r in _strs(m['reasons'])) if (r.isNotEmpty) r],
         owner: m['owner'] is Map ? Person.fromJson(_m(m['owner'])) : null,
         title: m['title']?.toString(), text: m['text']?.toString(), mediaUrl: m['mediaUrl']?.toString(),
-        bizId: m['bizId']?.toString(), listingId: m['listingId']?.toString(), wantedId: m['wantedId']?.toString(), vesselId: m['vesselId']?.toString(), parentId: m['parentId']?.toString(),
+        bizId: m['bizId']?.toString(), listingId: m['listingId']?.toString(), wantedId: m['wantedId']?.toString(), vesselId: m['vesselId']?.toString(), parentId: m['parentId']?.toString(), jobId: m['jobId']?.toString(),
         firstAt: _t(m['firstAt']), lastAt: _t(m['lastAt']), action: m['action'] is Map ? ModerationAction.fromJson(_m(m['action'])) : null,
       );
   bool get hidden => status == 'hidden';

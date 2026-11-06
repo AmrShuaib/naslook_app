@@ -4,7 +4,10 @@
 // النشطة (job_matches) ويرسل بطاقة إلى تبويب «الطلبات» في الدردشة مع إشعار. الدائرة ترى عدد المطابقين فقط؛ هوية المرشح
 // تُكشف بعد إجابته على أسئلة الفرز (قرار المالك)، ثم تُفتح محادثة مع عضو الفريق المسؤول (دور hr). لوحة المرشحين: مراحل
 // وملاحظات وتقييم وإسناد ومقابلات وقمع إحصائي وتصدير. باقة pro (تمنحها الإدارة الآن) ترفع حد العروض النشطة وتفتح التصدير.
-// لا رسوم على الباحث عن عمل أبداً. التسجيل في src/index.js بعد offers.js:
+// لا رسوم على الباحث عن عمل أبداً. الثقة (فجوة 7): المطابقة التلقائية وبطاقات العروض للدوائر الموثّقة فقط (biz.verified)؛
+// غير الموثّقة تنشر في القائمة العامة بعلامة bizVerified:false، والمسح الدوري يطابق عروضها المفتوحة حين تُوثَّق.
+// البلاغ على الوظيفة نوع "job" في safety.js: الإخفاء يجعل الحالة blocked فتخرج من كل القوائم والمطابقة.
+// التسجيل في src/index.js بعد offers.js:
 //   await app.register((await import("./jobs.js")).default, { pool, auth });
 import crypto from "node:crypto";
 
@@ -15,7 +18,8 @@ const TYPES = ["full", "part", "remote", "intern", "shift", "freelance"];
 const TYPE_AR = { full: "دوام كامل", part: "دوام جزئي", remote: "عن بُعد", intern: "تدريب", shift: "ورديات", freelance: "عمل حر" };
 const EDU = ["none", "secondary", "diploma", "bachelor", "master", "phd"];
 const AVAIL = ["now", "2w", "1m", "3m"];
-const JOB_STATUS = ["draft", "pending", "open", "paused", "closed", "filled"];
+// blocked = أخفاه الإشراف (safety.js)؛ لا يُعاد نشره أو يُغلق أو يُكرَّر من لوحة الدائرة حتى تعيده الإدارة
+const JOB_STATUS = ["draft", "pending", "open", "paused", "closed", "filled", "blocked"];
 const MATCH_STATUS = ["sent", "viewed", "accepted", "declined", "later", "answered", "withdrawn", "expired"];
 export const STAGES = ["new", "screening", "answered", "interview", "offer", "hired", "rejected"];
 const STAGE_AR = { new: "جديد", screening: "فرز", answered: "أجاب", interview: "مقابلة", offer: "عرض", hired: "تعيين", rejected: "معتذر" };
@@ -184,7 +188,8 @@ export default async function jobs(app, opts = {}) {
     draftSource: j.draft_source ?? null, publishedAt: j.published_at, closedAt: j.closed_at, createdAt: j.created_at, updatedAt: j.updated_at, ...extra,
   });
   /// للعامة: الراتب يظهر فقط إن سمح صاحب العرض
-  const publicJobOut = (j, b, extra = {}) => { const o = jobOut(j, extra); if (!o.salaryVisible) { o.salaryMin = null; o.salaryMax = null; } delete o.questions; delete o.createdBy; delete o.assigneeId; return { ...o, biz: bizSummary(b) }; };
+  /// bizVerified: التطبيق يعرض «دائرة غير موثّقة» حين تكون false (تحذير للباحث قبل التقديم)
+  const publicJobOut = (j, b, extra = {}) => { const o = jobOut(j, extra); if (!o.salaryVisible) { o.salaryMin = null; o.salaryMax = null; } delete o.questions; delete o.createdBy; delete o.assigneeId; return { ...o, biz: bizSummary(b), bizVerified: b?.verified === true }; };
   const cleanQuestions = (qs) => {
     if (!Array.isArray(qs)) return [];
     return qs.slice(0, 10).map((q, i) => {
@@ -204,9 +209,12 @@ export default async function jobs(app, opts = {}) {
     return rows.filter((p) => !p.city || norm(p.city) === c);
   }
   /// يطابق عرضاً مفتوحاً مع الملفات النشطة، يرسل البطاقات ويُخطر؛ يتجاوز من طابقناهم سابقاً وفريق الدائرة ومن تجاوز حده الأسبوعي.
+  /// الدائرة غير الموثّقة لا تُرسل بطاقات (إعلانات التوظيف الوهمية تبدأ ببطاقة تصل الباحث بلا طلب)، ولا يُحدَّث
+  /// last_matched_at حتى يلتقط المسح الدوري العرض أولاً حين تُوثَّق.
   async function matchJob(job, { notifyUsers = true } = {}) {
     if (job.status !== "open") return { sent: 0, considered: 0 };
     const b = await bizRow(job.biz_id); if (!b) return { sent: 0, considered: 0 };
+    if (b.verified !== true) return { sent: 0, considered: 0, skipped: "not-verified" };
     const team = new Set((await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1", [b.id])).rows.map((r) => r.user_id).concat([b.owner_id]).filter(Boolean));
     const already = new Set((await pool.query("SELECT user_id FROM job_matches WHERE job_id=$1", [job.id])).rows.map((r) => r.user_id));
     const blocked = new Set(await blockedIds(job.created_by));
@@ -245,7 +253,8 @@ export default async function jobs(app, opts = {}) {
     const team = new Set((await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1", [job.biz_id])).rows.map((r) => r.user_id));
     const th = minScore(); let strong = 0, good = 0, weak = 0;
     for (const p of profiles) { if (team.has(p.user_id)) continue; const { score } = scoreMatch(job, p); if (score >= .75) strong++; else if (score >= th) good++; else if (score >= th - .15) weak++; }
-    return { strong, good, weak, threshold: th, profiles: profiles.length };
+    const b = await bizRow(job.biz_id);
+    return { strong, good, weak, threshold: th, profiles: profiles.length, autoMatch: b?.verified === true };
   }
 
   // ---- المسح الدوري: مطابقة جديدة للعروض المفتوحة، إغلاق عند الموعد، انتهاء البطاقات القديمة، تذكير المقابلات
@@ -259,7 +268,10 @@ export default async function jobs(app, opts = {}) {
       st.closed = closed.length;
       for (const j of closed) await event(j.id, null, null, "job.closed", { reason: "deadline" });
       st.expired = (await pool.query("UPDATE job_matches SET status='expired', updated_at=now() WHERE status='sent' AND sent_at < now() - interval '21 days'")).rowCount;
-      const open = (await pool.query("SELECT * FROM jobs WHERE status='open' AND (last_matched_at IS NULL OR last_matched_at < now() - interval '20 minutes') ORDER BY last_matched_at NULLS FIRST LIMIT 200")).rows;
+      // الموثّقة فقط: عروض دائرة وُثّقت بعد النشر (last_matched_at فارغ) تأتي أولاً، فتصل بطاقاتها خلال دورة واحدة من التوثيق
+      // أياً كان من وثّقها (طابور التوثيق أو مفتاح لوحة الإدارة؛ مشغّل biz_verified_mirror يحفظ verified في القاعدة)
+      const open = (await pool.query(`SELECT j.* FROM jobs j JOIN biz b ON b.id=j.biz_id WHERE j.status='open' AND b.verified IS TRUE
+        AND (j.last_matched_at IS NULL OR j.last_matched_at < now() - interval '20 minutes') ORDER BY j.last_matched_at NULLS FIRST LIMIT 200`)).rows;
       for (const j of open) { try { st.matched += (await matchJob(j)).sent; } catch { /* عرض واحد لا يوقف الباقي */ } }
       const soon = (await pool.query("SELECT i.*, m.user_id, j.title, j.biz_id, j.assignee_id FROM job_interviews i JOIN job_matches m ON m.id=i.match_id JOIN jobs j ON j.id=i.job_id WHERE i.status='scheduled' AND i.reminded_at IS NULL AND i.at BETWEEN now() AND now() + interval '24 hours'")).rows;
       for (const i of soon) {
@@ -528,7 +540,7 @@ export default async function jobs(app, opts = {}) {
     const plan = await planOf(g.b.id);
     const team = await Promise.all((await hiringTeam(g.b)).map(person));
     const upcoming = (await pool.query("SELECT count(*)::int AS n FROM job_interviews i JOIN jobs j ON j.id=i.job_id WHERE j.biz_id=$1 AND i.status='scheduled' AND i.at > now()", [g.b.id])).rows[0].n;
-    return { items, plan: { ...plan, active: await activeCount(g.b.id) }, team, role: g.role, enabled: enabled(), requireApproval: requireApproval(), upcomingInterviews: upcoming, types: TYPES.map((t) => ({ id: t, label: TYPE_AR[t] })), stages: STAGES.map((s) => ({ id: s, label: STAGE_AR[s] })), aiAvailable: typeof globalThis.naslifeAskClaude === "function" };
+    return { items, plan: { ...plan, active: await activeCount(g.b.id) }, team, role: g.role, enabled: enabled(), requireApproval: requireApproval(), upcomingInterviews: upcoming, verified: g.b.verified === true, types: TYPES.map((t) => ({ id: t, label: TYPE_AR[t] })), stages: STAGES.map((s) => ({ id: s, label: STAGE_AR[s] })), aiAvailable: typeof globalThis.naslifeAskClaude === "function" };
   });
   /// محرك الصياغة: يعيد مسودة كاملة (المصدر ai أو template) لا تُحفظ حتى يضغط صاحب العرض حفظاً
   app.post("/biz/:id/manage/jobs/draft", async (req, reply) => {
@@ -635,7 +647,7 @@ export default async function jobs(app, opts = {}) {
   app.post("/biz/:id/manage/jobs/:jobId/close", async (req, reply) => {
     const g = await hiringGuard(req, reply); if (!g) return;
     const j = await jobFor(req, reply, g); if (!j) return;
-    if (["closed", "filled"].includes(j.status)) return bad(reply, 409, "bad-state", { status: j.status });
+    if (["closed", "filled", "blocked"].includes(j.status)) return bad(reply, 409, "bad-state", { status: j.status });
     const filled = req.body?.filled === true;
     const r = await pool.query("UPDATE jobs SET status=$2, closed_at=now(), updated_at=now() WHERE id=$1 RETURNING *", [j.id, filled ? "filled" : "closed"]);
     await pool.query("UPDATE job_matches SET status='expired', updated_at=now() WHERE job_id=$1 AND status IN ('sent','viewed','later')", [j.id]);
@@ -645,6 +657,8 @@ export default async function jobs(app, opts = {}) {
   app.post("/biz/:id/manage/jobs/:jobId/duplicate", async (req, reply) => {
     const g = await hiringGuard(req, reply); if (!g) return;
     const j = await jobFor(req, reply, g); if (!j) return;
+    // نسخ عرض أخفاه الإشراف ثم نشره يلتفّ على الإخفاء
+    if (j.status === "blocked") return bad(reply, 409, "bad-state", { status: j.status });
     const id = crypto.randomUUID();
     const r = await pool.query(`INSERT INTO jobs(id,biz_id,created_by,assignee_id,title,title_en,department,description,description_en,requirements,skills,city,district,type,experience_min,education,salary_min,salary_max,salary_visible,openings,questions,public,draft_source)
       SELECT $1,biz_id,$3,assignee_id,title,title_en,department,description,description_en,requirements,skills,city,district,type,experience_min,education,salary_min,salary_max,salary_visible,openings,questions,public,draft_source FROM jobs WHERE id=$2 RETURNING *`, [id, j.id, g.uid]);
@@ -828,12 +842,14 @@ export default async function jobs(app, opts = {}) {
     await event(j.id, null, uid, "job.approved");
     const matched = await matchJob(r.rows[0]);
     const b = await bizRow(j.biz_id);
-    await notify(await hiringTeam(b), { kind: "job_review", title: `نُشر عرضك: ${j.title}`, body: `وصل إلى ${matched.sent} مرشحاً مطابقاً`, data: { jobId: j.id, bizId: j.biz_id, manage: true } });
+    await notify(await hiringTeam(b), { kind: "job_review", title: `نُشر عرضك: ${j.title}`, body: matched.skipped === "not-verified" ? "ظهر في قائمة الوظائف؛ يصل للمرشحين المطابقين بعد توثيق الدائرة" : `وصل إلى ${matched.sent} مرشحاً مطابقاً`, data: { jobId: j.id, bizId: j.biz_id, manage: true } });
     return jobOut(r.rows[0], { matched });
   });
   app.post("/adminapi/jobs/:id/close", async (req, reply) => {
     const uid = await adminGuard(req, reply); if (!uid) return;
     const j = (await pool.query("SELECT * FROM jobs WHERE id=$1", [String(req.params.id)])).rows[0]; if (!j) return bad(reply, 404, "not-found");
+    // المخفي بالإشراف يُدار من طابور البلاغات؛ إغلاقه هنا يجعله «مغلقاً» قابلاً لإعادة النشر من الدائرة
+    if (j.status === "blocked") return bad(reply, 409, "bad-state", { status: j.status });
     const reason = str(req.body?.reason, 300);
     await pool.query("UPDATE jobs SET status='closed', closed_at=now(), updated_at=now() WHERE id=$1", [j.id]);
     await pool.query("UPDATE job_matches SET status='expired', updated_at=now() WHERE job_id=$1 AND status IN ('sent','viewed','later')", [j.id]);

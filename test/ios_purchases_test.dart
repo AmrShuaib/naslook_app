@@ -211,6 +211,11 @@ void main() {
         expect(find.byKey(Key(k)), findsOneWidget, reason: k);
       }
       expect(find.byKey(const Key('wallet-ios-note')), findsNothing);
+      // شارة صادقة (لا رقم سري خاص بالمحفظة)، و«دفع» إدخال يدوي للرمز لا ماسح كاميرا
+      expect(find.text('محمي بالرقم السري'), findsNothing);
+      expect(find.text('للإنفاق داخل ناس لايف'), findsOneWidget);
+      expect(find.byIcon(Icons.qr_code_scanner_rounded), findsNothing);
+      expect(find.descendant(of: find.byKey(const Key('wallet-pay')), matching: find.byIcon(Icons.keyboard_alt_outlined)), findsOneWidget);
     });
 
     testWidgets('web with /settings/public failing: transfer, pay and QR stay hidden until the switch is known', (tester) async {

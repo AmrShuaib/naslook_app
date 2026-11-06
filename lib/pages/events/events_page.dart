@@ -205,7 +205,7 @@ class EventDetailPage extends ConsumerWidget {
             const SizedBox(height: 10),
             const SectionTitle('للمضيف'),
             Row(children: [
-              Expanded(child: OutlinedButton.icon(onPressed: () => _checkin(context, ref, e), icon: const Icon(Icons.qr_code_scanner_rounded), label: const Text('تسجيل دخول تذكرة'))),
+              Expanded(child: OutlinedButton.icon(key: const Key('event-checkin-code'), onPressed: () => _checkin(context, ref, e), icon: const Icon(Icons.keyboard_alt_outlined), label: const Text('تسجيل دخول برمز التذكرة'))),
               const SizedBox(width: 8),
               if (!e.cancelled) OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Joy.danger), onPressed: () => _cancel(context, ref, e), child: const Text('إلغاء')),
             ]),
