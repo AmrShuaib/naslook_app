@@ -29,7 +29,7 @@
 
 ## العرض (المنتج أو الخدمة)
 
-- حتى **٨ صور** (الأولى هي الغلاف)، تصنيف فرعي، حالة (جديد/مستعمل)، توصيل، مخزون (اختياري)، **خيارات** بأسعار مختلفة (مقاس، حجم…) لكل منها مخزونه، و**أوقات الخدمة** (أيام الأسبوع، من–إلى، مدة الموعد) للخدمات، ومدينة وحي، ونشر فوري أو **مسودة** أو **نشر مجدول** بتاريخ.
+- حتى **٨ صور** (الأولى هي الغلاف)، تصنيف فرعي، حالة (جديد/مستعمل)، توصيل برسمه وأقصى مسافة (انظر «التوصيل والعناوين»)، مخزون (اختياري)، **خيارات** بأسعار مختلفة (مقاس، حجم…) لكل منها مخزونه، و**أوقات الخدمة** (أيام الأسبوع، من–إلى، مدة الموعد) للخدمات، ومدينة وحي، ونشر فوري أو **مسودة** أو **نشر مجدول** بتاريخ.
 - صفحة العرض: معرض الصور، السعر، الشارات، بطاقة البائع (التقييم، الشارات، زر مراسلة، متابعة)، اختيار الخيار والكمية والموعد، حقل كوبون مع تحقق فوري، زر الطلب، **الأسئلة والأجوبة** العامة، والتقييمات. من القائمة: مشاركة (رابط `naslife.app/l/<id>` مع معاينة)، نسخ رمز الشات، إضافة للمقارنة، إبلاغ. رابط المشاركة (`server/share.js`، 5 نوفمبر 2026) صفحة وسوم صغيرة تحوّل إلى `/#/l/<id>` حين يوجد العرض (وإلى `/` للمجهول، ووسوم عامة بلا صورة لغير النشط) كرابط اللحظة؛ والتطبيق يقرأ `/l/` و`#/l/` (`parsePendingLink`) فيفتح `ListingPage` للمسجّل والزائر بدل الرئيسية. الحزمة `harness_share_listing.mjs`.
 - **رفع العرض** (bump) مرة كل ٢٤ ساعة لإعادته إلى أعلى ترتيب «الأحدث».
 - قيود السلامة: الحساب الجديد ينشر ٣ عروض في أول ٢٤ ساعة، ويُرفض العرض المكرر (نفس العنوان والسعر)، وتُمنع أرقام الجوال والروابط في النص عندما يكون `marketBlockContacts` مفعّلاً، وتذهب عروض الحسابات الجديدة إلى **مراجعة الإدارة** عندما يكون `marketReviewNewAccounts` مفعّلاً.
@@ -44,6 +44,10 @@
 - **الكوبونات**: البائع ينشئها (نسبة أو مبلغ، حد أدنى، عدد استخدامات، انتهاء) ويكتبها المشتري عند الطلب.
 - **الفاتورة**: `GET /market/orders/:id/invoice` صفحة HTML قابلة للطباعة لطرفي الطلب.
 - بعد الاكتمال يقيّم المشتري (١–٥ نجوم ونص) مرة واحدة، ويرد البائع على التقييم.
+
+## التوصيل والعناوين (7 نوفمبر 2026، بند 13 من نواقص الإطلاق)
+
+التفاصيل كلها في `docs/addresses.md`. باختصار: البائع يحدد على العرض **رسم التوصيل** (`deliveryFee` بالهللة، 0 = مجاني، حتى ١٠٠٠ ر.س) و**أقصى مسافة** اختيارية (`deliveryMaxKm`، 1–500 كم). المشتري يختار عند الطلب «استلام» أو «توصيل» (`fulfilment:"delivery"` مع `addressId` من «عناويني»، `server/addresses.js`)؛ بلا `fulfilment` الطلب استلام كما كان. الخادم يرفض `delivery-unavailable` و`address-required` و`address-not-found` و`too-far` {km, maxKm} (حين تتوفر نقطتا العرض والعنوان)، ويضيف الرسم إلى الإجمالي **بعد الكوبون وبلا عمولة عليه** في المحفظة وفي الدفع عند الاستلام، ويحفظ **نسخة** من العنوان على الطلب (`delivery_address`) لا تتبع تعديل الدفتر. **الرؤية**: المشتري دائماً، البائع ما دام الطلب قائماً وبعد القبول في الدفع عند الاستلام، المندوب ما دام مكلّفاً وقبل «تم التسليم»، والإدارة في النزاع؛ لا في الإشعارات ولا في أي مسار عام. **المحو** بعد ٣٠ يوماً من انتهاء الطلب (وفوراً لطلبات منتهية لحساب محذوف) في كنس السوق. الفاتورة تعرض سطر «التوصيل». الحزمة `harness_addresses.mjs` والتطبيق `test/addresses_test.dart`.
 
 ## الدفع عند الاستلام (6 نوفمبر 2026، بند 10 من نواقص الإطلاق)
 
@@ -105,7 +109,7 @@
 
 ## الجداول
 
-`market_listings` (أعمدة جديدة: images، subcategory، condition، delivery، stock، sold، views، variants، availability، publish_at، bumped_at، spotlight_until، rating_avg/count، city)، `market_orders` (code، variant، coupon، discount، commission، slot، delivered_at، completed_at، dispute_*، payment، cancel_reason، cash_received_at)، و`market_listings.pay_on_receipt`، `market_reviews`، `market_coupons`، `market_seller_stats`، `market_seller_flags`، `market_follows`، `market_questions`، `market_wanted`، `market_wanted_replies`، `market_spotlight`، `market_alerts`، `market_views`. كلها تُنشأ وتُهاجَر تلقائياً عند الإقلاع (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`).
+`market_listings` (أعمدة جديدة: images، subcategory، condition، delivery، stock، sold، views، variants، availability، publish_at، bumped_at، spotlight_until، rating_avg/count، city)، `market_orders` (code، variant، coupon، discount، commission، slot، delivered_at، completed_at، dispute_*، payment، cancel_reason، cash_received_at، fulfilment، delivery_fee، delivery_address، delivery_km، address_purged_at)، و`market_listings.pay_on_receipt` و`delivery_fee` و`delivery_max_km`، و`user_addresses` (`addresses.js`)، `market_reviews`، `market_coupons`، `market_seller_stats`، `market_seller_flags`، `market_follows`، `market_questions`، `market_wanted`، `market_wanted_replies`، `market_spotlight`، `market_alerts`، `market_views`. كلها تُنشأ وتُهاجَر تلقائياً عند الإقلاع (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`).
 
 ## الاختبار
 
@@ -120,7 +124,7 @@
 
 الخادم في `server/market_b.js` (يُسجَّل بعد `market_plus.js`)، والاختبار `srvtest/harness_market_b.mjs`، واختبارات التطبيق `test/market_b_test.dart`.
 
-- **مندوب توصيل على الطلب**: البائع يعيّن أي مستخدم في ناس لايف باسم مستخدمه (`POST /market/orders/:id/courier {nickname, note}`) ما دام الطلب مدفوعاً أو قيد التحضير أو في الطريق. المندوب يرى الطلب في «الطلبات» بدور «توصيل إلى»، ويستطيع نقله إلى «في الطريق» و«تم التسليم» فقط، ولا يرى رمز المشتري. البائع يلغي التكليف بـ`DELETE` على المسار نفسه. الطرفان يُخطران.
+- **مندوب توصيل على الطلب**: البائع يعيّن أي مستخدم في ناس لايف باسم مستخدمه (`POST /market/orders/:id/courier {nickname, note}`) ما دام الطلب مدفوعاً أو قيد التحضير أو في الطريق. المندوب يرى الطلب في «الطلبات» بدور «توصيل إلى»، ويستطيع نقله إلى «في الطريق» و«تم التسليم» فقط، ولا يرى رمز المشتري. في طلب التوصيل يرى **عنوان التوصيل** ما دام مكلّفاً والطلب لم يُسلَّم بعد (`paid`/`preparing`/`on_the_way`)، ويختفي عنه عند «تم التسليم» أو إلغاء التكليف (`docs/addresses.md`). البائع يلغي التكليف بـ`DELETE` على المسار نفسه. الطرفان يُخطران.
 - **البازارات الموسمية**: الإدارة تنشئ بازاراً (عنوان، وصف، مدينة، تصنيف اختياري، تاريخ بداية ونهاية) من قسم السوق في لوحة التحكم، فيُخطر البائعون النشطون في التصنيف. يظهر البازار الجاري أو القادم كبطاقة في أعلى السوق تحت سبوت لايت، وصفحته تعرض عروضه بشبكة السوق نفسها. البائع يضيف عروضه النشطة من الصفحة نفسها (زر «أضف عروضك» → مفاتيح تبديل لكل عرض). المسارات: `GET /market/bazaars`، `GET /market/bazaars/:id`، `POST /market/bazaars/:id/join {listingId}`، `DELETE /market/bazaars/:id/join/:listingId`، وللإدارة `GET|POST /adminapi/market/bazaars` و`PATCH /adminapi/market/bazaars/:id`.
 - **ترقية البائع إلى دائرة أعمال**: من لوحة البائع بطاقة «رقِّ حسابك إلى دائرة أعمال» تظهر لمن لديه عرض نشط. تُنشأ الدائرة عبر مسار الدوائر نفسه (`POST /biz`) بالاسم التجاري والفئة المقترحة من أكثر تصنيفاته (قهوة → مقهى، طعام → مطعم، غير ذلك → علامة تجارية) وموقعها متوسط مواقع عروضه، وتُنسخ عروضه النشطة إلى كتالوج الدائرة كأصناف. مرة واحدة لكل بائع (`market_seller_upgrades`). المسارات: `GET|POST /market/seller/upgrade`.
 - **طبقة السوق على الخريطة**: رقاقة «السوق» في الخريطة تعرض العروض ذات الموقع ضمن حدود الخريطة (`GET /market?bbox=…`) كنقاط خضراء داكنة برمز حقيبة (منتج) أو أدوات (خدمة)، والنقر يفتح صفحة العرض.

@@ -22,6 +22,7 @@ import '../../ui/qr_scanner.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../wallet/wallet_page.dart';
+import 'market_delivery.dart';
 import 'market_page.dart';
 import 'seller_tools.dart';
 
@@ -207,6 +208,7 @@ class OrderCard extends ConsumerWidget {
       Row(children: [
         Flexible(child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: orderStatusColor(o.status).withValues(alpha: .12), borderRadius: BorderRadius.circular(999)), child: Text(orderStatusText(o), key: Key('order-status-${o.id}'), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: orderStatusColor(o.status), fontSize: 12, fontWeight: FontWeight.w700)))),
         const SizedBox(width: 6), OrderPayChip(o),
+        if (o.isDelivery) ...[const SizedBox(width: 6), OrderDeliveryChip(o)],
         const Spacer(),
         if (o.status == 'completed' && !o.mineAsSeller && !o.reviewed) TextButton(onPressed: () => reviewOrder(context, ref, o), child: const Text('قيّم')),
         if (o.status == 'requested' && o.mineAsSeller) FilledButton(key: Key('card-accept-${o.id}'), style: FilledButton.styleFrom(minimumSize: const Size(44, 38)), onPressed: () => acceptCodOrder(context, ref, o), child: const Text('قبول الطلب')),
@@ -271,7 +273,7 @@ class OrderPage extends ConsumerWidget {
               const SizedBox(height: 4),
               Text(x.cod ? 'الدفع: عند الاستلام للبائع مباشرة' : 'الدفع: من المحفظة (محجوز حتى الاستلام)', key: const Key('order-payment'), style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: x.cod ? Joy.sunText : Joy.textMuted)),
             ])),
-            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(money(x.total), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary, fontSize: 16)), if (x.discount > 0) Text('خصم ${money(x.discount)}', style: const TextStyle(color: Joy.success, fontSize: 11.5)), if (x.mineAsSeller && (x.commission ?? 0) > 0) Text('عمولة ${money(x.commission!)}', style: const TextStyle(color: Joy.textMuted, fontSize: 11.5))]),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(money(x.total), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary, fontSize: 16)), if (x.discount > 0) Text('خصم ${money(x.discount)}', style: const TextStyle(color: Joy.success, fontSize: 11.5)), if (x.deliveryFee > 0) Text('منها توصيل ${money(x.deliveryFee)}', style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)), if (x.mineAsSeller && (x.commission ?? 0) > 0) Text('عمولة ${money(x.commission!)}', style: const TextStyle(color: Joy.textMuted, fontSize: 11.5))]),
           ])),
           const SizedBox(height: 12),
           if (x.status == 'cancelled' || x.status == 'refunded') _banner(_cancelText(x), Icons.cancel_outlined, Joy.textMuted)
@@ -280,6 +282,8 @@ class OrderPage extends ConsumerWidget {
           else _Timeline(status: x.status),
           if (x.disputeNote != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('قرار الإدارة: ${x.disputeNote}', style: const TextStyle(fontSize: 12.5))),
           const SizedBox(height: 16),
+          // التوصيل: الرسم والعنوان لمن يحق له رؤيته الآن (المشتري، البائع بعد القبول، المندوب ما دام مكلّفاً)
+          if (x.isDelivery) ...[OrderDeliveryCard(x), const SizedBox(height: 12)],
           // مندوب التوصيل: يراه الطرفان، ويعيّنه البائع من زر أدناه
           if (x.courier != null) JoyCard(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), child: Row(children: [
             ProfileAvatar(person: x.courier!, size: 40), const SizedBox(width: 10),
@@ -361,7 +365,7 @@ class OrderPage extends ConsumerWidget {
       const SizedBox(height: 8),
       TextField(key: const Key('courier-note'), controller: note, decoration: const InputDecoration(labelText: 'ملاحظة للمندوب (اختياري)', hintText: 'يتصل بالمشتري قبل الوصول')),
       const SizedBox(height: 6),
-      const Text('سيرى المندوب الطلب في «الطلبات» ويستطيع تحديثه إلى «في الطريق» و«تم التسليم»، ولن يرى رمز المشتري.', style: TextStyle(color: Joy.textMuted, fontSize: 12)),
+      const Text('سيرى المندوب الطلب في «الطلبات» وعنوان التوصيل إن وُجد حتى يسلّمه، ويستطيع تحديثه إلى «في الطريق» و«تم التسليم»، ولن يرى رمز المشتري.', style: TextStyle(color: Joy.textMuted, fontSize: 12)),
     ]), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(key: const Key('courier-save'), onPressed: () => Navigator.pop(ctx, true), child: const Text('تعيين'))]));
     if (ok != true || nick.text.trim().isEmpty || !context.mounted) return;
     try { await ref.read(apiClientProvider).setCourier(x.id, nickname: nick.text.trim(), note: note.text.trim()); ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); if (context.mounted) toast(context, 'تم تعيين المندوب وإخطاره'); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }

@@ -155,6 +155,9 @@ class AdultSheet extends StatelessWidget {
 bool listingBodyPriced(Map<String, dynamic> body) {
   final p = body['price'];
   if (p is num && p > 0) return true;
+  // رسم توصيل يُطبَّق بيعٌ بمقابل أيضاً (commerce.js يطلب الإقرار له)
+  final f = body['deliveryFee'];
+  if (body['delivery'] == true && f is num && f > 0) return true;
   final v = body['variants'];
   return v is List && v.any((x) => x is Map && x['price'] is num && (x['price'] as num) > 0);
 }

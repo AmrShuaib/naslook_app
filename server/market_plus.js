@@ -452,7 +452,8 @@ export default async function marketPlus(app, opts) {
     const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     const d = (t) => (t ? new Date(new Date(t).getTime() + 3 * 3600000).toISOString().slice(0, 16).replace("T", " ") : "");
     const status = { requested: "بانتظار قبول البائع", paid: "مؤكَّد", preparing: "قيد التحضير", on_the_way: "في الطريق", delivered: "تم التسليم", completed: "مكتمل", cancelled: "ملغى", refunded: "مسترد", disputed: "نزاع" }[o.status] ?? o.status;
-    const unit = Number(o.total) + Number(o.discount ?? 0);
+    // رسم التوصيل (commerce.js) داخل الإجمالي وله سطره، فسطر البند يبقى قيمة البضاعة قبل الخصم
+    const fee = Number(o.delivery_fee ?? 0), unit = Number(o.total) + Number(o.discount ?? 0) - fee;
     // الدفع عند الاستلام (commerce.js): المال لا يمر بالمحفظة فلا «مدفوع» ولا تحرير عند التأكيد
     const cod = o.payment === "cod";
     const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>فاتورة ${esc(o.id.slice(0, 8))}</title>
@@ -460,7 +461,7 @@ export default async function marketPlus(app, opts) {
 <div class="head"><div><h1>فاتورة سوق ناس لايف</h1><div class="muted">رقم ${esc(o.id)} · ${d(o.created_at)}</div></div><div><strong>${esc(status)}</strong></div></div>
 <div class="grid"><div class="box"><div class="muted">المشتري</div><div>${esc(buyer.nickname)} · ${esc(buyer.id)}</div></div><div class="box"><div class="muted">البائع</div><div>${esc(seller.nickname)} · ${esc(seller.id)}</div></div></div>
 <table><tr><th>البند</th><th>الكمية</th><th>المبلغ</th></tr><tr><td>${esc(o.title)}${o.variant ? " (" + esc(o.variant) + ")" : ""}${o.slot ? "<div class='muted'>موعد: " + d(o.slot) + "</div>" : ""}</td><td>${o.qty}</td><td>${esc(sar(unit))}</td></tr>
-${Number(o.discount) > 0 ? `<tr><td>خصم${o.coupon ? " (" + esc(o.coupon) + ")" : ""}</td><td></td><td>- ${esc(sar(o.discount))}</td></tr>` : ""}
+${Number(o.discount) > 0 ? `<tr><td>خصم${o.coupon ? " (" + esc(o.coupon) + ")" : ""}</td><td></td><td>- ${esc(sar(o.discount))}</td></tr>` : ""}${o.fulfilment === "delivery" ? `<tr><td>التوصيل</td><td></td><td>${fee > 0 ? esc(sar(fee)) : "مجاني"}</td></tr>` : ""}
 <tr class="tot"><td>${cod ? "الإجمالي (يُدفع للبائع عند الاستلام)" : "الإجمالي المدفوع"}</td><td></td><td>${esc(sar(o.total))}</td></tr>${o.seller_id === uid && Number(o.commission) > 0 ? `<tr><td class="muted">عمولة المنصة</td><td></td><td class="muted">${esc(sar(o.commission))}</td></tr><tr class="tot"><td>صافي البائع</td><td></td><td>${esc(sar(Number(o.total) - Number(o.commission)))}</td></tr>` : ""}</table>
 ${o.note ? `<p class="muted">ملاحظة: ${esc(o.note)}</p>` : ""}<p class="muted">المبالغ بالريال السعودي. ${cod ? "الدفع عند الاستلام مباشرة للبائع؛ لم يمر المبلغ بمحفظة ناس لايف." : "الدفع عبر محفظة ناس لايف؛ يُحرَّر المبلغ للبائع عند تأكيد الاستلام."}</p><button onclick="print()">طباعة / حفظ PDF</button></body></html>`;
     return reply.type("text/html; charset=utf-8").send(html);

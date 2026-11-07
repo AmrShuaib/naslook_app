@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../api/address_models.dart';
 import '../../api/client.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
@@ -20,8 +21,10 @@ import '../../ui/profile_avatar.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
+import '../addresses/addresses_page.dart';
 import '../chat/chat_thread_page.dart';
 import '../wallet/wallet_page.dart';
+import 'market_delivery.dart';
 import 'market_page.dart';
 import 'seller_tools.dart';
 
@@ -41,6 +44,9 @@ class _ListingPageState extends ConsumerState<ListingPage> {
   String? variant;
   /// اختيار المشتري لطريقة الدفع؛ null = الافتراضي (عند الاستلام في iOS إن سمح البائع، وإلا المحفظة)
   bool? payCod;
+  /// التوصيل: اختيار المشتري (null = الافتراضي: توصيل حين لا مكان استلام للعرض) والعنوان المختار من «عناويني»
+  bool? wantDelivery;
+  SavedAddress? deliveryAddress;
   DateTime? slot;
   final coupon = TextEditingController();
   Map<String, dynamic>? couponCheck;
@@ -54,8 +60,11 @@ class _ListingPageState extends ConsumerState<ListingPage> {
 
   int _unit(Listing x) => variant == null ? x.price : (x.variants.where((v) => v.name == variant).firstOrNull?.price ?? x.price);
   int _subtotal(Listing x) => _unit(x) * qty;
-  /// الدفع عند الاستلام للطلب المسعّر فقط؛ المجاني طلب عادي بلا طريقة دفع
-  bool _useCod(Listing x) => x.payOnReceipt && _subtotal(x) > 0 && (payCod ?? isIosNative);
+  bool _delivery(Listing x) => x.delivery && (wantDelivery ?? (x.placeName ?? '').trim().isEmpty);
+  /// رسم التوصيل يُضاف بعد خصم الكوبون (الخادم يحسبه كذلك)
+  int _fee(Listing x) => _delivery(x) ? x.deliveryFee : 0;
+  /// الدفع عند الاستلام للطلب المسعّر فقط (ومنه رسم التوصيل)؛ المجاني طلب عادي بلا طريقة دفع
+  bool _useCod(Listing x) => x.payOnReceipt && _subtotal(x) + _fee(x) > 0 && (payCod ?? isIosNative);
 
   @override
   Widget build(BuildContext context) {
@@ -113,7 +122,9 @@ class _ListingPageState extends ConsumerState<ListingPage> {
   Widget _chip(String t, IconData i, {Color bg = Joy.surface2, Color fg = Joy.textMuted}) => Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(i, size: 14, color: fg), const SizedBox(width: 4), Text(t, style: TextStyle(color: fg, fontSize: 12, fontWeight: FontWeight.w600))]));
 
   Widget _buyBox(Listing x) {
-    final total = _subtotal(x); final disc = couponCheck?['valid'] == true ? (couponCheck!['discount'] as num).toInt() : 0;
+    final disc = couponCheck?['valid'] == true ? (couponCheck!['discount'] as num).toInt() : 0;
+    final total = _subtotal(x) + _fee(x);
+    final needAddress = _delivery(x) && deliveryAddress == null;
     final v = x.variants.where((v) => v.name == variant).firstOrNull;
     final out = x.variants.isEmpty ? x.stock == 0 : (v != null && v.stock == 0);
     final cod = _useCod(x);
@@ -140,6 +151,11 @@ class _ListingPageState extends ConsumerState<ListingPage> {
           suffixIcon: TextButton(onPressed: () => _checkCoupon(x), child: const Text('تحقق'))), onChanged: (_) => setState(() => couponCheck = null))),
       ]),
       if (couponCheck != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(couponCheck!['valid'] == true ? 'خصم ${money(disc)}' : marketErrText(couponCheck!['error']?.toString() ?? 'bad-coupon'), style: TextStyle(color: couponCheck!['valid'] == true ? Joy.success : Joy.danger, fontSize: 12.5))),
+      // الاستلام أو التوصيل برسمه وعنوان من «عناويني» (حين يوصّل البائع)
+      if (x.delivery) ...[
+        const SizedBox(height: 12),
+        DeliveryChoice(listing: x, delivery: _delivery(x), address: deliveryAddress, onMode: (v) => setState(() => wantDelivery = v), onAddress: (a) => setState(() => deliveryAddress = a), onPick: () => _pickAddress(x)),
+      ],
       // طريقة الدفع: تظهر فقط حين يسمح البائع بالدفع عند الاستلام والطلب مسعّر
       if (x.payOnReceipt && total > 0) ...[
         const SizedBox(height: 12),
@@ -154,8 +170,9 @@ class _ListingPageState extends ConsumerState<ListingPage> {
         key: const Key('order-btn'), style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
         onPressed: out || (x.variants.isNotEmpty && variant == null) || (x.isService && x.availability != null && slot == null) ? null : () => _order(x),
         icon: Icon(cod ? Icons.payments_outlined : Icons.account_balance_wallet_outlined),
-        label: Text(out ? 'غير متوفر' : x.variants.isNotEmpty && variant == null ? 'اختر الخيار أولاً' : x.isService && x.availability != null && slot == null ? 'اختر الموعد أولاً' : cod ? 'اطلب وادفع عند الاستلام · ${money(total - disc)}' : 'اطلب بالمحفظة · ${money(total - disc)}'),
+        label: Text(out ? 'غير متوفر' : x.variants.isNotEmpty && variant == null ? 'اختر الخيار أولاً' : x.isService && x.availability != null && slot == null ? 'اختر الموعد أولاً' : needAddress ? 'اختر عنوان التوصيل' : cod ? 'اطلب وادفع عند الاستلام · ${money(total - disc)}' : 'اطلب بالمحفظة · ${money(total - disc)}'),
       ),
+      if (_fee(x) > 0) Padding(padding: const EdgeInsets.only(top: 6), child: Text('يشمل رسم التوصيل ${money(_fee(x))}', key: const Key('order-fee-line'), style: const TextStyle(color: Joy.textMuted, fontSize: 12))),
       const SizedBox(height: 8),
       Text(
         cod
@@ -174,8 +191,10 @@ class _ListingPageState extends ConsumerState<ListingPage> {
   Future<void> _order(Listing x) async {
     // الزائر يُدعى للدخول قبل ورقة الملاحظة، لا بعد كتابتها
     if (!requireAccount(context)) return;
-    // الشراء المدفوع (بالمحفظة أو عند الاستلام) يحتاج إقرار 18+ مرة واحدة؛ الطلب المجاني لا
-    if (_subtotal(x) > 0 && (!await requireAdult(context, ref) || !mounted)) return;
+    // الشراء المدفوع (بالمحفظة أو عند الاستلام، ومنه رسم التوصيل) يحتاج إقرار 18+ مرة واحدة؛ الطلب المجاني لا
+    if (_subtotal(x) + _fee(x) > 0 && (!await requireAdult(context, ref) || !mounted)) return;
+    // التوصيل بلا عنوان: نفتح الاختيار قبل ورقة الملاحظة
+    if (_delivery(x) && deliveryAddress == null) { await _pickAddress(x); if (deliveryAddress == null || !mounted) return; }
     final note = await askText(context, title: 'ملاحظة للبائع', hint: 'مثال: الاستلام بعد المغرب', confirm: 'تأكيد الطلب', maxLines: 2);
     if (note == null || !mounted) return;
     await _place(x, note, cod: _useCod(x));
@@ -183,7 +202,7 @@ class _ListingPageState extends ConsumerState<ListingPage> {
 
   Future<void> _place(Listing x, String note, {required bool cod}) async {
     try {
-      final r = await ref.read(apiClientProvider).order(x.id, x.isService ? 1 : qty, note: note, variant: variant, coupon: coupon.text.trim().toUpperCase(), slot: slot, cod: cod);
+      final r = await ref.read(apiClientProvider).order(x.id, x.isService ? 1 : qty, note: note, variant: variant, coupon: coupon.text.trim().toUpperCase(), slot: slot, cod: cod, deliveryAddressId: _delivery(x) ? deliveryAddress?.id : null);
       ref.invalidate(ordersProvider); ref.invalidate(walletProvider); ref.invalidate(listingProvider(x.id));
       if (!mounted) return;
       final sent = r['payment'] == 'cod';
@@ -230,6 +249,13 @@ class _ListingPageState extends ConsumerState<ListingPage> {
       return;
     }
     toast(context, marketErrText('insufficient-funds'), error: true);
+  }
+
+  /// اختيار عنوان التوصيل من «عناويني» (أو إضافة عنوان جديد واختياره)؛ الزائر يُدعى للدخول أولاً
+  Future<void> _pickAddress(Listing x) async {
+    if (!requireAccount(context)) return;
+    final a = await pickDeliveryAddress(context, ref, selectedId: deliveryAddress?.id);
+    if (a != null && mounted) setState(() { deliveryAddress = a; wantDelivery = true; });
   }
 
   void _toggleCompare(Listing x) {

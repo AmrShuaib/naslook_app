@@ -1,3 +1,4 @@
+import 'address_models.dart';
 import 'models.dart';
 
 String money(int halalas) {
@@ -140,6 +141,9 @@ class Listing {
   final bool mine, delivery, spotlight;
   /// يسمح البائع بالدفع عند الاستلام (توصيل أو لقاء حضوري)؛ الطلب حينها بلا محفظة وينتظر قبول البائع
   final bool payOnReceipt;
+  /// رسم التوصيل بالهللة (0 = مجاني) وأقصى مسافة بالكيلومتر (null = بلا حد)؛ يُطبَّقان حين [delivery] فقط
+  final int deliveryFee;
+  final double? deliveryMaxKm;
   final int? stock;
   final int sold, views, ratingCount, sellerRatingCount;
   final List<Variant> variants;
@@ -147,14 +151,14 @@ class Listing {
   final List<String> sellerBadges;
   final DateTime? createdAt, updatedAt, publishAt, bumpedAt, spotlightUntil;
   const Listing({required this.id, required this.kind, required this.category, required this.title, required this.description, required this.status, required this.seller, required this.price, this.imageUrl, this.placeName, this.subcategory, this.condition, this.city,
-      this.images = const [], this.lat, this.lng, this.distanceKm, this.ratingAvg, this.sellerRating, this.mine = false, this.delivery = false, this.spotlight = false, this.payOnReceipt = false, this.stock, this.sold = 0, this.views = 0, this.ratingCount = 0, this.sellerRatingCount = 0,
+      this.images = const [], this.lat, this.lng, this.distanceKm, this.ratingAvg, this.sellerRating, this.mine = false, this.delivery = false, this.spotlight = false, this.payOnReceipt = false, this.deliveryFee = 0, this.deliveryMaxKm, this.stock, this.sold = 0, this.views = 0, this.ratingCount = 0, this.sellerRatingCount = 0,
       this.variants = const [], this.availability, this.sellerBadges = const [], this.createdAt, this.updatedAt, this.publishAt, this.bumpedAt, this.spotlightUntil});
   factory Listing.fromJson(Map m) => Listing(
         id: m['id'].toString(), kind: m['kind']?.toString() ?? 'product', category: m['category']?.toString() ?? 'other', title: m['title']?.toString() ?? '', description: m['description']?.toString() ?? '',
         status: m['status']?.toString() ?? 'active', seller: Person.fromJson(_m(m['seller'])), price: _i(m['price']), imageUrl: m['imageUrl']?.toString(), placeName: m['placeName']?.toString(),
         subcategory: m['subcategory']?.toString(), condition: m['condition']?.toString(), city: m['city']?.toString(), images: [for (final u in asListDyn(m['images'])) if (u != null && u.toString().isNotEmpty) u.toString()],
         lat: (m['lat'] as num?)?.toDouble(), lng: (m['lng'] as num?)?.toDouble(), distanceKm: (m['distanceKm'] as num?)?.toDouble(), ratingAvg: (m['ratingAvg'] as num?)?.toDouble(), sellerRating: (m['sellerRating'] as num?)?.toDouble(),
-        mine: m['mine'] == true, delivery: m['delivery'] == true, spotlight: m['spotlight'] == true, payOnReceipt: m['payOnReceipt'] == true, stock: m['stock'] == null ? null : _i(m['stock']), sold: _i(m['sold']), views: _i(m['views']), ratingCount: _i(m['ratingCount']), sellerRatingCount: _i(m['sellerRatingCount']),
+        mine: m['mine'] == true, delivery: m['delivery'] == true, spotlight: m['spotlight'] == true, payOnReceipt: m['payOnReceipt'] == true, deliveryFee: _i(m['deliveryFee']), deliveryMaxKm: (m['deliveryMaxKm'] as num?)?.toDouble(), stock: m['stock'] == null ? null : _i(m['stock']), sold: _i(m['sold']), views: _i(m['views']), ratingCount: _i(m['ratingCount']), sellerRatingCount: _i(m['sellerRatingCount']),
         variants: [for (final v in asListDyn(m['variants'])) if (v is Map) Variant.fromJson(v)], availability: m['availability'] is Map ? Availability.fromJson(_m(m['availability'])) : null,
         sellerBadges: [for (final b in asListDyn(m['sellerBadges'])) b.toString()], createdAt: _t(m['createdAt']), updatedAt: _t(m['updatedAt']), publishAt: _t(m['publishAt']), bumpedAt: _t(m['bumpedAt']), spotlightUntil: _t(m['spotlightUntil']),
       );
@@ -179,9 +183,17 @@ class Order {
   /// سبب الإلغاء: buyer | seller | declined (اعتذار البائع) | no_show (لم يحضر المشتري) | no_show_cleared (مسحته الإدارة) | expired (لم يُقبل خلال ٤٨ ساعة)
   final String? cancelReason;
   final DateTime? acceptedAt, cashReceivedAt;
+  /// pickup (استلام) أو delivery (توصيل) ورسمه داخل [total] والمسافة المحسوبة إن توفرت النقطتان
+  final String fulfilment;
+  final int deliveryFee;
+  final double? deliveryKm;
+  /// نسخة عنوان التوصيل: يراها المشتري، والبائع بعد قبول الطلب وما دام قائماً، والمندوب ما دام مكلّفاً؛ null لغيرهم
+  final DeliveryAddress? address;
+  /// مُحي العنوان بعد ٣٠ يوماً من انتهاء الطلب
+  final bool addressPurged;
   const Order({required this.id, required this.listingId, required this.title, required this.status, required this.note, this.imageUrl, this.kind, this.code, this.variant, this.coupon, this.disputeStatus, this.disputeReason, this.disputeNote,
       required this.qty, required this.total, this.discount = 0, this.commission, required this.buyer, required this.seller, this.courier, this.courierNote = '', required this.mineAsSeller, this.mineAsCourier = false, this.reviewed = false, this.createdAt, this.updatedAt, this.slot, this.deliveredAt, this.completedAt,
-      this.payment = 'wallet', this.cancelReason, this.acceptedAt, this.cashReceivedAt});
+      this.payment = 'wallet', this.cancelReason, this.acceptedAt, this.cashReceivedAt, this.fulfilment = 'pickup', this.deliveryFee = 0, this.deliveryKm, this.address, this.addressPurged = false});
   factory Order.fromJson(Map m) => Order(
         id: m['id'].toString(), listingId: m['listingId'].toString(), title: m['title']?.toString() ?? '', status: m['status']?.toString() ?? '', note: m['note']?.toString() ?? '', imageUrl: m['imageUrl']?.toString(), kind: m['kind']?.toString(),
         code: m['code']?.toString(), variant: m['variant']?.toString(), coupon: m['coupon']?.toString(), disputeStatus: m['disputeStatus']?.toString(), disputeReason: m['disputeReason']?.toString(), disputeNote: m['disputeNote']?.toString(),
@@ -189,6 +201,8 @@ class Order {
         courier: m['courier'] is Map ? Person.fromJson(_m(m['courier'])) : null, courierNote: m['courierNote']?.toString() ?? '', mineAsCourier: m['mineAsCourier'] == true,
         mineAsSeller: m['mineAsSeller'] == true, reviewed: m['reviewed'] == true, createdAt: _t(m['createdAt']), updatedAt: _t(m['updatedAt']), slot: _t(m['slot']), deliveredAt: _t(m['deliveredAt']), completedAt: _t(m['completedAt']),
         payment: m['payment'] == 'cod' ? 'cod' : 'wallet', cancelReason: m['cancelReason']?.toString(), acceptedAt: _t(m['acceptedAt']), cashReceivedAt: _t(m['cashReceivedAt']),
+        fulfilment: m['fulfilment'] == 'delivery' ? 'delivery' : 'pickup', deliveryFee: _i(m['deliveryFee']), deliveryKm: (m['deliveryKm'] as num?)?.toDouble(),
+        address: m['address'] is Map ? DeliveryAddress.fromJson(_m(m['address'])) : null, addressPurged: m['addressPurged'] == true,
       );
   /// مفتوح: بانتظار قبول البائع أو في مراحله قبل الاكتمال
   bool get open => status == 'requested' || active;
@@ -200,6 +214,7 @@ class Order {
   /// دوري في الطلب: بائع أو مشترٍ أو مندوب
   bool get mineAsBuyer => !mineAsSeller && !mineAsCourier;
   bool get done => status == 'completed';
+  bool get isDelivery => fulfilment == 'delivery';
 }
 
 class SpotlightItem {

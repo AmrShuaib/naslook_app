@@ -41,8 +41,10 @@ extension CommerceApi on ApiClient {
 
   // ---- الطلبات بمراحلها
   /// [cod] الدفع عند الاستلام (العرض يسمح به): لا يُخصم شيء والطلب ينتظر قبول البائع.
-  Future<Map<String, dynamic>> order(String listingId, int qty, {String note = '', String? variant, String? coupon, DateTime? slot, bool cod = false}) =>
-      post('/market/$listingId/order', {'qty': qty, 'note': note, if (variant != null) 'variant': variant, if (coupon != null && coupon.isNotEmpty) 'coupon': coupon, if (slot != null) 'slot': slot.toUtc().toIso8601String(), if (cod) 'payment': 'cod'});
+  /// [deliveryAddressId] عنوان من «عناويني» للتوصيل (العرض يوصّل)؛ بلا عنوان الطلب استلام.
+  Future<Map<String, dynamic>> order(String listingId, int qty, {String note = '', String? variant, String? coupon, DateTime? slot, bool cod = false, String? deliveryAddressId}) =>
+      post('/market/$listingId/order', {'qty': qty, 'note': note, if (variant != null) 'variant': variant, if (coupon != null && coupon.isNotEmpty) 'coupon': coupon, if (slot != null) 'slot': slot.toUtc().toIso8601String(), if (cod) 'payment': 'cod',
+        if (deliveryAddressId != null) ...{'fulfilment': 'delivery', 'addressId': deliveryAddressId}});
   Future<List<Order>> orders() async => asList(await getList('/market/orders')).map(Order.fromJson).toList();
   Future<Order> orderDetail(String id) async => Order.fromJson(await get('/market/orders/$id'));
   Future<void> orderStage(String id, String stage) => post('/market/orders/$id/stage', {'stage': stage});

@@ -22,6 +22,7 @@ import '../../state/providers.dart';
 import '../../ui/widgets.dart';
 import '../business/my_bookings_page.dart';
 import '../admin/admin_shell.dart';
+import '../addresses/addresses_page.dart';
 import '../admin/blog_drafts_page.dart';
 import '../business/owner/my_businesses_page.dart';
 import '../events/events_page.dart';
@@ -133,6 +134,7 @@ class MySpacePage extends ConsumerWidget {
             const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('share-me'), leading: const Icon(Icons.ios_share_rounded, color: Joy.primary), title: const Text('مشاركة حسابي'), subtitle: Text(me == null ? '' : profileLink(me.nickname).replaceFirst(RegExp(r'^https?://'), ''), textDirection: TextDirection.ltr, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: me == null ? null : () => shareLink(context, title: me.nickname, url: profileLink(me.nickname), subtitle: (p?.isPublic ?? true) ? 'حسابك العام على ناس لايف' : 'حسابك خاص: الرابط يعرض اسمك فقط', code: userCode(me.nickname))),
             const Divider(indent: 16, endIndent: 16),
+            ListTile(key: const Key('my-addresses'), leading: const Icon(Icons.home_work_outlined, color: Joy.primary), title: const Text('عناويني'), subtitle: const Text('عناوين التوصيل لطلبات السوق، لا يراها غيرك'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddressesPage()))), const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('privacy-control'), leading: const Icon(Icons.shield_outlined, color: Joy.primary), title: const Text('الخصوصية والأمان'), subtitle: const Text('التوثيق، من يراسلك، ما يظهر في ملفك، المحظورون'), trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PrivacyControlPage()))),
             const Divider(indent: 16, endIndent: 16),
             ListTile(key: const Key('blog-link'), leading: const Icon(Icons.newspaper_outlined, color: Joy.primary), title: const Text('التحديثات والأخبار'), subtitle: const Text('مدونة ناس لايف: كل جديد في التطبيق'), trailing: const Icon(Icons.open_in_new_rounded, color: Joy.textMuted, size: 18), onTap: () => launchUrl(Uri.parse('${publicOrigin()}/blog'), mode: LaunchMode.externalApplication)),
