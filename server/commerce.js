@@ -359,6 +359,52 @@ export default async function commerce(app, opts) {
     if (!r.rowCount) return bad(reply, 404, "ticket-invalid");
     return { ok: true, holder: await person(r.rows[0].user_id) };
   });
+  // قائمة الحضور للمضيف وللإدارة فقط: الاسم الظاهر والصورة، الفئة، دخل أم لا ومتى. صفحات بمؤشر معتم (وقت الشراء بدقة الميكروثانية
+  // ثم المعرّف) حتى لا تتكرر تذكرة بين صفحتين. رموز التذاكر لا تُعاد في القائمة: يُعاد الرمز فقط لمن بحث به (?code= بعد المسح)،
+  // فلا تتسرب رموز صالحة تُستخدم للدخول. التذاكر المستردة خارج القائمة إلا بطلبها (?status=refunded) أو بالبحث بالرمز.
+  const CURSOR_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)~([0-9a-f-]{36})$/i;
+  app.get("/events/:id/attendees", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const ev = (await pool.query("SELECT id, host_id FROM events WHERE id=$1", [req.params.id])).rows[0];
+    if (!ev) return bad(reply, 404, "not-found");
+    if (ev.host_id !== uid && !(await isAdmin(uid))) return bad(reply, 403, "host-only");
+    const q = req.query ?? {};
+    const limit = Math.max(1, Math.min(100, Math.floor(Number(q.limit)) || 30));
+    const code = String(q.code ?? "").trim().toUpperCase().slice(0, 40);
+    const status = ["in", "out", "refunded"].includes(q.status) ? q.status : "";
+    const name = String(q.q ?? "").trim().slice(0, 40);
+    let cur = null;
+    if (q.cursor != null && q.cursor !== "") { cur = CURSOR_RE.exec(String(q.cursor)); if (!cur) return bad(reply, 400, "bad-cursor"); }
+    const args = [ev.id];
+    const arg = (v) => { args.push(v); return `$${args.length}`; };
+    const where = ["t.event_id=$1"];
+    if (code) where.push(`t.code=${arg(code)}`);
+    else where.push(status === "in" ? "t.status='used'" : status === "out" ? "t.status='valid'" : status === "refunded" ? "t.status='refunded'" : "t.status<>'refunded'");
+    if (name) where.push(`EXISTS (SELECT 1 FROM users u WHERE u.id=t.user_id AND u.nickname ILIKE '%' || ${arg(name.replace(/[\\%_]/g, (c) => "\\" + c))} || '%')`);
+    if (cur) where.push(`(t.created_at, t.id) > (${arg(cur[1])}::timestamptz, ${arg(cur[2])}::uuid)`);
+    const rows = (await pool.query(`SELECT t.id, t.user_id, t.code, t.status, t.paid, t.created_at, t.used_at, tt.name AS tier_name,
+        to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cur_at
+      FROM tickets t LEFT JOIN ticket_tiers tt ON tt.id=t.tier_id WHERE ${where.join(" AND ")} ORDER BY t.created_at, t.id LIMIT ${limit + 1}`, args)).rows;
+    const page = rows.slice(0, limit);
+    // الأسماء دفعة واحدة بدل استعلام لكل تذكرة
+    const people = new Map();
+    try {
+      const ids = [...new Set(page.map((r) => r.user_id))];
+      if (ids.length) for (const u of (await pool.query("SELECT * FROM users WHERE id = ANY($1::text[])", [ids])).rows) people.set(u.id, { id: u.id, nickname: u.nickname ?? "", avatarUrl: u.avatar_url ?? u.avatarUrl ?? null });
+    } catch { /* بلا جدول مستخدمين: الأسماء فارغة */ }
+    const n = (await pool.query(`SELECT count(*) FILTER (WHERE status<>'refunded')::int AS total, count(*) FILTER (WHERE status='used')::int AS checked_in,
+      count(DISTINCT user_id) FILTER (WHERE status<>'refunded')::int AS people FROM tickets WHERE event_id=$1`, [ev.id])).rows[0];
+    const last = page[page.length - 1];
+    return {
+      items: page.map((r) => ({
+        ticketId: r.id, holder: people.get(r.user_id) ?? { id: r.user_id, nickname: "", avatarUrl: null }, tier: r.tier_name ?? "", status: r.status,
+        checkedIn: r.status === "used", checkedInAt: r.used_at, boughtAt: r.created_at, paid: Number(r.paid), ...(code ? { code: r.code } : {}),
+      })),
+      next: rows.length > limit && last ? `${last.cur_at}~${last.id}` : null,
+      total: n.total, checkedIn: n.checked_in, people: n.people,
+    };
+  });
   app.post("/events/:id/cancel", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");

@@ -371,16 +371,23 @@ void main() {
   });
 
   testWidgets('owner: checking in a venue booking by code asks to confirm the payment', (tester) async {
-    final srv = _Srv(_biz('shop', [_item('oil', venue: true)], role: 'owner'));
+    final srv = _Srv(_biz('shop', [_item('oil', venue: true)], role: 'owner'))..ownerOrders = [_order('o2', payment: 'at_venue', paid: false)];
     await _pump(tester, srv, Scaffold(body: OrdersTab(biz: Biz.fromJson(srv.biz))));
     await _tap(tester, find.byKey(const Key('orders-checkin-code')));
-    await tester.enterText(find.byType(TextField).last, 'NAS-O2');
-    await _tap(tester, find.widgetWithText(FilledButton, 'تأكيد'));
+    // لا كاميرا حية في الاختبار: الرمز يُكتب في ورقة المسح نفسها، ثم ملخص الطلب قبل التأكيد
+    await tester.enterText(find.byKey(const Key('qr-manual')), 'nas-o2');
+    await _tap(tester, find.byKey(const Key('qr-manual-go')));
+    expect(find.byKey(const Key('order-summary')), findsOneWidget);
+    expect(find.textContaining('الدفع في المكان: اطلب'), findsOneWidget);
+    expect(srv.calls.where((c) => c == 'POST /biz/biz-shop/checkin'), isEmpty);
+    await _tap(tester, find.byKey(const Key('scan-confirm')));
     expect(srv.calls, contains('POST /biz/biz-shop/checkin'));
+    expect(srv.last('POST /biz/biz-shop/checkin'), {'code': 'NAS-O2'});
     expect(find.byKey(const Key('checkin-venue-dialog')), findsOneWidget);
     expect(find.text('الدفع في المكان: لم يُدفع بعد'), findsWidgets);
     await _tap(tester, find.byKey(const Key('checkin-venue-paid')));
     expect(srv.calls, contains('POST /biz/biz-shop/orders/o2/paid'));
+    expect(find.textContaining('سُجّل الدفع'), findsOneWidget);
   });
 
   testWidgets('customer: «لدي مشكلة» sends the reason and a photo', (tester) async {

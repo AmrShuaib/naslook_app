@@ -39,6 +39,8 @@ dependencies:
   shared_preferences: ^2.3.0
   geolocator: ^13.0.2
   qr_flutter: ^4.1.0
+  # فك رموز QR بلغة Dart خالصة (بلا إضافة أصلية): إطارات كاميرا الويب حين لا يتوفر BarcodeDetector، وصورة كاميرا النظام في iOS
+  zxing2: ^0.2.4
   web_socket_channel: ^3.0.1
   url_launcher: ^6.3.0
   flutter_localizations:

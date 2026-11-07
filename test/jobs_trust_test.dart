@@ -289,15 +289,16 @@ void main() {
     expect(find.byIcon(Icons.verified_rounded), findsNothing);
   });
 
-  testWidgets('manual code entry is not dressed as a camera scanner (orders tab and event host)', (tester) async {
+  testWidgets('check-in buttons open the real camera scanner (orders tab and event host)', (tester) async {
+    // صار في التطبيق ماسح فعلي (lib/ui/qr_scanner.dart)، فالزر يحمل أيقونة المسح واسمه، والإدخال اليدوي داخل ورقته
     final srv = _Srv();
     await _pump(tester, srv, Scaffold(body: OrdersTab(biz: Biz.fromJson(_bizFull()))));
     expect(find.byKey(const Key('orders-checkin-code')), findsOneWidget);
-    expect(find.text('إدخال رمز الاستلام'), findsOneWidget);
-    expect(find.byIcon(Icons.qr_code_scanner_rounded), findsNothing);
+    expect(find.text('مسح رمز الاستلام'), findsOneWidget);
+    expect(find.byIcon(Icons.qr_code_scanner_rounded), findsOneWidget);
     await _pump(tester, srv, const EventDetailPage(eventId: 'ev-1'));
     expect(find.byKey(const Key('event-checkin-code')), findsOneWidget);
-    expect(find.text('تسجيل دخول برمز التذكرة'), findsOneWidget);
-    expect(find.byIcon(Icons.qr_code_scanner_rounded), findsNothing);
+    expect(find.text('مسح التذاكر عند الدخول'), findsOneWidget);
+    expect(find.byIcon(Icons.qr_code_scanner_rounded), findsOneWidget);
   });
 }

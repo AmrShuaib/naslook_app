@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../chat/chat_thread_page.dart';
@@ -17,6 +18,7 @@ import '../../core/platform.dart';
 import '../../core/require_adult.dart';
 import '../../state/app_state.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/qr_scanner.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../wallet/wallet_page.dart';
@@ -292,6 +294,8 @@ class OrderPage extends ConsumerWidget {
           if (x.mineAsBuyer && x.code != null && x.open) JoyCard(child: Column(children: [
             const Text('رمز الاستلام', style: TextStyle(color: Joy.textMuted, fontSize: 12.5)),
             Text(x.code!, key: const Key('order-code'), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 34, letterSpacing: 8)),
+            // QR يحمل معرّف الطلب مع الرمز: ماسح البائع يرفض رمز طلب آخر قبل أن يُحسب محاولة خاطئة
+            Container(key: const Key('order-code-qr'), margin: const EdgeInsets.symmetric(vertical: 8), padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: Joy.line)), child: QrImageView(data: marketQrData(x.id, x.code!), size: 150)),
             Text(x.cod ? 'عند الاستلام ادفع للبائع ${money(x.total)} وأعطه الرمز، أو أكّد الاستلام بنفسك من الزر أدناه.' : 'أعطه للبائع عند الاستلام، أو أكّد الاستلام بنفسك من الزر أدناه.', textAlign: TextAlign.center, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
           ])),
           // الدفع عند الاستلام: ناس لايف لا تحفظ المبلغ فلا نزاع؛ البديل بلاغ عن البائع من ورقة البلاغ الموحدة
@@ -313,7 +317,7 @@ class OrderPage extends ConsumerWidget {
             if ((x.mineAsSeller || x.mineAsCourier) && x.status == 'preparing') FilledButton(key: const Key('stage-on_the_way'), onPressed: () => advanceOrder(context, ref, x, 'on_the_way'), child: const Text('في الطريق')),
             if ((x.mineAsSeller || x.mineAsCourier) && (x.status == 'preparing' || x.status == 'on_the_way')) FilledButton(key: const Key('stage-delivered'), onPressed: () => advanceOrder(context, ref, x, 'delivered'), child: const Text('تم التسليم')),
             if (x.mineAsSeller && x.cod && x.active) FilledButton.icon(key: const Key('order-cash-received'), onPressed: () => _cashReceived(context, ref, x), icon: const Icon(Icons.payments_outlined, size: 18), label: const Text('استلمت المبلغ')),
-            if (x.mineAsSeller && x.active) OutlinedButton.icon(key: const Key('seller-code'), onPressed: () => _sellerCode(context, ref, x), icon: const Icon(Icons.pin_outlined, size: 18), label: const Text('إدخال رمز المشتري')),
+            if (x.mineAsSeller && x.active) OutlinedButton.icon(key: const Key('seller-code'), onPressed: () => _sellerCode(context, ref, x), icon: const Icon(Icons.qr_code_scanner_rounded, size: 18), label: const Text('مسح رمز المشتري')),
             if (x.mineAsSeller && x.courier == null && const {'paid', 'preparing', 'on_the_way'}.contains(x.status)) OutlinedButton.icon(key: const Key('order-courier'), onPressed: () => _assignCourier(context, ref, x), icon: const Icon(Icons.delivery_dining_outlined, size: 18), label: const Text('تعيين مندوب توصيل')),
             if (x.mineAsSeller && x.cod && const {'paid', 'preparing', 'on_the_way'}.contains(x.status)) OutlinedButton.icon(key: const Key('order-no-show'), style: OutlinedButton.styleFrom(foregroundColor: Joy.danger), onPressed: () => _noShow(context, ref, x), icon: const Icon(Icons.person_off_outlined, size: 18), label: const Text('لم يحضر المشتري')),
             if (x.mineAsSeller && x.active) TextButton(key: const Key('order-seller-cancel'), style: TextButton.styleFrom(foregroundColor: Joy.danger), onPressed: () => _cancel(context, ref, x), child: Text(x.cod ? 'إلغاء الطلب' : 'إلغاء وردّ المبلغ')),
@@ -365,10 +369,43 @@ class OrderPage extends ConsumerWidget {
   Future<void> _clearCourier(BuildContext context, WidgetRef ref, Order x) async {
     try { await ref.read(apiClientProvider).clearCourier(x.id); ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
   }
+  /// البائع يمسح QR المشتري من صفحة طلبه (أو يكتب الأرقام الأربعة) ثم يرى ملخص الطلب ويؤكد التسليم بطلب الخادم نفسه.
+  /// رمز طلب آخر يُرفض في ورقة المسح قبل أي محاولة (خمس محاولات خاطئة تُقفل الرمز).
   Future<void> _sellerCode(BuildContext context, WidgetRef ref, Order x) async {
-    final code = await askText(context, title: 'رمز المشتري', hint: '٤ أرقام يعطيها لك المشتري عند التسليم', confirm: 'تأكيد', maxLines: 1, keyboardType: TextInputType.number);
-    if (code == null || code.isEmpty || !context.mounted) return;
-    try { await ref.read(apiClientProvider).confirmOrder(x.id, code: code.trim()); ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); ref.invalidate(walletProvider); if (context.mounted) toast(context, x.cod ? 'اكتمل الطلب' : 'اكتمل الطلب ووصلك المبلغ'); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
+    final api = ref.read(apiClientProvider);
+    for (;;) {
+      if (!context.mounted) return;
+      final code = await showQrScanSheet(context, title: 'رمز المشتري', help: 'امسح رمز QR من صفحة الطلب على جوال المشتري', manualHint: '٤ أرقام يعطيها لك المشتري عند التسليم', keyboardType: TextInputType.number,
+          check: (raw, {required bool scanned}) => checkMarketCode(raw, orderId: x.id, scanned: scanned));
+      if (code == null || !context.mounted) return;
+      final step = await showScanSummary(
+        context,
+        code: code,
+        header: Row(key: const Key('market-summary'), children: [
+          ProfileAvatar(person: x.buyer, size: 46),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(x.buyer.nickname.isNotEmpty ? x.buyer.nickname : 'المشتري', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+            Text(orderStatusLabels[x.status] ?? x.status, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+          ])),
+        ]),
+        rows: [
+          ('الطلب', '${x.title}${x.variant != null ? ' (${x.variant})' : ''}${x.qty > 1 ? ' × ${x.qty}' : ''}'),
+          ('المبلغ', money(x.total)),
+          ('الدفع', x.cod ? 'عند الاستلام للبائع مباشرة' : 'من المحفظة · يصلك عند التأكيد'),
+        ],
+        warning: x.cod ? 'تأكد أنك استلمت ${money(x.total)} من المشتري قبل التأكيد' : null,
+        confirmLabel: 'تأكيد التسليم',
+        offerNext: false,
+        onConfirm: (_) async {
+          await api.confirmOrder(x.id, code: code);
+          ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); ref.invalidate(walletProvider);
+          return x.cod ? 'اكتمل الطلب' : 'اكتمل الطلب ووصلك المبلغ';
+        },
+        errText: marketErrText,
+      );
+      if (step != ScanStep.rescan) return;
+    }
   }
   /// الدفع عند الاستلام: البائع يسجّل أنه استلم المبلغ فيكتمل الطلب (لا شيء يتحرك في المحفظة)
   Future<void> _cashReceived(BuildContext context, WidgetRef ref, Order x) async {

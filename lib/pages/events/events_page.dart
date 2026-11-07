@@ -7,12 +7,14 @@ import '../../core/require_account.dart';
 import '../../core/require_adult.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
+import '../../api/event_attendees_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../state/app_state.dart';
 import '../../state/providers.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
+import '../../ui/qr_scanner.dart';
 import '../../ui/report_sheet.dart';
 import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
@@ -23,6 +25,8 @@ final eventsProvider = FutureProvider<List<Event>>((ref) => ref.watch(apiClientP
 final myEventsProvider = FutureProvider<List<Event>>((ref) => ref.watch(apiClientProvider).events(mine: true));
 final eventProvider = FutureProvider.family<Event, String>((ref, id) => ref.watch(apiClientProvider).event(id));
 final ticketsProvider = FutureProvider<List<Ticket>>((ref) => ref.watch(apiClientProvider).tickets());
+/// الصفحة الأولى من قائمة الحضور للمضيف بحسب الفلتر ('' الكل، 'in' دخلوا، 'out' لم يدخلوا)؛ «عرض المزيد» يكمل بالمؤشر.
+final eventAttendeesProvider = FutureProvider.autoDispose.family<AttendeePage, ({String id, String status})>((ref, a) => ref.watch(apiClientProvider).eventAttendees(a.id, status: a.status, limit: 20));
 
 String when(DateTime? t) {
   if (t == null) return '';
@@ -162,10 +166,13 @@ class EventDetailPage extends ConsumerWidget {
             const SizedBox(height: 10),
             const SectionTitle('للمضيف'),
             Row(children: [
-              Expanded(child: OutlinedButton.icon(key: const Key('event-checkin-code'), onPressed: () => _checkin(context, ref, e), icon: const Icon(Icons.keyboard_alt_outlined), label: const Text('تسجيل دخول برمز التذكرة'))),
+              // مسح رمز التذكرة بالكاميرا، والإدخال اليدوي في الورقة نفسها
+              Expanded(child: FilledButton.icon(key: const Key('event-checkin-code'), onPressed: () => _checkin(context, ref, e), icon: const Icon(Icons.qr_code_scanner_rounded), label: const Text('مسح التذاكر عند الدخول'))),
               const SizedBox(width: 8),
               if (!e.cancelled) OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Joy.danger), onPressed: () => _cancel(context, ref, e), child: const Text('إلغاء')),
             ]),
+            const SizedBox(height: 14),
+            EventAttendeesSection(event: e),
           ],
         ]),
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -176,14 +183,59 @@ class EventDetailPage extends ConsumerWidget {
 
   Widget _row(IconData i, String a, String? b) => Row(children: [Container(width: 40, height: 40, decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)), child: Icon(i, size: 20)), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(a, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)), if (b != null) Text(b, style: const TextStyle(color: Joy.textMuted, fontSize: 12))]))]);
 
+  /// بوابة الفعالية: مسح رمز التذكرة (أو كتابته) ثم ملخصها (الحاضر، الفئة، دخل أم لا) ثم «تأكيد الدخول» بطلب الخادم نفسه،
+  /// و«امسح التالي» يعيد الكاميرا للحاضر التالي.
   Future<void> _checkin(BuildContext context, WidgetRef ref, Event e) async {
-    final code = await askText(context, title: 'رمز التذكرة', hint: 'NAS-XXXXXXXX', confirm: 'تحقق', maxLines: 1);
-    if (code == null || code.isEmpty) return;
-    try {
-      final r = await ref.read(apiClientProvider).checkin(e.id, code);
-      if (context.mounted) toast(context, 'تذكرة صالحة · ${asMapName(r)}');
-    } catch (err) {
-      if (context.mounted) toast(context, err.toString().contains('ticket-invalid') ? 'تذكرة غير صالحة أو مستخدمة' : err.toString(), error: true);
+    final api = ref.read(apiClientProvider);
+    for (;;) {
+      if (!context.mounted) return;
+      final code = await showQrScanSheet(context, title: 'مسح التذاكر', help: 'وجّه الكاميرا إلى رمز التذكرة على جوال الحاضر', manualHint: 'NAS-XXXXXXXX', check: checkVenueCode);
+      if (code == null || !context.mounted) return;
+      EventAttendee? t;
+      Object? lookupErr;
+      try {
+        t = (await api.eventAttendees(e.id, code: code, limit: 1)).items.firstOrNull;
+      } catch (err) {
+        lookupErr = err;
+      }
+      if (!context.mounted) return;
+      final step = await showScanSummary(
+        context,
+        code: code,
+        header: Row(key: const Key('ticket-summary'), children: [
+          if (t != null) ProfileAvatar(person: t.holder, size: 46) else const Icon(Icons.confirmation_number_outlined, size: 40, color: Joy.textMuted),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(t?.name ?? 'تذكرة', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+            Text(e.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+          ])),
+        ]),
+        rows: [
+          if (t != null) ('الفئة', t.tier),
+          if (t != null && t.paid > 0) ('المدفوع', money(t.paid)),
+          if (t != null) ('الحالة', t.checkedIn ? 'دخل' : t.refunded ? 'مستردّة' : 'لم يدخل بعد'),
+        ],
+        // تعذر الجلب لا يمنع الدخول: الخادم يتحقق من الرمز عند التأكيد كما في الإدخال اليدوي
+        warning: lookupErr != null
+            ? 'تعذر جلب تفاصيل التذكرة. يمكنك التأكيد والخادم يتحقق من الرمز.'
+            : t == null
+                ? 'لا تذكرة بهذا الرمز في هذه الفعالية'
+                : t.checkedIn
+                    ? 'دخل بهذه التذكرة من قبل${t.checkedInAt != null ? ' · ${when(t.checkedInAt)}' : ''}'
+                    : t.refunded
+                        ? 'تذكرة مستردّة، لا تصلح للدخول'
+                        : null,
+        blocked: lookupErr == null && (t == null || t.checkedIn || t.refunded),
+        confirmLabel: 'تأكيد الدخول',
+        onConfirm: (_) async {
+          final r = await api.checkin(e.id, code);
+          ref.invalidate(eventAttendeesProvider);
+          final who = asMapName(r);
+          return 'تذكرة صالحة · ${who.isNotEmpty ? who : t?.name ?? ''}';
+        },
+        errText: (err) => err.toString().contains('ticket-invalid') ? 'تذكرة غير صالحة أو مستخدمة' : err.toString(),
+      );
+      if (step == ScanStep.done) return;
     }
   }
   String asMapName(Map<String, dynamic> r) => (r['holder'] is Map ? (r['holder']['nickname']?.toString() ?? '') : '');
@@ -197,6 +249,104 @@ class EventDetailPage extends ConsumerWidget {
       final s = err.toString();
       if (context.mounted) toast(context, s.contains('insufficient-funds') ? 'رصيد محفظتك لا يكفي لاسترداد التذاكر للمشترين؛ اشحن المحفظة ثم أعد المحاولة' : s, error: true);
     }
+  }
+}
+
+/// قائمة الحضور للمضيف: من حجز، والفئة، ودخل أم لا ومتى، بفلتر وصفحات («عرض المزيد»). الخادم يقصرها على المضيف والإدارة.
+class EventAttendeesSection extends ConsumerStatefulWidget {
+  final Event event;
+  const EventAttendeesSection({super.key, required this.event});
+  @override
+  ConsumerState<EventAttendeesSection> createState() => _EventAttendeesSectionState();
+}
+
+class _EventAttendeesSectionState extends ConsumerState<EventAttendeesSection> {
+  String status = '';
+  // صفحات «عرض المزيد» تتبع الصفحة الأولى التي جاءت بعدها؛ إن أعيد جلب الأولى (بعد دخول أو تحديث) تبدأ من جديد
+  AttendeePage? _base;
+  final _more = <EventAttendee>[];
+  String? _cursor;
+  bool _loadingMore = false;
+
+  Future<void> _loadMore() async {
+    final c = _cursor;
+    if (c == null || _loadingMore) return;
+    final base = _base;
+    setState(() => _loadingMore = true);
+    try {
+      final p = await ref.read(apiClientProvider).eventAttendees(widget.event.id, status: status, cursor: c, limit: 20);
+      if (!mounted || !identical(base, _base)) return;
+      setState(() { _more.addAll(p.items); _cursor = p.next; });
+    } catch (e) {
+      if (mounted) toast(context, '$e', error: true);
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final key = (id: widget.event.id, status: status);
+    final first = ref.watch(eventAttendeesProvider(key));
+    final page = first.valueOrNull;
+    if (page != null && !identical(page, _base)) {
+      _base = page;
+      _more.clear();
+      _cursor = page.next;
+    }
+    Widget chip(String k, String label) => Padding(
+          padding: const EdgeInsets.only(left: 6),
+          child: ChoiceChip(
+            key: Key('att-filter-${k.isEmpty ? 'all' : k}'),
+            label: Text(label, style: TextStyle(color: status == k ? Joy.primaryOn : Joy.text, fontSize: 12.5)),
+            selected: status == k, showCheckmark: false, selectedColor: Joy.primary, visualDensity: VisualDensity.compact,
+            onSelected: (_) => setState(() => status = k),
+          ),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Expanded(child: SectionTitle('الحضور')),
+        if (page != null) Text('دخل ${page.checkedIn} من ${page.total}', key: const Key('attendees-count'), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5, fontWeight: FontWeight.w600)),
+      ]),
+      Row(children: [chip('', 'الكل'), chip('in', 'دخلوا'), chip('out', 'لم يدخلوا')]),
+      const SizedBox(height: 8),
+      first.when(
+        data: (p) {
+          final items = [...p.items, ..._more];
+          if (items.isEmpty) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              child: Text(status == 'in' ? 'لم يدخل أحد بعد' : status == 'out' ? 'دخل كل من حجز' : 'لم يحجز أحد بعد', key: const Key('attendees-empty'), style: const TextStyle(color: Joy.textMuted)),
+            );
+          }
+          return JoyCard(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: Column(children: [
+              for (final (i, a) in items.indexed) ...[
+                if (i > 0) const Divider(height: 1),
+                Padding(
+                  key: Key('attendee-${a.ticketId}'),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(children: [
+                    ProfileAvatar(person: a.holder, size: 36),
+                    const SizedBox(width: 10),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+                      Text('${a.tier}${a.checkedIn ? ' · دخل ${clockOf(a.checkedInAt)}' : a.refunded ? ' · مستردّة' : ' · لم يدخل بعد'}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+                    ])),
+                    Icon(a.checkedIn ? Icons.check_circle_rounded : Icons.schedule_rounded, size: 20, color: a.checkedIn ? Joy.success : Joy.textMuted),
+                  ]),
+                ),
+              ],
+              if (_cursor != null)
+                TextButton(key: const Key('attendees-more'), onPressed: _loadingMore ? null : _loadMore, child: Text(_loadingMore ? 'جارٍ التحميل…' : 'عرض المزيد')),
+            ]),
+          );
+        },
+        loading: () => const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator())),
+        error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(eventAttendeesProvider(key))),
+      ),
+    ]);
   }
 }
 

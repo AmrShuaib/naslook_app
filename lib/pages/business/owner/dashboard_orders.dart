@@ -8,6 +8,7 @@ import '../../../core/app_theme.dart';
 import '../../../state/app_state.dart';
 import '../../../state/biz_providers.dart';
 import '../../../ui/profile_avatar.dart';
+import '../../../ui/qr_scanner.dart';
 import '../../../ui/widgets.dart';
 import '../../chat/chat_thread_page.dart' show ChatThreadPage;
 import '../biz_order_page.dart' show BizOrderPage, VenueActions, orderErrText;
@@ -44,8 +45,8 @@ class _OrdersTabState extends ConsumerState<OrdersTab> {
             ),
           ),
           const SizedBox(width: 8),
-          // إدخال يدوي لرمز الحجز (لا ماسح كاميرا في التطبيق)
-          FilledButton.tonalIcon(key: const Key('orders-checkin-code'), onPressed: () => checkinByCode(context, ref, widget.biz), icon: const Icon(Icons.keyboard_alt_outlined, size: 18), label: const Text('إدخال رمز الاستلام')),
+          // مسح رمز QR من جوال العميل بالكاميرا، والإدخال اليدوي في الورقة نفسها
+          FilledButton.tonalIcon(key: const Key('orders-checkin-code'), onPressed: () => checkinByCode(context, ref, widget.biz), icon: const Icon(Icons.qr_code_scanner_rounded, size: 18), label: const Text('مسح رمز الاستلام')),
         ]),
       ),
       SizedBox(
@@ -250,23 +251,87 @@ void showOwnerOrderSheet(BuildContext context, WidgetRef ref, Biz biz, BizOrder 
   );
 }
 
-/// تأكيد الاستلام بإدخال رمز الحجز يدوياً (أو لصقه من ماسح QR).
+/// تأكيد الاستلام بمسح رمز QR من جوال العميل (أو كتابته في الورقة نفسها): ملخص الطلب أولاً (من العميل، ماذا، متى، الدفع)
+/// ثم «تأكيد» بطلب الخادم نفسه (POST /biz/:id/checkin بالرمز)، و«امسح التالي» يعيد الكاميرا للعميل التالي.
 Future<void> checkinByCode(BuildContext context, WidgetRef ref, Biz biz) async {
-  final code = await askText(context, title: 'تأكيد الاستلام', hint: 'رمز الحجز مثل NAS-1A2B3C4D', confirm: 'تأكيد', maxLines: 1);
-  if (code == null || code.trim().isEmpty) return;
-  try {
-    final o = await ref.read(apiClientProvider).checkinBiz(biz.id, code: code.trim().toUpperCase());
-    invalidateBizAll(ref, biz.id);
+  final api = ref.read(apiClientProvider);
+  for (;;) {
     if (!context.mounted) return;
-    toast(context, 'تم التأكيد · ${o.customer?.nickname ?? ''} · ${o.title}');
-    // حجز بالدفع في المكان: بعد الاستلام يُطلب المبلغ ويُسجَّل «تم الدفع»
-    if (o.venueUnpaid) await _askVenuePaid(context, ref, biz, o);
-  } catch (e) {
-    if (context.mounted) toast(context, ownerErrText(e), error: true);
+    final code = await showQrScanSheet(context, title: 'تأكيد الاستلام', help: 'وجّه الكاميرا إلى رمز الحجز على جوال العميل', manualHint: 'رمز الحجز مثل NAS-1A2B3C4D', check: checkVenueCode);
+    if (code == null || !context.mounted) return;
+    BizOrder? o;
+    Object? lookupErr;
+    try {
+      // البحث في طلبات هذه الدائرة فقط (الصلاحية نفسها التي يحتاجها الاستلام)، ثم المطابقة التامة للرمز
+      o = (await api.bizOrders(biz.id, q: code)).where((x) => x.code.toUpperCase() == code).firstOrNull;
+    } catch (e) {
+      lookupErr = e;
+    }
+    if (!context.mounted) return;
+    final c = o?.customer;
+    final step = await showScanSummary(
+      context,
+      code: code,
+      header: Row(key: const Key('order-summary'), children: [
+        if (c != null) ProfileAvatar(person: c, size: 46) else const Icon(Icons.receipt_long_outlined, size: 40, color: Joy.textMuted),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(c?.nickname.isNotEmpty == true ? c!.nickname : o == null ? 'طلب' : 'عميل', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+          if (o != null) Text('${o.kindLabel} · ${o.statusLabel}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+        ])),
+      ]),
+      rows: [
+        if (o != null) ...[
+          ('العنصر', o.title),
+          if (o.summary.isNotEmpty) ('التفاصيل', o.summary),
+          if (o.startAt != null) (isSlotKind(o.kind) ? 'الموعد' : 'من', isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
+          ('المبلغ', money(o.total)),
+          if (o.payment != 'free') ('الدفع', o.ownerMoneyLabel),
+        ],
+      ],
+      // تعذر الجلب لا يمنع الاستلام: الخادم يتحقق من الرمز عند التأكيد كما في الإدخال اليدوي
+      warning: lookupErr != null
+          ? 'تعذر جلب تفاصيل الطلب. يمكنك التأكيد والخادم يتحقق من الرمز.'
+          : o == null
+              ? 'لا طلب بهذا الرمز في هذه الدائرة'
+              : o.status == 'used'
+                  ? 'استُخدم هذا الرمز من قبل${o.usedAt != null ? ' · ${dayLabel(o.usedAt!)} ${clockOf(o.usedAt)}' : ''}'
+                  : o.status == 'cancelled'
+                      ? 'هذا الطلب ملغى'
+                      : o.status == 'no_show'
+                          ? 'سُجّل هذا الحجز: لم يحضر'
+                          : o.status != 'confirmed'
+                              ? 'لا يمكن تأكيد هذا الطلب (${o.statusLabel})'
+                              : o.disputeOpen
+                                  ? 'مشكلة مفتوحة من العميل: يبقى المبلغ مجمّداً حتى تحسمها الإدارة'
+                                  : o.venueUnpaid
+                                      ? 'الدفع في المكان: اطلب ${money(o.total)} من العميل'
+                                      : null,
+      blocked: lookupErr == null && (o == null || o.status != 'confirmed'),
+      confirmLabel: o == null ? 'تأكيد الاستلام' : o.kind == 'product' ? 'تأكيد التسليم' : isSlotKind(o.kind) ? 'تأكيد الدخول' : 'تأكيد الوصول',
+      onConfirm: (sheet) async {
+        final done = await api.checkinBiz(biz.id, code: code);
+        invalidateBizAll(ref, biz.id);
+        var msg = 'تم التأكيد · ${done.customer?.nickname.isNotEmpty == true ? '${done.customer!.nickname} · ' : ''}${done.title}';
+        // حجز بالدفع في المكان: بعد الاستلام يُطلب المبلغ ويُسجَّل «تم الدفع»؛ فشل التسجيل لا يلغي الاستلام الذي تم
+        if (done.venueUnpaid && sheet.mounted && await _askVenuePaid(sheet, done)) {
+          try {
+            await api.markVenuePaid(biz.id, done.id);
+            invalidateBizAll(ref, biz.id);
+            msg += ' · سُجّل الدفع';
+          } catch (e) {
+            msg += ' · لم يُسجَّل الدفع (${orderErrText(e)})، سجّله من ورقة الطلب';
+          }
+        }
+        return msg;
+      },
+      errText: ownerErrText,
+    );
+    if (step == ScanStep.done) return;
   }
 }
 
-Future<void> _askVenuePaid(BuildContext context, WidgetRef ref, Biz biz, BizOrder o) async {
+Future<bool> _askVenuePaid(BuildContext context, BizOrder o) async {
   final paid = await showDialog<bool>(
     context: context,
     builder: (d) => AlertDialog(
@@ -276,12 +341,5 @@ Future<void> _askVenuePaid(BuildContext context, WidgetRef ref, Biz biz, BizOrde
       actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('لاحقاً')), FilledButton(key: const Key('checkin-venue-paid'), onPressed: () => Navigator.pop(d, true), child: const Text('تم الدفع'))],
     ),
   );
-  if (paid != true) return;
-  try {
-    await ref.read(apiClientProvider).markVenuePaid(biz.id, o.id);
-    invalidateBizAll(ref, biz.id);
-    if (context.mounted) toast(context, 'سُجّل الدفع');
-  } catch (e) {
-    if (context.mounted) toast(context, orderErrText(e), error: true);
-  }
+  return paid == true;
 }
