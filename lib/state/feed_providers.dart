@@ -1,8 +1,16 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/profile_v2_api.dart';
 import '../api/row_api.dart';
 import 'app_state.dart';
+import 'providers.dart' show signedInProvider;
 import 'search_providers.dart';
+
+/// مفتاح «أتابعهم» في [momentsProvider]: التغذية كلها (`kind=all`) بنطاق `scope=following`، بجانب أنواع [feedKinds].
+const followingFeed = 'following';
+
+/// مفاتيح قوائم «اللحظات» كلها: الأنواع ثم «أتابعهم».
+const momentsKeys = [...feedKinds, followingFeed];
 
 /// حالة «اللحظات» لنوع واحد: العناصر المعروضة الأحدث أولاً، ما ينتظر خلف كبسولة «جديد» (وصل حيّاً أو بتحديث أثناء التصفح)،
 /// ومؤشر الصفحة التالية (null = لا أقدم).
@@ -22,10 +30,12 @@ class MomentsState {
   final bool loaded;
   /// رُتّبت الصفحة بموقع المستخدم (ضمن النطاق) لا بالأحدث فقط
   final bool located;
+  /// «أتابعهم»: عدد من أتابعهم ودوائري من آخر صفحة أولى (نص الفراغ يدعو إلى المتابعة حين يكونان صفراً)
+  final int? followPeople, followCircles;
   final Object? error;
-  const MomentsState({this.items = const [], this.pending = const [], this.pendingReplaces = false, this.pendingNext, this.next, this.loading = false, this.loadingMore = false, this.loaded = false, this.located = false, this.error});
+  const MomentsState({this.items = const [], this.pending = const [], this.pendingReplaces = false, this.pendingNext, this.next, this.loading = false, this.loadingMore = false, this.loaded = false, this.located = false, this.followPeople, this.followCircles, this.error});
 
-  MomentsState copyWith({List<RowItem>? items, List<RowItem>? pending, bool? pendingReplaces, String? pendingNext, bool clearPendingNext = false, String? next, bool clearNext = false, bool? loading, bool? loadingMore, bool? loaded, bool? located, Object? error, bool clearError = false}) => MomentsState(
+  MomentsState copyWith({List<RowItem>? items, List<RowItem>? pending, bool? pendingReplaces, String? pendingNext, bool clearPendingNext = false, String? next, bool clearNext = false, bool? loading, bool? loadingMore, bool? loaded, bool? located, int? followPeople, int? followCircles, Object? error, bool clearError = false}) => MomentsState(
         items: items ?? this.items,
         pending: pending ?? this.pending,
         pendingReplaces: pendingReplaces ?? this.pendingReplaces,
@@ -35,6 +45,8 @@ class MomentsState {
         loadingMore: loadingMore ?? this.loadingMore,
         loaded: loaded ?? this.loaded,
         located: located ?? this.located,
+        followPeople: followPeople ?? this.followPeople,
+        followCircles: followCircles ?? this.followCircles,
         error: clearError ? null : (error ?? this.error),
       );
 
@@ -64,13 +76,14 @@ class MomentsNotifier extends StateNotifier<MomentsState> {
     } catch (_) {
       // بلا موقع: الأحدث بلا نطاق
     }
-    return _ref.read(apiClientProvider).feedItems(kind: kind, lat: lat, lng: lng, before: before);
+    final following = kind == followingFeed;
+    return _ref.read(apiClientProvider).feedItems(kind: following ? 'all' : kind, scope: following ? 'following' : null, lat: lat, lng: lng, before: before);
   }
 
   /// يستبدل القائمة كلها بصفحة أولى (ومعها رمز التصفح فتُهمل أي صفحة أقدم جارية؛ الحالة الجديدة بلا loadingMore).
-  void _replace(List<RowItem> items, String? next, bool located) {
+  void _replace(List<RowItem> items, String? next, bool located, {int? followPeople, int? followCircles}) {
     _list++;
-    state = MomentsState(items: items, next: next, loaded: true, located: located);
+    state = MomentsState(items: items, next: next, loaded: true, located: located, followPeople: followPeople ?? state.followPeople, followCircles: followCircles ?? state.followCircles);
   }
 
   Future<void> load() async {
@@ -79,7 +92,7 @@ class MomentsNotifier extends StateNotifier<MomentsState> {
     try {
       final page = await _fetch();
       if (gen != _gen || !mounted) return;
-      _replace(page.items, page.next, page.located);
+      _replace(page.items, page.next, page.located, followPeople: page.followPeople, followCircles: page.followCircles);
     } catch (e) {
       if (gen != _gen || !mounted) return;
       state = state.copyWith(loading: false, error: e);
@@ -95,7 +108,7 @@ class MomentsNotifier extends StateNotifier<MomentsState> {
     try {
       final page = await _fetch();
       if (gen != _gen || !mounted) return;
-      if (applyNow || state.items.isEmpty) return _replace(page.items, page.next, page.located);
+      if (applyNow || state.items.isEmpty) return _replace(page.items, page.next, page.located, followPeople: page.followPeople, followCircles: page.followCircles);
       final inPage = {for (final it in page.items) it.pinKey};
       final items = _withoutGone(state.items, page, inPage);
       if (items.isEmpty) return _replace(page.items, page.next, page.located);
@@ -106,7 +119,7 @@ class MomentsNotifier extends StateNotifier<MomentsState> {
       // صفحة كاملة لا تلتقي بالقائمة: الجديد أكثر من صفحة فلا يُلحق فوقها بل يستبدلها عند الاعتماد
       final gap = page.next != null && page.items.isNotEmpty && !page.items.any((it) => keys.contains(it.pinKey));
       final fresh = gap ? page.items : [for (final it in page.items) if (!keys.contains(it.pinKey)) it];
-      state = state.copyWith(items: items, pending: [...live, ...fresh], pendingReplaces: gap, pendingNext: gap ? page.next : null, clearPendingNext: !gap, located: page.located, clearError: true);
+      state = state.copyWith(items: items, pending: [...live, ...fresh], pendingReplaces: gap, pendingNext: gap ? page.next : null, clearPendingNext: !gap, located: page.located, followPeople: page.followPeople, followCircles: page.followCircles, clearError: true);
     } catch (e) {
       if (gen != _gen || !mounted) return;
       if (state.items.isEmpty) state = state.copyWith(loading: false, error: e);
@@ -193,8 +206,29 @@ class MomentsNotifier extends StateNotifier<MomentsState> {
   }
 }
 
-/// «اللحظات» لكل نوع (`all`، `moment`، …): يبقى بعد تبديل الرقاقة فتعود القائمة فوراً، والصفحة تحدّثه عند الفتح والعودة.
-final momentsProvider = StateNotifierProvider.family<MomentsNotifier, MomentsState, String>((ref, kind) => MomentsNotifier(ref, kind));
+/// «اللحظات» لكل نوع (`all`، `moment`، …) ولـ«أتابعهم» ([followingFeed]): يبقى بعد تبديل الرقاقة فتعود القائمة فوراً، والصفحة تحدّثه
+/// عند الفتح والعودة. «أتابعهم» تخص الحساب فتُبنى من جديد حين يتبدّل.
+final momentsProvider = StateNotifierProvider.family<MomentsNotifier, MomentsState, String>((ref, kind) {
+  if (kind == followingFeed) ref.watch(appStateProvider.select((s) => s.session?.user.id));
+  return MomentsNotifier(ref, kind);
+});
 
 /// قوائم «اللحظات» المفتوحة فعلاً (نوع لم يُفتح لا يُنشأ فيبدأ جلبه): لتطبيق الحذف والحظر والتحديث والحيّ عليها كلها لا المرئية وحدها.
-List<MomentsNotifier> openMoments(WidgetRef ref) => [for (final k in feedKinds) if (ref.exists(momentsProvider(k))) ref.read(momentsProvider(k).notifier)];
+List<MomentsNotifier> openMoments(WidgetRef ref) => [for (final k in momentsKeys) if (ref.exists(momentsProvider(k))) ref.read(momentsProvider(k).notifier)];
+
+/// من تُدرج لحظاتهم الحيّة في «أتابعهم» بلا جلب: من أتابعهم ومن أضفتهم (`GET /me/following/ids`، بأحرف كبيرة). null للزائر أو حين
+/// يتعذّر الجلب (خادم أقدم): القائمة تتحدّث حينها بالجلب الدوري وحده. يُبطَل بعد متابعة أو إلغائها.
+final followFeedIdsProvider = FutureProvider<Set<String>?>((ref) async {
+  if (!ref.watch(signedInProvider)) return null;
+  try {
+    return {for (final id in await ref.watch(apiClientProvider).followFeedIds()) id.toUpperCase()};
+  } catch (_) {
+    return null;
+  }
+});
+
+/// بعد متابعة شخص أو إلغائها: معرّفات «أتابعهم» تُجلب من جديد، وقائمتها المفتوحة تتحدّث في مكانها (الجديد خلف الكبسولة وما زال يُزال).
+void onFollowChanged(WidgetRef ref) {
+  ref.invalidate(followFeedIdsProvider);
+  if (ref.exists(momentsProvider(followingFeed))) ref.read(momentsProvider(followingFeed).notifier).refresh(applyNow: false);
+}

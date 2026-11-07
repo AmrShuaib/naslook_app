@@ -117,13 +117,16 @@ String messageGateNotice(String? reason) => switch (reason) {
 class ProfileSettings {
   final String msgPolicy, introVisibility;
   final bool showOnline, showCity, showFriends;
-  const ProfileSettings({this.msgPolicy = 'all', this.introVisibility = 'all', this.showOnline = true, this.showCity = true, this.showFriends = false});
+  /// «إشعارات من أتابعهم»: لحظة جديدة ممن أتابعهم (مرة كل 6 ساعات لكل شخص). مفعّلة افتراضياً
+  final bool followNotify;
+  const ProfileSettings({this.msgPolicy = 'all', this.introVisibility = 'all', this.showOnline = true, this.showCity = true, this.showFriends = false, this.followNotify = true});
   factory ProfileSettings.fromJson(Map m) => ProfileSettings(
         msgPolicy: const ['all', 'friends', 'none'].contains(_s(m, 'msgPolicy')) ? _s(m, 'msgPolicy') : 'all',
         introVisibility: _s(m, 'introVisibility') == 'friends' ? 'friends' : 'all',
-        showOnline: _b(m, 'showOnline', true), showCity: _b(m, 'showCity', true), showFriends: _b(m, 'showFriends'));
-  ProfileSettings copyWith({String? msgPolicy, String? introVisibility, bool? showOnline, bool? showCity, bool? showFriends}) => ProfileSettings(
-      msgPolicy: msgPolicy ?? this.msgPolicy, introVisibility: introVisibility ?? this.introVisibility, showOnline: showOnline ?? this.showOnline, showCity: showCity ?? this.showCity, showFriends: showFriends ?? this.showFriends);
+        showOnline: _b(m, 'showOnline', true), showCity: _b(m, 'showCity', true), showFriends: _b(m, 'showFriends'), followNotify: _b(m, 'followNotify', true));
+  ProfileSettings copyWith({String? msgPolicy, String? introVisibility, bool? showOnline, bool? showCity, bool? showFriends, bool? followNotify}) => ProfileSettings(
+      msgPolicy: msgPolicy ?? this.msgPolicy, introVisibility: introVisibility ?? this.introVisibility, showOnline: showOnline ?? this.showOnline, showCity: showCity ?? this.showCity, showFriends: showFriends ?? this.showFriends,
+      followNotify: followNotify ?? this.followNotify);
 }
 
 /// خطوة في اكتمال الملف: avatar | cover | bio | links | intro | email | skills.
@@ -170,6 +173,32 @@ class FollowResult {
   final int followers;
   const FollowResult({required this.following, required this.followers});
   factory FollowResult.fromJson(Map m) => FollowResult(following: _b(m, 'following'), followers: _i(m, 'followers'));
+}
+
+/// شخص في قائمتي «متابِعون» و«يتابع»: [isFollowing] = أتابعه أنا (زر المتابعة في القائمة)، [isMe] = أنا.
+class FollowPerson {
+  final String id, nickname, displayName;
+  final String? avatarUrl;
+  final bool isFollowing, isMe;
+  const FollowPerson({required this.id, this.nickname = '', this.displayName = '', this.avatarUrl, this.isFollowing = false, this.isMe = false});
+  factory FollowPerson.fromJson(Map m) => FollowPerson(
+      id: _s(m, 'id'), nickname: _s(m, 'nickname'), displayName: _s(m, 'displayName'), avatarUrl: _sn(m, 'avatarUrl'), isFollowing: _b(m, 'isFollowing'), isMe: _b(m, 'isMe'));
+  /// الاسم الظاهر: الاسم المعروض وإلا النك نيم وإلا المعرّف.
+  String get name => displayName.isNotEmpty ? displayName : (nickname.isNotEmpty ? nickname : id);
+  FollowPerson copyWith({bool? isFollowing}) => FollowPerson(id: id, nickname: nickname, displayName: displayName, avatarUrl: avatarUrl, isFollowing: isFollowing ?? this.isFollowing, isMe: isMe);
+}
+
+/// صفحة من `GET /profiles/:id/followers|following`: الأحدث متابعةً أولاً، و[next] مؤشر معتم يُعاد في `before=` كما هو أو null في النهاية،
+/// و[total] عدد القائمة كلها.
+class FollowPage {
+  final List<FollowPerson> items;
+  final String? next;
+  final int total;
+  const FollowPage({this.items = const [], this.next, this.total = 0});
+  factory FollowPage.fromJson(Map m) {
+    final items = asList(m['items']).map(FollowPerson.fromJson).where((p) => p.id.isNotEmpty).toList();
+    return FollowPage(items: items, next: _sn(m, 'next'), total: m['total'] == null ? items.length : _i(m, 'total'));
+  }
 }
 
 /// الملف الشخصي كما يراه الزائر، ومع [settings] و[completion] لصاحب الحساب.

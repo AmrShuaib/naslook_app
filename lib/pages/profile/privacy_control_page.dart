@@ -14,7 +14,7 @@ import '../chat/chat_thread_page.dart' show errText;
 import '../myspace/safety_page.dart';
 
 /// «التوثيق والتحكم»: درجة التوثيق (بريد، جوال قريباً، نفاذ قريباً)، من يراسلني (الجميع/الأصدقاء/لا أحد)،
-/// ما يظهر في ملفي (متصل الآن، المدينة، التعريف، الأصدقاء، ملف عام)، والأمان (المحظورون، المكتومون، الأجهزة قريباً).
+/// ما يظهر في ملفي (متصل الآن، المدينة، التعريف، الأصدقاء، ملف عام)، «إشعارات من أتابعهم»، والأمان (المحظورون، المكتومون، الأجهزة قريباً).
 class PrivacyControlPage extends ConsumerStatefulWidget {
   const PrivacyControlPage({super.key});
   @override
@@ -118,6 +118,20 @@ class _PrivacyControlPageState extends ConsumerState<PrivacyControlPage> {
               secondary: const Icon(Icons.shield_outlined, color: Joy.text),
             ),
           ]),
+        ),
+        const SizedBox(height: 14),
+        // لا شاشة لإعدادات الإشعارات لكل نوع (قسم «الإشعارات» في ماي سبيس يخص هذا المتصفح)، فالإيقاف هنا مع بقية ما يخص الحساب
+        const SectionTitle('الإشعارات'),
+        JoyCard(
+          padding: EdgeInsets.zero,
+          child: SwitchListTile(
+            key: const Key('follow-notify'),
+            value: s?.followNotify ?? true,
+            onChanged: hasV2 ? (v) => _put({'followNotify': v}, (x) => x.copyWith(followNotify: v)) : null,
+            title: const Text('إشعارات من أتابعهم'),
+            subtitle: Text((s?.followNotify ?? true) ? 'يصلك إشعار حين ينشر من تتابعهم لحظة جديدة تستطيع رؤيتها، مرة كل 6 ساعات لكل شخص على الأكثر' : 'متوقفة: لحظاتهم تظهر في «أتابعهم» داخل «اللحظات» بلا إشعار'),
+            secondary: const Icon(Icons.notifications_active_outlined, color: Joy.text),
+          ),
         ),
         const SizedBox(height: 14),
         const SectionTitle('الأمان'),

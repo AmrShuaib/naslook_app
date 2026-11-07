@@ -98,7 +98,7 @@ await call('PUT', '/me/profile/v2', { body: { displayName: 'x' }, user: null, ex
 let m = await call('PUT', '/me/profile/v2', { body: { displayName: '  فهد العتيبي ', jobTitle: 'مصوّر', city: 'جدة', district: 'الشاطئ', links: [{ kind: 'instagram', value: '@fahad' }, { kind: 'x', value: 'https://www.x.com/fahad_1/' }, { kind: 'website', value: 'fahad.sa' }], coverUrl: '/chat/media/cover-1.jpg', msgPolicy: 'friends', showOnline: false, showCity: false, showFriends: true, introVisibility: 'friends' }, expect: 200 });
 check(m.displayName === 'فهد العتيبي' && m.jobTitle === 'مصوّر' && m.city === 'جدة' && m.district === 'الشاطئ' && m.coverUrl === 'https://naslife.app/chat/media/cover-1.jpg', 'fields trimmed and cover made absolute', JSON.stringify([m.displayName, m.coverUrl]));
 check(same(m.links, [{ kind: 'instagram', value: 'fahad', url: 'https://instagram.com/fahad' }, { kind: 'x', value: 'fahad_1', url: 'https://x.com/fahad_1' }, { kind: 'website', value: 'fahad.sa', url: 'https://fahad.sa' }]), 'links normalised with canonical urls', JSON.stringify(m.links));
-check(same(m.settings, { msgPolicy: 'friends', showOnline: false, showCity: false, showFriends: true, introVisibility: 'friends' }), 'settings echoed', JSON.stringify(m.settings));
+check(same(m.settings, { msgPolicy: 'friends', showOnline: false, showCity: false, showFriends: true, introVisibility: 'friends', followNotify: true }), 'settings echoed (followNotify on by default)', JSON.stringify(m.settings));
 check(m.flags.isMe === true && m.flags.canMessage === true && m.flags.online === null && m.stats.friends === 1, 'owner sees own friends count and can always message');
 m = await call('PUT', '/me/profile/v2', { body: { jobTitle: 'مخرج' }, expect: 200 });
 check(m.jobTitle === 'مخرج' && m.displayName === 'فهد العتيبي' && m.links.length === 3 && m.settings.msgPolicy === 'friends', 'partial put keeps the other fields');
@@ -284,7 +284,7 @@ check(p.flags.isFollowing === false && p.stats.followers === 0 && p.stats.follow
 let list = await call('GET', `/profiles/${FAHAD}/followers`, { user: null, expect: 200 });
 check(same(list.items.map((x) => x.id), [KHALID, SARA]) && list.items[1].nickname === 'sara' && list.items[1].avatarUrl === null, 'followers list newest first with nicknames', JSON.stringify(list));
 list = await call('GET', `/profiles/${SARA}/following`, { user: null, expect: 200 });
-check(same(list.items, [{ id: FAHAD, nickname: 'Fahad', avatarUrl: 'https://naslife.app/chat/media/av1.jpg' }]), 'following list', JSON.stringify(list));
+check(same(list.items, [{ id: FAHAD, nickname: 'Fahad', avatarUrl: 'https://naslife.app/chat/media/av1.jpg', displayName: 'فهد العتيبي', isFollowing: false, isMe: false }]) && list.next === null && list.total === 1, 'following list (with displayName, isFollowing, isMe; next and total)', JSON.stringify(list));
 list = await call('GET', `/profiles/${FAHAD}/followers?limit=1`, { user: null, expect: 200 });
 check(list.items.length === 1 && list.items[0].id === KHALID, 'limit respected');
 await call('GET', '/profiles/nobody/followers', { user: null, expect: 404 });

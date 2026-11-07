@@ -172,13 +172,20 @@ class FeedPage {
   final List<RowItem> items;
   final String? next;
   final bool located;
-  const FeedPage({this.items = const [], this.next, this.located = false});
+  /// «أتابعهم» (`scope=following`): كم شخصاً أتابع (مع من أضفتهم) وكم دائرة انضممت إليها، لنص القائمة الفارغة؛ null لغيرها
+  final int? followPeople, followCircles;
+  const FeedPage({this.items = const [], this.next, this.located = false, this.followPeople, this.followCircles});
 
-  factory FeedPage.fromJson(Map m) => FeedPage(
-        items: [for (final e in (m['items'] as List? ?? const [])) if (e is Map) RowItem.fromJson(e)],
-        next: (m['next']?.toString().isNotEmpty ?? false) ? m['next'].toString() : null,
-        located: m['located'] == true,
-      );
+  factory FeedPage.fromJson(Map m) {
+    final f = m['following'] is Map ? m['following'] as Map : null;
+    return FeedPage(
+      items: [for (final e in (m['items'] as List? ?? const [])) if (e is Map) RowItem.fromJson(e)],
+      next: (m['next']?.toString().isNotEmpty ?? false) ? m['next'].toString() : null,
+      located: m['located'] == true,
+      followPeople: (f?['people'] as num?)?.toInt(),
+      followCircles: (f?['circles'] as num?)?.toInt(),
+    );
+  }
 }
 
 extension RowApi on ApiClient {
@@ -190,9 +197,11 @@ extension RowApi on ApiClient {
 
   /// «اللحظات»: `GET /feed?kind=&lat=&lng=&radiusKm=&limit=&before=` الأحدث أولاً بين الأنواع المختارة (`all` يدمجها كلها)،
   /// ضمن [radiusKm] حين يُعرف الموقع، و[before] مؤشر الصفحة التالية من الردّ السابق كما هو. عام: يعمل للزائر.
-  Future<FeedPage> feedItems({String kind = 'all', double? lat, double? lng, int radiusKm = feedRadiusKm, int limit = 30, String? before}) async {
+  /// [scope] = `following` («أتابعهم»): ممن أتابعهم وأصدقائي ودوائري فقط وبلا نطاق مسافة.
+  Future<FeedPage> feedItems({String kind = 'all', String? scope, double? lat, double? lng, int radiusKm = feedRadiusKm, int limit = 30, String? before}) async {
     final m = await get('/feed', query: {
       'kind': kind,
+      if (scope != null) 'scope': scope,
       if (lat != null) 'lat': '$lat',
       if (lng != null) 'lng': '$lng',
       'radiusKm': '$radiusKm',

@@ -253,6 +253,8 @@ export default async function posts(app, opts) {
     // بث فوري للتطبيقات المفتوحة (الخط الزمني والخريطة) بصيغة المشاهد نفسها؛ من منظور عام (لا mine ولا liked)،
     // ولحظة «الأصدقاء» أو لحظة صاحب الملف الخاص تُسلَّم لجمهورها فقط (live.js يصفّي لكل مستمع)
     try { globalThis.naslifeLive?.emit("post", { ...(await out(row, null)), user: await person(uid) }, { only: await momentAudience(row) }); } catch { /* البث لا يعطّل النشر */ }
+    // إشعار من يتابع الناشر ويرى اللحظة (profile_ext.js: قاعدة الرؤية والحظر والإيقاف وحد 6 ساعات)؛ النشر لا ينتظره
+    Promise.resolve().then(() => globalThis.naslifeNotifyFollowers?.(row)).catch(() => {});
     return out(row, uid);
   });
 

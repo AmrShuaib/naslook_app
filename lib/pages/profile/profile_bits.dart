@@ -36,18 +36,20 @@ class ProfileChip extends StatelessWidget {
   }
 }
 
-/// عمود رقم وتسمية في صف الأرقام.
+/// عمود رقم وتسمية في صف الأرقام؛ [onTap] يجعله قابلاً للضغط (المتابِعون ومن يتابعهم يفتحان قائمتهم).
 class StatCell extends StatelessWidget {
   final String value, label;
   final Key? cellKey;
-  const StatCell(this.value, this.label, {super.key, this.cellKey});
+  final VoidCallback? onTap;
+  const StatCell(this.value, this.label, {super.key, this.cellKey, this.onTap});
   @override
-  Widget build(BuildContext context) => Expanded(
-        child: Column(key: cellKey, children: [
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 19, color: Joy.text)),
-          Text(label, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5), maxLines: 1, overflow: TextOverflow.ellipsis),
-        ]),
-      );
+  Widget build(BuildContext context) {
+    final cell = Column(key: cellKey, children: [
+      Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 19, color: Joy.text)),
+      Text(label, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+    ]);
+    return Expanded(child: onTap == null ? cell : InkWell(borderRadius: BorderRadius.circular(10), onTap: onTap, child: cell));
+  }
 }
 
 /// مجموعة رقاقات تحت عنوان صغير (مهاراته، هواياته…).

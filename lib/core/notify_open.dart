@@ -163,6 +163,11 @@ Widget? notificationTarget(AppNotification n) {
     case 'post_like':
       final post = n.str('postId');
       return post == null ? const MyPostsPage() : MomentLinkPage(id: post);
+    // لحظة جديدة ممن أتابعهم (profile_ext.js عبر map_posts.js): اللحظة نفسها، وإلا ملف ناشرها
+    case 'follow_moment':
+      final moment = n.str('postId'), author = n.str('userId');
+      if (moment != null) return MomentLinkPage(id: moment);
+      return author == null ? null : UserProfilePage(person: Person(id: author, nickname: n.str('nickname') ?? author));
     // حجز فندق مؤكد (hotels.js): «حجوزاتي» وفيها الحجز برقم تأكيده
     case 'hotel_booked':
       return const MyBookingsPage();
@@ -337,6 +342,8 @@ Widget? _moderatedTarget(AppNotification n) {
       return (icon: Icons.add_reaction_outlined, color: Joy.accent);
     case 'post_like':
       return (icon: Icons.favorite_border_rounded, color: Joy.accent);
+    case 'follow_moment':
+      return (icon: Icons.auto_awesome_outlined, color: Joy.primary);
     case 'hotel_booked':
       return (icon: Icons.hotel_outlined, color: Joy.primary);
     case 'profile_follow':
