@@ -102,7 +102,7 @@ const routes = {
   'GET /wallet/transactions': [],
   'GET /events': [{ id: '22222222-2222-2222-2222-222222222222', host: person('SA0000002', 'sara'), vesselId: null, title: 'لقاء المطورين', description: 'نتكلم عن Flutter', startsAt: new Date(Date.now() + 86400000).toISOString(), endsAt: null, placeName: 'جدة', lat: 21.5, lng: 39.2, cancelled: false, tiers: [{ id: '33333333-3333-3333-3333-333333333333', name: 'عادي', description: '', price: 5000, quantity: 50, sold: 3, left: 47 }], going: 3, myTickets: 0, isHost: false }],
   'GET /tickets': [{ id: 'tk1', code: 'NAS-ABCD1234', status: 'valid', paid: 5000, eventId: '22222222-2222-2222-2222-222222222222', title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tier: 'عادي', createdAt: now, usedAt: null }],
-  'GET /market': [{ id: '55555555-5555-4555-8555-555555555555', seller: me, kind: 'product', category: 'food', title: 'برجر لحم', description: 'طازج', price: 5000, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'hidden', createdAt: now, mine: true }, { id: '44444444-4444-4444-4444-444444444444', seller: person('SA0000002', 'sara'), kind: 'product', category: 'coffee', title: 'قهوة مختصة', description: 'حبوب إثيوبية', price: 4500, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'active', createdAt: now, mine: false, payOnReceipt: true }],
+  'GET /market': [{ id: '55555555-5555-4555-8555-555555555555', seller: me, kind: 'product', category: 'food', title: 'برجر لحم', description: 'طازج', price: 5000, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'hidden', createdAt: now, mine: true }, { id: '44444444-4444-4444-4444-444444444444', seller: person('SA0000002', 'sara'), kind: 'product', category: 'coffee', title: 'قهوة مختصة', description: 'حبوب إثيوبية', price: 4500, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'active', createdAt: now, mine: false, payOnReceipt: true, delivery: true, deliveryFee: 1500, deliveryMaxKm: 25 }],
   'GET /market/orders': [],
 };
 
@@ -523,28 +523,59 @@ function profileMarketRoute(req, res, url, key) {
   if (key === 'GET /me/profile') return json(200, { id: me.id, nickname: me.nickname, bio: '', avatarUrl: me.avatarUrl, skills: [], hobbies: [], lookingFor: [] });
   if (key === 'POST /profile/avatar') { readBody((b) => { me.avatarUrl = 'http://127.0.0.1:8090' + String(b.url || ''); json(200, { ok: true, avatarUrl: me.avatarUrl }); }); return true; }
   if (key === 'DELETE /profile/avatar') { readBody(() => { me.avatarUrl = null; json(200, { ok: true, avatarUrl: null }); }); return true; }
+  // ---- دفتر العناوين (stream b3-address) — يحاكي server/addresses.js: حتى ١٠ عناوين خاصة، أحدها افتراضي، وجوال سعودي اختياري
+  const AB = (globalThis.__addresses ??= [{ id: 'adadadad-adad-4ada-8ada-adadadad0001', label: 'البيت', district: 'الروضة', details: 'شارع الأمير سلطان', city: 'جدة', lat: 21.55, lng: 39.16, phone: '+966551234567', isDefault: true }]);
+  const abPhone = (v) => { const m = /^(?:\+966|00966|966)?0?5(\d{8})$/.exec(String(v ?? '').replace(/[\s\-().]/g, '')); return m ? `+9665${m[1]}` : null; };
+  const abInput = (b, partial) => {
+    const v = {};
+    if (!partial || b.label !== undefined) { v.label = String(b.label ?? '').trim().slice(0, 30); if (!v.label) return { error: 'bad-label' }; }
+    if (!partial || b.district !== undefined) { v.district = String(b.district ?? '').trim(); if (v.district.length < 2 || v.district.length > 60) return { error: 'bad-district' }; }
+    if (!partial || b.details !== undefined) v.details = String(b.details ?? '').trim().slice(0, 200);
+    if (!partial || b.city !== undefined) v.city = String(b.city ?? '').trim() || null;
+    if (!partial || b.lat !== undefined || b.lng !== undefined) { const has = b.lat != null && b.lat !== '' && b.lng != null && b.lng !== ''; v.lat = has ? Number(b.lat) : null; v.lng = has ? Number(b.lng) : null; }
+    if (!partial || b.phone !== undefined) { if (b.phone == null || String(b.phone).trim() === '') v.phone = null; else { v.phone = abPhone(b.phone); if (!v.phone) return { error: 'bad-phone' }; } }
+    return { v };
+  };
+  const abSorted = () => [...AB].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+  if (key === 'GET /me/addresses') return json(200, { items: abSorted(), max: 10 });
+  if (key === 'POST /me/addresses') { readBody((b) => { const r = abInput(b, false); if (r.error) return json(400, { error: r.error }); if (AB.length >= 10) return json(409, { error: 'address-limit', max: 10 }); const a = { id: `adadadad-adad-4ada-8ada-${String(Date.now()).slice(-12).padStart(12, '0')}`, ...r.v, isDefault: AB.length === 0 || b.isDefault === true }; if (a.isDefault) for (const x of AB) x.isDefault = false; AB.push(a); json(200, a); }); return true; }
+  let am = key.match(/^(PATCH|DELETE) \/me\/addresses\/([0-9a-f-]{36})$/) ?? key.match(/^(POST) \/me\/addresses\/([0-9a-f-]{36})\/default$/);
+  if (am) { readBody((b) => { const i = AB.findIndex((x) => x.id === am[2]); if (i < 0) return json(404, { error: 'not-found' }); const a = AB[i];
+    if (am[1] === 'DELETE') { AB.splice(i, 1); if (a.isDefault && AB.length) AB[AB.length - 1].isDefault = true; return json(200, { ok: true }); }
+    if (am[1] === 'POST' || b.isDefault === true) { for (const x of AB) x.isDefault = x.id === a.id; if (am[1] === 'POST') return json(200, a); }
+    const r = abInput(b, true); if (r.error) return json(400, { error: r.error }); Object.assign(a, r.v); json(200, a); }); return true; }
+  // ---- دفتر العناوين end
   if (key === 'GET /market') return json(200, routes['GET /market'].filter((l) => l.status === 'active'));
   if (key === 'GET /market/mine') return json(200, routes['GET /market'].filter((l) => l.seller.id === me.id));
   let m = key.match(/^GET \/market\/([0-9a-f-]{36})$/); if (m) { const l = routes['GET /market'].find((x) => x.id === m[1]); return l ? json(200, l) : json(404, { error: 'not-found' }); }
-  m = key.match(/^PATCH \/market\/([0-9a-f-]{36})$/); if (m) { readBody((b) => { const l = routes['GET /market'].find((x) => x.id === m[1]); if (!l) return json(404, { error: 'not-found' }); if (b.status && l.status === 'blocked') return json(403, { error: 'blocked' }); for (const k of ['title', 'description', 'price', 'kind', 'category', 'placeName', 'status']) if (b[k] !== undefined) l[k] = b[k]; if (b.imageUrl !== undefined) l.imageUrl = b.imageUrl ? (b.imageUrl.startsWith('/') ? 'http://127.0.0.1:8090' + b.imageUrl : b.imageUrl) : null; json(200, l); }); return true; }
+  m = key.match(/^PATCH \/market\/([0-9a-f-]{36})$/); if (m) { readBody((b) => { const l = routes['GET /market'].find((x) => x.id === m[1]); if (!l) return json(404, { error: 'not-found' }); if (b.status && l.status === 'blocked') return json(403, { error: 'blocked' }); for (const k of ['title', 'description', 'price', 'kind', 'category', 'placeName', 'status', 'delivery', 'deliveryFee', 'deliveryMaxKm']) if (b[k] !== undefined) l[k] = b[k]; if (b.imageUrl !== undefined) l.imageUrl = b.imageUrl ? (b.imageUrl.startsWith('/') ? 'http://127.0.0.1:8090' + b.imageUrl : b.imageUrl) : null; json(200, l); }); return true; }
   // ---- الدفع عند الاستلام (stream b2-marketcod) — تحاكي طلبات السوق في server/commerce.js: الطلب بالمحفظة أو عند الاستلام (العرض
   // يسمح به payOnReceipt)، حد ٣ طلبات مفتوحة، قبول البائع أو اعتذاره، المراحل، «استلمت المبلغ»، «لم يحضر»، الإلغاء، ولا نزاع عليه.
   // طلب مبذور من sara على عرضي بانتظار قبولي (لرؤية جهة البائع). MOCK_BROKE=1 يرد طلب المحفظة المسعّر بـ 402.
   {
     const MO = (globalThis.__marketOrders ??= [{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc01', listingId: '55555555-5555-4555-8555-555555555555', title: 'برجر لحم', imageUrl: null, kind: 'product', qty: 2, total: 10000, discount: 0, coupon: null, commission: 0, status: 'requested', note: 'بدون بصل', variant: null, slot: null, buyer: person('SA0000002', 'sara'), seller: me, payment: 'cod', cancelReason: null, code: '7311', reviewed: false, createdAt: now }]);
     const OPEN = ['requested', 'paid', 'preparing', 'on_the_way', 'delivered'];
-    const moOut = (o) => ({ ...o, mineAsSeller: o.seller.id === me.id, mineAsCourier: false, code: o.buyer.id === me.id ? o.code : null, commission: o.seller.id === me.id ? o.commission : null });
+    // التوصيل: العنوان للمشتري دائماً، وللبائع بعد قبول طلب الدفع عند الاستلام وما دام الطلب قائماً (كما في commerce.js)
+    const moAddr = (o) => (o.buyer.id === me.id || (['paid', 'preparing', 'on_the_way', 'delivered', 'disputed'].includes(o.status) && (o.payment !== 'cod' || o.acceptedAt)) ? o.address ?? null : null);
+    const moOut = (o) => ({ ...o, mineAsSeller: o.seller.id === me.id, mineAsCourier: false, code: o.buyer.id === me.id ? o.code : null, commission: o.seller.id === me.id ? o.commission : null, fulfilment: o.fulfilment ?? 'pickup', deliveryFee: o.deliveryFee ?? 0, address: moAddr(o) });
     if (key === 'GET /market/orders') return json(200, MO.map(moOut));
     m = key.match(/^GET \/market\/orders\/([0-9a-f-]{36})$/); if (m) { const o = MO.find((x) => x.id === m[1]); return o ? json(200, moOut(o)) : json(404, { error: 'not-found' }); }
     m = key.match(/^POST \/market\/([0-9a-f-]{36})\/order$/); if (m) { readBody((b) => {
       const l = routes['GET /market'].find((x) => x.id === m[1]); if (!l || l.status !== 'active') return json(404, { error: 'not-found' });
       if (l.seller.id === me.id) return json(400, { error: 'own-listing' });
       if (b.payment === 'cod' && !l.payOnReceipt) return json(400, { error: 'cod-unavailable' });
-      const qty = Math.max(1, Math.min(20, Number(b.qty) || 1)), total = Number(l.price) * qty, cod = b.payment === 'cod' && total > 0;
+      const wantDelivery = b.fulfilment === 'delivery';
+      if (wantDelivery && !l.delivery) return json(400, { error: 'delivery-unavailable' });
+      if (wantDelivery && !b.addressId) return json(400, { error: 'address-required' });
+      const addr = wantDelivery ? (globalThis.__addresses ?? []).find((a) => a.id === b.addressId) : null;
+      if (wantDelivery && !addr) return json(400, { error: 'address-not-found' });
+      const fee = wantDelivery ? Number(l.deliveryFee ?? 0) : 0;
+      const qty = Math.max(1, Math.min(20, Number(b.qty) || 1)), total = Number(l.price) * qty + fee, cod = b.payment === 'cod' && total > 0;
       if (cod && MO.filter((o) => o.payment === 'cod' && o.buyer.id === me.id && OPEN.includes(o.status)).length >= 3) return json(429, { error: 'cod-limit', max: 3 });
       if (!cod && total > 0 && process.env.MOCK_BROKE) return json(402, { error: 'insufficient-funds' });
-      const o = { id: `cccccccc-cccc-4ccc-8ccc-${String(Date.now()).slice(-12).padStart(12, '0')}`, listingId: l.id, title: l.title, imageUrl: l.imageUrl ?? null, kind: l.kind, qty, total, discount: 0, coupon: null, commission: 0, status: cod ? 'requested' : 'paid', note: String(b.note ?? ''), variant: b.variant ?? null, slot: b.slot ?? null, buyer: me, seller: l.seller, payment: cod ? 'cod' : 'wallet', cancelReason: null, code: String(1000 + Math.floor(Math.random() * 9000)), reviewed: false, createdAt: new Date().toISOString() };
-      MO.unshift(o); json(200, { ok: true, id: o.id, total, discount: 0, commission: 0, code: o.code, payment: o.payment, status: o.status });
+      const o = { id: `cccccccc-cccc-4ccc-8ccc-${String(Date.now()).slice(-12).padStart(12, '0')}`, listingId: l.id, title: l.title, imageUrl: l.imageUrl ?? null, kind: l.kind, qty, total, discount: 0, coupon: null, commission: 0, status: cod ? 'requested' : 'paid', note: String(b.note ?? ''), variant: b.variant ?? null, slot: b.slot ?? null, buyer: me, seller: l.seller, payment: cod ? 'cod' : 'wallet', cancelReason: null, code: String(1000 + Math.floor(Math.random() * 9000)), reviewed: false, createdAt: new Date().toISOString(),
+        fulfilment: wantDelivery ? 'delivery' : 'pickup', deliveryFee: fee, address: addr ? { label: addr.label, district: addr.district, details: addr.details, city: addr.city, lat: addr.lat, lng: addr.lng, phone: addr.phone } : null };
+      MO.unshift(o); json(200, { ok: true, id: o.id, total, discount: 0, commission: 0, code: o.code, payment: o.payment, status: o.status, fulfilment: o.fulfilment, deliveryFee: fee });
     }); return true; }
     m = key.match(/^POST \/market\/orders\/([0-9a-f-]{36})\/(accept|decline|cash-received|no-show|cancel|confirm|stage|deliver|dispute)$/); if (m) { readBody((b) => {
       const o = MO.find((x) => x.id === m[1]); if (!o) return json(404, { error: 'not-found' });
@@ -552,7 +583,7 @@ function profileMarketRoute(req, res, url, key) {
       const done = (status, extra = {}) => { Object.assign(o, { status, ...extra }); json(200, { ok: true, status }); };
       if (['accept', 'decline', 'cash-received', 'no-show'].includes(act) && !seller) return json(403, { error: 'seller-only' });
       if (['accept', 'decline', 'cash-received', 'no-show'].includes(act) && o.payment !== 'cod') return json(409, { error: 'not-cod' });
-      if (act === 'accept') return o.status === 'requested' ? done('paid') : json(409, { error: 'bad-status' });
+      if (act === 'accept') return o.status === 'requested' ? done('paid', { acceptedAt: new Date().toISOString() }) : json(409, { error: 'bad-status' });
       if (act === 'decline') return o.status === 'requested' ? done('cancelled', { cancelReason: 'declined' }) : json(409, { error: 'bad-status' });
       if (act === 'cash-received') return active ? done('completed', { cashReceivedAt: new Date().toISOString() }) : json(409, { error: 'bad-status' });
       if (act === 'no-show') return ['paid', 'preparing', 'on_the_way'].includes(o.status) ? done('cancelled', { cancelReason: 'no_show' }) : json(409, { error: 'bad-status' });
@@ -1129,7 +1160,7 @@ http.createServer((req, res) => {
   // ---- consent + age + legal identity (stream b1-consent) end
   if (/^\/(me\/login-email|me\/recovery|mail\/status|adminapi\/mail|auth\/(register|forgot|reset|change-password|nickname-available))(\/|$)/.test(url.pathname) && mailRoute(req, res, url, key)) return;
   if (/^\/(profile\/v2\/status|handles\/check|me\/profile\/(v2|intro|stats)|profiles\/[^/]+\/(v2|follow|followers|following|event))$/.test(url.pathname) && profileV2Route(req, res, url, key)) return; // ---- profile v2
-  if (/^\/(me\/profile|profile\/avatar|market(\/|$)|stories\/|map\/pins\/)/.test(url.pathname) && profileMarketRoute(req, res, url, key)) return;
+  if (/^\/(me\/profile|me\/addresses|profile\/avatar|market(\/|$)|stories\/|map\/pins\/)/.test(url.pathname) && profileMarketRoute(req, res, url, key)) return;
   if (url.pathname.startsWith('/mapposts')) { if (postsRoute(req, res, url, key)) return; }
   if (url.pathname.startsWith('/wishlist')) { if (wishlistRoute(req, res, url, key)) return; }
   if (url.pathname.startsWith('/searches/saved')) { if (savedSearchRoute(req, res, url, key)) return; }

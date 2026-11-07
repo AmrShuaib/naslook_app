@@ -396,6 +396,17 @@ String marketErrCode(Object e) {
 String marketErrText(Object e) {
   final s = marketErrCode(e);
   if (s.contains('insufficient-funds')) return 'الرصيد غير كافٍ في المحفظة';
+  // التوصيل (عنوان من «عناويني» ومسافة البائع)
+  if (s.contains('too-far')) {
+    final Object? max = e is ApiException ? (e.body?['maxKm']) : null;
+    final km = (max is num) ? (max == max.roundToDouble() ? '${max.toInt()}' : '$max') : null;
+    return km == null ? 'عنوانك أبعد من مسافة التوصيل. اختر عنواناً أقرب أو الاستلام' : 'عنوانك أبعد من مسافة التوصيل ($km كم). اختر عنواناً أقرب أو الاستلام';
+  }
+  if (s.contains('delivery-unavailable')) return 'هذا العرض لا يوصّل؛ اختر الاستلام';
+  if (s.contains('address-required') || s.contains('address-not-found')) return 'اختر عنوان التوصيل من عناوينك';
+  if (s.contains('addresses-unavailable')) return 'العناوين غير متاحة الآن، حاول بعد قليل';
+  if (s.contains('bad-delivery-fee')) return 'رسم التوصيل حتى ١٠٠٠ ر.س';
+  if (s.contains('bad-delivery-km')) return 'أقصى مسافة من ١ إلى ٥٠٠ كم، أو اتركها فارغة';
   // الدفع عند الاستلام (قبل فحص blocked أدناه لأن cod-blocked يحتويها). في iOS لا شحن للمحفظة داخل التطبيق فلا ندلّ عليها
   if (s.contains('cod-limit')) return isIosNative ? 'لديك ٣ طلبات مفتوحة بالدفع عند الاستلام؛ أكمل أحدها أو ألغه أولاً' : 'لديك ٣ طلبات مفتوحة بالدفع عند الاستلام؛ أكمل أحدها أو ألغه أولاً، أو ادفع من المحفظة';
   if (s.contains('cod-blocked')) {

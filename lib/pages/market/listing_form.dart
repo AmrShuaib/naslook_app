@@ -1,4 +1,4 @@
-// نموذج العرض (إنشاء أو تعديل) كصفحة كاملة: حتى ٨ صور، نوع، تصنيف وفرعي، عنوان ووصف وسعر، حالة، توصيل، مخزون،
+// نموذج العرض (إنشاء أو تعديل) كصفحة كاملة: حتى ٨ صور، نوع، تصنيف وفرعي، عنوان ووصف وسعر، حالة، توصيل برسمه وأقصى مسافة، مخزون،
 // خيارات بأسعار، أوقات الخدمة، مكان ومدينة، الدفع عند الاستلام، وحفظ كمسودة أو جدولة النشر.
 import 'package:flutter/material.dart';
 
@@ -16,16 +16,20 @@ class ListingDraft {
   final bool delivery;
   /// الدفع عند الاستلام: مطفأ افتراضياً، ويحتاج توصيلاً أو مكان استلام (الخادم يرفض غير ذلك بـ cod-needs-place)
   final bool payOnReceipt;
+  /// رسم التوصيل بالهللة (0 = مجاني) وأقصى مسافة بالكيلومتر (null = بلا حد)، حين يكون التوصيل متاحاً
+  final int deliveryFee;
+  final double? deliveryMaxKm;
   final List<Variant> variants;
   final Availability? availability;
   final DateTime? publishAt;
   final List<String> existingImages;
   final List<PickedImage> newImages;
-  const ListingDraft({required this.title, required this.description, required this.kind, required this.category, this.subcategory, this.condition, required this.price, this.stock, this.delivery = false, this.payOnReceipt = false, this.variants = const [], this.availability, this.publishAt,
+  const ListingDraft({required this.title, required this.description, required this.kind, required this.category, this.subcategory, this.condition, required this.price, this.stock, this.delivery = false, this.payOnReceipt = false, this.deliveryFee = 0, this.deliveryMaxKm, this.variants = const [], this.availability, this.publishAt,
       this.placeName = '', this.city = '', this.status = 'active', this.existingImages = const [], this.newImages = const []});
   /// الحقول التي يرسلها التطبيق للخادم (الصور تُضاف بعد الرفع)
   Map<String, dynamic> toBody() => {
         'title': title, 'description': description, 'kind': kind, 'category': category, 'subcategory': subcategory, 'condition': condition, 'price': price, 'stock': stock, 'delivery': delivery, 'payOnReceipt': payOnReceipt,
+        'deliveryFee': delivery ? deliveryFee : 0, 'deliveryMaxKm': delivery ? deliveryMaxKm : null,
         'variants': [for (final v in variants) v.toJson()], 'availability': availability?.toJson(), 'placeName': placeName, 'city': city, 'status': status, 'publishAt': publishAt?.toUtc().toIso8601String(),
       };
   /// ما يُتاح للتعديل في ملف الصور: القائمة المتبقية من الروابط القديمة فقط
@@ -33,6 +37,7 @@ class ListingDraft {
 }
 
 String _priceText(int halalas) => halalas % 100 == 0 ? '${halalas ~/ 100}' : (halalas / 100).toStringAsFixed(2);
+String _kmText(double km) => km == km.roundToDouble() ? km.toStringAsFixed(0) : km.toStringAsFixed(1);
 
 /// فحص عند الحفظ والنموذج مفتوح (إقرار 18+ للعرض المسعّر): false يُبقي النموذج بما فيه.
 typedef ListingBeforeSave = Future<bool> Function(BuildContext context, ListingDraft draft);
@@ -56,6 +61,8 @@ class _ListingFormPageState extends State<ListingFormPage> {
   late final place = TextEditingController(text: widget.initial?.placeName ?? '');
   late final city = TextEditingController(text: widget.initial?.city ?? '');
   late final stock = TextEditingController(text: widget.initial?.stock == null ? '' : '${widget.initial!.stock}');
+  late final fee = TextEditingController(text: (widget.initial?.deliveryFee ?? 0) == 0 ? '' : _priceText(widget.initial!.deliveryFee));
+  late final maxKm = TextEditingController(text: widget.initial?.deliveryMaxKm == null ? '' : _kmText(widget.initial!.deliveryMaxKm!));
   late String kind = widget.initial?.kind ?? 'product';
   late String category = marketCategories.containsKey(widget.initial?.category) ? widget.initial!.category : 'other';
   late String? sub = widget.initial?.subcategory;
@@ -71,7 +78,7 @@ class _ListingFormPageState extends State<ListingFormPage> {
   bool _checking = false;
 
   @override
-  void dispose() { for (final c in [title, desc, price, place, city, stock]) { c.dispose(); } super.dispose(); }
+  void dispose() { for (final c in [title, desc, price, place, city, stock, fee, maxKm]) { c.dispose(); } super.dispose(); }
 
   int get imageCount => existing.length + picked.length;
   bool get _codPlaceOk => delivery || place.text.trim().isNotEmpty;
@@ -93,9 +100,14 @@ class _ListingFormPageState extends State<ListingFormPage> {
     if (variants.isEmpty && p <= 0 && price.text.trim().isNotEmpty && price.text.trim() != '0') { toast(context, 'السعر غير صالح', error: true); return; }
     // الدفع عند الاستلام لما يُسلَّم أو يُلتقى عليه حضورياً: نفحصه هنا قبل الإغلاق حتى لا يضيع النموذج برفض الخادم
     if (payOnReceipt && !_codPlaceOk) { setState(() => advanced = true); toast(context, 'للدفع عند الاستلام فعّل التوصيل أو اكتب مكان الاستلام', error: true); return; }
+    // رسم التوصيل حتى ١٠٠٠ ر.س، والمسافة من ١ إلى ٥٠٠ كم أو فارغة (بلا حد)؛ parseSar يقرأ الأرقام العربية أيضاً
+    final feeH = parseSar(fee.text), kmH = parseSar(maxKm.text);
+    if (delivery && feeH > 100000) { toast(context, 'رسم التوصيل حتى ١٠٠٠ ر.س', error: true); return; }
+    if (delivery && maxKm.text.trim().isNotEmpty && (kmH < 100 || kmH > 50000)) { toast(context, 'أقصى مسافة من ١ إلى ٥٠٠ كم، أو اتركها فارغة', error: true); return; }
     final draft = ListingDraft(
       title: title.text.trim(), description: desc.text.trim(), kind: kind, category: category, subcategory: sub, condition: kind == 'product' ? condition : null, price: variants.isNotEmpty ? variants.map((v) => v.price).reduce((a, b) => a < b ? a : b) : p,
-      stock: variants.isNotEmpty || stock.text.trim().isEmpty ? null : int.tryParse(stock.text.trim()), delivery: delivery, payOnReceipt: payOnReceipt, variants: variants, availability: kind == 'service' ? availability : null, publishAt: publishAt,
+      stock: variants.isNotEmpty || stock.text.trim().isEmpty ? null : int.tryParse(stock.text.trim()), delivery: delivery, payOnReceipt: payOnReceipt,
+      deliveryFee: feeH, deliveryMaxKm: maxKm.text.trim().isEmpty ? null : kmH / 100, variants: variants, availability: kind == 'service' ? availability : null, publishAt: publishAt,
       placeName: place.text.trim(), city: city.text.trim(), status: status, existingImages: existing, newImages: picked,
     );
     // الفحص قبل إغلاق النموذج: رفضه يُبقي الصور والنص كما هي بدل أن يضيع ما كُتب
@@ -144,7 +156,13 @@ class _ListingFormPageState extends State<ListingFormPage> {
           const SizedBox(height: 10),
           Wrap(spacing: 8, children: [for (final e in marketConditions.entries) ChoiceChip(key: Key('lf-cond-${e.key}'), label: Text(e.value), selected: condition == e.key, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setState(() => condition = condition == e.key ? null : e.key))]),
         ],
-        SwitchListTile(key: const Key('lf-delivery'), contentPadding: EdgeInsets.zero, value: delivery, onChanged: (v) => setState(() => delivery = v), title: const Text('التوصيل متاح'), subtitle: const Text('يظهر في الفلاتر ويطمئن المشتري', style: TextStyle(fontSize: 12))),
+        SwitchListTile(key: const Key('lf-delivery'), contentPadding: EdgeInsets.zero, value: delivery, onChanged: (v) => setState(() => delivery = v), title: const Text('التوصيل متاح'), subtitle: const Text('يختار المشتري «توصيل» وعنواناً من عناوينه، ويظهر في الفلاتر', style: TextStyle(fontSize: 12))),
+        // رسم التوصيل وأقصى مسافة: يُضاف الرسم إلى إجمالي الطلب ويصلك كاملاً بلا عمولة؛ المسافة تُفحص حين يحدد المشتري موقعه وللعرض موقع
+        if (delivery) Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: TextField(key: const Key('lf-delivery-fee'), controller: fee, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'رسم التوصيل (ر.س)', hintText: 'فارغ = مجاني'))),
+          const SizedBox(width: 10),
+          Expanded(child: TextField(key: const Key('lf-delivery-km'), controller: maxKm, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'أقصى مسافة (كم)', hintText: 'فارغ = بلا حد'))),
+        ]),
         // بلا توصيل يلزم مكان الاستلام، فنفتح الخيارات الإضافية حيث حقله
         SwitchListTile(key: const Key('lf-cod'), contentPadding: EdgeInsets.zero, value: payOnReceipt, onChanged: (v) => setState(() { payOnReceipt = v; if (v && !delivery) advanced = true; }), title: const Text('الدفع عند الاستلام'),
           subtitle: Text(payOnReceipt && !_codPlaceOk ? 'فعّل التوصيل أو اكتب مكان الاستلام في الخيارات الإضافية' : 'يطلب المشتري ويدفع لك عند التسليم أو اللقاء. تقبل الطلب أولاً، ولا يمر المبلغ بالمحفظة', style: TextStyle(fontSize: 12, color: payOnReceipt && !_codPlaceOk ? Joy.danger : null))),

@@ -89,6 +89,14 @@ export default async function commerce(app, opts) {
     ALTER TABLE market_orders ADD COLUMN IF NOT EXISTS payment TEXT NOT NULL DEFAULT 'wallet', ADD COLUMN IF NOT EXISTS cancel_reason TEXT, ADD COLUMN IF NOT EXISTS cash_received_at TIMESTAMPTZ;
     CREATE INDEX IF NOT EXISTS market_orders_buyer_cod ON market_orders(buyer_id, status) WHERE payment='cod';
   `);
+  // التوصيل (بند 13 من نواقص الإطلاق): رسم التوصيل وأقصى مسافة على العرض؛ وعلى الطلب الاستلام أو التوصيل ورسمه ونسخة من العنوان
+  // المختار (من addresses.js) والمسافة حين تتوفر النقطتان. النسخة تُمحى بعد ٣٠ يوماً من انتهاء الطلب (address_purged_at)
+  await pool.query(`
+    ALTER TABLE market_listings ADD COLUMN IF NOT EXISTS delivery_fee BIGINT NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS delivery_max_km REAL;
+    ALTER TABLE market_orders ADD COLUMN IF NOT EXISTS fulfilment TEXT NOT NULL DEFAULT 'pickup', ADD COLUMN IF NOT EXISTS delivery_fee BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS delivery_address JSONB, ADD COLUMN IF NOT EXISTS delivery_km REAL, ADD COLUMN IF NOT EXISTS address_purged_at TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS market_orders_addr ON market_orders(updated_at) WHERE delivery_address IS NOT NULL;
+  `);
   try { await pool.query(String.raw`UPDATE market_listings SET image_url = regexp_replace(image_url, '^(https?://)www\.', '\1', 'i') WHERE image_url ~* '^https?://www\.'`); } catch { /* عمود غير موجود أو جدول قديم */ }
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
@@ -405,6 +413,38 @@ export default async function commerce(app, opts) {
   const noShowCount = async (c, buyerId) => (await c.query(`SELECT count(DISTINCT seller_id)::int AS n FROM market_orders
       WHERE buyer_id=$1 AND payment='cod' AND cancel_reason='no_show' AND updated_at > now() - make_interval(days => $2)`, [buyerId, COD_NO_SHOW_DAYS])).rows[0].n;
   const COD_OPEN = ["requested", "paid", "preparing", "on_the_way", "delivered"];
+  // التوصيل: سقف الرسم (١٠٠٠ ر.س) والمسافة القصوى (٥٠٠ كم)، ومدة بقاء نسخة العنوان بعد انتهاء الطلب
+  const DELIVERY_FEE_MAX = 100000, DELIVERY_KM_MAX = 500, ADDRESS_KEEP_DAYS = 30;
+  // رسم بالهللة: 0 = مجاني؛ null = غير صالح (400)
+  const feeOf = (v) => { if (v == null || v === "") return 0; const n = Number(v); return Number.isFinite(n) && n >= 0 && n <= DELIVERY_FEE_MAX ? Math.round(n) : null; };
+  // أقصى مسافة: null = بلا حد؛ undefined = غير صالح (400)
+  const maxKmOf = (v) => { if (v == null || v === "" || Number(v) === 0) return null; const n = Number(v); return Number.isFinite(n) && n >= 1 && n <= DELIVERY_KM_MAX ? Math.round(n * 10) / 10 : undefined; };
+  const kmBetween = (a, b) => {
+    const r = (d) => (d * Math.PI) / 180;
+    const x = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lng - a.lng) / 2) ** 2;
+    return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  };
+  // نسخة العنوان من دفتر المشتري (addresses.js)؛ احتياطاً استعلام مباشر. undefined = الدفتر غير متاح (لا جدول)
+  const addressFor = async (uid, id) => {
+    try { const f = globalThis.naslifeAddressFor; if (typeof f === "function") return await f(uid, id); } catch { return undefined; }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id ?? ""))) return null;
+    try {
+      const r = (await pool.query("SELECT * FROM user_addresses WHERE id=$1 AND user_id=$2", [id, uid])).rows[0];
+      return r ? { label: r.label, district: r.district, details: r.details ?? "", city: r.city ?? null, lat: r.lat == null ? null : Number(r.lat), lng: r.lng == null ? null : Number(r.lng), phone: r.phone ?? null } : null;
+    } catch { return undefined; }
+  };
+  // من يرى عنوان التوصيل على الطلب: المشتري دائماً؛ البائع ما دام الطلب قائماً وبعد قبوله في الدفع عند الاستلام؛ المندوب ما دام
+  // مكلّفاً والطلب لم يُسلَّم؛ والإدارة في النزاع فقط. لا يظهر في أي مسار عام
+  const ADDR_SELLER = ["paid", "preparing", "on_the_way", "delivered", "disputed"], ADDR_COURIER = ["paid", "preparing", "on_the_way"];
+  const addressVisible = async (o, uid) => {
+    if (!o.delivery_address || !uid) return false;
+    if (o.buyer_id === uid) return true;
+    if (o.seller_id === uid) return ADDR_SELLER.includes(o.status) && (o.payment !== "cod" || o.accepted_at != null);
+    if (o.courier_id === uid) return ADDR_COURIER.includes(o.status);
+    return o.status === "disputed" && (await isAdmin(uid));
+  };
+  const addressOutOf = (a) => (a && typeof a === "object" ? { label: a.label ?? "", district: a.district ?? "", details: a.details ?? "", city: a.city ?? null,
+    lat: a.lat == null ? null : Number(a.lat), lng: a.lng == null ? null : Number(a.lng), phone: a.phone ?? null } : null);
   // المراحل بعد القبول (أو بعد الدفع في طلب المحفظة) وقبل الاكتمال
   const ACTIVE = ["paid", "preparing", "on_the_way", "delivered"];
   const settingsOf = () => globalThis.naslifeSettings ?? {};
@@ -433,6 +473,7 @@ export default async function commerce(app, opts) {
       publishAt: l.publish_at ?? null, bumpedAt: l.bumped_at ?? l.created_at, spotlight: !!spot, spotlightUntil: spot ? l.spotlight_until : null,
       ratingAvg: l.rating_avg == null ? null : Number(l.rating_avg), ratingCount: Number(l.rating_count ?? 0), distanceKm: dist == null || !Number.isFinite(Number(dist)) ? null : round1(Number(dist)),
       createdAt: l.created_at, updatedAt: l.updated_at ?? l.created_at, mine: l.seller_id === uid, payOnReceipt: l.pay_on_receipt === true,
+      deliveryFee: Number(l.delivery_fee ?? 0), deliveryMaxKm: l.delivery_max_km == null ? null : Number(l.delivery_max_km),
     };
   };
   globalThis.naslifeMarketListingOut = listingOut;
@@ -493,8 +534,11 @@ export default async function commerce(app, opts) {
     if (hasContact(title, description)) return bad(reply, 400, "contact-in-text");
     const guard = await globalThis.naslifeMarketGuard?.(uid, { title, price });
     if (guard) return bad(reply, 429, guard);
-    // البيع بمقابل (سعر أو خيار مسعّر) يحتاج إقرار 18+؛ العرض المجاني مفتوح
-    if ((price > 0 || parseVariants(b.variants).some((v) => v.price > 0)) && (await needsAdult(uid))) return bad(reply, 403, "adult-required");
+    // رسم التوصيل وأقصى مسافة (يُحفظان ولو أُطفئ التوصيل، ولا يُطبَّقان إلا معه)
+    const deliveryFee = feeOf(b.deliveryFee); if (deliveryFee == null) return bad(reply, 400, "bad-delivery-fee", { max: DELIVERY_FEE_MAX });
+    const deliveryMaxKm = maxKmOf(b.deliveryMaxKm); if (deliveryMaxKm === undefined) return bad(reply, 400, "bad-delivery-km", { max: DELIVERY_KM_MAX });
+    // البيع بمقابل (سعر أو خيار مسعّر أو رسم توصيل) يحتاج إقرار 18+؛ العرض المجاني مفتوح
+    if ((price > 0 || parseVariants(b.variants).some((v) => v.price > 0) || (b.delivery === true && deliveryFee > 0)) && (await needsAdult(uid))) return bad(reply, 403, "adult-required");
     const payOnReceipt = b.payOnReceipt === true;
     if (payOnReceipt && !codPlaceOk(b.delivery, b.placeName)) return bad(reply, 400, "cod-needs-place");
     const publishAt = b.publishAt ? new Date(b.publishAt) : null;
@@ -502,11 +546,11 @@ export default async function commerce(app, opts) {
     const needsReview = settingsOf().marketReviewNewAccounts === true && (await accountAgeHours(uid)) < 24 * 7 && !(await isAdmin(uid));
     const status = b.status === "draft" ? "draft" : scheduled ? "scheduled" : needsReview ? "pending" : "active";
     const imgs = parseImages(req, b); const id = crypto.randomUUID();
-    await pool.query(`INSERT INTO market_listings(id,seller_id,kind,category,subcategory,condition,delivery,title,description,price,image_url,images,place_name,city,lat,lng,status,stock,variants,availability,publish_at,bumped_at,pay_on_receipt)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,now(),$22)`,
+    await pool.query(`INSERT INTO market_listings(id,seller_id,kind,category,subcategory,condition,delivery,title,description,price,image_url,images,place_name,city,lat,lng,status,stock,variants,availability,publish_at,bumped_at,pay_on_receipt,delivery_fee,delivery_max_km)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,now(),$22,$23,$24)`,
       [id, uid, kind, category, subcategory, CONDITIONS.has(b.condition) ? b.condition : null, b.delivery === true, title, description, price, imgs[0] ?? null, JSON.stringify(imgs),
        b.placeName ? String(b.placeName).slice(0, 80) : null, b.city ? String(b.city).slice(0, 40) : null, b.lat == null ? null : Number(b.lat), b.lng == null ? null : Number(b.lng),
-       status, stockInt(b.stock), JSON.stringify(parseVariants(b.variants)), b.availability ? JSON.stringify(parseAvailability(b.availability)) : null, scheduled ? publishAt : null, payOnReceipt]);
+       status, stockInt(b.stock), JSON.stringify(parseVariants(b.variants)), b.availability ? JSON.stringify(parseAvailability(b.availability)) : null, scheduled ? publishAt : null, payOnReceipt, deliveryFee, deliveryMaxKm]);
     const row = (await pool.query("SELECT * FROM market_listings WHERE id=$1", [id])).rows[0];
     if (status === "active") globalThis.naslifeMarketOnPublish?.(row).catch?.(() => {});
     if (status === "pending") globalThis.naslifeNotifyAdmins?.({ kind: "market_pending", title: "عرض بانتظار المراجعة", body: `${await nickOf(uid)}: ${title}`, data: { listingId: id } }).catch?.(() => {});
@@ -571,8 +615,11 @@ export default async function commerce(app, opts) {
     const bannedP = globalThis.naslifeCheckText?.(b.title, b.description, b.placeName);
     if (bannedP) return reply.code(400).send({ error: "banned-words", word: bannedP });
     if (hasContact(b.title, b.description)) return bad(reply, 400, "contact-in-text");
-    // تحويل عرض مجاني إلى مسعّر بيعٌ بمقابل: إقرار 18+ أولاً
-    if (((b.price !== undefined && SAR(b.price) > 0) || (b.variants !== undefined && parseVariants(b.variants).some((v) => v.price > 0))) && (await needsAdult(uid))) return bad(reply, 403, "adult-required");
+    const feeP = b.deliveryFee !== undefined ? feeOf(b.deliveryFee) : undefined; if (feeP === null) return bad(reply, 400, "bad-delivery-fee", { max: DELIVERY_FEE_MAX });
+    const kmP = b.deliveryMaxKm !== undefined ? maxKmOf(b.deliveryMaxKm) : false; if (kmP === undefined) return bad(reply, 400, "bad-delivery-km", { max: DELIVERY_KM_MAX });
+    // تحويل عرض مجاني إلى مسعّر بيعٌ بمقابل (ومنه رسم توصيل يُطبَّق): إقرار 18+ أولاً
+    const feeApplies = (feeP !== undefined ? feeP : Number(l.delivery_fee ?? 0)) > 0 && (b.delivery !== undefined ? b.delivery === true : l.delivery === true);
+    if (((b.price !== undefined && SAR(b.price) > 0) || (b.variants !== undefined && parseVariants(b.variants).some((v) => v.price > 0)) || ((b.deliveryFee !== undefined || b.delivery !== undefined) && feeApplies)) && (await needsAdult(uid))) return bad(reply, 403, "adult-required");
     if (b.title !== undefined) { const t = String(b.title).trim(); if (!t || t.length > 100) return bad(reply, 400, "bad-title"); set("title", t); }
     if (b.description !== undefined) set("description", String(b.description).slice(0, 2000));
     if (b.price !== undefined) { const pr = SAR(b.price); if (pr < 0) return bad(reply, 400, "bad-price"); set("price", pr); }
@@ -582,6 +629,8 @@ export default async function commerce(app, opts) {
     if (b.kind !== undefined) set("kind", b.kind === "service" ? "service" : "product");
     if (b.condition !== undefined) set("condition", CONDITIONS.has(b.condition) ? b.condition : null);
     if (b.delivery !== undefined) set("delivery", b.delivery === true);
+    if (feeP !== undefined) set("delivery_fee", feeP);
+    if (kmP !== false) set("delivery_max_km", kmP);
     // الدفع عند الاستلام يبقى صالحاً بعد التعديل: يُفحص بالقيم الناتجة (المرسلة أو المحفوظة) متى لمس الطلب أحد الثلاثة
     if (b.payOnReceipt !== undefined || b.delivery !== undefined || b.placeName !== undefined) {
       const cod = b.payOnReceipt !== undefined ? b.payOnReceipt === true : l.pay_on_receipt === true;
@@ -631,6 +680,8 @@ export default async function commerce(app, opts) {
     deliveredAt: o.delivered_at ?? null, completedAt: o.completed_at ?? null, disputeStatus: o.dispute_status ?? null, disputeReason: o.dispute_reason ?? null, disputeNote: o.dispute_note ?? null,
     reviewed: o.reviewed === true, codeLocked: Number(o.code_fails ?? 0) >= CODE_MAX_FAILS, createdAt: o.created_at, updatedAt: o.updated_at,
     payment: o.payment === "cod" ? "cod" : "wallet", cancelReason: o.cancel_reason ?? null, acceptedAt: o.accepted_at ?? null, cashReceivedAt: o.cash_received_at ?? null,
+    fulfilment: o.fulfilment === "delivery" ? "delivery" : "pickup", deliveryFee: Number(o.delivery_fee ?? 0), deliveryKm: o.delivery_km == null ? null : Number(o.delivery_km),
+    address: (await addressVisible(o, uid)) ? addressOutOf(o.delivery_address) : null, addressPurged: o.address_purged_at != null,
   });
   globalThis.naslifeMarketOrderOut = orderOut;
   // «من يراسلني» (profile_ext.js): أطراف طلب السوق (المشتري والبائع والمندوب) يتراسلون أياً كانت سياستهم ما دام الطلب
@@ -682,6 +733,15 @@ export default async function commerce(app, opts) {
     const slot = b.slot ? new Date(b.slot) : null;
     const wantCod = b.payment === "cod";
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    // التوصيل: عنوان من دفتر المشتري نفسه (لا نص حر) تُحفظ نسخته على الطلب؛ بلا fulfilment الطلب استلام كما كان (التطبيقات القديمة)
+    const wantDelivery = b.fulfilment === "delivery";
+    let addr = null;
+    if (wantDelivery) {
+      if (b.addressId == null || b.addressId === "") return bad(reply, 400, "address-required");
+      addr = await addressFor(uid, String(b.addressId));
+      if (addr === undefined) return bad(reply, 503, "addresses-unavailable");
+      if (!addr) return bad(reply, 400, "address-not-found");
+    }
     // ملاحظة المشتري تصل البائع نصاً وإشعاراً: الكلمات الممنوعة نفسها التي تسري على العرض
     const bannedNote = bannedIn(note); if (bannedNote) return bad(reply, 400, "banned-words", { word: bannedNote });
     const blocked = await blockedIds(uid);
@@ -689,7 +749,7 @@ export default async function commerce(app, opts) {
     const adultMissing = await needsAdult(uid);
     const id = crypto.randomUUID(); const code = String(1000 + crypto.randomInt(9000));
     const fail = (err, extra = {}) => Object.assign(new Error(err), { code: err, ...extra });
-    let l, variant = null, total = 0, discount = 0, commission = 0, payment = "wallet";
+    let l, variant = null, total = 0, discount = 0, commission = 0, payment = "wallet", fee = 0, km = null;
     try {
       // قراءة العرض بقفل داخل المعاملة نفسها: فحص المخزون والخيار والموعد والخصم في وحدة واحدة فلا بيع زائد عند طلبين متوازيين
       await tx(async (c) => {
@@ -699,6 +759,15 @@ export default async function commerce(app, opts) {
         // لا طلب بين طرفين بينهما حظر (بأي اتجاه)
         if (blocked.includes(l.seller_id)) throw fail("not-found");
         if (wantCod && l.pay_on_receipt !== true) throw fail("cod-unavailable");
+        if (wantDelivery) {
+          if (l.delivery !== true) throw fail("delivery-unavailable");
+          // المسافة تُفحص حين تتوفر نقطتا العرض والعنوان معاً؛ بلا إحداثيات لا تخمين
+          if (l.lat != null && l.lng != null && addr.lat != null && addr.lng != null) {
+            km = kmBetween({ lat: Number(l.lat), lng: Number(l.lng) }, addr);
+            if (l.delivery_max_km != null && km > Number(l.delivery_max_km)) throw fail("too-far", { km: round1(km), maxKm: Number(l.delivery_max_km) });
+          }
+          fee = Number(l.delivery_fee ?? 0);
+        }
         let unit = Number(l.price);
         const variants = Array.isArray(l.variants) ? l.variants : [];
         if (variants.length) {
@@ -717,7 +786,9 @@ export default async function commerce(app, opts) {
           if (subtotal < Number(cp.min_total ?? 0)) throw fail("coupon-min", { minTotal: Number(cp.min_total) });
           discount = cp.percent != null ? Math.floor(subtotal * Number(cp.percent) / 100) : Math.min(subtotal, Number(cp.amount ?? 0)); coupon = cp.code;
         }
-        total = Math.max(0, subtotal - discount); commission = Math.floor(total * commissionPct() / 100);
+        // رسم التوصيل يُضاف بعد الخصم (الكوبون على البضاعة)، ولا عمولة عليه: يصل البائع كاملاً
+        const goods = Math.max(0, subtotal - discount);
+        total = goods + fee; commission = Math.floor(goods * commissionPct() / 100);
         if (total > 0 && adultMissing) throw fail("adult-required");
         // الطلب المجاني لا طريقة دفع له: يسلك مسار الطلب العادي بلا قبول مسبق
         payment = wantCod && total > 0 ? "cod" : "wallet";
@@ -731,8 +802,9 @@ export default async function commerce(app, opts) {
           // المال لا يمر بناس لايف فلا عمولة تُقتطع منه
           commission = 0;
         } else if (total > 0) await ledger(c, uid, "market", -total, { peerId: l.seller_id, ref: id, note: l.title, points: Math.floor(total / 1000) });
-        await c.query("INSERT INTO market_orders(id,listing_id,buyer_id,seller_id,qty,total,note,code,variant,coupon,discount,commission,slot,payment,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
-          [id, l.id, uid, l.seller_id, qty, total, note, code, variant?.name ?? null, coupon, discount, commission, slot && !Number.isNaN(slot.getTime()) ? slot : null, payment, payment === "cod" ? "requested" : "paid"]);
+        await c.query("INSERT INTO market_orders(id,listing_id,buyer_id,seller_id,qty,total,note,code,variant,coupon,discount,commission,slot,payment,status,fulfilment,delivery_fee,delivery_address,delivery_km) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)",
+          [id, l.id, uid, l.seller_id, qty, total, note, code, variant?.name ?? null, coupon, discount, commission, slot && !Number.isNaN(slot.getTime()) ? slot : null, payment, payment === "cod" ? "requested" : "paid",
+           wantDelivery ? "delivery" : "pickup", fee, wantDelivery ? JSON.stringify(addr) : null, km == null ? null : round1(km)]);
         if (variant) await c.query(`UPDATE market_listings SET variants = (SELECT COALESCE(jsonb_agg(CASE WHEN v->>'name'=$2 AND (v->>'stock') IS NOT NULL THEN jsonb_set(v, '{stock}', to_jsonb(GREATEST(0, (v->>'stock')::int - $3))) ELSE v END), '[]'::jsonb) FROM jsonb_array_elements(variants) v), sold=sold+$3, updated_at=now() WHERE id=$1`, [l.id, variant.name, qty]);
         else await c.query("UPDATE market_listings SET stock = CASE WHEN stock IS NULL THEN NULL ELSE GREATEST(0, stock-$2) END, sold=sold+$2, updated_at=now() WHERE id=$1", [l.id, qty]);
         if (coupon) await c.query("UPDATE market_coupons SET used=used+1 WHERE code=$1 AND seller_id=$2", [coupon, l.seller_id]);
@@ -750,13 +822,16 @@ export default async function commerce(app, opts) {
         case "cod-unavailable": return bad(reply, 400, "cod-unavailable");
         case "cod-blocked": return bad(reply, 403, "cod-blocked", { noShows: e.noShows, days: e.days });
         case "cod-limit": return bad(reply, 429, "cod-limit", { max: e.max });
+        case "delivery-unavailable": return bad(reply, 400, "delivery-unavailable");
+        case "too-far": return bad(reply, 400, "too-far", { km: e.km, maxKm: e.maxKm });
         default: throw e;
       }
     }
-    const what = `${l.title}${variant ? " (" + variant.name + ")" : ""}${qty > 1 ? " × " + qty : ""}`;
+    // الإشعار لا يحمل العنوان: البائع يراه في صفحة الطلب بقواعده (بعد القبول في الدفع عند الاستلام)
+    const what = `${l.title}${variant ? " (" + variant.name + ")" : ""}${qty > 1 ? " × " + qty : ""}${wantDelivery ? " · توصيل" : ""}`;
     if (payment === "cod") await notify(l.seller_id, { kind: "market_cod_order", title: "طلب جديد · الدفع عند الاستلام", body: `${await nickOf(uid)} طلب ${what} بقيمة ${sar(total)} يدفعها عند الاستلام. اقبل الطلب أو اعتذر${note ? " · " + note.slice(0, 80) : ""}`, data: { orderId: id, listingId: l.id, payment } });
     else await notify(l.seller_id, { kind: "market_order", title: "طلب جديد في السوق", body: `${await nickOf(uid)} طلب ${what} بقيمة ${sar(total)}${note ? " · " + note.slice(0, 80) : ""}`, data: { orderId: id, listingId: l.id } });
-    return { ok: true, id, total, discount, commission, code, payment, status: payment === "cod" ? "requested" : "paid" };
+    return { ok: true, id, total, discount, commission, code, payment, status: payment === "cod" ? "requested" : "paid", fulfilment: wantDelivery ? "delivery" : "pickup", deliveryFee: fee, deliveryKm: km == null ? null : round1(km) };
   });
   const loadOrder = async (id) => (await pool.query(`${ORDER_SQL} WHERE o.id=$1`, [id])).rows[0] ?? null;
   const STAGE_LABEL = { preparing: "قيد التحضير", on_the_way: "في الطريق", delivered: "تم التسليم" };
@@ -1007,6 +1082,16 @@ export default async function commerce(app, opts) {
         await notify(o.seller_id, { kind: "market_status", title: "أُلغي طلب لم تقبله", body: `${o.title}: مرت ${COD_ACCEPT_HOURS} ساعة بلا قبول فأُلغي وعاد المخزون`, data: { orderId: o.id, status: "cancelled" } });
       }
     } catch (e) { app.log?.warn?.({ err: e?.message }, "market sweep failed"); }
+    // خصوصية التوصيل: نسخة العنوان تُمحى بعد ٣٠ يوماً من انتهاء الطلب (اكتمال أو إلغاء أو استرداد)، وفوراً لطلبات انتهت لمشترٍ حذف حسابه.
+    // updated_at لا يُلمس: المحو لا يعيد فتح نافذة المراسلة ولا يغيّر ترتيب الطلبات
+    try {
+      await pool.query(`UPDATE market_orders SET delivery_address=NULL, address_purged_at=now() WHERE delivery_address IS NOT NULL AND status IN ('completed','cancelled','refunded')
+        AND COALESCE(completed_at, updated_at) < now() - make_interval(days => $1)`, [ADDRESS_KEEP_DAYS]);
+    } catch (e) { app.log?.warn?.({ err: e?.message }, "market address purge failed"); }
+    try {
+      await pool.query(`UPDATE market_orders o SET delivery_address=NULL, address_purged_at=now() FROM account_deletions d
+        WHERE d.user_id=o.buyer_id AND o.delivery_address IS NOT NULL AND o.status IN ('completed','cancelled','refunded')`);
+    } catch { /* لا جدول حذف الحسابات */ }
   };
   if (process.env.NODE_ENV !== "test") setInterval(sweep, 5 * 60000).unref?.();
   globalThis.naslifeMarketSweep = sweep;
