@@ -16,6 +16,8 @@ import '../../state/providers.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/widgets.dart';
+import '../business/inbox/biz_inbox_entry.dart' show BizThreadsTab;
+import '../business/inbox/biz_inbox_providers.dart';
 import '../jobs/job_offers_page.dart';
 import 'chat_thread_page.dart';
 
@@ -146,6 +148,7 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
     ref.invalidate(chatsProvider);
     ref.invalidate(requestsProvider);
     ref.invalidate(jobsInboxProvider);
+    ref.invalidate(myBizThreadsProvider);
     try {
       await ref.read(chatsProvider.future);
     } catch (_) {
@@ -210,6 +213,9 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
     // عروض التوظيف بانتظار الرد تُعدّ طلبات أيضاً (المؤجّلة لا تُحسب ولا تُعرض هنا)
     final jobOffers = (ref.watch(jobsInboxProvider).valueOrNull?.items ?? const <JobMatch>[]).where((m) => m.pending).toList();
     final reqCount = (requests.value?.length ?? 0) + jobOffers.length;
+    // «رسائل الدوائر» (biz_inbox.js): شريحة ثالثة تظهر حين توجد محادثة مع دائرة، بعدد ما فيه رد لم أقرأه
+    final biz = ref.watch(myBizThreadsProvider).valueOrNull;
+    final hasBiz = (biz?.threads.isNotEmpty ?? false) || _tab == 2;
     return Scaffold(
       backgroundColor: Joy.bg,
       floatingActionButton: FloatingActionButton(
@@ -241,12 +247,25 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
                 padding: const EdgeInsetsDirectional.only(end: 8),
                 child: ChoiceChip(label: Text(l, style: TextStyle(color: _tab == i ? Joy.primaryOn : Joy.text)), selected: _tab == i, onSelected: (_) => setState(() => _tab = i), showCheckmark: false, selectedColor: Joy.primary),
               ),
+            if (hasBiz)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(end: 8),
+                child: ChoiceChip(
+                  key: const Key('chat-chip-biz'),
+                  avatar: Icon(Icons.storefront_outlined, size: 16, color: _tab == 2 ? Joy.primaryOn : Joy.primary),
+                  label: Text((biz?.unread ?? 0) > 0 ? 'الدوائر · ${biz!.unread}' : 'الدوائر', style: TextStyle(color: _tab == 2 ? Joy.primaryOn : Joy.text)),
+                  selected: _tab == 2,
+                  onSelected: (_) => setState(() => _tab = 2),
+                  showCheckmark: false,
+                  selectedColor: Joy.primary,
+                ),
+              ),
             // عروض التوظيف بانتظار الرد تظهر كشريحة مستقلة تفتح الطلبات (حيث تُعرض أولاً)
             if (jobOffers.isNotEmpty)
               ChoiceChip(key: const Key('chat-chip-jobs'), avatar: Icon(Icons.work_outline_rounded, size: 16, color: _tab == 1 ? Joy.primaryOn : Joy.primary), label: Text('التوظيف · ${jobOffers.length}', style: TextStyle(color: _tab == 1 ? Joy.primaryOn : Joy.text)), selected: false, onSelected: (_) => setState(() => _tab = 1), showCheckmark: false),
           ]),
         ),
-        Expanded(child: _tab == 0 ? _chatsTab(chats, requests.valueOrNull ?? const [], jobOffers) : _requestsTab(requests, jobOffers)),
+        Expanded(child: _tab == 0 ? _chatsTab(chats, requests.valueOrNull ?? const [], jobOffers) : _tab == 2 ? const BizThreadsTab() : _requestsTab(requests, jobOffers)),
       ]),
     );
   }

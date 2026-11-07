@@ -35,6 +35,7 @@ import '../posts/place_moments.dart';
 import '../jobs/jobs_page.dart' show JobsEntryCard;
 import 'owner/business_dashboard_page.dart';
 import 'owner/dashboard_posts.dart';
+import 'inbox/biz_inbox_entry.dart' show BizMessageButton;
 
 const _days = ['الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد'];
 const _months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
@@ -166,6 +167,8 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
               // مساحة المجتمع في أعلى الصفحة: أول ما يراه الزائر بعد اسم الدائرة
               CommunityEntryCard(bizId: biz.id, title: biz.title, prominent: true),
               const SizedBox(height: 12),
+              // «راسل الدائرة»: سؤال خاص لفريقها (biz_inbox.js)؛ يحمل هامشه ويختفي للفريق ولدائرة بلا مالك
+              BizMessageButton(biz: biz),
               // العروض السارية: بطاقة واحدة مختصرة تفتح شاشة العروض (السارية والقادمة والمنتهية)
               if (biz.offers > 0 || ref.watch(bizOffersProvider(biz.id)).valueOrNull?.active.isNotEmpty == true) ...[
                 OffersEntryCard(biz: biz, onOpen: () => _openOffers(biz)),

@@ -8,6 +8,7 @@ import '../state/admin_providers.dart';
 import '../pages/business/biz_order_page.dart';
 import '../pages/business/business_page.dart';
 import '../pages/business/community_page.dart';
+import '../pages/business/inbox/biz_thread_page.dart';
 import '../pages/business/my_bookings_page.dart';
 import '../pages/business/offers_page.dart';
 import '../pages/chat/chat_thread_page.dart';
@@ -70,6 +71,14 @@ Widget? notificationTarget(AppNotification n) {
       return biz == null ? null : BusinessDashboardPage(id: biz, initialTab: 5);
     case 'biz_owner':
       return biz == null ? null : BusinessDashboardPage(id: biz);
+    // رسائل الدوائر الخاصة (biz_inbox.js): رسالة عميل أو إسناد للفريق، ورد الدائرة للعميل؛ المحادثة نفسها بمعرّفها
+    case 'biz_inbox_message':
+    case 'biz_inbox_assigned':
+      final thread = n.str('threadId');
+      return thread != null ? BizThreadPage(threadId: thread) : (biz == null ? null : BusinessDashboardPage(id: biz, initialTab: BusinessDashboardPage.inboxTab));
+    case 'biz_inbox_reply':
+      final thread = n.str('threadId');
+      return thread != null ? BizThreadPage(threadId: thread) : (biz == null ? null : BizThreadPage(bizId: biz));
     // قرار التوثيق (قبول أو رفض بسبب): صفحة التوثيق في لوحة الدائرة
     case 'biz_verified':
     case 'biz_verification_rejected':
@@ -256,6 +265,10 @@ Widget? _moderatedTarget(AppNotification n) {
       return b == null ? null : BusinessPage(id: b);
     case 'event':
       return id == null ? const EventsPage() : EventDetailPage(eventId: id);
+    // رسالة خاصة مع دائرة أُخفيت أو أُعيدت بعد بلاغ: المحادثة نفسها
+    case 'biz-msg':
+      final thread = n.str('threadId');
+      return thread == null ? null : BizThreadPage(threadId: thread);
   }
   return null;
 }
@@ -297,6 +310,11 @@ Widget? _moderatedTarget(AppNotification n) {
       return (icon: Icons.campaign_outlined, color: Joy.accent);
     case 'biz':
       return (icon: Icons.add_business_outlined, color: Joy.primary);
+    case 'biz_inbox_message':
+    case 'biz_inbox_reply':
+      return (icon: Icons.forum_outlined, color: Joy.primary);
+    case 'biz_inbox_assigned':
+      return (icon: Icons.assignment_ind_outlined, color: Joy.accent);
     case 'wallet':
       return (icon: Icons.account_balance_wallet_outlined, color: Joy.primary);
     case 'biz_review':
