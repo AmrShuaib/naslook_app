@@ -15,6 +15,7 @@ import '../../core/require_account.dart';
 import '../../core/share/share_links.dart';
 import '../../state/admin_providers.dart';
 import '../../state/app_state.dart';
+import '../../state/feed_providers.dart' show onFollowChanged;
 import '../../state/profile_v2_providers.dart';
 import '../../state/providers.dart';
 import '../../state/safety_providers.dart';
@@ -26,6 +27,7 @@ import '../market/market_page.dart';
 import '../posts/overlay_canvas.dart';
 import '../posts/post_viewer.dart';
 import 'edit_profile_page.dart';
+import 'follow_list_page.dart';
 import 'intro_card.dart';
 import 'profile_bits.dart';
 
@@ -241,7 +243,9 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
                     padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
                     child: Row(children: [
                       StatCell('${p2.stats.posts}', 'منشور'),
-                      StatCell('${_followers ?? p2.stats.followers}', 'متابِع', cellKey: const Key('stat-followers')),
+                      // الرقمان يفتحان القائمتين (الملف الخاص لا يصل هنا إلا لصاحبه وأصدقائه، والخادم يفرض القاعدة نفسها)
+                      StatCell('${_followers ?? p2.stats.followers}', 'متابِعون', cellKey: const Key('stat-followers'), onTap: () => _openFollows(context, name, followers: true)),
+                      StatCell('${p2.stats.following}', 'يتابع', cellKey: const Key('stat-following'), onTap: () => _openFollows(context, name, followers: false)),
                       StatCell(p2.stats.ratingAvg?.toStringAsFixed(1) ?? '—', p2.stats.ratingCount > 0 ? '${p2.stats.ratingCount} تقييماً' : 'التقييم'),
                       StatCell('${p2.stats.circles}', 'دوائر'),
                     ]),
@@ -441,6 +445,16 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
     }
   }
 
+  Future<void> _openFollows(BuildContext context, String name, {required bool followers}) async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => FollowListPage(userId: id, name: name, followers: followers)));
+    // متابعات من داخل القائمة تغيّر أرقام هذا الملف (حين يكون ملفي) أو حالة زر المتابعة فيه
+    if (mounted) {
+      _following = null;
+      _followers = null;
+      ref.invalidate(profileV2Provider(id));
+    }
+  }
+
   Future<void> _toggleFollow(ProfileV2 p) async {
     final was = _following ?? p.flags.isFollowing;
     final count = _followers ?? p.stats.followers;
@@ -453,6 +467,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
       final api = ref.read(apiClientProvider);
       final r = was ? await api.unfollow(id) : await api.follow(id);
       if (mounted) setState(() { _following = r.following; _followers = r.followers; });
+      onFollowChanged(ref);
     } catch (e) {
       if (mounted) {
         setState(() { _following = was; _followers = count; });

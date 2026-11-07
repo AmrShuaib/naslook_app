@@ -18,6 +18,17 @@ extension ProfileV2Api on ApiClient {
   Future<List<Person>> followers(String id, {int limit = 50}) async => asList(await getList('/profiles/$id/followers', query: {'limit': '$limit'})).map(Person.fromJson).toList();
   Future<List<Person>> following(String id, {int limit = 50}) async => asList(await getList('/profiles/$id/following', query: {'limit': '$limit'})).map(Person.fromJson).toList();
 
+  /// صفحة من قائمة «متابِعون» ([followers] = true) أو «يتابع» لـ[id]، و[before] مؤشر الصفحة السابقة كما أعاده الخادم.
+  /// الملف الخاص يرد 403 لغير صاحبه ومن أضافهم.
+  Future<FollowPage> followPage(String id, {required bool followers, String? before, int limit = 30}) async =>
+      FollowPage.fromJson(await get('/profiles/${Uri.encodeComponent(id)}/${followers ? 'followers' : 'following'}', query: {'limit': '$limit', if (before != null && before.isNotEmpty) 'before': before}));
+
+  /// معرّفات «أتابعهم» (من أتابعهم ومن أضفتهم) لإدراج اللحظات الحيّة في قائمتها.
+  Future<List<String>> followFeedIds() async {
+    final raw = (await get('/me/following/ids'))['ids'];
+    return [if (raw is List) for (final x in raw) if (x != null) x.toString()];
+  }
+
   /// حدث على الملف (message | share | link): خلفي، لا يزعج الزائر ولا يفشل الواجهة.
   Future<void> profileEvent(String id, String kind) => post('/profiles/$id/event', {'kind': kind}, prompt: false).then((_) {}).catchError((_) {});
 

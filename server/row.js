@@ -7,6 +7,7 @@
 // «التغذية» GET /feed (22 أكتوبر 2026): البطاقات نفسها بالبنّاء نفسه لكن الأحدث نشراً أولاً (لا بالقرب ولا بالتوزيع) مع تصفية بالنوع ومؤشر ترقيم before،
 // لتبويب عمودي من بطاقات متوسطة متحركة، التصنيف «عام» افتراضياً وبقية التصانيف في الشريط العلوي (طلب المالك). الترتيب بزمن النشر feedAt
 // (حقل إضافي؛ «at» يبقى كما في /row) والمؤشر مركّب معتم «feedAt~رقم النوع~المعرّف» فلا تسقط بطاقات تتشارك الملي ثانية.
+// «أتابعهم» GET /feed?scope=following (7 نوفمبر 2026): التغذية نفسها مقصورة على من أتابعهم وأصدقائي ودوائري (scoped أدناه).
 // التسجيل في register.txt:
 //   await app.register((await import("./row.js")).default, { pool, auth });
 import { CATEGORY_AR } from "./business.js";
@@ -136,6 +137,16 @@ const tail = (ctx, kind, params, rowOrder) => {
   if (ctx.band) { const b = arg(ctx.band); w.push(`${t} >= ${b}::timestamptz AND ${t} < ${b}::timestamptz + interval '1 millisecond'`); }
   return [`${w.map((x) => `AND ${x} `).join("")}ORDER BY ${ctx.band ? "" : `${t} DESC, `}${id} LIMIT ${ctx.cand}`, P];
 };
+// «أتابعهم» (scope=following): شرط إضافي على عمود الناشر (people: من أتابعهم ومن أضفتهم) أو الدائرة (circles: دوائر انضممت إليها)،
+// ومعامله يُلحق بالمعاملات قبل ذيل المؤشر فيبقى المؤشر وشريطه كما هما. بلا نطاق «أتابعهم» لا شرط ولا معامل؛ والمجموعة الفارغة تعيد null
+// (النوع لا يساهم فلا استعلام أصلاً)
+export const scoped = (ctx, col, set, params) => {
+  if (!ctx.following) return ["", params];
+  const ids = ctx.following[set] ?? [];
+  if (!ids.length) return null;
+  const P = [...params, ids];
+  return [` AND ${col} = ANY($${P.length}::text[])`, P];
+};
 // المؤشر المعتم «<feedAt ISO>~<رقم النوع في KINDS>~<المعرّف>». ISO وحده (عملاء أقدم) = أقدم من ذلك الزمن تماماً: k = عدد الأنواع فلا يُؤخذ شيء من شريطه.
 // قيمة غير مفهومة = بلا مؤشر (من الأول) كما كان
 export const parseCursor = (s) => {
@@ -189,9 +200,9 @@ export default async function row(app, opts = {}) {
   // ---- المصادر الستة: استعلام مرشّحين (الصف: بحد CAND الأقرب أولاً ثم الأحدث؛ التغذية: الأحدث أولاً بحد الصفحة) ثم تحويل الصف إلى بطاقة
   const SOURCES = {
     moment: {
-      rows: (ctx) => { const [t, P] = tail(ctx, "moment", [...ctx.geo, ctx.uid, ctx.blocked], "p.created_at DESC"); return q("moment", `SELECT p.*, (SELECT count(*) FROM map_post_likes l WHERE l.post_id=p.id)::int AS likes,
+      rows: (ctx) => { const sc = scoped(ctx, "p.user_id", "people", [...ctx.geo, ctx.uid, ctx.blocked]); if (!sc) return []; const [t, P] = tail(ctx, "moment", sc[1], "p.created_at DESC"); return q("moment", `SELECT p.*, (SELECT count(*) FROM map_post_likes l WHERE l.post_id=p.id)::int AS likes,
           ($4::text IS NOT NULL AND EXISTS (SELECT 1 FROM map_post_likes l WHERE l.post_id=p.id AND l.user_id=$4)) AS liked, ${KM("p")} AS km${feedMs(ctx, "moment")}
-        FROM map_posts p WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($5::text[])) AND ${momentVisible("p", "$4::text")} AND ${WITHIN("p")} ${t}`, P); },
+        FROM map_posts p WHERE p.status='active' AND p.expires_at > now() AND NOT (p.user_id = ANY($5::text[])) AND ${momentVisible("p", "$4::text")}${sc[0]} AND ${WITHIN("p")} ${t}`, P); },
       userId: (p) => p.user_id,
       item: (p, ctx, who) => ({
         kind: "moment", id: p.id, refId: p.id,
@@ -202,8 +213,8 @@ export default async function row(app, opts = {}) {
       }),
     },
     offer: {
-      rows: (ctx) => { const [t, P] = tail(ctx, "offer", ctx.geo, "o.starts_at DESC"); return q("offer", `SELECT o.*, b.id AS b_id, b.name, b.name_ar, b.logo_url, b.lat, b.lng, ${KM("b")} AS km${feedMs(ctx, "offer")}
-        FROM biz_offers o JOIN biz b ON b.id=o.biz_id WHERE ${ACTIVE_OFFER} AND ${WITHIN("b")} ${t}`, P); },
+      rows: (ctx) => { const sc = scoped(ctx, "o.biz_id", "circles", ctx.geo); if (!sc) return []; const [t, P] = tail(ctx, "offer", sc[1], "o.starts_at DESC"); return q("offer", `SELECT o.*, b.id AS b_id, b.name, b.name_ar, b.logo_url, b.lat, b.lng, ${KM("b")} AS km${feedMs(ctx, "offer")}
+        FROM biz_offers o JOIN biz b ON b.id=o.biz_id WHERE ${ACTIVE_OFFER}${sc[0]} AND ${WITHIN("b")} ${t}`, P); },
       userId: () => null,
       item: (o, ctx) => ({
         kind: "offer", id: o.id, refId: o.b_id, title: cut(o.title, 80), subtitle: cut(`${bizName(o)} · ${endsText(o.ends_at, ctx.now)}`, 60),
@@ -214,9 +225,10 @@ export default async function row(app, opts = {}) {
     event: {
       // الفعاليات الملغاة أو المخفية بالإشراف لا تُعرض (كما في GET /events)؛ الجارية تبقى حتى نهايتها أو 6 ساعات بعد بدايتها.
       // والضيف لا يرى فعاليات الدوائر الخاصة بقاعدة GET /events نفسها (guestEvents)
-      rows: async (ctx) => { const [t, P] = tail(ctx, "event", [...ctx.geo, ctx.blocked], "e.starts_at ASC"); const g = ctx.uid ? "" : await guestEvents(); return q("event", `SELECT e.*, (SELECT min(t.price) FROM ticket_tiers t WHERE t.event_id=e.id) AS min_price, ${KM("e")} AS km${feedMs(ctx, "event")}
+      // «أتابعهم»: الفعاليات لا ترتبط بدوائر الأعمال (vessel_id دائرة مجتمع في النواة) فتأتي ممن أتابعهم مضيفين
+      rows: async (ctx) => { const sc = scoped(ctx, "e.host_id", "people", [...ctx.geo, ctx.blocked]); if (!sc) return []; const [t, P] = tail(ctx, "event", sc[1], "e.starts_at ASC"); const g = ctx.uid ? "" : await guestEvents(); return q("event", `SELECT e.*, (SELECT min(t.price) FROM ticket_tiers t WHERE t.event_id=e.id) AS min_price, ${KM("e")} AS km${feedMs(ctx, "event")}
         FROM events e WHERE NOT e.cancelled AND NOT e.hidden AND e.lat IS NOT NULL AND e.lng IS NOT NULL AND NOT (e.host_id = ANY($4::text[]))
-          AND ((e.ends_at IS NULL AND e.starts_at > now() - interval '6 hours') OR e.ends_at > now())${g} AND ${WITHIN("e")} ${t}`, P); },
+          AND ((e.ends_at IS NULL AND e.starts_at > now() - interval '6 hours') OR e.ends_at > now())${g}${sc[0]} AND ${WITHIN("e")} ${t}`, P); },
       userId: (e) => e.host_id,
       item: (e, ctx, who) => ({
         kind: "event", id: e.id, refId: e.id, title: cut(e.title, 80),
@@ -227,9 +239,9 @@ export default async function row(app, opts = {}) {
     },
     job: {
       // وظائف دائرة موقوفة أو مخفية بالإشراف لا تظهر (كما تختفي الدائرة نفسها)
-      rows: (ctx) => { const [t, P] = tail(ctx, "job", ctx.geo, "j.published_at DESC NULLS LAST"); return q("job", `SELECT j.id, j.title, j.type, j.city, j.district, j.salary_min, j.salary_max, j.salary_visible, j.published_at, j.created_at, j.deadline,
+      rows: (ctx) => { const sc = scoped(ctx, "j.biz_id", "circles", ctx.geo); if (!sc) return []; const [t, P] = tail(ctx, "job", sc[1], "j.published_at DESC NULLS LAST"); return q("job", `SELECT j.id, j.title, j.type, j.city, j.district, j.salary_min, j.salary_max, j.salary_visible, j.published_at, j.created_at, j.deadline,
           b.id AS b_id, b.name, b.name_ar, b.logo_url, b.lat, b.lng, ${KM("b")} AS km${feedMs(ctx, "job")}
-        FROM jobs j JOIN biz b ON b.id=j.biz_id WHERE j.status='open' AND j.public=true AND b.active AND NOT b.hidden AND ${WITHIN("b")} ${t}`, P); },
+        FROM jobs j JOIN biz b ON b.id=j.biz_id WHERE j.status='open' AND j.public=true AND b.active AND NOT b.hidden${sc[0]} AND ${WITHIN("b")} ${t}`, P); },
       userId: () => null,
       item: (j, ctx) => {
         // الراتب يظهر فقط حين أذن صاحب العمل (كما في publicJobOut)؛ وإلا الحي أو المدينة أو اسم الدائرة
@@ -244,9 +256,9 @@ export default async function row(app, opts = {}) {
       },
     },
     listing: {
-      rows: (ctx) => { const [t, P] = tail(ctx, "listing", [...ctx.geo, ctx.blocked], "COALESCE(l.bumped_at, l.created_at) DESC"); return q("listing", `SELECT l.id, l.seller_id, l.title, l.price, l.image_url, l.images, l.place_name, l.city, l.lat, l.lng, l.created_at, l.bumped_at, ${KM("l")} AS km${feedMs(ctx, "listing")}
+      rows: (ctx) => { const sc = scoped(ctx, "l.seller_id", "people", [...ctx.geo, ctx.blocked]); if (!sc) return []; const [t, P] = tail(ctx, "listing", sc[1], "COALESCE(l.bumped_at, l.created_at) DESC"); return q("listing", `SELECT l.id, l.seller_id, l.title, l.price, l.image_url, l.images, l.place_name, l.city, l.lat, l.lng, l.created_at, l.bumped_at, ${KM("l")} AS km${feedMs(ctx, "listing")}
         FROM market_listings l WHERE l.status='active' AND l.lat IS NOT NULL AND l.lng IS NOT NULL AND (l.publish_at IS NULL OR l.publish_at <= now())
-          AND NOT (l.seller_id = ANY($4::text[])) AND ${WITHIN("l")} ${t}`, P); },
+          AND NOT (l.seller_id = ANY($4::text[]))${sc[0]} AND ${WITHIN("l")} ${t}`, P); },
       userId: (l) => l.seller_id,
       item: (l, ctx, who) => ({
         kind: "listing", id: l.id, refId: l.id, title: cut(l.title, 80), subtitle: cut(`${sar(l.price)} · ${l.place_name || l.city || who.nickname}`, 60),
@@ -256,10 +268,10 @@ export default async function row(app, opts = {}) {
     },
     circle: {
       // الدائرة المتنقلة التي ثبّتت دبوس «هنا اليوم»: تُعرض عند موقع الدبوس ما دام until في المستقبل (business.js يملك العمود here)
-      rows: (ctx) => { const [t, P] = tail(ctx, "circle", ctx.geo, "c.set_at DESC NULLS LAST"); return q("circle", `SELECT c.*, ${KM("c")} AS km${feedMs(ctx, "circle")} FROM (
+      rows: (ctx) => { const sc = scoped(ctx, "c.id", "circles", ctx.geo); if (!sc) return []; const [t, P] = tail(ctx, "circle", sc[1], "c.set_at DESC NULLS LAST"); return q("circle", `SELECT c.*, ${KM("c")} AS km${feedMs(ctx, "circle")} FROM (
           SELECT b.id, b.name, b.name_ar, b.category, b.logo_url, (b.here->>'lat')::float8 AS lat, (b.here->>'lng')::float8 AS lng, b.here->>'until' AS until, b.here->>'setAt' AS set_at, b.updated_at
           FROM biz b WHERE b.active AND NOT b.hidden AND b.here IS NOT NULL AND jsonb_typeof(b.here->'until')='string' AND (b.here->>'until')::timestamptz > now()) c
-        WHERE c.lat IS NOT NULL AND c.lng IS NOT NULL AND ${WITHIN("c")} ${t}`, P); },
+        WHERE c.lat IS NOT NULL AND c.lng IS NOT NULL${sc[0]} AND ${WITHIN("c")} ${t}`, P); },
       userId: () => null,
       item: (c, ctx) => ({
         kind: "circle", id: c.id, refId: c.id, title: cut(bizName(c), 80), subtitle: cut(`هنا اليوم حتى ${hhmm(c.until)} · ${CATEGORY_AR[c.category] ?? c.category ?? ""}`, 60),
@@ -309,14 +321,29 @@ export default async function row(app, opts = {}) {
   // بلا دفعات ولا حد لكل نوع ولا توزيع؛ الموقع يقصر على نصف القطر ويملأ المسافة فقط، وبلا موقع الأحدث أياً كان بعده.
   // kind واحد يصفّي إليه، وall (أو قيمة غير معروفة) يدمج الأنواع كلها. next = مؤشر آخر بطاقة «feedAt~k~id» حين تمتلئ الصفحة وإلا null،
   // ويُعاد في before كما هو؛ ISO وحده (عملاء أقدم) = البطاقات التي feedAt < before.
+  // scope=following («أتابعهم»، نوفمبر 2026): المصادر نفسها مقصورة على من أتابعهم ومن أضفتهم إلى جهات اتصالي (اللحظات والفعاليات التي
+  // يستضيفونها وإعلاناتهم في السوق) وعلى الدوائر التي انضممت إليها (العروض والوظائف و«هنا اليوم»)، بالمؤشر نفسه وقاعدة الرؤية والحظر نفسيهما.
+  // بلا نطاق مسافة: من أتابعهم أينما نشروا، والموقع يملأ المسافة للعرض فقط. للضيف صفحة فارغة. following = عدد الأشخاص والدوائر (لنص الفراغ)
+  const followingOf = async (uid) => {
+    const [people, circles] = await Promise.all([
+      (async () => { try { return (await globalThis.naslifeFollowFeedIds?.(uid)) ?? []; } catch { return []; } })(),
+      pool.query("SELECT biz_id FROM biz_follows WHERE user_id=$1 LIMIT 5000", [uid]).then((r) => r.rows.map((x) => String(x.biz_id))).catch(() => []),
+    ]);
+    return { people, circles };
+  };
   app.get("/feed", async (req) => {
     const uid = await optionalAuth(req);
+    const following = req.query?.scope === "following";
     const { located, geo } = geoOf(req.query);
+    // نصف الكرة الأرضية وزيادة: لا يقصر شيئاً ويُبقي حساب المسافة
+    if (following && located) geo[2] = 20100;
     const limit = clampInt(req.query?.limit, 1, FEED_LIMIT_MAX, LIMIT_DEFAULT);
     const kinds = KINDS.includes(req.query?.kind) ? [req.query.kind] : KINDS;
-    const ctx = { geo, uid, blocked: await blockedIds(uid), now: Date.now(), located, sort: "time", cursor: parseCursor(req.query?.before), cand: limit };
+    if (following && !uid) return { items: [], next: null, located, scope: "following", following: { people: 0, circles: 0 } };
+    const ctx = { geo, uid, blocked: await blockedIds(uid), now: Date.now(), located, sort: "time", cursor: parseCursor(req.query?.before), cand: limit, following: following ? await followingOf(uid) : null };
     const page = (await collect(kinds, ctx)).sort(feedCmp).slice(0, limit);
-    return { items: page.map((e) => ({ ...e.card, feedAt: new Date(e.ms).toISOString() })), next: page.length === limit ? cursorOf(page[page.length - 1]) : null, located };
+    const out = { items: page.map((e) => ({ ...e.card, feedAt: new Date(e.ms).toISOString() })), next: page.length === limit ? cursorOf(page[page.length - 1]) : null, located };
+    return following ? { ...out, scope: "following", following: { people: ctx.following.people.length, circles: ctx.following.circles.length } } : out;
   });
 
   // ---- للفحص الحي: أي الجداول المصدرية موجودة

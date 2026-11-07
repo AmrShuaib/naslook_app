@@ -25,13 +25,15 @@ import '../home/row_deck.dart';
 import '../home/row_open.dart';
 import '../jobs/jobs_page.dart';
 import '../market/market_page.dart';
+import '../search/search_page.dart';
 import 'my_posts_page.dart';
 import 'overlay_canvas.dart' show colorFromHex;
 import 'post_media.dart' show videoPreviewUrl;
 
 /// «اللحظات» (قرار المالك 22 أكتوبر 2026): شبكة متدرّجة بعمودين من بطاقات متوسطة تتحرك كالصور المتحركة (الفيديو يدور صامتاً بلا
 /// شريط تحكم، الصورة تتقرّب ببطء، النص على تدرّج لوني) لكل ما يبثه `GET /feed` الأحدث أولاً: لحظات وعروض وفعاليات ووظائف
-/// وسوق ودوائر «هنا اليوم». الرقاقة «عام» افتراضية وبقية الأنواع في الشريط العلوي. التصفح بالمؤشر عند الاقتراب من النهاية،
+/// وسوق ودوائر «هنا اليوم». الرقاقة «عام» افتراضية، و«أتابعهم» بعدها للحساب المسجّل (`scope=following`: من أتابعهم وأصدقائي ودوائري)،
+/// وبقية الأنواع في الشريط العلوي. التصفح بالمؤشر عند الاقتراب من النهاية،
 /// والجديد يصل فوراً عبر «القناة الحية» ([LiveChannel]) ويُدرج في الأعلى، أو خلف كبسولة «N جديدة» إن كان المستخدم يتصفح.
 /// الجلب الدوري كل [refreshEvery] وعند العودة إلى التطبيق احتياط فقط.
 class TimelinePage extends ConsumerStatefulWidget {
@@ -97,7 +99,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
         km = _distanceKm(e.data);
         it = RowItem.moment(e.data, distanceKm: km);
       } catch (_) {
-        if (_kind == 'all' || _kind == 'moment') _n.refresh(applyNow: _atTop);
+        if (_kind == 'all' || _kind == 'moment' || _kind == followingFeed) _n.refresh(applyNow: _atTop);
         return;
       }
       final uid = (e.data['user'] is Map ? (e.data['user'] as Map)['id'] : null)?.toString().toUpperCase() ?? '';
@@ -109,6 +111,11 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
         // القائمة غير المرئية تُدرج فيها مباشرة: تُفتح من الأعلى عند تبديل الرقاقة
         final visible = k == _kind;
         if (ref.read(momentsProvider(k).notifier).pushLive(it, applyNow: !visible || _atTop) && visible) _fresh.add(it.pinKey);
+      }
+      // «أتابعهم» بلا نطاق مسافة: لحظة ممن أتابعهم أو أضفتهم (معرّفاتهم من الخادم) تُدرج أينما نُشرت؛ بلا المعرّفات يكفي الجلب الدوري
+      if (ref.exists(momentsProvider(followingFeed)) && (ref.read(followFeedIdsProvider).valueOrNull?.contains(uid) ?? false)) {
+        final visible = _kind == followingFeed;
+        if (ref.read(momentsProvider(followingFeed).notifier).pushLive(it, applyNow: !visible || _atTop) && visible) _fresh.add(it.pinKey);
       }
     } else if (e.kind == LiveEvent.postRemoved) {
       final id = e.data['id']?.toString();
@@ -149,6 +156,8 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
       _fresh.clear();
     });
     if (_scroll.hasClients) _scroll.jumpTo(0);
+    // معرّفات من أتابعهم لإدراج لحظاتهم الحيّة في «أتابعهم» (تُجلب مرة وتبقى حتى متابعة أو إلغائها)
+    if (k == followingFeed) ref.read(followFeedIdsProvider);
     // نوع فُتح من قبل يظهر فوراً من الذاكرة ثم يتحدّث في الخلفية؛ الجديد يجلب عند إنشائه
     if (ref.read(momentsProvider(k)).loaded) ref.read(momentsProvider(k).notifier).refresh();
   }
@@ -189,6 +198,8 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
   Widget build(BuildContext context) {
     // تغيّر الحساب يستبدل القناة: نعيد الاشتراك في الجديدة
     ref.listen<LiveChannel>(liveChannelProvider, (_, next) { if (next != _live) _subscribeLive(next); });
+    // الخروج يخفي «أتابعهم»: نعود إلى «عام» بدل قائمة لا رقاقة لها
+    ref.listen<bool>(signedInProvider, (_, signedIn) { if (!signedIn && _kind == followingFeed) _setKind('all'); });
     // ناشر حُظر (من العارض أو غيره): لحظاته تُزال في مكانها من كل قائمة مفتوحة، ومنها الصفحات الأقدم التي لا يشملها التحديث
     ref.listen<Set<String>>(blockedIdsProvider, (prev, next) {
       for (final uid in next.difference(prev ?? const <String>{})) {
@@ -223,7 +234,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
           ]),
           IconButton(key: const Key('tl-refresh'), tooltip: 'تحديث', onPressed: _refresh, icon: const Icon(Icons.refresh_rounded)),
         ],
-        bottom: PreferredSize(preferredSize: const Size.fromHeight(50), child: _KindBar(kind: _kind, onKind: _setKind)),
+        bottom: PreferredSize(preferredSize: const Size.fromHeight(50), child: _KindBar(kind: _kind, onKind: _setKind, showFollowing: ref.watch(signedInProvider))),
       ),
       body: Stack(children: [
         if (st.loading && items.isEmpty)
@@ -239,6 +250,9 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
                 hasScrollBody: false,
                 child: _Empty(
                   kind: _kind,
+                  followPeople: st.followPeople,
+                  followCircles: st.followCircles,
+                  onFindPeople: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage())),
                   onCompose: () async {
                     await composePostHere(context, ref);
                     if (mounted) _n.refresh();
@@ -324,31 +338,35 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
   static double _infoHeight(double scale) => 27 + 75 * scale;
 }
 
-/// شريط الرقاقات: «عام» ثم الأنواع الستة؛ المختارة بلون نوعها.
+/// شريط الرقاقات: «عام» ثم «أتابعهم» (للحساب المسجّل) ثم الأنواع الستة؛ المختارة بلون نوعها.
 class _KindBar extends StatelessWidget {
   final String kind;
   final ValueChanged<String> onKind;
-  const _KindBar({required this.kind, required this.onKind});
+  final bool showFollowing;
+  const _KindBar({required this.kind, required this.onKind, this.showFollowing = false});
+
+  static Color _color(String k) => k == 'all' ? Joy.primary : k == followingFeed ? Joy.accent : rowKindColor(k);
+  static IconData? _icon(String k) => k == 'all' ? null : k == followingFeed ? Icons.people_alt_rounded : rowKindIcon(k);
 
   @override
   Widget build(BuildContext context) => SizedBox(
         height: 50,
-        // صف واحد لا قائمة كسولة: سبع رقاقات فقط، وكلها في الشجرة حتى تصل إليها الاختبارات وقارئ الشاشة
+        // صف واحد لا قائمة كسولة: ثماني رقاقات فقط، وكلها في الشجرة حتى تصل إليها الاختبارات وقارئ الشاشة
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
           child: Row(children: [
-            for (final k in feedKinds)
+            for (final k in [feedKinds.first, if (showFollowing) followingFeed, ...feedKinds.skip(1)])
               Padding(
                 padding: const EdgeInsetsDirectional.only(end: 6),
                 child: ChoiceChip(
                   key: Key('feed-kind-$k'),
-                  label: Text(feedKindLabel(k)),
-                  avatar: k == 'all' ? null : Icon(rowKindIcon(k), size: 15, color: kind == k ? Colors.white : rowKindColor(k)),
+                  label: Text(k == followingFeed ? 'أتابعهم' : feedKindLabel(k)),
+                  avatar: _icon(k) == null ? null : Icon(_icon(k), size: 15, color: kind == k ? Colors.white : _color(k)),
                   selected: kind == k,
                   showCheckmark: false,
                   onSelected: (_) => onKind(k),
-                  selectedColor: k == 'all' ? Joy.primary : rowKindColor(k),
+                  selectedColor: _color(k),
                   backgroundColor: Joy.surface2,
                   side: BorderSide.none,
                   labelStyle: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: kind == k ? Colors.white : Joy.text),
@@ -824,13 +842,35 @@ class _EnterInState extends State<_EnterIn> {
 /// الحالة الفارغة لكل نوع: اللحظات تدعو للمشاركة، وبقية الأنواع تدل على قسمها.
 class _Empty extends StatelessWidget {
   final String kind;
-  final VoidCallback onCompose;
+  final VoidCallback onCompose, onFindPeople;
   final ValueChanged<String> onGoTab;
-  const _Empty({required this.kind, required this.onCompose, required this.onGoTab});
+  /// «أتابعهم»: عدد من أتابعهم (مع من أضفتهم) ودوائري من الخادم؛ صفر للاثنين = لا أحد بعد فالدعوة أوضح
+  final int? followPeople, followCircles;
+  const _Empty({required this.kind, required this.onCompose, required this.onGoTab, required this.onFindPeople, this.followPeople, this.followCircles});
 
   @override
   Widget build(BuildContext context) {
     switch (kind) {
+      case followingFeed:
+        final none = (followPeople ?? 0) == 0 && (followCircles ?? 0) == 0;
+        return EmptyState(
+          key: const Key('tl-following-empty'),
+          icon: Icons.people_alt_outlined,
+          title: none ? 'لا أحد تتابعه بعد' : 'لا جديد ممن تتابعهم',
+          subtitle: none
+              ? 'تابع أشخاصاً من ملفاتهم وانضم إلى دوائر، فتصلك هنا لحظاتهم وعروضهم وفعالياتهم أولاً بأول.'
+              : 'تظهر هنا لحظات من تتابعهم وأصدقائك وعروض دوائرك فور نشرها. تابع المزيد أو انضم إلى دوائر أخرى.',
+          action: Wrap(alignment: WrapAlignment.center, spacing: 8, runSpacing: 8, children: [
+            _btn('tl-follow-people', Icons.person_search_rounded, 'ابحث عن أشخاص', onFindPeople),
+            OutlinedButton.icon(
+              key: const Key('tl-follow-circles'),
+              onPressed: () => onGoTab('circles'),
+              style: OutlinedButton.styleFrom(shape: const StadiumBorder(), padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
+              icon: const Icon(Icons.groups_rounded, size: 18),
+              label: const Text('تصفّح الدوائر', style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ]),
+        );
       case 'offer':
         return EmptyState(icon: Icons.local_offer_outlined, title: 'لا عروض حولك الآن', subtitle: 'عروض الدوائر القريبة تظهر هنا فور نشرها', action: _btn('tl-go-offer', Icons.groups_rounded, 'تصفّح الدوائر', () => onGoTab('circles')));
       case 'event':

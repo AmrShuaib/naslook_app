@@ -1,6 +1,6 @@
 // الملف الشخصي v2 في Naslife: غلاف واسم ظاهر ومسمّى وظيفي ومدينة وروابط تواصل، تعريف صوتي أو مرئي قصير، متابعة، إحصاءات
 // زيارات سبعة أيام، خصوصية (من يراسلني، إظهار الاتصال والمدينة والأصدقاء)، وفحص توفر الاسم. النواة (ليست في المستودع) تملك
-// users/profiles/contacts فنقرأها فقط ونكتشف أعمدتها عند الإقلاع، وكل ما يخصنا في أربعة جداول هنا حتى لا نعدّل جداول النواة.
+// users/profiles/contacts فنقرأها فقط ونكتشف أعمدتها عند الإقلاع، وكل ما يخصنا في جداول هنا حتى لا نعدّل جداول النواة.
 // التسجيل في src/index.js:
 //   await app.register((await import("./profile_ext.js")).default, { pool, auth });
 
@@ -162,6 +162,12 @@ export default async function profileV2(app, opts) {
     CREATE INDEX IF NOT EXISTS profile_events_user_at ON profile_events(user_id, created_at DESC);
     -- نوع الحساب هنا لا في النواة: PUT /me/profile في النواة يرفض «pro» (bad-account-type) ففشل حفظ الملف المهني كله
     ALTER TABLE profile_ext ADD COLUMN IF NOT EXISTS account_type TEXT;
+    -- «إشعارات من أتابعهم» (نوفمبر 2026): مفعّلة افتراضياً، والإيقاف لكل متابِع من «التوثيق والتحكم»
+    ALTER TABLE profile_ext ADD COLUMN IF NOT EXISTS follow_notify BOOLEAN NOT NULL DEFAULT true;
+    -- آخر إشعار لحظة جديدة لكل متابِع وناشر: حدّ مرة كل 6 ساعات يُحجز ذرياً عند الإرسال
+    CREATE TABLE IF NOT EXISTS follow_notify_log (follower_id TEXT NOT NULL, author_id TEXT NOT NULL, last_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (follower_id, author_id));
+    -- قائمة «يتابع» بالأحدث متابعةً أولاً (المفتاح الأساسي يبدأ بالمتابِع لكن بلا ترتيب الزمن)
+    CREATE INDEX IF NOT EXISTS user_follows_follower ON user_follows(follower_id, created_at DESC);
   `);
 
   const postsOk = await has("map_posts", "user_id", "status", "expires_at");
@@ -242,6 +248,8 @@ export default async function profileV2(app, opts) {
   const hasContact = async (owner, other) => (owner && other && owner !== other && C ? exists(`SELECT 1 FROM ${q(C.table)} WHERE ${q(C.a)}=$1 AND ${q(C.b)}=$2 LIMIT 1`, [owner, other]) : false);
   const wroteTo = async (from, to) => (MS && from && to ? exists(`SELECT 1 FROM ${q(MS.table)} WHERE ${q(MS.from)}=$1 AND ${q(MS.to)}=$2 LIMIT 1`, [from, to]) : false);
   const blockedPair = async (a, b) => { try { const f = globalThis.naslifeIsBlocked; return f ? !!(await f(a, b)) : false; } catch { return false; } };
+  // طرفا الحظر في الاتجاهين (safety.js)؛ بلا الإضافة لا أحد
+  const blockedIdsOf = async (uid) => { try { return (await globalThis.naslifeBlockedIds?.(uid)) ?? []; } catch { return []; } };
   // اتجاه الحظر: «blocked» لمن حظر فقط؛ المحظور يرى «nobody» كأي حساب لا يستقبل رسائل حتى لا يعرف أنه حُظر
   const hasBlocked = async (a, b) => { try { const f = globalThis.naslifeHasBlocked; return f ? !!(await f(a, b)) : false; } catch { return false; } };
   // علاقات على المنصة تستلزم التواصل (المرشح وفريق التوظيف، أطراف طلب قائم): تسجّلها الإضافة المالكة لجداولها في
@@ -266,13 +274,14 @@ export default async function profileV2(app, opts) {
   }
   const isOnline = async (id) => (PR ? exists(`SELECT 1 FROM ${q(PR.table)} WHERE ${q(PR.key)}=$1 AND ${q(PR.at)} > now() - interval '5 minutes' LIMIT 1`, [id]) : null);
   const loadExt = async (id) => { try { return (await pool.query("SELECT * FROM profile_ext WHERE user_id=$1", [id])).rows[0] ?? null; } catch { return null; } };
-  const EXT_DEFAULTS = { cover_url: null, display_name: "", job_title: "", city: "", district: "", links: [], intro_kind: null, intro_url: null, intro_sec: null, intro_at: null, intro_visibility: "all", msg_policy: "all", show_online: true, show_city: true, show_friends: false, account_type: null };
+  const EXT_DEFAULTS = { cover_url: null, display_name: "", job_title: "", city: "", district: "", links: [], intro_kind: null, intro_url: null, intro_sec: null, intro_at: null, intro_visibility: "all", msg_policy: "all", show_online: true, show_city: true, show_friends: false, account_type: null, follow_notify: true };
   const followersOf = (id) => count("SELECT count(*)::int AS n FROM user_follows WHERE user_id=$1", [id]);
   // عدد اللحظات بقاعدة الرؤية نفسها (map_posts.js، وإلا قاعدة هذا الملف) حتى يطابق ما يفتحه الزائر في تبويب المنشورات، ويتبع «الجمهور»
   // لكل لحظة. single: لحظات صاحب واحد، ففحص مفتاح لكل لحظة لا بناء مجموعة أصحاب الملفات الخاصة كلها. بلا map_posts.js (نادر) وبعمود
   // الجمهور: لحظة «الأصدقاء» لا تُعدّ لغيرهم
   const audOk = postsOk && (await has("map_posts", "audience"));
-  const momentVisible = (viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f("map_posts", viewerExpr, { single: true }) : authorVisibleSql("map_posts.user_id", viewerExpr, { single: true, publicWhen: audOk ? "map_posts.audience = 'all'" : null }); };
+  const momentVisibleAt = (alias, viewerExpr) => { const f = globalThis.naslifeMomentVisibleSql; return typeof f === "function" ? f(alias, viewerExpr, { single: true }) : authorVisibleSql(`${alias}.user_id`, viewerExpr, { single: true, publicWhen: audOk ? `${alias}.audience = 'all'` : null }); };
+  const momentVisible = (viewerExpr) => momentVisibleAt("map_posts", viewerExpr);
   const stats = async (id, viewer = null) => {
     const [posts, followers, following, circles, friends, completedOrders] = await Promise.all([
       postsOk ? count(`SELECT count(*)::int AS n FROM map_posts WHERE user_id=$1 AND status='active' AND expires_at > now() AND ${momentVisible("$2::text")}`, [id, viewer ?? null]) : 0,
@@ -327,7 +336,7 @@ export default async function profileV2(app, opts) {
     const done = steps.filter((s) => s.done).length;
     return {
       ...strip(p),
-      settings: { msgPolicy: ext.msg_policy, showOnline: ext.show_online === true, showCity: ext.show_city === true, showFriends: ext.show_friends === true, introVisibility: ext.intro_visibility },
+      settings: { msgPolicy: ext.msg_policy, showOnline: ext.show_online === true, showCity: ext.show_city === true, showFriends: ext.show_friends === true, introVisibility: ext.intro_visibility, followNotify: ext.follow_notify !== false },
       completion: { pct: Math.round((done / steps.length) * 20) * 5, steps },
     };
   }
@@ -380,7 +389,7 @@ export default async function profileV2(app, opts) {
     if (b.accountType !== undefined) { if (!ACCOUNT_TYPES.includes(b.accountType)) return bad(reply, 400, "bad-field", { field: "accountType" }); set.account_type = b.accountType; }
     if (b.msgPolicy !== undefined) { if (!MSG_POLICIES.includes(b.msgPolicy)) return bad(reply, 400, "bad-field", { field: "msgPolicy" }); set.msg_policy = b.msgPolicy; }
     if (b.introVisibility !== undefined) { if (!VISIBILITIES.includes(b.introVisibility)) return bad(reply, 400, "bad-field", { field: "introVisibility" }); set.intro_visibility = b.introVisibility; }
-    for (const [field, col] of [["showOnline", "show_online"], ["showCity", "show_city"], ["showFriends", "show_friends"]]) {
+    for (const [field, col] of [["showOnline", "show_online"], ["showCity", "show_city"], ["showFriends", "show_friends"], ["followNotify", "follow_notify"]]) {
       if (b[field] === undefined) continue;
       if (typeof b[field] !== "boolean") return bad(reply, 400, "bad-field", { field });
       set[col] = b[field];
@@ -446,15 +455,90 @@ export default async function profileV2(app, opts) {
     await pool.query("DELETE FROM user_follows WHERE follower_id=$1 AND user_id=$2", [t.uid, t.u.id]);
     return { ok: true, following: false, followers: await followersOf(t.u.id) };
   });
+  // ---- قائمتا «متابِعون» و«يتابع»: صفحات بالأحدث متابعةً أولاً ومؤشر معتم «created_at~المعرّف» (الزمن بالميكروثانية من القاعدة نفسها
+  // فلا تسقط متابعة تشارك غيرها الملي ثانية). الملف الخاص قائمتاه لصاحبه ولمن أضافهم صاحبه فقط (تعريف الصديق الواحد)، وطرفا حظر لا يرى
+  // أحدهما قائمتي الآخر (403 private كالملف الخاص حتى لا يعرف المحظور). ومن حظرهم المشاهد أو حظروه لا يظهرون في أي قائمة يراها.
+  // لكل شخص isFollowing (المشاهد يتابعه) لزر المتابعة في القائمة، وisMe. limit 1..100 (الافتراضي 30)، وtotal عدد القائمة كما في الملف
+  const LIST_CURSOR_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z)~([A-Z]{2}\d{7})$/;
+  const listAllowed = async (u, viewer) => {
+    if (viewer && viewer === u.id) return true;
+    if (viewer && (await blockedPair(u.id, viewer))) return false;
+    if ((await coreProfile(u.id, u)).isPublic !== false) return true;
+    return hasContact(u.id, viewer);
+  };
   const followList = async (req, reply, mineCol, otherCol) => {
+    let viewer = null; try { viewer = (await auth(req)) || null; } catch { viewer = null; }
     const u = await findUser(req.params.id); if (!u) return bad(reply, 404, "not-found");
-    const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query?.limit ?? "50"), 10) || 50));
-    const rows = (await pool.query(`SELECT ${q(otherCol)} AS id FROM user_follows WHERE ${q(mineCol)}=$1 ORDER BY created_at DESC LIMIT $2`, [u.id, limit])).rows;
-    const people = await usersByIds(rows.map((r) => r.id));
-    return { items: rows.map((r) => people.get(r.id) ?? { id: r.id, nickname: null, avatarUrl: null }) };
+    if (!(await listAllowed(u, viewer))) return bad(reply, 403, "private");
+    const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query?.limit ?? "30"), 10) || 30));
+    const cur = LIST_CURSOR_RE.exec(String(req.query?.before ?? ""));
+    const hidden = viewer ? await blockedIdsOf(viewer) : [];
+    const P = [u.id, hidden, limit + 1];
+    if (cur) P.push(cur[1], cur[2]);
+    // صف المقارنة (الزمن ثم المعرّف) بترتيب الفرز نفسه تنازلياً، فالصفحة التالية تبدأ بعد آخر صف تماماً
+    const after = cur ? `AND (f.created_at, f.${q(otherCol)}) < ($4::timestamptz, $5::text)` : "";
+    const rows = (await pool.query(`SELECT f.${q(otherCol)} AS id, to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
+      FROM user_follows f WHERE f.${q(mineCol)}=$1 AND NOT (f.${q(otherCol)} = ANY($2::text[])) ${after}
+      ORDER BY f.created_at DESC, f.${q(otherCol)} DESC LIMIT $3`, P)).rows;
+    const more = rows.length > limit, page = more ? rows.slice(0, limit) : rows;
+    const ids = page.map((r) => r.id);
+    const [people, names, mine, total] = await Promise.all([
+      usersByIds(ids),
+      ids.length ? pool.query("SELECT user_id, display_name FROM profile_ext WHERE user_id = ANY($1::text[])", [ids]).then((r) => new Map(r.rows.map((x) => [x.user_id, x.display_name ?? ""]))).catch(() => new Map()) : new Map(),
+      viewer && ids.length ? pool.query("SELECT user_id FROM user_follows WHERE follower_id=$1 AND user_id = ANY($2::text[])", [viewer, ids]).then((r) => new Set(r.rows.map((x) => x.user_id))).catch(() => new Set()) : new Set(),
+      count(`SELECT count(*)::int AS n FROM user_follows WHERE ${q(mineCol)}=$1`, [u.id]),
+    ]);
+    return {
+      items: page.map((r) => ({ ...(people.get(r.id) ?? { id: r.id, nickname: null, avatarUrl: null }), id: r.id, displayName: names.get(r.id) ?? "", isFollowing: mine.has(r.id), isMe: viewer === r.id })),
+      next: more ? `${page[page.length - 1].at}~${page[page.length - 1].id}` : null,
+      total,
+    };
   };
   app.get("/profiles/:id/followers", (req, reply) => followList(req, reply, "user_id", "follower_id"));
   app.get("/profiles/:id/following", (req, reply) => followList(req, reply, "follower_id", "user_id"));
+
+  // ---- «أتابعهم» في التغذية (row.js) وفي التطبيق: من أتابعهم ومن أضفتهم إلى جهات اتصالي (حتى 5000)، بلا نفسي ولا طرفي حظر.
+  // GET /me/following/ids للتطبيق: يقرر به هل تُدرج لحظة حيّة في قائمة «أتابعهم» بلا جلب
+  const followFeedIds = async (uid) => {
+    const id = String(uid ?? ""); if (!id) return [];
+    const [followed, friends, hidden] = await Promise.all([
+      pool.query("SELECT user_id FROM user_follows WHERE follower_id=$1 ORDER BY created_at DESC LIMIT 5000", [id]).then((r) => r.rows.map((x) => x.user_id)).catch(() => []),
+      globalThis.naslifeFriendIds(id).catch(() => []),
+      blockedIdsOf(id),
+    ]);
+    const drop = new Set([id, ...hidden]);
+    return [...new Set([...followed, ...friends])].filter((x) => x && !drop.has(x)).slice(0, 5000);
+  };
+  globalThis.naslifeFollowFeedIds = followFeedIds;
+  app.get("/me/following/ids", async (req, reply) => {
+    const uid = await auth(req); if (!uid) return unauthorized(reply);
+    return { ids: await followFeedIds(uid) };
+  });
+
+  // ---- إشعار المتابِعين بلحظة جديدة: يستدعيه map_posts.js بعد إدراج اللحظة ولا ينتظره النشر. يصل من يتابع الناشر ويرى اللحظة بقاعدة الرؤية
+  // الواحدة (لحظة «الأصدقاء» لأصدقائه وحدهم، والملف الخاص كذلك)، لا من حظره الناشر أو حظره، ولا من أطفأ «إشعارات من أتابعهم»، ومرة لكل
+  // ناشر ومتابِع كل 6 ساعات: الحجز في سجل follow_notify_log بالاستعلام نفسه (ON CONFLICT ... WHERE) فلحظتان معاً لا ترسلان إشعارين
+  const FOLLOW_NOTIFY_HOURS = 6;
+  const MEDIA_WORD = { image: "صورة", video: "فيديو", audio: "تسجيل صوتي", text: "لحظة" };
+  globalThis.naslifeNotifyFollowers = async (post) => {
+    const author = String(post?.user_id ?? ""), pid = String(post?.id ?? "");
+    if (!postsOk || !ID_RE.test(author) || !/^[0-9a-f-]{36}$/i.test(pid)) return [];
+    const hidden = await blockedIdsOf(author);
+    const ids = (await pool.query(`WITH cand AS (
+        SELECT f.follower_id FROM user_follows f JOIN map_posts p ON p.id = $2::uuid LEFT JOIN profile_ext x ON x.user_id = f.follower_id
+        WHERE f.user_id = $1 AND p.user_id = $1 AND p.status = 'active' AND p.expires_at > now() AND COALESCE(x.follow_notify, true)
+          AND NOT (f.follower_id = ANY($3::text[])) AND ${momentVisibleAt("p", "f.follower_id")} LIMIT 5000)
+      INSERT INTO follow_notify_log AS g (follower_id, author_id, last_at) SELECT follower_id, $1, now() FROM cand
+      ON CONFLICT (follower_id, author_id) DO UPDATE SET last_at = EXCLUDED.last_at WHERE g.last_at <= now() - interval '${FOLLOW_NOTIFY_HOURS} hours'
+      RETURNING g.follower_id AS id`, [author, pid, hidden])).rows.map((r) => r.id);
+    if (!ids.length) return [];
+    const [u, ext] = await Promise.all([findUser(author), loadExt(author)]);
+    const nickname = u?.nickname ?? null, name = String(ext?.display_name ?? "").trim() || nickname || author;
+    const text = String(post.caption ?? "").replace(/\s+/g, " ").trim() || String(post.title ?? "").trim();
+    const body = text ? (text.length > 100 ? `${text.slice(0, 99).trimEnd()}…` : text) : MEDIA_WORD[post.kind] ?? "لحظة";
+    try { await globalThis.naslifeNotify?.(ids, { kind: "follow_moment", title: `لحظة جديدة من ${name}`, body, data: { postId: pid, userId: author, nickname } }); } catch { /* ignore */ }
+    return ids;
+  };
 
   // ---- أحداث الملف (مراسلة، مشاركة، نقر رابط) للإحصاءات؛ أفعال المالك على ملفه لا تُحسب
   app.post("/profiles/:id/event", async (req, reply) => {
@@ -500,6 +584,7 @@ export default async function profileV2(app, opts) {
       await pool.query("DELETE FROM user_follows WHERE follower_id=$1 OR user_id=$1", [id]);
       await pool.query("DELETE FROM profile_views WHERE user_id=$1 OR viewer_id=$1", [id]);
       await pool.query("DELETE FROM profile_events WHERE user_id=$1 OR actor_id=$1", [id]);
+      await pool.query("DELETE FROM follow_notify_log WHERE follower_id=$1 OR author_id=$1", [id]);
       return true;
     } catch { return false; }
   };

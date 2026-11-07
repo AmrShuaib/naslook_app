@@ -1000,10 +1000,15 @@ function rowRoute(req, res, url, key) {
     const located = url.searchParams.has('lat'), kind = url.searchParams.get('kind') || 'all', before = feedCursor(url.searchParams.get('before'));
     const limit = Math.max(1, Math.min(40, Number(url.searchParams.get('limit')) || 30));
     // feedAt = زمن النشر: الفعالية نُشرت قبل خمس ساعات وموعدها («at») غداً، وغيرها نُشر عند «at»
+    // «أتابعهم» (scope=following): لحظات من أتابعهم وأصدقائي، وفعالياتهم وإعلاناتهم (بالاسم في المحاكاة)، وعروض دوائري ووظائفها
+    const following = url.searchParams.get('scope') === 'following';
+    const people = following ? pv2FollowFeedIds() : [], circles = following ? [...bizFollows] : [];
+    const names = new Set(people.map((x) => pv2Names[x]).filter(Boolean));
+    const inScope = (i) => !following || (i.kind === 'moment' ? people.includes(i.payload?.user?.id) : ['event', 'listing'].includes(i.kind) ? names.has(i.who) : circles.includes(i.refId));
     const all = feedItems(located).map((i) => ({ ...i, feedAt: i.kind === 'event' ? ago(300) : i.at }))
-      .filter((i) => (!ROW_KINDS.includes(kind) || i.kind === kind) && (!before || feedCmp(before, feedKey(i)) < 0)).sort((a, b) => feedCmp(feedKey(a), feedKey(b)));
+      .filter((i) => inScope(i) && (!ROW_KINDS.includes(kind) || i.kind === kind) && (!before || feedCmp(before, feedKey(i)) < 0)).sort((a, b) => feedCmp(feedKey(a), feedKey(b)));
     const page = all.slice(0, limit), last = page[page.length - 1];
-    return json(200, { items: page, next: page.length === limit ? `${last.feedAt}~${ROW_KINDS.indexOf(last.kind)}~${last.id}` : null, located });
+    return json(200, { items: page, next: page.length === limit ? `${last.feedAt}~${ROW_KINDS.indexOf(last.kind)}~${last.id}` : null, located, ...(following ? { scope: 'following', following: { people: people.length, circles: circles.length } } : {}) });
   }
   return false;
 }
@@ -1043,10 +1048,12 @@ const pv2Ext = {
   SA0000001: { coverUrl: 'http://127.0.0.1:8090/chat/media/cover-fahad.jpg', displayName: 'فهد العتيبي', jobTitle: 'مصوّر', city: 'جدة', district: 'الشاطئ', links: [{ kind: 'instagram', value: 'fahad' }, { kind: 'x', value: 'fahad_1' }, { kind: 'website', value: 'fahad.sa' }], intro: { kind: 'voice', url: 'http://127.0.0.1:8090/chat/media/intro-fahad.weba', sec: 42, at: ago(60 * 24 * 3) }, msgPolicy: 'all', showOnline: true, showCity: true, showFriends: true, introVisibility: 'all' },
   SA0000002: { coverUrl: null, displayName: 'سارة', jobTitle: 'مصممة', city: 'جدة', district: '', links: [{ kind: 'instagram', value: 'sara.design' }], intro: { kind: 'video', url: 'http://127.0.0.1:8090/chat/media/intro-sara.mp4', sec: 18, at: ago(60 * 24) }, msgPolicy: 'friends', showOnline: true, showCity: false, showFriends: false, introVisibility: 'friends' },
 };
-const pv2Default = () => ({ coverUrl: null, displayName: '', jobTitle: '', city: '', district: '', links: [], intro: null, msgPolicy: 'all', showOnline: true, showCity: true, showFriends: false, introVisibility: 'all' });
+const pv2Default = () => ({ coverUrl: null, displayName: '', jobTitle: '', city: '', district: '', links: [], intro: null, msgPolicy: 'all', showOnline: true, showCity: true, showFriends: false, introVisibility: 'all', followNotify: true });
 const pv2Follows = new Set(['SA0000002>SA0000001', 'SA0000003>SA0000001', 'SA0000001>SA0000002']); // follower>user
 const pv2Friends = new Set(['SA0000002']); // أصدقاء amr (من /contacts)
 const pv2Private = new Set(['SA0000004']);
+// «أتابعهم»: من أتابعهم ومن أضفتهم (GET /me/following/ids وGET /feed?scope=following)
+const pv2FollowFeedIds = () => [...new Set([...[...pv2Follows].filter((k) => k.startsWith(me.id + '>')).map((k) => k.split('>')[1]), ...pv2Friends])].filter((x) => x !== me.id);
 const pv2Events = [{ kind: 'follow', at: Date.now() - 86400000 }, { kind: 'message', at: Date.now() - 3600000 }, { kind: 'share', at: Date.now() - 7200000 }];
 const pv2Visits = [3, 5, 2, 8, 4, 6, 7];
 function pv2Profile(id, viewer) {
@@ -1075,7 +1082,7 @@ function pv2Mine() {
   const labels = { avatar: 'صورة الحساب', cover: 'صورة الغلاف', bio: 'النبذة', links: 'روابط التواصل', intro: 'تعريف صوتي أو مرئي', email: 'تأكيد البريد', skills: 'المهارات' };
   const steps = [['avatar', !!me.avatarUrl], ['cover', !!ext.coverUrl], ['bio', !!p.bio], ['links', ext.links.length > 0], ['intro', !!ext.intro], ['email', true], ['skills', false]].map(([id, done]) => ({ id, done, label: labels[id] }));
   const done = steps.filter((s) => s.done).length;
-  return { ...p, settings: { msgPolicy: ext.msgPolicy, showOnline: ext.showOnline, showCity: ext.showCity, showFriends: ext.showFriends, introVisibility: ext.introVisibility }, completion: { pct: Math.round((done / 7) * 20) * 5, steps } };
+  return { ...p, settings: { msgPolicy: ext.msgPolicy, showOnline: ext.showOnline, showCity: ext.showCity, showFriends: ext.showFriends, introVisibility: ext.introVisibility, followNotify: ext.followNotify !== false }, completion: { pct: Math.round((done / 7) * 20) * 5, steps } };
 }
 function profileV2Route(req, res, url, key) {
   const json = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
@@ -1094,7 +1101,7 @@ function profileV2Route(req, res, url, key) {
     if (b.accountType !== undefined) { if (!['personal', 'pro'].includes(b.accountType)) return json(400, { error: 'bad-field', field: 'accountType' }); next.accountType = b.accountType; }
     if (b.msgPolicy !== undefined) { if (!['all', 'friends', 'none'].includes(b.msgPolicy)) return json(400, { error: 'bad-field', field: 'msgPolicy' }); next.msgPolicy = b.msgPolicy; }
     if (b.introVisibility !== undefined) { if (!['all', 'friends'].includes(b.introVisibility)) return json(400, { error: 'bad-field', field: 'introVisibility' }); next.introVisibility = b.introVisibility; }
-    for (const f of ['showOnline', 'showCity', 'showFriends']) if (b[f] !== undefined) { if (typeof b[f] !== 'boolean') return json(400, { error: 'bad-field', field: f }); next[f] = b[f]; }
+    for (const f of ['showOnline', 'showCity', 'showFriends', 'followNotify']) if (b[f] !== undefined) { if (typeof b[f] !== 'boolean') return json(400, { error: 'bad-field', field: f }); next[f] = b[f]; }
     pv2Ext[me.id] = next; json(200, pv2Mine());
   }); return true; }
   if (key === 'PUT /me/profile/intro') { readBody((b) => {
@@ -1106,7 +1113,17 @@ function profileV2Route(req, res, url, key) {
   if (key === 'GET /handles/check') { const n = String(url.searchParams.get('nickname') ?? '').trim().toLowerCase(); if (n.length < 3) return json(200, { valid: false, available: false, reason: 'short' }); if (!/^[a-z0-9._]{3,20}$/.test(n)) return json(200, { valid: false, available: false, reason: 'chars' }); const taken = ['naslife', 'admin', 'support', 'jeddah', 'dammam', ...Object.values(pv2Names)].includes(n); return json(200, { valid: true, available: !taken, reason: taken ? 'taken' : null }); }
   let m = key.match(/^GET \/profiles\/([^/]+)\/v2$/); if (m) { const id = resolve(m[1]); if (!id) return json(404, { error: 'not-found' }); if (id !== me.id) pv2Visits[6]++; return json(200, pv2Profile(id, me.id)); }
   m = key.match(/^(POST|DELETE) \/profiles\/([^/]+)\/follow$/); if (m) { const id = resolve(m[2]); if (!id) return json(404, { error: 'not-found' }); if (id === me.id) return json(400, { error: 'self' }); readBody(() => { const k = `${me.id}>${id}`; if (m[1] === 'POST') { pv2Follows.add(k); } else pv2Follows.delete(k); json(200, { ok: true, following: m[1] === 'POST', followers: [...pv2Follows].filter((x) => x.endsWith('>' + id)).length }); }); return true; }
-  m = key.match(/^GET \/profiles\/([^/]+)\/(followers|following)$/); if (m) { const id = resolve(m[1]); if (!id) return json(404, { error: 'not-found' }); const ids = [...pv2Follows].map((k) => k.split('>')).filter(([f, u]) => (m[2] === 'followers' ? u === id : f === id)).map(([f, u]) => (m[2] === 'followers' ? f : u)); return json(200, { items: ids.slice(0, Number(url.searchParams.get('limit') || 50)).map((x) => person(x, pv2Names[x] ?? 'user')) }); }
+  if (key === 'GET /me/following/ids') return json(200, { ids: pv2FollowFeedIds() });
+  // القائمتان بصفحات (المؤشر «زمن~معرّف آخر صف» معتم للتطبيق) و403 private للملف الخاص لغير صاحبه وأصدقائه، ولكل شخص isFollowing وisMe
+  m = key.match(/^GET \/profiles\/([^/]+)\/(followers|following)$/); if (m) {
+    const id = resolve(m[1]); if (!id) return json(404, { error: 'not-found' });
+    if (pv2Private.has(id) && id !== me.id && !pv2Friends.has(id)) return json(403, { error: 'private' });
+    const ids = [...pv2Follows].map((k) => k.split('>')).filter(([f, u]) => (m[2] === 'followers' ? u === id : f === id)).map(([f, u]) => (m[2] === 'followers' ? f : u)).reverse();
+    const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 30)));
+    const after = String(url.searchParams.get('before') ?? '').split('~')[1], start = after ? ids.indexOf(after) + 1 : 0;
+    const page = ids.slice(start, start + limit), more = start + limit < ids.length;
+    return json(200, { items: page.map((x) => ({ ...person(x, pv2Names[x] ?? 'user'), displayName: (pv2Ext[x] ?? {}).displayName ?? '', isFollowing: pv2Follows.has(`${me.id}>${x}`), isMe: x === me.id })), next: more ? `2026-11-01T00:00:00.000000Z~${page[page.length - 1]}` : null, total: ids.length });
+  }
   m = key.match(/^POST \/profiles\/([^/]+)\/event$/); if (m) { const id = resolve(m[1]); readBody((b) => { if (!['message', 'share', 'link'].includes(b.kind)) return json(400, { error: 'bad-kind' }); if (!id) return json(404, { error: 'not-found' }); if (id === me.id) return json(200, { ok: true }); pv2Events.push({ kind: b.kind, at: Date.now() }); json(200, { ok: true }); }); return true; }
   return false;
 }
@@ -1128,7 +1145,7 @@ http.createServer((req, res) => {
   }
   // ---- consent + age + legal identity (stream b1-consent) end
   if (/^\/(me\/login-email|me\/recovery|mail\/status|adminapi\/mail|auth\/(register|forgot|reset|change-password|nickname-available))(\/|$)/.test(url.pathname) && mailRoute(req, res, url, key)) return;
-  if (/^\/(profile\/v2\/status|handles\/check|me\/profile\/(v2|intro|stats)|profiles\/[^/]+\/(v2|follow|followers|following|event))$/.test(url.pathname) && profileV2Route(req, res, url, key)) return; // ---- profile v2
+  if (/^\/(profile\/v2\/status|handles\/check|me\/profile\/(v2|intro|stats)|me\/following\/ids|profiles\/[^/]+\/(v2|follow|followers|following|event))$/.test(url.pathname) && profileV2Route(req, res, url, key)) return; // ---- profile v2
   if (/^\/(me\/profile|profile\/avatar|market(\/|$)|stories\/|map\/pins\/)/.test(url.pathname) && profileMarketRoute(req, res, url, key)) return;
   if (url.pathname.startsWith('/mapposts')) { if (postsRoute(req, res, url, key)) return; }
   if (url.pathname.startsWith('/wishlist')) { if (wishlistRoute(req, res, url, key)) return; }
