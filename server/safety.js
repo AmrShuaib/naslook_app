@@ -14,7 +14,7 @@ const ID_RE = /^[A-Z]{2}\d{7}$/i;
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
 const CORE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export const TARGET_TYPES = ["post", "listing", "community", "vessel-post", "community-reply", "listing-question", "listing-review", "wanted", "wanted-reply",
-  "biz", "biz-review", "biz-post", "event", "vessel-comment", "vessel", "job"];
+  "biz", "biz-review", "biz-post", "event", "vessel-comment", "vessel", "job", "biz-msg"];
 const TARGETS = new Set(TARGET_TYPES);
 export const MOD_ACTIONS = ["dismiss", "hide", "restore", "suspend-owner"];
 const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
@@ -138,7 +138,7 @@ export default async function safety(app, opts) {
     post: "منشور", listing: "عرض", community: "منشور مجتمع", "vessel-post": "منشور دائرة", "community-reply": "رد في مساحة الدائرة",
     "listing-question": "سؤال على عرض", "listing-review": "تقييم في السوق", wanted: "طلب «أبحث عن»", "wanted-reply": "رد على طلب",
     biz: "دائرة تجارية", "biz-review": "تقييم دائرة", "biz-post": "خبر دائرة", event: "فعالية", "vessel-comment": "تعليق في دائرة", vessel: "دائرة",
-    job: "عرض وظيفي",
+    job: "عرض وظيفي", "biz-msg": "رسالة خاصة مع دائرة",
   };
   const typeName = (type) => TYPE_NAMES[type] ?? "محتوى";
 
@@ -233,6 +233,9 @@ export default async function safety(app, opts) {
       // الوظيفة (jobs.js): المسؤول عنها مالك الدائرة (وإلا من أنشأها)؛ الإخفاء = الحالة blocked كمنشورات الخريطة وعروض السوق
       case "job": return one(`SELECT COALESCE(b.owner_id, j.created_by) AS owner, j.title, j.description AS text, b.logo_url AS media,
         CASE WHEN j.status='blocked' THEN 'blocked' ELSE 'active' END AS status, j.biz_id, j.id AS job_id FROM jobs j LEFT JOIN biz b ON b.id=j.biz_id WHERE j.id=$1`, [id]);
+      // رسالة خاصة بين عميل ودائرة (biz_inbox.js): صاحبها من كتبها (العميل أو عضو الفريق)، والجهة تمنع الإبلاغ عن جهتك
+      case "biz-msg": return one(`SELECT m.sender_id AS owner, m.side, COALESCE(NULLIF(left(m.text, 80), ''), 'رسالة بصورة') AS title, m.text, m.photos->>0 AS media,
+        CASE WHEN m.hidden THEN 'blocked' ELSE 'active' END AS status, t.biz_id, t.id AS thread_id FROM biz_thread_msgs m JOIN biz_threads t ON t.id=m.thread_id WHERE m.id=$1`, [id]);
       case "vessel-post": case "vessel-comment": {
         // المحتوى في النواة: المعلومات من vessel_mod.js إن وُجد، وإلا يُقبل البلاغ بلا تفاصيل
         const fn = type === "vessel-post" ? globalThis.naslifeVesselPostInfo : globalThis.naslifeVesselCommentInfo;
@@ -311,6 +314,7 @@ export default async function safety(app, opts) {
         // و«إعادة الإظهار» ترجع حالته قبل الإخفاء (منشور أو موقوف أو مسودة…)
         if (hide) { await savePrev(type, id, "SELECT status AS v FROM jobs WHERE id=$1"); return upd("UPDATE jobs SET status='blocked', updated_at=now() WHERE id=$1 AND status<>'blocked'", [id]); }
         return upd("UPDATE jobs SET status=$2, updated_at=now() WHERE id=$1 AND status='blocked'", [id, await takePrev(type, id, ["draft", "pending", "open", "paused", "closed", "filled"], "open")]);
+      case "biz-msg": return flag("biz_thread_msgs");
       case "vessel-post": {
         try {
           return hide ? !!(await globalThis.naslifeVesselPostHide?.(id, { vesselId: info?.vessel_id ?? "", by, reason })) : !!(await globalThis.naslifeVesselPostUnhide?.(id));
@@ -359,6 +363,7 @@ export default async function safety(app, opts) {
     if (info.listing_id) data.listingId = info.listing_id;
     if (info.wanted_id) data.wantedId = info.wanted_id;
     if (info.post_id) data.parentId = info.post_id;
+    if (info.thread_id) data.threadId = info.thread_id;
     if (type === "post" || type === "community" || type === "vessel-post") data.postId = id;
     if (type === "listing") data.listingId = id;
     // الوظيفة: نوع job_review الموسوم manage يفتحه التطبيق على تبويب التوظيف في لوحة الدائرة
@@ -389,6 +394,12 @@ export default async function safety(app, opts) {
     if (info.owner === uid) return bad(reply, 400, "own-content");
     // الوظيفة يملكها مالك الدائرة، لكن فريقها (مدير، توظيف، موظف) لا يُبلغ عنها: بلاغه يُحتسب في حد الإخفاء التلقائي لعرض دائرته
     if (type === "job" && info.biz_id && (await one("SELECT 1 AS x FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [info.biz_id, uid]))) return bad(reply, 400, "own-content");
+    // الرسالة الخاصة يُبلغ عنها طرفا محادثتها فقط، ولا يُبلغ أحد عن جهته (رد زميله في فريق الدائرة)
+    if (type === "biz-msg") {
+      let side = null; try { side = await globalThis.naslifeBizInboxSideOf?.(uid, id); } catch { side = null; }
+      if (!side) return bad(reply, 404, "not-found");
+      if (side === info.side) return bad(reply, 400, "own-content");
+    }
     await pool.query("INSERT INTO content_reports(id,reporter_id,target_type,target_id,reason) VALUES($1,$2,$3,$4,$5) ON CONFLICT (reporter_id,target_type,target_id) DO UPDATE SET reason=EXCLUDED.reason, created_at=now()", [crypto.randomUUID(), uid, type, id, reason]);
     // بعد «إعادة الإظهار» أو «التجاهل» من الإدارة يبدأ العد من جديد، وإلا يعيد بلاغ واحد إخفاء ما راجعته الإدارة
     const n = (await pool.query(`SELECT count(DISTINCT reporter_id)::int AS n FROM content_reports WHERE target_type=$1 AND target_id=$2

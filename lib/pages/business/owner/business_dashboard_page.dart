@@ -12,6 +12,7 @@ import '../../../state/biz_providers.dart';
 import '../../../ui/widgets.dart';
 import '../../posts/post_stats.dart';
 import '../business_page.dart' show openBusiness, BizLogo, Stars, dayLabel, shortDate;
+import '../inbox/dashboard_inbox.dart';
 import 'business_editor.dart';
 import 'dashboard_catalog.dart';
 import 'dashboard_jobs.dart';
@@ -28,8 +29,11 @@ class BusinessDashboardPage extends ConsumerWidget {
   final int initialTab;
   const BusinessDashboardPage({super.key, required this.id, this.initial, this.initialTab = 0});
 
-  /// فهرس تبويب «التوظيف» (الأخير) للروابط العميقة من الإشعارات.
+  /// فهرس تبويب «التوظيف» للروابط العميقة من الإشعارات.
   static const jobsTab = 8;
+
+  /// فهرس تبويب «الرسائل» (الأخير، رسائل العملاء الخاصة من biz_inbox.js): أُضيف في النهاية فلا تتغير فهارس ما قبله.
+  static const inboxTab = 9;
 
   /// فهرس التبويب لمفتاح الخطوة التالية في الاكتمال (profile|catalog|posts|offers)؛ null لما ليس تبويباً (verify).
   static int? tabIndexFor(String tab) => switch (tab) { 'catalog' => 2, 'offers' => 3, 'posts' => 4, 'profile' => 7, _ => null };
@@ -50,8 +54,8 @@ class BusinessDashboardPage extends ConsumerWidget {
       ('التوظيف', Icons.work_outline_rounded),
     ];
     return DefaultTabController(
-      length: tabs.length,
-      initialIndex: initialTab.clamp(0, tabs.length - 1),
+      length: tabs.length + 1,
+      initialIndex: initialTab.clamp(0, tabs.length),
       child: Scaffold(
         backgroundColor: Joy.bg,
         appBar: AppBar(
@@ -71,7 +75,11 @@ class BusinessDashboardPage extends ConsumerWidget {
             indicatorColor: Joy.primary,
             labelStyle: const TextStyle(fontFamily: AppTheme.bodyFont, fontWeight: FontWeight.w700, fontSize: 13.5),
             unselectedLabelStyle: const TextStyle(fontFamily: AppTheme.bodyFont, fontWeight: FontWeight.w500, fontSize: 13.5),
-            tabs: [for (final (label, icon) in tabs) Tab(child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 17), const SizedBox(width: 5), Text(label)]))],
+            tabs: [
+              for (final (label, icon) in tabs) Tab(child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 17), const SizedBox(width: 5), Text(label)])),
+              // «الرسائل» بشارة غير المقروء (تعدّ 0 لمن ليس في فريق الرسائل)
+              Tab(key: const Key('dash-tab-inbox'), child: InboxTabLabel(bizId: id)),
+            ],
           ),
         ),
         body: biz == null
@@ -88,6 +96,7 @@ class BusinessDashboardPage extends ConsumerWidget {
                     TeamTab(biz: biz),
                     ProfileTab(biz: biz),
                     JobsTab(biz: biz),
+                    InboxTab(biz: biz),
                   ]),
       ),
     );

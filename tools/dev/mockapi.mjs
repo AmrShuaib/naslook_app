@@ -1192,6 +1192,93 @@ http.createServer((req, res) => {
     if (key === 'POST /chat/suggest') return lb((b) => { const last = [...(Array.isArray(b.messages) ? b.messages : [])].reverse().find((m) => !m.mine)?.text ?? ''; const sug = /السلام/.test(last) ? ['وعليكم السلام ورحمة الله', 'هلا والله', 'أهلاً، كيف الحال؟'] : /سعر|بكم|ريال/.test(last) ? ['كم السعر؟', 'فيه خصم؟', 'تمام، أبغى واحد'] : /[؟?]/.test(last) ? ['نعم', 'لا', 'خلني أتأكد'] : ['تمام', 'أبشر', 'خلني أرجع لك']; lj(200, { suggestions: sug, source: 'rules' }); });
   }
   // ---- chat live + suggest (stream B) end
+  // ---- circle inbox (stream b3-inbox) start — تحاكي server/biz_inbox.js في الذاكرة: محادثة العميل الوهمي مع «برو 92» (رد من الدائرة لم يُقرأ)،
+  // وصندوق إيكيا (يملكها المستخدم الوهمي) فيه محادثة من sara بمرجع صنف؛ الإرسال والقراءة والإسناد والإغلاق وعدّادات غير المقروء.
+  if (/^\/(bizinbox(\/|$)|biz\/[^/]+\/(thread|inbox(\/unread)?)$|adminapi\/bizinbox\/)/.test(url.pathname)) {
+    const mkT = (id, bizId, userId, extra = {}) => ({ id, bizId, userId, status: 'open', assigneeId: null, lastAt: ago(3), lastText: '', lastSide: 'customer', userUnread: 0, teamUnread: 0, userReadAt: null, teamReadAt: null, createdAt: ago(60), closedAt: null, ...extra });
+    const BI = (globalThis.__bizInbox ??= (() => {
+      const st = { threads: {}, msgs: {}, n: 0 };
+      st.threads['bt-1'] = mkT('bt-1', 'biz-brew92', me.id, { lastText: 'أهلاً، الحبوب الإثيوبية متوفرة اليوم', lastSide: 'team', userUnread: 1 });
+      st.msgs['bt-1'] = [
+        { id: 'bm-1', side: 'customer', senderId: me.id, text: 'هل عندكم حبوب إثيوبية؟', photos: [], ref: null, hidden: false, createdAt: ago(40) },
+        { id: 'bm-2', side: 'team', senderId: 'SA0000004', text: 'أهلاً، الحبوب الإثيوبية متوفرة اليوم', photos: [], ref: null, hidden: false, createdAt: ago(3) },
+      ];
+      st.threads['bt-2'] = mkT('bt-2', 'biz-ikea', 'SA0000002', { lastText: 'وصل الرف ناقص برغي', teamUnread: 2 });
+      st.msgs['bt-2'] = [
+        { id: 'bm-3', side: 'customer', senderId: 'SA0000002', text: 'السلام عليكم، طلبت رف BILLY', photos: [], ref: { kind: 'item', id: 'ikea-billy' }, hidden: false, createdAt: ago(20) },
+        { id: 'bm-4', side: 'customer', senderId: 'SA0000002', text: 'وصل الرف ناقص برغي', photos: [], ref: null, hidden: false, createdAt: ago(3) },
+      ];
+      return st;
+    })());
+    const bj = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); return true; };
+    const bb = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => { let b = {}; try { b = JSON.parse(raw || '{}'); } catch { b = {}; } cb(b); }); return true; };
+    const names = { SA0000001: 'amr', SA0000002: 'sara', SA0000003: 'khalid', SA0000004: 'noura' };
+    const P = (id) => (id ? person(id, names[id] ?? id) : null);
+    const circleOf = (id) => { const b = SEED.find((x) => x.id === id); return { id, name: b ? (b.nameAr || b.name) : id, logoUrl: b?.logoUrl ?? null, category: b?.category ?? null, verified: !!b?.verified, ownerId: id === 'biz-ikea' ? me.id : 'SA0000004' }; };
+    const teamOf = (bizId) => (bizId === 'biz-ikea' ? [{ ...P(me.id), role: 'owner' }, { ...P('SA0000003'), role: 'staff' }] : []);
+    const refOut = (r, bizId) => {
+      if (!r) return null;
+      if (r.kind === 'order') { const o = bizOrders.find((x) => x.id === r.id); return o ? { kind: 'order', id: o.id, title: o.title, code: o.code, status: o.status, total: o.total, startAt: o.startAt ?? null } : { ...r, missing: true }; }
+      const it = (SEED.find((x) => x.id === bizId)?.items ?? []).find((i) => i.id === r.id);
+      return it ? { kind: 'item', id: it.id, title: it.title, price: it.price, imageUrl: it.imageUrl ?? null } : { ...r, missing: true };
+    };
+    const msgOut = (m, t, viewer) => ({ id: m.id, threadId: t.id, side: m.side, mine: viewer === 'customer' ? m.side === 'customer' : m.senderId === me.id, text: m.hidden ? '' : m.text, photos: m.hidden ? [] : m.photos,
+      hidden: m.hidden, ref: m.hidden ? null : refOut(m.ref, t.bizId), createdAt: m.createdAt, ...(viewer === 'team' && m.side === 'team' ? { sender: P(m.senderId) } : {}) });
+    const threadOut = (t, viewer) => ({ id: t.id, bizId: t.bizId, status: t.status, lastAt: t.lastAt, lastText: t.lastText, lastSide: t.lastSide, createdAt: t.createdAt, closedAt: t.closedAt,
+      ...(viewer === 'customer' ? { biz: circleOf(t.bizId), unread: t.userUnread, seenAt: t.teamReadAt } : { customer: P(t.userId), assignee: P(t.assigneeId), unread: t.teamUnread, seenAt: t.userReadAt }) });
+    const myOrders = (bizId, uid) => (uid === me.id ? bizOrders.filter((o) => o.bizId === bizId).slice(0, 10).map((o) => ({ kind: 'order', id: o.id, title: o.title, code: o.code, status: o.status, total: o.total })) : []);
+    const append = (t, side, b, senderId = me.id) => {
+      const text = String(b.text ?? '').trim().slice(0, 2000); const photos = Array.isArray(b.photos) ? b.photos.slice(0, 4) : [];
+      if (!text && !photos.length) return null;
+      const m = { id: 'bm-' + (++BI.n) + '-' + Date.now(), side, senderId, text, photos, ref: b.ref ?? null, hidden: false, createdAt: new Date().toISOString() };
+      (BI.msgs[t.id] ??= []).push(m);
+      Object.assign(t, { status: 'open', closedAt: null, lastAt: m.createdAt, lastText: text || (photos.length > 1 ? `${photos.length} صور` : 'صورة'), lastSide: side });
+      if (side === 'customer') { t.teamUnread++; t.userUnread = 0; } else { t.userUnread++; t.teamUnread = 0; t.teamReadAt = m.createdAt; }
+      return m;
+    };
+    if (key === 'GET /bizinbox/status') return bj(200, { ok: true, perMin: 30, threadsPerDay: 5, maxPhotos: 4, maxText: 2000, roles: ['owner', 'manager', 'staff'], filters: ['open', 'closed', 'mine', 'all'] });
+    let bm = url.pathname.match(/^\/biz\/([^/]+)\/thread$/);
+    if (bm) {
+      const bizId = bm[1]; const own = bizId === 'biz-ikea';
+      const t = Object.values(BI.threads).find((x) => x.bizId === bizId && x.userId === me.id) ?? null;
+      if (req.method === 'GET') return bj(200, { biz: circleOf(bizId), thread: t ? threadOut(t, 'customer') : null, messages: t ? (BI.msgs[t.id] ?? []).map((m) => msgOut(m, t, 'customer')) : [], hasMore: false, canSend: !own, reason: own ? 'own-circle' : null, orders: own ? [] : myOrders(bizId, me.id) });
+      if (req.method === 'POST') return bb((b) => {
+        if (own) return bj(400, { error: 'own-circle' });
+        let th = t;
+        if (!th) { th = mkT('bt-' + Date.now(), bizId, me.id, { createdAt: new Date().toISOString() }); BI.threads[th.id] = th; }
+        const m = append(th, 'customer', b); if (!m) return bj(400, { error: 'empty' });
+        // رد آلي من الدائرة بعد ثوانٍ ليُرى الرد والشارة
+        setTimeout(() => append(th, 'team', { text: 'شكراً لتواصلك، سنرد عليك قريباً' }, 'SA0000004'), 4000);
+        bj(200, { thread: threadOut(th, 'customer'), message: msgOut(m, th, 'customer'), duplicate: false });
+      });
+    }
+    if (key === 'GET /bizinbox/threads') { const list = Object.values(BI.threads).filter((t) => t.userId === me.id).sort((a, z) => (a.lastAt < z.lastAt ? 1 : -1)).map((t) => threadOut(t, 'customer')); return bj(200, { threads: list, unread: list.filter((t) => t.unread > 0).length }); }
+    bm = url.pathname.match(/^\/bizinbox\/threads\/([^/]+)(?:\/(messages|read|assign|close|reopen))?$/);
+    if (bm) {
+      const t = BI.threads[bm[1]]; if (!t) return bj(404, { error: 'not-found' });
+      const viewer = t.userId === me.id ? 'customer' : t.bizId === 'biz-ikea' ? 'team' : null; if (!viewer) return bj(404, { error: 'not-found' });
+      const act = bm[2];
+      if (!act && req.method === 'GET') return bj(200, { viewer, role: viewer === 'team' ? 'owner' : null, biz: circleOf(t.bizId), thread: threadOut(t, viewer), messages: (BI.msgs[t.id] ?? []).map((m) => msgOut(m, t, viewer)), hasMore: false, canSend: true, reason: null, orders: myOrders(t.bizId, t.userId), ...(viewer === 'team' ? { team: teamOf(t.bizId), canAssignOthers: true } : {}) });
+      if (act === 'read') { if (viewer === 'customer') { t.userUnread = 0; t.userReadAt = new Date().toISOString(); } else { t.teamUnread = 0; t.teamReadAt = new Date().toISOString(); } return bj(200, { ok: true }); }
+      if (act === 'messages') return bb((b) => { const m = append(t, viewer, b); if (!m) return bj(400, { error: 'empty' }); bj(200, { thread: threadOut(t, viewer), message: msgOut(m, t, viewer), duplicate: false }); });
+      if (viewer !== 'team') return bj(403, { error: 'forbidden' });
+      if (act === 'assign') return bb((b) => { t.assigneeId = b.userId ?? null; bj(200, { thread: threadOut(t, 'team') }); });
+      if (act === 'close') { Object.assign(t, { status: 'closed', closedAt: new Date().toISOString() }); return bj(200, { thread: threadOut(t, 'team') }); }
+      if (act === 'reopen') { Object.assign(t, { status: 'open', closedAt: null }); return bj(200, { thread: threadOut(t, 'team') }); }
+    }
+    bm = url.pathname.match(/^\/biz\/([^/]+)\/inbox(\/unread)?$/);
+    if (bm && req.method === 'GET') {
+      if (bm[1] !== 'biz-ikea') return bj(403, { error: 'forbidden' });
+      const all = Object.values(BI.threads).filter((t) => t.bizId === 'biz-ikea');
+      const counts = { open: all.filter((t) => t.status === 'open').length, closed: all.filter((t) => t.status === 'closed').length, mine: all.filter((t) => t.assigneeId === me.id).length, unread: all.filter((t) => t.teamUnread > 0).length };
+      if (bm[2]) return bj(200, { unread: counts.unread, open: counts.open, mine: all.filter((t) => t.assigneeId === me.id && t.teamUnread > 0).length });
+      const f = ['open', 'closed', 'mine', 'all'].includes(url.searchParams.get('filter')) ? url.searchParams.get('filter') : 'open';
+      const list = all.filter((t) => f === 'all' || (f === 'mine' ? t.assigneeId === me.id : t.status === f)).sort((a, z) => (a.lastAt < z.lastAt ? 1 : -1));
+      return bj(200, { filter: f, role: 'owner', canAssignOthers: true, counts, threads: list.map((t) => threadOut(t, 'team')), team: teamOf('biz-ikea') });
+    }
+    if (url.pathname.startsWith('/adminapi/bizinbox/reported/')) return bj(404, { error: 'not-reported' });
+  }
+  // ---- circle inbox (stream b3-inbox) end
   // ---- moments extras (server) start — تحاكي server/moment_extras.js (تفاعلات 😍 😂 🔥 👏)، و/chat/vpreview في chat_tools.js
   // (يقدّم ملف mp4 بالاسم نفسه من mock-media إن وُجد وإلا 404)، و/m/:id في share.js (صفحة وسوم تحوّل إلى /#/m/<id>).
   // المنشور الأول فيه تفاعلان جاهزان من sara وkhalid حتى تظهر العدّادات.

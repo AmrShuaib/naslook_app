@@ -184,6 +184,10 @@ NASLIFE_TEST_DB=naslife_test_reg server/test/run.sh harness_biz_onboard.mjs
 
 حزم أثّرت فيها بوابة البيع فعُدّلت بسطر اعتماد قبل الطلبات المدفوعة: `harness.mjs`، `harness_offers.mjs`، `harness_chat_cards.mjs`، `harness_notify.mjs`.
 
+## رسائل العملاء الخاصة (نوفمبر 2026)
+
+الصفحة العامة للدائرة التي لها مالك فيها «راسل الدائرة» (تحت بطاقة المساحة، لغير فريقها)، ولوحة الدائرة فيها تبويب «الرسائل» أخيراً (`BusinessDashboardPage.inboxTab = 9`) بشارة غير المقروء وفلاتر وإسناد. يقرأ الصندوق المالك والمدير والموظف (لا hr ولا مدير النظام)، والدائرة غير الموثّقة تُراسَل ويرى العميل «دائرة غير موثّقة». التفاصيل في `docs/biz-inbox.md`.
+
 ## ملاحظات ومؤجّلات
 
 - `POST /adminapi/biz/:id {verified}` في `admin.js` ما زال يقلب العمود `verified` وحده (الملف خارج هذه الحزمة)، والمشغّل `biz_verified_mirror` يكمل الحالة و`verified_at` فيبقى الاتساق وبوابة البيع صحيحين؛ ما ينقصه فقط إشعار المالك (`biz_verified` / `biz_verification_rejected`) وسبب الرفض، فالأفضل أن تستدعي اللوحة `POST /adminapi/biz/:id/verification/approve|reject` (حزمة الإدارة).
