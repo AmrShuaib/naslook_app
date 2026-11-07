@@ -219,6 +219,21 @@ class _ModerationCardState extends ConsumerState<_ModerationCard> {
             if (preview.isNotEmpty) Text(preview, maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.4)),
           ])),
         ]),
+        // لحظة الألبوم: كل صورها للمشرف لا الغلاف وحده
+        if (it.mediaUrls.length > 1)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: SizedBox(
+              key: Key('mod-album-$k'),
+              height: 48,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: it.mediaUrls.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (_, i) => ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.network(thumbUrl(it.mediaUrls[i]), width: 48, height: 48, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(width: 48, height: 48, color: Joy.surface2))),
+              ),
+            ),
+          ),
         const SizedBox(height: 6),
         Text('الناشر: ${it.owner == null ? 'غير معروف' : (it.owner!.nickname.isNotEmpty ? it.owner!.nickname : it.owner!.id)} · آخر بلاغ ${timeAgo(it.lastAt)}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
         if (it.reasons.isNotEmpty)

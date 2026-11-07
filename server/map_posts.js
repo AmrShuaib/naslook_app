@@ -6,6 +6,7 @@
 // (الأماكن الأكثر لحظاتٍ: دائرة تجارية قريبة أو اسم المكان المكتوب).
 // «الجمهور» لكل لحظة (audience: friends | all، قرار المالك: الافتراضي «الأصدقاء» للحظة الشخصية) يدخل قاعدة الرؤية الواحدة
 // momentVisibleSql أدناه فيسري على كل مسار يقرأ اللحظات، وعلى البث الحي (momentAudience).
+// «الألبوم» (7 نوفمبر 2026): لحظة الصورة تحمل حتى 8 صور في media (مصفوفة روابط، الغلاف أولاً) وmedia_url يبقى الغلاف لكل قارئ قديم.
 // التسجيل في src/index.js:
 //   await app.register((await import("./map_posts.js")).default, { pool, auth });
 import crypto from "node:crypto";
@@ -19,6 +20,8 @@ const CTA_TYPES = new Set(["link", "whatsapp", "call", "biz", "market", "chat"])
 const TTL_HOURS = new Set([24, 72, 168]);
 export const AUDIENCES = new Set(["friends", "all"]);
 const MAX_OVERLAYS = 30;
+/// أقصى صور الألبوم: حد الكاميرا في التطبيق (kMaxShots في capture_page.dart)
+export const MAX_MEDIA = 8;
 const str = (v, max = 200) => String(v ?? "").trim().slice(0, max);
 const num = (v) => (v == null || v === "" ? null : Number(v));
 const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
@@ -65,6 +68,16 @@ export function defaultAudience({ tag = "moment", price = null, cta = null } = {
   return (tag && tag !== "moment") || price != null || cta != null ? "all" : "friends";
 }
 
+/// صور اللحظة بالترتيب، الغلاف أولاً: media إن وُجد، وإلا [media_url] للحظات ما قبل الألبوم. الغلاف هو media_url دائماً (مصدر الحقيقة
+/// لكل قارئ قديم، ولو عدّله إصدار سابق بعد تراجع النشر)، فيُقدَّم إن اختلف أول المصفوفة. غير الصورة لا ألبوم لها: وسيطها وحده.
+export function albumOf(p) {
+  const cover = p?.media_url ? String(p.media_url) : null;
+  if (!cover) return [];
+  if (p.kind !== "image") return [cover];
+  const list = Array.isArray(p.media) ? p.media.filter((u) => typeof u === "string" && u) : [];
+  return [cover, ...list.filter((u) => u !== cover)].slice(0, MAX_MEDIA);
+}
+
 export default async function posts(app, opts) {
   const { pool, auth } = opts;
   if (!pool || !auth) throw new Error("posts: pool and auth are required");
@@ -84,6 +97,8 @@ export default async function posts(app, opts) {
     ALTER TABLE map_posts ADD COLUMN IF NOT EXISTS audio_url TEXT, ADD COLUMN IF NOT EXISTS audio_sec INT;
     -- الجمهور: ما نُشر قبل الميزة نُشر للعموم فيبقى 'all' (افتراضي العمود)؛ الجديد يحدده POST /mapposts صراحةً
     ALTER TABLE map_posts ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'all';
+    -- الألبوم: روابط الصور بالترتيب والغلاف أولاً (= media_url)؛ NULL = لحظة قبل الميزة، تُملأ أدناه بغلافها
+    ALTER TABLE map_posts ADD COLUMN IF NOT EXISTS media JSONB;
   `);
   // سجل أحداث المنشورات للإحصاءات: مشاهدة (كل فتح)، ضغطة زر الإجراء، مراسلة الناشر، إعجاب
   await pool.query(`
@@ -95,6 +110,12 @@ export default async function posts(app, opts) {
   const logEvent = async (postId, uid, kind) => { try { await pool.query("INSERT INTO map_post_events(post_id,user_id,kind) VALUES($1,$2,$3)", [postId, uid, kind]); } catch { /* ignore */ } };
   // روابط حُفظت سابقاً بمضيف www. تُعاد إلى المضيف الأساسي (انظر publicOrigin)
   try { await pool.query(String.raw`UPDATE map_posts SET media_url = regexp_replace(media_url, '^(https?://)www\.', '\1', 'i') WHERE media_url ~* '^https?://www\.'`); } catch { /* ignore */ }
+  try {
+    await pool.query(String.raw`UPDATE map_posts SET media = (SELECT jsonb_agg(regexp_replace(e, '^(https?://)www\.', '\1', 'i') ORDER BY i) FROM jsonb_array_elements_text(media) WITH ORDINALITY t(e, i))
+      WHERE jsonb_typeof(media) = 'array' AND media::text ~* '"https?://www\.'`);
+    // لحظات ما قبل الألبوم: media = [media_url] (مرة واحدة فعلياً: الجديد يُكتب بمصفوفته عند النشر)
+    await pool.query("UPDATE map_posts SET media = CASE WHEN media_url IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(media_url) END WHERE media IS NULL");
+  } catch { /* القرّاء يستنتجون الألبوم من media_url (albumOf) فلا يتعطل شيء */ }
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
@@ -122,6 +143,26 @@ export default async function posts(app, opts) {
     return `${publicOrigin(req)}${s}`;
   };
   const bbox = (s) => { const p = String(s ?? "").split(",").map(Number); return p.length === 4 && p.every(Number.isFinite) ? { minLng: p[0], minLat: p[1], maxLng: p[2], maxLat: p[3] } : null; };
+  // ---- الألبوم: صورة الألبوم ملف رفعه التطبيق عبر /chat/upload فقط (اسم ذلك المسار)، لا رابط خارجي ولا مسار آخر
+  const MEDIA_PATH = /^\/chat\/media\/[a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5}$/i;
+  const ownMedia = (req, url) => { const u = absUrl(req, url); const own = u ? OWN_MEDIA.exec(u) : null; return own && MEDIA_PATH.test(own[1]) ? u : null; };
+  // مفتاح المقارنة بين رابطين لملف واحد: المسار (المضيف قد يختلف بين رابط مخزّن وآخر مرسل)
+  const mediaKey = (u) => OWN_MEDIA.exec(String(u ?? ""))?.[1] ?? String(u ?? "");
+  /// صور الألبوم المرسلة: مصفوفة غير فارغة، كل عنصر من وسائطنا (أو من الألبوم الحالي [within] في التعديل: ترتيب وحذف فقط)،
+  /// بلا تكرار وحتى MAX_MEDIA. يعيد {list} أو {error}.
+  const albumInput = (req, input, within = null) => {
+    if (!Array.isArray(input) || !input.length) return { error: "bad-media" };
+    const list = [], seen = new Set();
+    for (const raw of input) {
+      let u;
+      if (within) { const k = mediaKey(absUrl(req, raw)); u = within.find((x) => mediaKey(x) === k); if (!u) return { error: "media-not-in-album" }; }
+      else { u = ownMedia(req, raw); if (!u) return { error: "bad-media" }; }
+      if (seen.has(mediaKey(u))) continue;
+      seen.add(mediaKey(u)); list.push(u);
+    }
+    return list.length > MAX_MEDIA ? { error: "too-many-media" } : { list };
+  };
+  const hasAlbum = (v) => (Array.isArray(v) ? v.length > 0 : v != null);
 
   const SELECT = `SELECT p.*, (SELECT count(*) FROM map_post_likes l WHERE l.post_id=p.id)::int AS likes,
     ($1::text IS NOT NULL AND EXISTS (SELECT 1 FROM map_post_likes l WHERE l.post_id=p.id AND l.user_id=$1)) AS liked FROM map_posts p`;
@@ -134,6 +175,8 @@ export default async function posts(app, opts) {
     audioUrl: p.audio_url ?? null, audioSec: p.audio_sec ?? null,
     // من يرى اللحظة يعرف جمهورها (لحظة «الأصدقاء» لا تصل غيرهم أصلاً)؛ قيمة غير معروفة تُعرض «الأصدقاء» كما تعاملها القاعدة
     audience: p.audience === "all" ? "all" : "friends",
+    // صور الألبوم بالترتيب والغلاف أولاً (= mediaUrl)؛ لحظة قبل الميزة = [mediaUrl]
+    media: albumOf(p),
   });
   const many = async (rows, uid) => { const cache = new Map(); const res = []; for (const r of rows) { if (!cache.has(r.user_id)) cache.set(r.user_id, await person(r.user_id)); res.push({ ...(await out(r, uid)), user: cache.get(r.user_id) }); } return res; };
 
@@ -195,6 +238,8 @@ export default async function posts(app, opts) {
     return f ? f(`${alias}.user_id`, viewerExpr, { ...opts, publicWhen: audienceAll(alias) }) : closedVisibleSql(alias, viewerExpr, opts);
   };
   globalThis.naslifeMomentVisibleSql = momentVisibleSql;
+  // صور الألبوم لصف map_posts (الغلاف أولاً) للإضافات التي تبني شكل اللحظة بنفسها (row.js) أو تنظّف وسائطها
+  globalThis.naslifeMomentMedia = albumOf;
   // بعد تحميل الإضافات كلها: بلا قاعدة profile_ext.js يعمل الاحتياط المغلق (لحظات «الأصدقاء» لصاحبها وحده، ولحظات الملف الخاص كذلك
   // إن وُجد عمود الخصوصية)، فننبّه في السجل
   app.addHook("onReady", async () => {
@@ -224,7 +269,16 @@ export default async function posts(app, opts) {
     if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     const b = req.body ?? {};
     const kind = KINDS.has(b.kind) ? b.kind : null; if (!kind) return bad(reply, 400, "bad-kind");
-    const mediaUrl = kind === "text" ? null : absUrl(req, b.mediaUrl);
+    let mediaUrl = kind === "text" ? null : absUrl(req, b.mediaUrl);
+    // الألبوم (mediaUrls، لحظة الصورة فقط): الغلاف أولها، وmediaUrl إن أُرسل معه يجب أن يكون هو الغلاف
+    let media = mediaUrl ? [mediaUrl] : [];
+    if (hasAlbum(b.mediaUrls)) {
+      if (kind !== "image") return bad(reply, 400, "album-images-only");
+      const a = albumInput(req, b.mediaUrls);
+      if (a.error) return bad(reply, 400, a.error, { max: MAX_MEDIA });
+      if (mediaUrl && mediaKey(mediaUrl) !== mediaKey(a.list[0])) return bad(reply, 400, "cover-mismatch");
+      media = a.list; mediaUrl = media[0];
+    }
     if (kind !== "text" && !mediaUrl) return bad(reply, 400, "bad-media");
     const lat = num(b.lat), lng = num(b.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return bad(reply, 400, "bad-location");
@@ -245,10 +299,10 @@ export default async function posts(app, opts) {
     const audioSec = audioUrl && b.audioSec != null ? Math.round(clamp(b.audioSec, 1, 600, 0)) || null : null;
     // منشور نصي بلا نص لكن بتسجيل صوتي: مقبول (لوحة صوتية)
     if (kind === "text" && !caption && !overlays.some((o) => o.type === "text") && !audioUrl) return bad(reply, 400, "empty");
-    await pool.query(`INSERT INTO map_posts(id,user_id,kind,media_url,caption,bg,overlays,tag,title,price,cta,lat,lng,place_name,duration_sec,expires_at,audio_url,audio_sec,audience)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now() + ($16 || ' hours')::interval,$17,$18,$19)`,
+    await pool.query(`INSERT INTO map_posts(id,user_id,kind,media_url,caption,bg,overlays,tag,title,price,cta,lat,lng,place_name,duration_sec,expires_at,audio_url,audio_sec,audience,media)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now() + ($16 || ' hours')::interval,$17,$18,$19,$20)`,
       [id, uid, kind, mediaUrl, caption, HEX_RE.test(String(b.bg ?? "")) ? String(b.bg) : null, JSON.stringify(overlays), tag, str(b.title, 80), price,
-       JSON.stringify(cta), lat, lng, str(b.placeName, 80) || null, b.durationSec == null ? null : Math.round(clamp(b.durationSec, 0, 600, 0)), String(ttl), audioUrl, audioSec, audience]);
+       JSON.stringify(cta), lat, lng, str(b.placeName, 80) || null, b.durationSec == null ? null : Math.round(clamp(b.durationSec, 0, 600, 0)), String(ttl), audioUrl, audioSec, audience, JSON.stringify(media)]);
     const row = (await pool.query(`${SELECT} WHERE p.id=$2`, [uid, id])).rows[0];
     // بث فوري للتطبيقات المفتوحة (الخط الزمني والخريطة) بصيغة المشاهد نفسها؛ من منظور عام (لا mine ولا liked)،
     // ولحظة «الأصدقاء» أو لحظة صاحب الملف الخاص تُسلَّم لجمهورها فقط (live.js يصفّي لكل مستمع)
@@ -392,7 +446,21 @@ export default async function posts(app, opts) {
     if (b.price !== undefined) set("price", b.price == null || b.price === "" ? null : Math.max(0, Math.round(Number(b.price) || 0)));
     if (b.cta !== undefined) set("cta", JSON.stringify(cleanCta(b.cta)));
     if (b.placeName !== undefined) set("place_name", str(b.placeName, 80) || null);
-    if (b.mediaUrl !== undefined && p.kind !== "text") { const u = absUrl(req, b.mediaUrl); if (!u) return bad(reply, 400, "bad-media"); set("media_url", u); }
+    // الألبوم: mediaUrls يرتّب صور الألبوم الحالي أو يحذف منها (لا إضافة)، والأولى هي الغلاف. mediaUrl وحده (عميل قديم أو وسيط
+    // جديد) يحل محل الغلاف وتبقى بقية الألبوم، وصورة من الألبوم نفسه تتقدّم غلافاً بلا حذف شيء
+    const album = albumOf(p);
+    if (hasAlbum(b.mediaUrls)) {
+      if (p.kind !== "image") return bad(reply, 400, "album-images-only");
+      const a = albumInput(req, b.mediaUrls, album);
+      if (a.error) return bad(reply, 400, a.error, { max: MAX_MEDIA });
+      if (b.mediaUrl != null && b.mediaUrl !== "" && mediaKey(absUrl(req, b.mediaUrl)) !== mediaKey(a.list[0])) return bad(reply, 400, "cover-mismatch");
+      set("media_url", a.list[0]); set("media", JSON.stringify(a.list));
+    } else if (b.mediaUrl !== undefined && p.kind !== "text") {
+      const u = absUrl(req, b.mediaUrl); if (!u) return bad(reply, 400, "bad-media");
+      const at = album.findIndex((x) => mediaKey(x) === mediaKey(u));
+      const next = p.kind !== "image" ? [u] : at >= 0 ? [album[at], ...album.filter((_, i) => i !== at)] : [u, ...album.slice(1)];
+      set("media_url", next[0]); set("media", JSON.stringify(next));
+    }
     if (b.audioUrl !== undefined && (p.kind === "image" || p.kind === "text")) { const u = absUrl(req, b.audioUrl); set("audio_url", u); set("audio_sec", u && b.audioSec != null ? Math.round(clamp(b.audioSec, 1, 600, 0)) || null : null); }
     if (b.status !== undefined) { if (!["active", "hidden"].includes(b.status)) return bad(reply, 400, "bad-status"); if (p.status === "blocked") return bad(reply, 403, "blocked"); set("status", b.status); }
     if (b.ttlHours !== undefined) { if (!TTL_HOURS.has(Number(b.ttlHours))) return bad(reply, 400, "bad-ttl"); vals.push(String(Number(b.ttlHours))); sets.push(`expires_at=now() + ($${vals.length} || ' hours')::interval`); }

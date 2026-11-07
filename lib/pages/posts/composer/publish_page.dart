@@ -109,17 +109,15 @@ class _PublishPageState extends ConsumerState<PublishPage> {
     try {
       final api = ref.read(apiClientProvider);
       // ١. الوسائط: الغلاف يُخبز بالفلتر والقصّ، وبقية اللقطات كما هي، والفيديو والصوت كما هما.
-      // الخريطة تحمل صورة واحدة (mediaUrl): يُرفع الغلاف وحده فلا تُهدر رفعات لا تظهر، والدائرة والسوق يأخذان اللقطات كلها
+      // كل الوجهات تأخذ اللقطات كلها والغلاف أولاً: الخريطة ألبوماً (حتى 8 صور، mediaUrls)، والدائرة والسوق صوراً
       final urls = <String>[];
       final cover = d.coverShot;
       if (cover != null) {
         final baked = await bakePhoto(cover.bytes, filter: filterById(d.filter), adjust: d.adjust, frame: d.frame, name: cover.name, mime: cover.mime);
         urls.add((await api.uploadMedia(baked.bytes, contentType: baked.mime, fileName: baked.name)).url);
-        if (d.destination != Destination.map) {
-          for (final (i, s) in d.shots.indexed) {
-            if (i == d.cover) continue;
-            urls.add((await api.uploadMedia(s.bytes, contentType: s.mime, fileName: s.name)).url);
-          }
+        for (final (i, s) in d.shots.indexed) {
+          if (i == d.cover) continue;
+          urls.add((await api.uploadMedia(s.bytes, contentType: s.mime, fileName: s.name)).url);
         }
       }
       String? videoUrl;
@@ -143,9 +141,14 @@ class _PublishPageState extends ConsumerState<PublishPage> {
           };
           final MapPost post;
           if (editingExisting) {
+            // التعديل لا يلتقط صوراً جديدة: لا يُرسل mediaUrls فيبقى ألبوم اللحظة كما هو (ووسيط جديد إن وُجد يحل محل الغلاف وحده)
             post = await api.updatePost(d.editing!.id, {...fields, if (urls.isNotEmpty || videoUrl != null) 'mediaUrl': mediaUrl});
           } else {
-            post = await api.createPost({'kind': d.kind, 'mediaUrl': mediaUrl, 'lat': d.lat, 'lng': d.lng, 'durationSec': d.isVideo ? d.videoSec : null, ...fields});
+            post = await api.createPost({
+              'kind': d.kind, 'mediaUrl': mediaUrl, 'lat': d.lat, 'lng': d.lng, 'durationSec': d.isVideo ? d.videoSec : null, ...fields,
+              // ألبوم الصور: كل اللقطات والغلاف أولاً (= mediaUrl)
+              if (d.kind == 'image' && urls.length > 1) 'mediaUrls': urls,
+            });
           }
           invalidatePosts(ref);
           out = PublishOutcome(Destination.map, post: post);
@@ -267,6 +270,9 @@ class _PublishPageState extends ConsumerState<PublishPage> {
     );
   }
 
+  /// صور المنشور: اللقطات الجديدة، وإلا ألبوم المنشور الذي يُعدَّل (يبقى كما هو)
+  int get _photos => d.shots.isNotEmpty ? d.shots.length : (d.editing?.album.length ?? 0);
+
   Widget _thumb() {
     Widget inner;
     if (d.isText) {
@@ -285,7 +291,7 @@ class _PublishPageState extends ConsumerState<PublishPage> {
     }
     return Stack(children: [
       Container(width: 76, height: 108, clipBehavior: Clip.antiAlias, decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), color: Joy.surface2), child: inner),
-      Positioned(bottom: 6, right: 6, child: Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(999)), child: Text(d.isText ? 'نص' : d.isVideo ? 'فيديو' : d.shots.length > 1 ? '${d.shots.length} صور' : 'صورة', style: const TextStyle(color: Colors.white, fontSize: 10.5)))),
+      Positioned(bottom: 6, right: 6, child: Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(999)), child: Text(d.isText ? 'نص' : d.isVideo ? 'فيديو' : _photos > 1 ? albumCountLabel(_photos) : 'صورة', key: const Key('pub-thumb-label'), style: const TextStyle(color: Colors.white, fontSize: 10.5)))),
       if (d.voice != null) const Positioned(top: 6, right: 6, child: Icon(Icons.mic_rounded, size: 16, color: Colors.white)),
     ]);
   }
@@ -312,17 +318,14 @@ class _PublishPageState extends ConsumerState<PublishPage> {
   }
 
   Widget _mapOptions(String nick) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // عدة لقطات والوجهة الخريطة: المنشور يحمل صورة واحدة، فنقول ذلك قبل النشر بدل أن تختفي البقية بصمت
-        if (!d.isText && !d.isVideo && d.shots.length > 1)
-          Container(
-            key: const Key('pub-map-cover-only'),
-            margin: const EdgeInsets.only(bottom: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(color: Joy.sunSoft, borderRadius: BorderRadius.circular(12)),
-            child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Icon(Icons.photo_library_outlined, size: 18, color: Joy.sunText),
-              SizedBox(width: 8),
-              Expanded(child: Text('الخريطة تعرض صورة الغلاف فقط. لعرض كل الصور انشرها في السوق أو مجتمع دائرة.', style: TextStyle(color: Joy.sunText, fontSize: 12.5, height: 1.5))),
+        // عدة لقطات: اللحظة ألبوم يُسحب بين صوره في العارض، والبطاقات تعرض غلافه وعددها
+        if (!d.isText && !d.isVideo && _photos > 1)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Row(key: const Key('pub-map-album'), children: [
+              const Icon(Icons.photo_library_outlined, size: 17, color: Joy.textMuted),
+              const SizedBox(width: 6),
+              Expanded(child: Text('ألبوم · ${albumCountLabel(_photos)} · الأولى هي الغلاف، ويُسحب بينها في العارض', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5))),
             ]),
           ),
         _audienceChoice(),

@@ -452,25 +452,78 @@ void main() {
     expect(srv.bodies['POST /market']?['price'], 22000);
   });
 
-  testWidgets('several shots to the map: only the cover is uploaded and the publish screen says so', (tester) async {
+  testWidgets('several shots to the map publish an album: every shot is uploaded, the baked cover first, and sent as mediaUrls', (tester) async {
     final srv = await _pump(tester);
     await threeShots(tester);
     expect(find.byKey(const Key('dest-map')), findsOneWidget);
-    expect(find.byKey(const Key('pub-map-cover-only')), findsOneWidget);
-    expect(find.text('الخريطة تعرض صورة الغلاف فقط. لعرض كل الصور انشرها في السوق أو مجتمع دائرة.'), findsOneWidget);
+    // لا ملاحظة «الغلاف فقط» بعد الآن: سطر يقول إنها ألبوم، والمصغّرة تعرض عدد الصور
+    expect(find.byKey(const Key('pub-map-cover-only')), findsNothing);
+    expect(find.byKey(const Key('pub-map-album')), findsOneWidget);
+    expect(find.text('ألبوم · 3 صور · الأولى هي الغلاف، ويُسحب بينها في العارض'), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const Key('pub-thumb-label'))).data, '3 صور');
     await tester.tap(find.byKey(const Key('pub-go')));
     await _settle(tester);
-    expect(srv.uploads.length, 1, reason: 'الغلاف وحده يُرفع للخريطة؛ calls: ${srv.calls} snack: ${_snack(tester)}');
-    expect(srv.bodies['POST /mapposts']!['mediaUrl'], '/chat/media/img1.jpg');
-    expect(srv.bodies['POST /mapposts']!['kind'], 'image');
+    expect(srv.uploads.length, 3, reason: 'كل اللقطات تُرفع للخريطة؛ calls: ${srv.calls} snack: ${_snack(tester)}');
+    final body = srv.bodies['POST /mapposts']!;
+    expect(body['kind'], 'image');
+    expect(body['mediaUrl'], '/chat/media/img1.jpg', reason: 'الغلاف (المخبوز، أول رفعة)');
+    expect(body['mediaUrls'], ['/chat/media/img1.jpg', '/chat/media/img2.jpg', '/chat/media/img3.jpg']);
   });
 
-  testWidgets('several shots to a circle keep every photo, and the cover-only note is for the map alone', (tester) async {
+  testWidgets('one shot to the map stays a single photo: no mediaUrls and no album line', (tester) async {
+    final srv = await _pump(tester);
+    await tester.tap(find.byKey(const Key('shutter')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    expect(find.byKey(const Key('pub-map-album')), findsNothing);
+    expect(tester.widget<Text>(find.byKey(const Key('pub-thumb-label'))).data, 'صورة');
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.uploads.length, 1);
+    expect(srv.bodies['POST /mapposts']!.containsKey('mediaUrls'), isFalse);
+  });
+
+  testWidgets('two shots read «صورتان»', (tester) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('cam-multi')));
+    await _settle(tester);
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(find.byKey(const Key('shutter')));
+      await _settle(tester);
+    }
+    await tester.tap(find.byKey(const Key('cam-done')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    expect(tester.widget<Text>(find.byKey(const Key('pub-thumb-label'))).data, 'صورتان');
+    expect(find.text('ألبوم · صورتان · الأولى هي الغلاف، ويُسحب بينها في العارض'), findsOneWidget);
+  });
+
+  testWidgets('editing an album keeps it: no new uploads, no mediaUrl or mediaUrls in the PATCH, and the thumb shows its count', (tester) async {
+    final post = MapPost.fromJson({'id': _pid, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'kind': 'image', 'mediaUrl': '/chat/media/a1.jpg', 'media': ['/chat/media/a1.jpg', '/chat/media/a2.jpg', '/chat/media/a3.jpg', '/chat/media/a4.jpg'],
+      'caption': 'ألبوم', 'overlays': [], 'tag': 'moment', 'lat': 21.5, 'lng': 39.2, 'status': 'active', 'mine': true, 'audience': 'all'});
+    expect(post.isAlbum, isTrue);
+    final srv = await _pump(tester, edit: post);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    expect(tester.widget<Text>(find.byKey(const Key('pub-thumb-label'))).data, '4 صور');
+    await tester.enterText(find.byKey(const Key('pub-caption')), 'ألبوم بعد التعديل');
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.uploads, isEmpty);
+    final body = srv.bodies['PATCH /mapposts/$_pid']!;
+    expect(body['caption'], 'ألبوم بعد التعديل');
+    expect(body.containsKey('mediaUrl'), isFalse);
+    expect(body.containsKey('mediaUrls'), isFalse, reason: 'الخادم يبقي الألبوم حين لا يُرسل');
+  });
+
+  testWidgets('several shots to a circle keep every photo, and the album line is for the map alone', (tester) async {
     final srv = await _pump(tester);
     await threeShots(tester);
     await tester.tap(find.byKey(const Key('dest-circle')));
     await _settle(tester);
-    expect(find.byKey(const Key('pub-map-cover-only')), findsNothing);
+    expect(find.byKey(const Key('pub-map-album')), findsNothing);
     await tester.tap(find.byKey(const Key('circle-biz-brew92')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('pub-go')));
@@ -484,7 +537,7 @@ void main() {
     await threeShots(tester);
     await tester.tap(find.byKey(const Key('dest-market')));
     await _settle(tester);
-    expect(find.byKey(const Key('pub-map-cover-only')), findsNothing);
+    expect(find.byKey(const Key('pub-map-album')), findsNothing);
     expect(find.text('3 من 8 صور · الأولى هي الغلاف'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('lst-title')), 'طقم فناجين');
     await tester.enterText(find.byKey(const Key('lst-price')), '90');

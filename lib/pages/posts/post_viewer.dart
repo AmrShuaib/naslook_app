@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, listEquals, visibleForTesting;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -86,6 +87,10 @@ class PostViewerPage extends ConsumerStatefulWidget {
     VideoView.prepareSound(primeNow: true);
   }
 
+  /// بديل الاختبار لجلب صورة الألبوم التالية مسبقاً (precacheImage لا أثر له يُقاس في اختبار الودجات)
+  @visibleForTesting
+  static void Function(String url)? warmPhotoOverride;
+
   @override
   ConsumerState<PostViewerPage> createState() => _PostViewerPageState();
 }
@@ -117,6 +122,19 @@ class MomentVoice {
 
 class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   static const _autoMs = 7000;
+  /// الألبوم: أربع ثوانٍ لكل صورة، والمدة سبع ثوانٍ على الأقل (كأي لحظة)
+  static const _photoMs = 4000;
+  /// مدة اللحظة المعروضة بلا صوت: سبع ثوانٍ، وللألبوم أربع لكل صورة؛ والطبقة الصوتية تمدّها إلى طول التسجيل كما كانت
+  int _momentMs = _autoMs;
+
+  // --- الألبوم: السحب يميناً ويساراً بين صوره (النقر بين اللحظات كما كان)، والشريط يقلبها تلقائياً بقدر حصة كل صورة ---
+  /// متحكم صفحات ألبوم اللحظة النشطة (null لغير الألبوم)
+  PageController? _album;
+  /// الصورة المعروضة، وآخر حصة بلغها الشريط: القلب التلقائي إلى الأمام فقط حين يعبر الشريط حصة جديدة
+  int _photo = 0, _photoMark = 0;
+  /// قلب برمجي جارٍ: لا يُعامل onPageChanged الناتج عنه سحباً من المستخدم
+  bool _albumAuto = false;
+  final _warmedPhotos = <String>{};
   late final PageController _ctl = PageController(initialPage: widget.initial);
   late List<MapPost> posts = List.of(widget.posts);
   late int index = widget.initial;
@@ -231,6 +249,8 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     _life.dispose();
     _auto?.cancel();
     _releaseVideo();
+    // صفحات الألبوم أُزيلت قبلنا (الأبناء يُفكّون أولاً) فيُحرَّر متحكمها مباشرة
+    _album?.dispose();
     _voiceGen++;
     _voiceSub?.cancel();
     _voice?.dispose();
@@ -253,6 +273,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     _pendingNext = false;
     progress = 0;
     final p = posts[index];
+    _showAlbum(p);
     // تسجيل اللحظة السابقة يتوقف، وتسجيل هذه (إن وُجد) يبدأ وحده
     final voiced = _voiceShow(p);
     if (p.kind == 'image' || p.kind == 'text') {
@@ -292,10 +313,87 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   /// خطوة المؤقّت للصورة والنص (والفيديو المتعذّر): عند الامتلاء ينتقل مرة واحدة ويتوقف المؤقّت، فلا يُعاد بدء حركة الانتقال
   /// كل 50 م.ث قبل اكتمالها؛ ظهور اللحظة التالية يبدأ مؤقّتها
   void _timedStep() {
-    setState(() => progress += 50 / _autoMs);
+    setState(() => progress += 50 / _momentMs);
+    _followAlbum();
     if (progress < 1) return;
     _auto?.cancel();
     _next(auto: true);
+  }
+
+  // --- الألبوم ---
+
+  /// متحكم جديد لألبوم اللحظة المعروضة (والقديم يُحرَّر بعد الإطار: صفحاته ما زالت في الشجرة حتى يُعاد البناء)، ومدتها
+  void _showAlbum(MapPost p) {
+    final old = _album;
+    if (old != null) WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    _album = p.isAlbum ? PageController() : null;
+    _photo = _photoMark = 0;
+    _albumAuto = false;
+    _momentMs = p.isAlbum ? math.max(_autoMs, _photoMs * p.album.length) : _autoMs;
+    if (p.isAlbum) WidgetsBinding.instance.addPostFrameCallback((_) => _warmPhoto(1));
+  }
+
+  int get _albumSize => _album == null ? 0 : posts[index].album.length;
+
+  /// الشريط بلغ حصة صورة جديدة: تُقلب إليها إن لم يسبقها المشاهد بالسحب
+  void _followAlbum() {
+    final n = _albumSize;
+    if (n < 2) return;
+    final at = math.min(n - 1, (progress * n).floor());
+    if (at <= _photoMark) return;
+    _photoMark = at;
+    if (at > _photo) _flipTo(at);
+  }
+
+  void _flipTo(int i) {
+    final c = _album;
+    setState(() => _photo = i);
+    _warmPhoto(i + 1);
+    if (c == null) return;
+    if (!c.hasClients) {
+      // الصفحات لم تُبنَ بعد: تلحق بالصورة بعد الإطار فلا تختلف عن النقاط
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && identical(c, _album) && c.hasClients) c.jumpToPage(_photo);
+      });
+      return;
+    }
+    _albumAuto = true;
+    final reduce = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (reduce) {
+      c.jumpToPage(i);
+      _albumAuto = false;
+    } else {
+      c.animateToPage(i, duration: const Duration(milliseconds: 260), curve: Curves.easeOut).whenComplete(() => _albumAuto = false);
+    }
+  }
+
+  /// سحب المشاهد إلى صورة: بلا صوت يقود اللحظة يقفز الشريط إلى بداية حصتها فيبقى لكل صورة بعدها وقتها؛ ومع الصوت
+  /// يبقى الشريط مع التسجيل ويكمل القلب التلقائي من الحصة التالية
+  void _onPhoto(int i) {
+    final n = _albumSize;
+    if (_albumAuto || n < 2 || i == _photo) return;
+    setState(() {
+      _photo = i;
+      if (!_voiceLeads) {
+        progress = i / n;
+        _photoMark = i;
+      }
+    });
+    _warmPhoto(i + 1);
+  }
+
+  /// الطبقة الصوتية تقود الشريط الآن (لم تنتهِ ولم تتعذّر)
+  bool get _voiceLeads => _voiceFor != null && _vphase != MomentVoicePhase.ended && _vphase != MomentVoicePhase.failed;
+
+  /// تجلب الصورة [i] من ألبوم اللحظة المعروضة قبل أن تُعرض فلا تظهر فارغة لحظة القلب
+  void _warmPhoto(int i) {
+    if (!mounted || _album == null) return;
+    final album = posts[index].album;
+    if (i < 1 || i >= album.length || !_warmedPhotos.add(album[i])) return;
+    final url = mediaUrl(album[i]);
+    final o = PostViewerPage.warmPhotoOverride;
+    if (o != null) return o(url);
+    unawaited(precacheImage(NetworkImage(url), context, onError: (_, __) {}));
   }
 
   // --- الطبقة الصوتية ---
@@ -315,7 +413,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     _voiceFor = p.id;
     _vphase = MomentVoicePhase.loading;
     _voiceWaited = _voiceStalled = _voiceSince = 0;
-    _voiceTotal = _autoMs;
+    _voiceTotal = _momentMs;
     _voiceLast = const VoiceState();
     v.setSource(url: mediaUrl(p.audioUrl!));
     // لحظة تُعرض والعارض مغطّى (حُذفت سابقتها من قائمة مفتوحة): تبدأ حين يظهر
@@ -391,8 +489,8 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   /// من الشريط المقاس على التسجيل إلى مدة اللحظة العادية: ما مضى من اللحظة يبقى كما هو بالمللي ثانية ([heard] على الأقل)
   void _voiceToTimed({int heard = 0}) {
     final at = math.max(progress * _voiceTotal, heard.toDouble());
-    _voiceTotal = _autoMs;
-    progress = (at / _autoMs).clamp(0.0, 1.0);
+    _voiceTotal = _momentMs;
+    progress = (at / _momentMs).clamp(0.0, 1.0);
   }
 
   /// طول التسجيل كما بلّغه المشغّل، وإلا كما حُفظ مع اللحظة
@@ -446,7 +544,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
           _voiceWaited += 50;
           if (_voiceWaited >= _voiceLoadMs) return _voiceFail();
         }
-        _voiceTotal = math.max(_autoMs, _voiceLength(s));
+        _voiceTotal = math.max(_momentMs, _voiceLength(s));
         var pos = s.position.inMilliseconds;
         // التقدير بين التبليغات والتسجيل يُسمع فقط: أثناء التحميل يقف الشريط مع الصوت
         if (s.playing && !s.loading) {
@@ -456,6 +554,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
         // لا يمتلئ قبل الانتهاء (المدة قد تكون أطول مما بُلّغ)، ولا يرجع بتصحيح التقدير
         final f = math.min(pos / _voiceTotal, .995);
         if (f > progress + .001) setState(() => progress = f);
+        _followAlbum();
     }
   }
 
@@ -665,7 +764,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
               _replace(p.id, (_) => updated);
               // التعديل غيّر الطبقة الصوتية أو النوع للحظة المعروضة: تُعرض من جديد، فلا يبقى التسجيل القديم يعمل ويحدد
               // مدتها، ولا تبقى شريحة جديدة بلا مشغّل
-              if (posts[index].id == p.id && (updated.kind != p.kind || updated.audioUrl != p.audioUrl)) _onShown();
+              if (posts[index].id == p.id && (updated.kind != p.kind || updated.audioUrl != p.audioUrl || !listEquals(updated.album, p.album))) _onShown();
             }
           } else if (choice == 'toggle') {
             if (p.status == 'blocked') {
@@ -727,6 +826,9 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
                 onHold: _hold,
                 voice: i == index ? _voiceView : null,
                 onVoiceTap: _voiceTap,
+                album: i == index ? _album : null,
+                photo: i == index ? _photo : 0,
+                onPhoto: _onPhoto,
               ),
             )),
           ),
@@ -750,7 +852,11 @@ class PostView extends ConsumerWidget {
   final ValueListenable<MomentVoice?>? voice;
   /// لمسة شريحة الصوت أو رقاقة «اضغط لتشغيل الصوت»
   final VoidCallback? onVoiceTap;
-  const PostView({super.key, required this.post, required this.active, required this.progress, required this.total, required this.position, required this.onPrev, required this.onNext, required this.onLike, this.onMenu, this.onPress, this.onHold, this.voice, this.onVoiceTap});
+  /// صفحات ألبوم اللحظة النشطة (null لغيرها: الغلاف وحده)، والصورة المعروضة، وسحب المشاهد إلى صورة
+  final PageController? album;
+  final int photo;
+  final ValueChanged<int>? onPhoto;
+  const PostView({super.key, required this.post, required this.active, required this.progress, required this.total, required this.position, required this.onPrev, required this.onNext, required this.onLike, this.onMenu, this.onPress, this.onHold, this.voice, this.onVoiceTap, this.album, this.photo = 0, this.onPhoto});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -768,8 +874,20 @@ class PostView extends ConsumerWidget {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(box.maxWidth > w + 8 ? 20 : 0),
               child: Stack(fit: StackFit.expand, children: [
-                PostMedia(kind: p.kind, url: p.mediaUrl, bg: p.bg, durationSec: p.durationSec, play: active),
-                IgnorePointer(child: OverlayCanvas(overlays: p.overlays, shadow: p.kind != 'text')),
+                // الألبوم: صفحات تُسحب يميناً ويساراً بين صوره، وعند طرفيه يكمل السحب إلى اللحظة المجاورة
+                if (p.isAlbum && album != null)
+                  MomentAlbum(key: ObjectKey(album), urls: p.album, controller: album!, onPage: (i) => onPhoto?.call(i), onPastEnd: onNext, onPastStart: onPrev)
+                else
+                  PostMedia(kind: p.kind, url: p.mediaUrl, bg: p.bg, durationSec: p.durationSec, play: active),
+                // نصوص الألبوم وملصقاته رُسمت على الغلاف في «راجع وعدّل» (كالفلتر والقصّ)، فتظهر معه وتختفي عن بقية الصور
+                IgnorePointer(
+                  child: AnimatedOpacity(
+                    opacity: !p.isAlbum || photo == 0 ? 1 : 0,
+                    duration: (MediaQuery.maybeDisableAnimationsOf(context) ?? false) ? Duration.zero : const Duration(milliseconds: 180),
+                    child: OverlayCanvas(overlays: p.overlays, shadow: p.kind != 'text'),
+                  ),
+                ),
+                if (p.isAlbum) Positioned(top: 64, left: 0, right: 0, child: IgnorePointer(child: Center(child: AlbumDots(count: p.album.length, index: active ? photo : 0)))),
                 // الطبقة الصوتية: تعليق صوتي على الصورة أو لوحة النص، يشغّله العارض وحده والشريحة تعرض موجته وتقدّمه
                 if (p.audioUrl != null && p.audioUrl!.isNotEmpty) Positioned(bottom: 96, left: 0, right: 0, child: Center(child: _voiceChip(p))),
                 // مناطق النقر للتنقل (النصف الأعلى فقط حتى تبقى أدوات الفيديو والأزرار متاحة)
@@ -970,5 +1088,86 @@ class PostView extends ConsumerWidget {
       ),
     );
     return tooltip == null ? pill : Tooltip(message: tooltip, child: pill);
+  }
+}
+
+/// ألبوم اللحظة في العارض: صفحات أفقية بصوره (الغلاف أولاً) تتبع اتجاه الكتابة كصفحات العارض نفسها، والصورة المجاورة تُبنى
+/// مسبقاً. صفحات الألبوم تأخذ السحب من صفحات العارض، فالسحب بعد آخر صورة أو قبل الأولى ينقل إلى اللحظة المجاورة مرة واحدة
+/// لكل سحبة. الفأرة ولوحة اللمس تسحبان أيضاً (سطح المكتب بلا لمس).
+class MomentAlbum extends StatefulWidget {
+  final List<String> urls;
+  final PageController controller;
+  final ValueChanged<int> onPage;
+  final VoidCallback onPastEnd, onPastStart;
+  const MomentAlbum({super.key, required this.urls, required this.controller, required this.onPage, required this.onPastEnd, required this.onPastStart});
+
+  /// سحب يتجاوز طرف الألبوم بهذا القدر (بكسل) ينقل إلى اللحظة المجاورة؛ أقل منه لا شيء
+  static const handOff = 24.0;
+
+  @override
+  State<MomentAlbum> createState() => _MomentAlbumState();
+}
+
+class _MomentAlbumState extends State<MomentAlbum> {
+  double _over = 0;
+  bool _handed = false;
+
+  bool _onScroll(ScrollNotification n) {
+    if (n.depth != 0) return false;
+    if (n is ScrollStartNotification) {
+      _over = 0;
+      _handed = false;
+    } else if (n is OverscrollNotification && n.dragDetails != null && !_handed) {
+      // الموضع لا يتجاوز الطرف (ClampingScrollPhysics) فيصل التجاوز هنا؛ موجبه بعد آخر صورة وسالبه قبل الأولى في أي اتجاه كتابة
+      _over += n.overscroll;
+      if (_over.abs() >= MomentAlbum.handOff) {
+        _handed = true;
+        _over > 0 ? widget.onPastEnd() : widget.onPastStart();
+      }
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) => NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: PageView.builder(
+          key: const Key('moment-album'),
+          controller: widget.controller,
+          physics: const ClampingScrollPhysics(),
+          scrollBehavior: ScrollConfiguration.of(context).copyWith(dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse, PointerDeviceKind.stylus, PointerDeviceKind.trackpad}),
+          // الصورة المجاورة مبنية مسبقاً فلا تظهر فارغة أثناء السحب
+          allowImplicitScrolling: true,
+          itemCount: widget.urls.length,
+          onPageChanged: widget.onPage,
+          itemBuilder: (_, i) => PostMedia(key: ValueKey('album-photo-$i'), kind: 'image', url: widget.urls[i]),
+        ),
+      );
+}
+
+/// نقاط صور الألبوم فوق اللحظة: النشطة أعرض وبيضاء.
+class AlbumDots extends StatelessWidget {
+  final int count, index;
+  const AlbumDots({super.key, required this.count, required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    final fast = (MediaQuery.maybeDisableAnimationsOf(context) ?? false) ? Duration.zero : const Duration(milliseconds: 180);
+    return Container(
+      key: const Key('album-dots'),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+      decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(999)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        for (var i = 0; i < count; i++)
+          AnimatedContainer(
+            key: Key(i == index ? 'album-dot-on-$i' : 'album-dot-$i'),
+            duration: fast,
+            margin: const EdgeInsets.symmetric(horizontal: 2.5),
+            width: i == index ? 14 : 6,
+            height: 6,
+            decoration: BoxDecoration(color: i == index ? Colors.white : Colors.white54, borderRadius: BorderRadius.circular(3)),
+          ),
+      ]),
+    );
   }
 }

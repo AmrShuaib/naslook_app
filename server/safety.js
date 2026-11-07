@@ -210,7 +210,8 @@ export default async function safety(app, opts) {
   async function targetInfo(type, id) {
     if (!validId(type, id)) return null;
     switch (type) {
-      case "post": return one("SELECT user_id AS owner, COALESCE(NULLIF(title,''), NULLIF(caption,''), 'منشور') AS title, caption AS text, media_url AS media, status FROM map_posts WHERE id=$1", [id]);
+      // media_list: صور الألبوم كلها للمشرف (to_jsonb فلا يفشل الاستعلام إن غاب العمود)
+      case "post": return one("SELECT user_id AS owner, COALESCE(NULLIF(title,''), NULLIF(caption,''), 'منشور') AS title, caption AS text, media_url AS media, to_jsonb(map_posts)->'media' AS media_list, status FROM map_posts WHERE id=$1", [id]);
       case "listing": return one("SELECT seller_id AS owner, title, description AS text, image_url AS media, status FROM market_listings WHERE id=$1", [id]);
       case "community": return one("SELECT user_id AS owner, COALESCE(NULLIF(left(text, 80), ''), 'منشور في مساحة الدائرة') AS title, text, images->>0 AS media, CASE WHEN hidden THEN 'blocked' ELSE 'active' END AS status, biz_id FROM biz_community_posts WHERE id=$1", [id]);
       case "community-reply": return one(`SELECT r.user_id AS owner, COALESCE(NULLIF(left(r.text, 80), ''), 'رد في مساحة الدائرة') AS title, r.text, r.images->>0 AS media,
@@ -444,6 +445,8 @@ export default async function safety(app, opts) {
         targetType: r.target_type, targetId: r.target_id, typeName: typeName(r.target_type), reports: r.reports, reasons: r.reasons ?? [], firstAt: r.first_at, lastAt: r.last_at,
         owner: info?.owner ? personIn(pm, info.owner) : null,
         title: info?.title ?? null, text: info?.text ? String(info.text).slice(0, 300) : null, mediaUrl: info?.media ?? null,
+        // لحظة بألبوم: كل صورها (الغلاف أولاً) حتى لا تخفى صورة مخالفة خلف الغلاف
+        ...(Array.isArray(info?.media_list) && info.media_list.length > 1 ? { mediaUrls: info.media_list.filter((u) => typeof u === "string" && u) } : {}),
         status: info ? (info.status === "blocked" ? "hidden" : "visible") : "missing", hidden: info?.status === "blocked",
         bizId: info?.biz_id ?? null, listingId: info?.listing_id ?? null, wantedId: info?.wanted_id ?? null, vesselId: info?.vessel_id ?? null, parentId: info?.post_id ?? null, jobId: info?.job_id ?? null,
         action: r.action ? { action: r.action, note: r.note, by: personIn(pm, r.admin_id), at: r.action_at } : null,

@@ -184,6 +184,8 @@ export default async function row(app, opts = {}) {
     expired: new Date(p.expires_at).getTime() < Date.now(), audioUrl: p.audio_url ?? null, audioSec: p.audio_sec ?? null,
     // جمهور اللحظة كما في map_posts.js (العارض يضع «للأصدقاء» على لحظة الأصدقاء)؛ بلا العمود = الجميع كما كانت
     audience: p.audience == null || p.audience === "all" ? "all" : "friends",
+    // صور الألبوم (الغلاف أولاً) كما في map_posts.js؛ بلاها = الغلاف وحده
+    media: typeof globalThis.naslifeMomentMedia === "function" ? globalThis.naslifeMomentMedia(p) : p.media_url ? [p.media_url] : [],
   });
 
   // ---- المصادر الستة: استعلام مرشّحين (الصف: بحد CAND الأقرب أولاً ثم الأحدث؛ التغذية: الأحدث أولاً بحد الصفحة) ثم تحويل الصف إلى بطاقة

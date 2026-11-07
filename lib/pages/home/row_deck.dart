@@ -6,6 +6,7 @@ import '../../api/client.dart';
 import '../../api/posts_api.dart';
 import '../../api/row_api.dart';
 import '../../core/app_theme.dart';
+import '../posts/album_badge.dart';
 
 /// «واحد» بشكل البطاقة (النموذج أ): بطاقة مدمجة واحدة فوق الخريطة تُسحب جانبياً فتأتي التالية، وفوقها صف عدّاد بسهمين.
 /// الودجة لا تعرف الخريطة: الأب يملك الفهرس ([index]) ويحرّك الخريطة عند تغيّره ([onIndex])، وزر البطاقة الوحيد يفتح
@@ -201,9 +202,18 @@ class _Thumb extends StatelessWidget {
     final fallback = Container(width: 68, height: 68, color: color.withValues(alpha: .14), child: Icon(rowKindIcon(item.kind), color: color, size: 28));
     // الدائرة «هنا اليوم»: شعارها هو صورتها (الخادم يرسله في imageUrl، وlogoUrl احتياط)
     final url = item.imageUrl ?? (item.kind == 'circle' ? item.logoUrl : null);
+    // لحظة الألبوم: الغلاف وحده في البطاقة، والشارة تقول كم صورة خلفه
+    final photos = item.kind == 'moment' ? albumCountOf(item.payload) : 1;
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
-      child: SizedBox(width: 68, height: 68, child: url == null ? fallback : Image.network(thumbUrl(url), fit: BoxFit.cover, errorBuilder: (_, __, ___) => fallback)),
+      child: SizedBox(
+        width: 68,
+        height: 68,
+        child: Stack(fit: StackFit.expand, children: [
+          url == null ? fallback : Image.network(thumbUrl(url), fit: BoxFit.cover, errorBuilder: (_, __, ___) => fallback),
+          if (photos > 1) PositionedDirectional(bottom: 4, end: 4, child: AlbumBadge(key: const Key('row-album'), count: photos)),
+        ]),
+      ),
     );
   }
 }
