@@ -66,7 +66,7 @@ class _ItemRow extends ConsumerWidget {
               Expanded(child: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5), maxLines: 1, overflow: TextOverflow.ellipsis)),
               if (item.isOffer) Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: Joy.accentSoft, borderRadius: BorderRadius.circular(999)), child: const Text('عرض', style: TextStyle(color: Joy.accent, fontSize: 10.5, fontWeight: FontWeight.w700))),
             ]),
-            Text('${money(item.price)} ${item.unitLabel} · $stockLabel${item.kind == 'showtime' ? ' · $times' : item.kind == 'clinic' ? ' · ${workDaysLabel(item.workDays)} · $times' : ''}${item.payAtVenue ? ' · يُدفع في المكان' : ''}', key: Key('catalog-line-${item.id}'), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5), maxLines: 2, overflow: TextOverflow.ellipsis),
+            Text('${money(item.price)} ${item.unitLabel} · $stockLabel${item.kind == 'showtime' ? ' · $times' : item.kind == 'clinic' ? ' · ${workDaysLabel(item.workDays)} · $times' : ''}${item.payAtVenue ? ' · يُدفع في المكان' : ''}${item.hasOptions ? ' · ${item.options.map((g) => g.name).join('، ')}' : ''}', key: Key('catalog-line-${item.id}'), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5), maxLines: 2, overflow: TextOverflow.ellipsis),
           ])),
           if (biz.canManage)
             Switch(
@@ -95,6 +95,36 @@ Future<void> openItemEditor(BuildContext context, Biz biz, {BizItem? item}) => s
       builder: (_) => ItemEditor(biz: biz, item: item),
     );
 
+/// مسودة خيار في المحرّر: المعرّف يبقى للخيار الموجود حتى لا تضيع سلال العملاء عند تعديل الاسم أو السعر.
+class _ChoiceDraft {
+  final String id;
+  final TextEditingController name, delta;
+  _ChoiceDraft({this.id = '', String name = '', int delta = 0})
+      : name = TextEditingController(text: name),
+        delta = TextEditingController(text: delta == 0 ? '' : (delta / 100).toStringAsFixed(delta % 100 == 0 ? 0 : 2));
+  void dispose() {
+    name.dispose();
+    delta.dispose();
+  }
+}
+
+class _GroupDraft {
+  final String id;
+  final TextEditingController name;
+  bool required, multi;
+  final List<_ChoiceDraft> choices;
+  _GroupDraft({this.id = '', String name = '', this.required = false, this.multi = false, List<_ChoiceDraft>? choices})
+      : name = TextEditingController(text: name),
+        choices = choices ?? [_ChoiceDraft(), _ChoiceDraft()];
+  factory _GroupDraft.of(ItemOptionGroup g) => _GroupDraft(id: g.id, name: g.name, required: g.required, multi: g.multi, choices: [for (final c in g.choices) _ChoiceDraft(id: c.id, name: c.name, delta: c.delta)]);
+  void dispose() {
+    name.dispose();
+    for (final c in choices) {
+      c.dispose();
+    }
+  }
+}
+
 class ItemEditor extends ConsumerStatefulWidget {
   final Biz biz;
   final BizItem? item;
@@ -114,6 +144,8 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
   String? imageUrl;
   /// نوع الصنف: ثابت للعنصر الموجود، ويختاره المالك للجديد حين تجمع الفئة بين المنتج والموعد (الصالون والخدمات).
   late String kind;
+  /// مجموعات خيارات المنتج (الحجم، الحليب…) كما يحرّرها المالك.
+  final List<_GroupDraft> groups = [];
 
   BizItem? get it => widget.item;
   Map<String, dynamic> get m => it?.meta ?? const {};
@@ -151,12 +183,16 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
     breakfast = m['breakfast'] == true;
     payAtVenue = it?.payAtVenue ?? false;
     imageUrl = it?.imageUrl;
+    groups.addAll([for (final g in it?.options ?? const <ItemOptionGroup>[]) _GroupDraft.of(g)]);
   }
 
   @override
   void dispose() {
     for (final c in [title, description, price, oldPrice, stock, hall, minutes, genre, rating, beds, guests, size, view, cls, seats, transmission, year, fuel, time]) {
       c.dispose();
+    }
+    for (final g in groups) {
+      g.dispose();
     }
     super.dispose();
   }
@@ -213,6 +249,7 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
         if (kind == 'product') ...[
           const SizedBox(height: 10),
           TextField(controller: oldPrice, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'السعر قبل الخصم (اختياري، لعرض شارة "عرض")')),
+          _optionsEditor(),
         ],
         if (kind == 'showtime' || kind == 'clinic') ...[
           const SizedBox(height: 14),
@@ -323,6 +360,68 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
     );
   }
 
+  /// محرّر خيارات المنتج: مجموعة باسم، إلزامية أو اختيارية، اختيار واحد أو عدة، وخيارات بفرق سعر.
+  Widget _optionsEditor() => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const SizedBox(height: 14),
+        Row(children: [
+          const Expanded(child: Text('خيارات الصنف', style: TextStyle(fontWeight: FontWeight.w700))),
+          TextButton.icon(key: const Key('opt-add-group'), onPressed: groups.length >= 8 ? null : () => setState(() => groups.add(_GroupDraft())), icon: const Icon(Icons.add_rounded, size: 18), label: const Text('إضافة مجموعة')),
+        ]),
+        const Text('مثل الحجم أو نوع الحليب: يختار العميل منها قبل الإضافة إلى السلة، ويُضاف فرق السعر إلى سعر الصنف.', style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.5)),
+        for (final (i, g) in groups.indexed)
+          Container(
+            key: Key('opt-group-$i'),
+            margin: const EdgeInsets.only(top: 10),
+            padding: const EdgeInsets.fromLTRB(12, 6, 6, 8),
+            decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(children: [
+                Expanded(child: TextField(key: Key('opt-group-name-$i'), controller: g.name, decoration: const InputDecoration(labelText: 'اسم المجموعة', hintText: 'الحجم'))),
+                IconButton(key: Key('opt-remove-group-$i'), tooltip: 'حذف المجموعة', onPressed: () => setState(() => groups.removeAt(i).dispose()), icon: const Icon(Icons.delete_outline_rounded, color: Joy.danger)),
+              ]),
+              const SizedBox(height: 6),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                FilterChip(key: Key('opt-required-$i'), label: const Text('إلزامي'), selected: g.required, selectedColor: Joy.primarySoft, onSelected: (v) => setState(() => g.required = v)),
+                ChoiceChip(key: Key('opt-single-$i'), label: const Text('اختيار واحد'), selected: !g.multi, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setState(() => g.multi = false)),
+                ChoiceChip(key: Key('opt-multi-$i'), label: const Text('عدة خيارات'), selected: g.multi, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setState(() => g.multi = true)),
+              ]),
+              for (final (j, c) in g.choices.indexed)
+                Row(children: [
+                  Expanded(child: TextField(key: Key('opt-choice-name-$i-$j'), controller: c.name, decoration: InputDecoration(hintText: j == 0 ? 'صغير' : j == 1 ? 'كبير' : 'خيار', isDense: true))),
+                  const SizedBox(width: 8),
+                  SizedBox(width: 92, child: TextField(key: Key('opt-choice-delta-$i-$j'), controller: c.delta, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(hintText: '0', prefixText: '+ ', suffixText: 'ر.س', isDense: true))),
+                  IconButton(key: Key('opt-remove-choice-$i-$j'), visualDensity: VisualDensity.compact, onPressed: g.choices.length <= 1 ? null : () => setState(() => g.choices.removeAt(j).dispose()), icon: const Icon(Icons.close_rounded, size: 18)),
+                ]),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton.icon(key: Key('opt-add-choice-$i'), onPressed: g.choices.length >= 15 ? null : () => setState(() => g.choices.add(_ChoiceDraft())), icon: const Icon(Icons.add_rounded, size: 18), label: const Text('إضافة خيار')),
+              ),
+            ]),
+          ),
+      ]);
+
+  /// الخيارات كما تُرسل للخادم، أو رسالة خطأ للمالك (الخادم يعيد الفحص نفسه).
+  ({List<Map<String, dynamic>> options, String? error}) _collectOptions() {
+    final out = <Map<String, dynamic>>[];
+    for (final g in groups) {
+      final name = g.name.text.trim();
+      final choices = [for (final c in g.choices) if (c.name.text.trim().isNotEmpty) c];
+      // مجموعة فارغة تماماً تُهمل بلا إزعاج
+      if (name.isEmpty && choices.isEmpty) continue;
+      if (name.isEmpty) return (options: out, error: 'اكتب اسم كل مجموعة خيارات');
+      if (choices.isEmpty) return (options: out, error: 'أضف خياراً واحداً على الأقل في «$name»');
+      final names = choices.map((c) => c.name.text.trim()).toList();
+      if (names.toSet().length != names.length) return (options: out, error: 'كرّرت اسم خيار في «$name»');
+      out.add(ItemOptionGroup(
+        id: g.id, name: name, required: g.required, multi: g.multi,
+        choices: [for (final c in choices) ItemOptionChoice(id: c.id, name: c.name.text.trim(), delta: parseSar(c.delta.text))],
+      ).toJson());
+    }
+    final names = out.map((g) => g['name']).toList();
+    if (names.toSet().length != names.length) return (options: out, error: 'كرّرت اسم مجموعة خيارات');
+    return (options: out, error: null);
+  }
+
   void _addTime() {
     final v = time.text.trim().replaceAll('٫', ':').replaceAll('.', ':');
     final ok = RegExp(r'^([01]?\d|2[0-3]):[0-5]\d$').hasMatch(v);
@@ -352,8 +451,12 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
     if ((kind == 'showtime' || kind == 'clinic') && times.isEmpty) { toast(context, 'أضف موعداً واحداً على الأقل', error: true); return; }
     if (kind == 'clinic' && days.isEmpty) { toast(context, 'اختر يوم عمل واحداً على الأقل', error: true); return; }
     int? intOf(TextEditingController c) => int.tryParse(c.text.trim().replaceAll(RegExp(r'[^0-9]'), ''));
+    final opts = kind == 'product' ? _collectOptions() : (options: const <Map<String, dynamic>>[], error: null);
+    if (opts.error != null) { toast(context, opts.error!, error: true); return; }
     final meta = <String, dynamic>{
       if (kind == 'product' && parseSar(oldPrice.text) > p) 'oldPrice': parseSar(oldPrice.text),
+      // الحفظ يستبدل meta كلها، فتُرسل الخيارات دائماً للمنتج (قائمة فارغة تحذفها)
+      if (kind == 'product') 'options': opts.options,
       if (kind == 'showtime') ...{'times': times, 'hall': hall.text.trim(), 'minutes': intOf(minutes) ?? 120, 'genre': genre.text.trim(), 'rating': rating.text.trim()},
       if (kind == 'clinic') ...{'times': times, 'floor': hall.text.trim(), 'minutes': intOf(minutes) ?? (clinicWords ? 20 : 30), 'days': days.toList()..sort()},
       if (kind == 'room') ...{'beds': beds.text.trim(), 'guests': intOf(guests) ?? 2, 'size': intOf(size), 'view': view.text.trim(), 'breakfast': breakfast},
@@ -371,7 +474,7 @@ class _ItemEditorState extends ConsumerState<ItemEditor> {
       invalidateBizAll(ref, widget.biz.id);
       if (mounted) { Navigator.pop(context); toast(context, it == null ? 'أُضيف إلى الكتالوج' : 'حُفظ'); }
     } catch (e) {
-      if (mounted) toast(context, e.toString().contains('bad-days') ? 'اختر يوم عمل واحداً على الأقل' : ownerErrText(e), error: true);
+      if (mounted) toast(context, e.toString().contains('bad-days') ? 'اختر يوم عمل واحداً على الأقل' : e.toString().contains('bad-options') ? 'راجع خيارات الصنف: لكل مجموعة اسم وخيار واحد على الأقل، وفرق السعر صفر أو أكثر' : ownerErrText(e), error: true);
     } finally {
       if (mounted) setState(() => busy = false);
     }

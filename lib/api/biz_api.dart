@@ -34,6 +34,17 @@ extension BizApi on ApiClient {
         if (lng != null) 'lng': lng,
         if (payment == 'at_venue') 'payment': 'at_venue',
       }));
+  /// طلب السلة: أسطر {itemId, qty, options: {groupId: [choiceId]}}؛ المجموع يحسبه الخادم من الأسعار الحالية.
+  /// [pickupAt] null = «في أقرب وقت»، وإلا وقت اليوم ضمن ساعات العمل.
+  Future<BizOrder> orderBizCart(String id, {required List<Map<String, dynamic>> lines, String note = '', DateTime? pickupAt, String payment = 'wallet', double? lat, double? lng}) async =>
+      BizOrder.fromJson(await post('/biz/$id/orders', {
+        'lines': lines,
+        'note': note,
+        if (pickupAt != null) 'pickupAt': pickupAt.toUtc().toIso8601String(),
+        if (payment == 'at_venue') 'payment': 'at_venue',
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+      }));
   Future<List<BizOrder>> myBizOrders() async => asList(await getList('/biz/orders/mine')).map(BizOrder.fromJson).toList();
   Future<void> cancelBizOrder(String id) => post('/biz/orders/$id/cancel', const {});
   /// طلب واحد بمعرّفه للعميل أو فريق الدائرة أو الإدارة (viewer في الرد).

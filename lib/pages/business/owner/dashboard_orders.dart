@@ -11,7 +11,7 @@ import '../../../ui/profile_avatar.dart';
 import '../../../ui/qr_scanner.dart';
 import '../../../ui/widgets.dart';
 import '../../chat/chat_thread_page.dart' show ChatThreadPage;
-import '../biz_order_page.dart' show BizOrderPage, VenueActions, orderErrText;
+import '../biz_order_page.dart' show BizOrderPage, OrderLinesBlock, VenueActions, orderErrText;
 import '../business_page.dart' show dayLabel, shortDate;
 import 'business_editor.dart';
 
@@ -140,7 +140,8 @@ class OwnerOrderCard extends ConsumerWidget {
             Expanded(child: Text(c?.nickname.isNotEmpty == true ? c!.nickname : 'عميل', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5), maxLines: 1, overflow: TextOverflow.ellipsis)),
             Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: active ? Joy.primarySoft : o.status == 'used' ? Joy.sunSoft : Joy.surface2, borderRadius: BorderRadius.circular(999)), child: Text(o.statusLabel, style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: active ? Joy.primary : o.status == 'used' ? Joy.sunText : Joy.textMuted))),
           ]),
-          Text('${o.title} · ${o.summary}', style: const TextStyle(fontSize: 12.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+          // طلب السلة: أسطره مختصرة («2 × لاتيه، 1 × كرواسون») بدل العنوان، والخيارات في ورقة الطلب
+          Text(o.isCart ? o.summary : '${o.title} · ${o.summary}', key: Key('owner-order-summary-${o.id}'), style: const TextStyle(fontSize: 12.5), maxLines: 1, overflow: TextOverflow.ellipsis),
           Text('$when · ${o.code}', style: const TextStyle(color: Joy.textMuted, fontSize: 11.5), maxLines: 1, overflow: TextOverflow.ellipsis),
           // حالة المال باختصار: مشكلة مفتوحة، أو دفع في المكان لم يُسجَّل، أو مبلغ محجوز
           if (o.disputeOpen || o.venueUnpaid || o.held)
@@ -184,8 +185,13 @@ void showOwnerOrderSheet(BuildContext context, WidgetRef ref, Biz biz, BizOrder 
         const SizedBox(height: 12),
         SelectableText(o.code, style: const TextStyle(fontWeight: FontWeight.w800, letterSpacing: 2, fontSize: 18, color: Joy.primary)),
         const SizedBox(height: 8),
-        kv('العنصر', o.title),
-        kv('التفاصيل', o.summary),
+        if (o.isCart) ...[
+          KeyedSubtree(key: const Key('owner-order-lines'), child: OrderLinesBlock(order: o)),
+          kv('الاستلام', o.pickupLabel),
+        ] else ...[
+          kv('العنصر', o.title),
+          kv('التفاصيل', o.summary),
+        ],
         if (o.startAt != null) kv(isSlotKind(o.kind) ? 'الموعد' : 'من', isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
         if (o.endAt != null && !isSlotKind(o.kind)) kv('إلى', '${dayLabel(o.endAt!)} · ${shortDate(o.endAt!)}'),
         if (o.meta['guests'] != null) kv('النزلاء', '${o.meta['guests']}'),
@@ -322,6 +328,9 @@ Future<void> checkinByCode(BuildContext context, WidgetRef ref, Biz biz) async {
           } catch (e) {
             msg += ' · لم يُسجَّل الدفع (${orderErrText(e)})، سجّله من ورقة الطلب';
           }
+        } else if (done.isCart && sheet.mounted) {
+          // طلب السلة: ما يُسلَّم للعميل سطراً سطراً بخياراته قبل إغلاق الورقة
+          await _showHandover(sheet, done);
         }
         return msg;
       },
@@ -337,9 +346,26 @@ Future<bool> _askVenuePaid(BuildContext context, BizOrder o) async {
     builder: (d) => AlertDialog(
       key: const Key('checkin-venue-dialog'),
       title: const Text('الدفع في المكان: لم يُدفع بعد'),
-      content: Text('اطلب ${money(o.total)} من ${o.customer?.nickname.isNotEmpty == true ? o.customer!.nickname : 'العميل'} ثم أكّد الدفع.'),
+      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        if (o.isCart) OrderLinesBlock(order: o),
+        Text('اطلب ${money(o.total)} من ${o.customer?.nickname.isNotEmpty == true ? o.customer!.nickname : 'العميل'} ثم أكّد الدفع.'),
+      ]),
       actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('لاحقاً')), FilledButton(key: const Key('checkin-venue-paid'), onPressed: () => Navigator.pop(d, true), child: const Text('تم الدفع'))],
     ),
   );
   return paid == true;
 }
+
+/// بعد استلام طلب سلة بالرمز: ما يُسلَّم للعميل سطراً سطراً بخياراته.
+Future<void> _showHandover(BuildContext context, BizOrder o) => showDialog<void>(
+      context: context,
+      builder: (d) => AlertDialog(
+        key: const Key('checkin-lines-dialog'),
+        title: Text('سلّم الطلب · ${o.code}'),
+        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          OrderLinesBlock(order: o),
+          if (o.note.isNotEmpty) Text('ملاحظة العميل: ${o.note}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+        ])),
+        actions: [FilledButton(onPressed: () => Navigator.pop(d), child: const Text('تم'))],
+      ),
+    );

@@ -19,6 +19,7 @@ import '../../core/share/share_links.dart';
 import '../../state/app_state.dart';
 import '../../state/biz_providers.dart';
 import '../../state/providers.dart' show signedInProvider;
+import '../../state/circle_cart.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/profile_avatar.dart';
 import '../../ui/report_sheet.dart';
@@ -27,6 +28,7 @@ import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
 import '../../api/community_api.dart';
 import 'biz_order_page.dart';
+import 'circle_cart_sheet.dart';
 import 'community_page.dart';
 import 'my_bookings_page.dart';
 import 'offers_page.dart';
@@ -103,6 +105,11 @@ String bizErrText(Object e) {
   // الدفع في المكان: الصنف لا يقبله، أو تكرر «لم يحضر» ثلاث مرات في هذه الدائرة
   if (s.contains('venue-not-allowed')) return 'هذا الصنف لا يقبل الدفع في المكان';
   if (s.contains('venue-blocked')) return 'تكرر عدم حضورك في هذه الدائرة، فلم يعد الدفع في المكان متاحاً لك فيها؛ ادفع من المحفظة';
+  // السلة: خيار إلزامي لم يُختر، أو خيارات تغيّرت عند الدائرة، أو وقت استلام خارج ساعات العمل
+  if (s.contains('options-required')) return 'اختر الخيارات المطلوبة للصنف أولاً';
+  if (s.contains('bad-options')) return 'تغيّرت خيارات أحد الأصناف عند الدائرة، راجع سلتك';
+  if (s.contains('bad-pickup')) return 'وقت الاستلام هذا غير متاح، اختر وقتاً آخر أو «في أقرب وقت»';
+  if (s.contains('bad-lines')) return 'تعذّر إرسال السلة، راجع الأصناف والكميات';
   if (e is ApiException && e.body?['error'] == 'offer-unavailable') return offerUnavailableText(e.body?['reason']?.toString());
   if (e is ApiException) return e.message;
   return s;
@@ -140,8 +147,11 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
   Widget build(BuildContext context) {
     final detail = ref.watch(bizDetailProvider(widget.id));
     final b = detail.valueOrNull ?? widget.initial;
+    final loaded = detail.valueOrNull;
     return Scaffold(
       backgroundColor: Joy.bg,
+      // شريط السلة يظهر ما دام فيها شيء، بأسعار الكتالوج المحمّل
+      bottomNavigationBar: loaded == null ? null : CircleCartBar(biz: loaded, onOpen: () => openCircleCart(context, ref, loaded)),
       appBar: AppBar(
         title: Text(b?.title ?? 'الدائرة'),
         actions: [
@@ -343,30 +353,55 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
     }
   }
 
-  /// شراء منتج: كمية ثم تأكيد.
+  /// شراء منتج: الخيارات (إن وُجدت) والكمية، ثم «أضف إلى السلة»؛ والصنف بلا خيارات يُشترى مباشرة أيضاً.
   Future<void> _buy(Biz b, BizItem it) async {
     // ورقة الكمية والدفع تسبق الطلب: الزائر يُدعى للدخول أولاً
     if (!requireAccount(context)) return;
     var qty = 1;
+    var sel = <String, List<String>>{};
     final max = it.stock == null ? 20 : it.stock!.clamp(0, 20);
     if (max == 0) return;
     // السعر الخاص يُطبّق تلقائياً على الخادم؛ نعرضه هنا إن كان متاحاً للمستخدم (عام، أو للأعضاء وهو عضو)
     final deal = it.deal != null && (!it.deal!.membersOnly || b.following) ? it.deal : null;
     final unit = deal?.price ?? it.price;
+    // المنتج بخيارات يُطلب من السلة وحدها (الخادم يرفض الطلب المباشر بلا الخيارات الإلزامية)
+    final withOptions = it.hasOptions;
+    int total() => (unit + it.optionsDelta(sel)) * qty;
     final pay = await showActionSheet<String>(
       context,
       body: (ctx, setS) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(it.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
         if (it.description.isNotEmpty) Text(it.description, style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
+        if (withOptions) ItemOptionsPicker(key: const Key('item-options'), item: it, selection: sel, onChanged: (v) => setS(() => sel = v)),
         const SizedBox(height: 12),
         _stepRow('الكمية', _Stepper(value: qty, min: 1, max: max, onChanged: (v) => setS(() => qty = v))),
         const SizedBox(height: 8),
-        _TotalRow(total: unit * qty, hint: deal != null ? 'بعرض «${deal.title}» بدل ${money(it.price * qty)}' : null),
+        _TotalRow(total: total(), hint: deal != null ? 'بعرض «${deal.title}» بدل ${money((it.price + it.optionsDelta(sel)) * qty)}' : null),
         if (it.deal != null && deal == null) const Padding(padding: EdgeInsets.only(top: 6), child: Text('السعر الخاص للأعضاء؛ انضم إلى الدائرة ليُطبّق على طلبك', style: TextStyle(color: Joy.textMuted, fontSize: 12))),
       ]),
-      action: (ctx, _) => payButtons(ctx, it, unit * qty, icon: Icons.shopping_bag_outlined, walletLabel: 'ادفع ${money(unit * qty)} من المحفظة'),
+      action: (ctx, _) {
+        final missing = it.missingGroup(sel);
+        if (withOptions) {
+          return FilledButton.icon(
+            key: const Key('add-to-cart'),
+            onPressed: missing == null ? () => Navigator.pop(ctx, 'cart') : null,
+            icon: const Icon(Icons.add_shopping_cart_rounded),
+            label: Text(missing == null ? 'أضف إلى السلة · ${money(total())}' : 'اختر ${missing.name}'),
+          );
+        }
+        return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          payButtons(ctx, it, total(), icon: Icons.shopping_bag_outlined, walletLabel: 'ادفع ${money(total())} من المحفظة'),
+          const SizedBox(height: 4),
+          TextButton.icon(key: const Key('add-to-cart'), onPressed: () => Navigator.pop(ctx, 'cart'), icon: const Icon(Icons.add_shopping_cart_rounded, size: 18), label: const Text('أضف إلى السلة')),
+        ]);
+      },
     );
-    if (pay == null) return;
+    if (pay == null || !mounted) return;
+    if (pay == 'cart') {
+      final ok = ref.read(circleCartProvider(b.id).notifier).add(CartLine(itemId: it.id, qty: qty, options: sel));
+      toast(context, ok ? 'أُضيف ${it.title} إلى السلة' : 'وصلت السلة إلى حدها (20 صنفاً أو 50 قطعة)', error: !ok);
+      return;
+    }
     await _order(b, it, qty: qty, payment: pay);
   }
 
@@ -585,14 +620,20 @@ void showOrderSheet(BuildContext context, BizOrder o, {Biz? biz, VoidCallback? o
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Icon(o.status == 'cancelled' || o.status == 'no_show' ? Icons.cancel_outlined : Icons.check_circle_rounded, color: o.status == 'cancelled' || o.status == 'no_show' ? Joy.textMuted : Joy.success, size: 40),
           const SizedBox(height: 6),
-          Text(o.status == 'cancelled' ? 'حجز ملغى' : o.status == 'no_show' ? 'سُجّل عدم حضورك' : o.status == 'used' ? 'تم الاستخدام' : o.atVenue ? 'تم الحجز · الدفع في المكان' : (o.kind == 'product' ? 'تم الشراء' : 'تم الحجز'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+          Text(o.status == 'cancelled' ? (o.isCart ? 'طلب ملغى' : 'حجز ملغى') : o.status == 'no_show' ? 'سُجّل عدم حضورك' : o.status == 'used' ? 'تم الاستخدام' : o.isCart ? (o.atVenue ? 'تم الطلب · الدفع في المكان' : 'تم الطلب') : o.atVenue ? 'تم الحجز · الدفع في المكان' : (o.kind == 'product' ? 'تم الشراء' : 'تم الحجز'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
           Text('${o.bizName.isNotEmpty ? o.bizName : biz?.title ?? ''} · ${o.title}', style: const TextStyle(color: Joy.textMuted), textAlign: TextAlign.center),
           const SizedBox(height: 12),
           Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Joy.line)), child: QrImageView(data: o.code, size: 170)),
           const SizedBox(height: 8),
           SelectableText(o.code, style: const TextStyle(fontWeight: FontWeight.w700, letterSpacing: 2, fontSize: 16)),
           const SizedBox(height: 10),
-          _kv('التفاصيل', o.summary),
+          // طلب السلة: أسطره بخياراتها ووقت الاستلام والملاحظة بدل سطر التفاصيل
+          if (o.isCart) ...[
+            OrderLinesBlock(order: o),
+            KeyedSubtree(key: const Key('order-pickup'), child: _kv('الاستلام', o.pickupLabel)),
+            if (o.note.isNotEmpty) _kv('ملاحظتك', o.note),
+          ] else
+            _kv('التفاصيل', o.summary),
           if (o.startAt != null) _kv(isSlotKind(o.kind) ? 'الموعد' : 'من', isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
           if (o.endAt != null && !isSlotKind(o.kind)) _kv('إلى', '${dayLabel(o.endAt!)} · ${shortDate(o.endAt!)}'),
           if (o.meta['hall'] != null) _kv('الصالة', o.meta['hall'].toString()),
