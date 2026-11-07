@@ -84,7 +84,12 @@ class _OrderBody extends ConsumerWidget {
           Center(child: SelectableText(o.code, style: const TextStyle(fontWeight: FontWeight.w800, letterSpacing: 2, fontSize: 16, color: Joy.primary))),
           const SizedBox(height: 8),
           if (team && o.customer != null) kv('العميل', o.customer!.nickname.isNotEmpty ? o.customer!.nickname : o.customer!.id),
-          kv('التفاصيل', o.summary),
+          if (o.isCart) ...[
+            OrderLinesBlock(order: o),
+            kv('الاستلام', o.pickupLabel, key: const Key('order-page-pickup')),
+            if (o.note.isNotEmpty) kv(team ? 'ملاحظة العميل' : 'ملاحظتك', o.note),
+          ] else
+            kv('التفاصيل', o.summary),
           if (o.startAt != null) kv(isSlotKind(o.kind) ? 'الموعد' : 'من', isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
           kv('المبلغ', money(o.total)),
           kv('الدفع', team ? o.ownerMoneyLabel : o.paymentLabel, key: const Key('order-payment-line')),
@@ -113,6 +118,39 @@ class _OrderBody extends ConsumerWidget {
       ],
     ]);
   }
+}
+
+/// أسطر طلب السلة: الكمية والصنف ومجموع السطر، وتحتها الخيارات المختارة وخصم العرض إن طُبّق عليه.
+class OrderLinesBlock extends StatelessWidget {
+  final BizOrder order;
+  const OrderLinesBlock({super.key, required this.order});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        key: const Key('order-lines'),
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          for (final (i, l) in order.lines.indexed)
+            Padding(
+              key: Key('order-line-$i'),
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${l.qty} ×', style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(l.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+                    if (l.optionsLabel.isNotEmpty) Text(l.optionsLabel, key: Key('order-line-options-$i'), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
+                    if (l.discount > 0) Text('${l.offerTitle ?? 'عرض'} · −${money(l.discount)}', style: const TextStyle(color: Joy.success, fontSize: 12, fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+                Text(money(l.total), style: const TextStyle(fontWeight: FontWeight.w600)),
+              ]),
+            ),
+        ]),
+      );
 }
 
 /// أزرار الدفع في المكان لفريق الدائرة: «تم الدفع»، و«لم يحضر» بعد حلول الموعد.

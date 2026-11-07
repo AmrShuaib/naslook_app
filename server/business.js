@@ -75,6 +75,86 @@ export function isOpenNow(text, now = new Date()) {
   return openOn((day + 6) % 7) && h.close > 1440 && min + 1440 >= h.open && min + 1440 < h.close;
 }
 
+// ---- وقت استلام طلب السلة: «في أقرب وقت» أو وقت اليوم (بتوقيت السعودية) ضمن ساعات العمل حين تُفهم
+const riyadhDay = (t) => new Date(t.getTime() + RIYADH_OFFSET_MIN * 60000).toISOString().slice(0, 10);
+/// أوقات الاستلام المتاحة اليوم كل نصف ساعة بدءاً من بعد 20 دقيقة؛ null حين لا تُفهم الساعات (فلا يُعرض إلا «في أقرب وقت»).
+export function pickupSlots(text, now = new Date()) {
+  if (!parseHours(text)) return null;
+  const step = 30 * 60000, today = riyadhDay(now), out = [];
+  for (let t = Math.ceil((now.getTime() + 20 * 60000) / step) * step; out.length < 48; t += step) {
+    const at = new Date(t);
+    if (riyadhDay(at) !== today) break;
+    if (isOpenNow(text, at) === true) out.push(at.toISOString());
+  }
+  return out;
+}
+/// يرفض وقتاً مضى أو بعد اليوم أو خارج ساعات العمل (والساعات غير المفهومة لا تقبل إلا «في أقرب وقت»).
+export function pickupError(text, at, now = new Date()) {
+  if (!(at instanceof Date) || isNaN(at)) return "bad-pickup";
+  if (at.getTime() < now.getTime() + 5 * 60000 || riyadhDay(at) !== riyadhDay(now)) return "bad-pickup";
+  return isOpenNow(text, at) === true ? null : "bad-pickup";
+}
+
+// ---- خيارات صنف المنتج (meta.options): مجموعات باسم، إلزامية أو اختيارية، اختيار واحد أو عدة، وخيارات بفرق سعر بالهللة
+const OPT_ID_RE = /^[a-z0-9]{1,12}$/;
+const OPT_MAX_GROUPS = 8, OPT_MAX_CHOICES = 15, OPT_MAX_DELTA = 100000;
+/// يطبّع مجموعات الخيارات ويثبّت معرّفاتها (المعرّف الصالح يبقى حتى لا تضيع سلال العملاء عند تعديل الاسم). يعيد {options} أو {error}.
+export function normOptions(raw) {
+  if (raw == null) return { options: [] };
+  if (!Array.isArray(raw) || raw.length > OPT_MAX_GROUPS) return { error: "bad-options" };
+  const used = new Set();
+  const fresh = () => { let id; do id = crypto.randomBytes(3).toString("hex"); while (used.has(id)); used.add(id); return id; };
+  const keep = (v) => { const s = String(v ?? ""); if (OPT_ID_RE.test(s) && !used.has(s)) { used.add(s); return s; } return fresh(); };
+  const out = [], groupNames = new Set();
+  for (const g of raw) {
+    if (!g || typeof g !== "object") return { error: "bad-options" };
+    const name = String(g.name ?? "").trim().slice(0, 40);
+    const choices = Array.isArray(g.choices) ? g.choices : [];
+    if (!name || groupNames.has(name) || !choices.length || choices.length > OPT_MAX_CHOICES) return { error: "bad-options" };
+    groupNames.add(name);
+    // معرّف المجموعة قبل خياراتها حتى لا يأخذه خيار بالمعرّف نفسه فيتغيّر معرّف المجموعة مع كل حفظ
+    const gid = keep(g.id);
+    const cs = [], names = new Set();
+    for (const ch of choices) {
+      const n = String(ch?.name ?? "").trim().slice(0, 40);
+      const delta = Number(ch?.delta ?? 0);
+      // فرق السعر لا يكون سالباً حتى لا ينزل سعر السطر عن الصفر
+      if (!n || names.has(n) || !Number.isInteger(delta) || delta < 0 || delta > OPT_MAX_DELTA) return { error: "bad-options" };
+      names.add(n);
+      cs.push({ id: keep(ch.id), name: n, delta });
+    }
+    out.push({ id: gid, name, required: g.required === true, multi: g.multi === true, choices: cs });
+  }
+  return { options: out };
+}
+/// سعر وحدة السطر من السعر الحالي للصنف وفروق الخيارات المختارة (sel: {groupId: [choiceId]}). يرمي bad-options أو options-required.
+export function priceLine(item, sel = {}) {
+  const groups = Array.isArray(item.meta?.options) ? item.meta.options : [];
+  const err = (code, extra = {}) => Object.assign(new Error(code), { code, itemId: item.id, ...extra });
+  for (const k of Object.keys(sel ?? {})) if (!groups.some((g) => g.id === k)) throw err("bad-options");
+  let unit = Number(item.price);
+  const picked = [];
+  for (const g of groups) {
+    const ids = new Set(sel?.[g.id] ?? []);
+    for (const id of ids) if (!g.choices.some((c) => c.id === id)) throw err("bad-options");
+    // ترتيب الخيارات كما رتبها المالك لا كما أرسلها التطبيق
+    const chosen = g.choices.filter((c) => ids.has(c.id));
+    if (!g.multi && chosen.length > 1) throw err("bad-options");
+    if (g.required && !chosen.length) throw err("options-required", { group: g.name });
+    for (const c of chosen) { unit += Number(c.delta) || 0; picked.push({ groupId: g.id, group: g.name, choiceId: c.id, choice: c.name, delta: Number(c.delta) || 0 }); }
+  }
+  return { unit, options: picked };
+}
+const hasRequiredOptions = (item) => Array.isArray(item.meta?.options) && item.meta.options.some((g) => g.required);
+/// عنوان طلب السلة: الصنف الأول وعدد البقية بالعدد العربي
+export function cartTitle(lines) {
+  const first = lines[0]?.title ?? "", rest = lines.length - 1;
+  if (rest <= 0) return first;
+  if (rest === 1) return `${first} وصنف آخر`;
+  if (rest === 2) return `${first} وصنفان آخران`;
+  return rest <= 10 ? `${first} و${rest} أصناف أخرى` : `${first} و${rest} صنفاً آخر`;
+}
+
 export default async function business(app, opts) {
   const { pool, auth } = opts;
   // النشر التلقائي يضيف سطر تسجيل الإضافة الجديدة مرة واحدة ولا يعدّله لاحقاً، فإضافةٌ سُجّلت بلا خيارات (مثل blog.js) تأخذ الاتصال من هنا
@@ -148,6 +228,10 @@ export default async function business(app, opts) {
     ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS released_at TIMESTAMPTZ;
     ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ;
     CREATE INDEX IF NOT EXISTS biz_orders_held ON biz_orders(release_at) WHERE funds='held';
+    -- سلة الدوائر (نوفمبر 2026): أسطر الطلب الواحد [{itemId,title,qty,options,unit,total}] محسوبة في الخادم (فارغ = طلب صنف واحد)،
+    -- ووقت الاستلام اليوم (فارغ = في أقرب وقت)
+    ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS lines JSONB;
+    ALTER TABLE biz_orders ADD COLUMN IF NOT EXISTS pickup_at TIMESTAMPTZ;
     -- نزاع واحد لكل طلب: السبب والصور، رسائل الطرفين والإدارة، وقرار الإدارة (refund | release | split)
     CREATE TABLE IF NOT EXISTS biz_disputes (
       order_id UUID PRIMARY KEY, biz_id TEXT NOT NULL, user_id TEXT NOT NULL, reason TEXT NOT NULL, photos JSONB NOT NULL DEFAULT '[]',
@@ -439,7 +523,14 @@ export default async function business(app, opts) {
     startAt: o.start_at, endAt: o.end_at, units: o.units, total: Number(o.total), status: o.status, code: o.code, note: o.note, meta: o.meta ?? {}, createdAt: o.created_at, updatedAt: o.updated_at,
     cancellable: cancellable(o), offer: o.meta?.offer ?? null,
     payment: paymentOf(o), paid: paymentOf(o) !== "at_venue" || o.paid_at != null, paidAt: o.paid_at ?? null, funds: fundsOf(o), releaseAt: o.release_at ?? null, releasedAt: o.released_at ?? null,
-    usedAt: o.used_at ?? null, dispute: disputeOut(o), disputable: disputable(o), ...extra,
+    usedAt: o.used_at ?? null, dispute: disputeOut(o), disputable: disputable(o),
+    // طلب السلة: أسطره بخياراتها وأسعارها كما حُسبت عند الطلب، ووقت الاستلام (null = في أقرب وقت)
+    cart: Array.isArray(o.lines), lines: Array.isArray(o.lines) ? o.lines.map(lineOut) : null, pickupAt: o.pickup_at ?? null, ...extra,
+  });
+  const lineOut = (l) => ({
+    itemId: l.itemId, title: l.title, qty: Number(l.qty) || 0, unit: Number(l.unit) || 0, total: Number(l.total) || 0,
+    options: (Array.isArray(l.options) ? l.options : []).map((x) => ({ groupId: x.groupId, group: x.group, choiceId: x.choiceId, choice: x.choice, delta: Number(x.delta) || 0 })),
+    offer: l.offer ?? null,
   });
   const postOut = (p) => ({ id: p.id, bizId: p.biz_id, kind: p.kind, title: p.title, body: p.body, imageUrl: p.image_url, startsAt: p.starts_at, endsAt: p.ends_at, active: p.active, hidden: p.hidden === true, createdAt: p.created_at });
   // الإلغاء من العميل: المنتجات خلال 24 ساعة من الشراء، التذاكر قبل ساعتين من العرض، الغرف والسيارات قبل 24 ساعة من البداية
@@ -451,7 +542,9 @@ export default async function business(app, opts) {
     if (o.kind === "showtime" || o.kind === "clinic") return start != null && start - now > 2 * 3600000;
     return start != null && start - now > DAY;
   }
-  const ORDER_JOIN = `SELECT o.*, i.title AS item_title, b.name AS biz_name, b.name_ar AS biz_name_ar, b.category, b.owner_id,
+  // عنوان طلب السلة محفوظ في meta.cartTitle («لاتيه وصنفان آخران») فتحمله الإشعارات وقيود الدفتر والمخرجات كعنوان الصنف الواحد
+  const ITEM_TITLE = "COALESCE(o.meta->>'cartTitle', i.title) AS item_title";
+  const ORDER_JOIN = `SELECT o.*, ${ITEM_TITLE}, b.name AS biz_name, b.name_ar AS biz_name_ar, b.category, b.owner_id,
       d.status AS d_status, d.reason AS d_reason, d.photos AS d_photos, d.messages AS d_messages, d.resolution AS d_resolution, d.note AS d_note, d.created_at AS d_created_at, d.resolved_at AS d_resolved_at
     FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id LEFT JOIN biz_disputes d ON d.order_id=o.id`;
 
@@ -690,7 +783,8 @@ export default async function business(app, opts) {
       user: await person(x.user_id), rating: x.rating, text: x.text, createdAt: x.created_at, mine: x.user_id === uid, reply: x.reply, replyAt: x.reply_at })));
     const posts = (await pool.query(`SELECT * FROM biz_posts WHERE biz_id=$1${staffView ? "" : " AND active AND NOT hidden AND (starts_at IS NULL OR starts_at <= now()) AND (ends_at IS NULL OR ends_at >= now())"} ORDER BY created_at DESC LIMIT 30`, [b.id])).rows.map(postOut);
     const myOrders = uid ? (await pool.query(`${ORDER_JOIN} WHERE o.biz_id=$1 AND o.user_id=$2 ORDER BY o.created_at DESC LIMIT 50`, [b.id, uid])).rows.map((o) => orderOut(o)) : [];
-    return bizOut(b, { myRole: role, items, reviews, posts, myOrders, ...offersInfo });
+    // أوقات استلام طلب السلة اليوم ضمن ساعات العمل (null حين لا تُفهم الساعات فيبقى «في أقرب وقت» وحده)
+    return bizOut(b, { myRole: role, items, reviews, posts, myOrders, ...offersInfo, pickupTimes: pickupSlots(b.hours) });
   });
 
   app.post("/biz/:id/follow", async (req, reply) => {
@@ -750,7 +844,16 @@ export default async function business(app, opts) {
       // أيام العمل بترقيم getUTCDay لتاريخ السعودية (0=الأحد … 6=السبت) كما يقرؤها showtimeSlots؛ قائمة فارغة بعد التنقية تُرفض في المسار
       if (m.days !== undefined) m.days = Array.isArray(m.days) ? [...new Set(m.days.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b) : [];
       if (m.oldPrice != null) m.oldPrice = Math.max(0, Math.round(Number(m.oldPrice) || 0)) || undefined;
+      // خيارات المنتج تُطبَّع وتُفحص هنا؛ الخطأ يُحمل في خاصية غير معدودة حتى لا يصير عموداً في UPDATE
+      let optErr = null;
+      if (m.options !== undefined) {
+        const r = normOptions(m.options);
+        if (r.error) optErr = r.error;
+        else if (r.options.length) m.options = r.options;
+        else delete m.options;
+      }
       out.meta = JSON.stringify(m);
+      if (optErr) Object.defineProperty(out, "optionsError", { value: optErr, enumerable: false });
     }
     if (has("imageUrl")) out.image_url = isUrl(body.imageUrl) ? str(body.imageUrl, 500) : null;
     if (has("sort")) out.sort = Math.round(Number(body.sort) || 0);
@@ -767,11 +870,20 @@ export default async function business(app, opts) {
     if (!(m.times ?? []).length) return "bad-times";
     return Array.isArray(m.days) && !m.days.length ? "bad-days" : null;
   };
+  // الخيارات للمنتج وحده (المواعيد والتذاكر والغرف والسيارات تبقى على مسار الصنف الواحد)؛ ونصوصها تمر بفلتر الكلمات المحظورة
+  const optionsMetaError = (kind, f) => {
+    if (f.optionsError) return f.optionsError;
+    if (!("meta" in f)) return null;
+    const o = JSON.parse(f.meta).options;
+    return Array.isArray(o) && o.length && kind !== "product" ? "bad-options" : null;
+  };
+  const optionTexts = (f) => { try { return (JSON.parse(f.meta ?? "{}").options ?? []).flatMap((g) => [g.name, ...g.choices.map((c) => c.name)]); } catch { return []; } };
   app.post("/biz/:id/items", async (req, reply) => {
     const g = await guard(req, reply, "manage"); if (!g) return;
     const f = itemFieldsFrom(req.body ?? {}, { category: g.b.category });
     if (!f.title) return bad(reply, 400, "bad-title");
-    if (rejectBanned(reply, f.title, f.description)) return;
+    const optErr = optionsMetaError(f.kind, f); if (optErr) return bad(reply, 400, optErr);
+    if (rejectBanned(reply, f.title, f.description, optionTexts(f))) return;
     const slotErr = slotMetaError(f.kind, f.meta); if (slotErr) return bad(reply, 400, slotErr);
     if (f.kind !== "product" && f.stock == null) f.stock = f.kind === "showtime" ? 100 : f.kind === "clinic" ? 6 : 1;
     const count = (await pool.query("SELECT count(*)::int AS n FROM biz_items WHERE biz_id=$1", [g.b.id])).rows[0].n;
@@ -789,7 +901,8 @@ export default async function business(app, opts) {
     if (!it) return bad(reply, 404, "not-found");
     const f = itemFieldsFrom(req.body ?? {}, { partial: true });
     if ("title" in f && !f.title) delete f.title;
-    if (rejectBanned(reply, f.title, f.description)) return;
+    const optErr = optionsMetaError(it.kind, f); if (optErr) return bad(reply, 400, optErr);
+    if (rejectBanned(reply, f.title, f.description, optionTexts(f))) return;
     const slotErr = "meta" in f ? slotMetaError(it.kind, f.meta) : null; if (slotErr) return bad(reply, 400, slotErr);
     const keys = Object.keys(f);
     if (keys.length) {
@@ -898,15 +1011,153 @@ export default async function business(app, opts) {
     return { ok: true };
   });
 
-  // ---- الشراء والحجز: منتج (كمية)، تذكرة سينما (موعد + عدد)، غرفة (من/إلى + عدد غرف)، سيارة (من/إلى)
+  // ---- الدفع لطلب جديد (صنف واحد أو سلة) داخل معاملته: دائرة بمالك ومعتمدة وإقرار 18+ للمدفوع، ثم الدفع في المكان أو المحفظة بمبلغ محجوز
+  async function settle(c, { b, uid, id, total, label, wantVenue, venueOk, adultMissing, endAt }) {
+    let payment = "free", funds = null, releaseAt = null;
+    if (total > 0) {
+      // دائرة بلا مالك لا تستقبل مالاً: الخصم من المشتري بلا قيد مقابل يُضيع المبلغ؛ الأصناف المجانية تبقى قابلة للطلب
+      if (!b.owner_id) throw fail("no-owner");
+      // البيع مغلق حتى يُعتمد السجل التجاري أو وثيقة العمل الحر (قرار المالك، 21 أكتوبر 2026)؛ الأصناف المجانية تبقى قابلة للطلب
+      if (verStatus(b) !== "approved") throw fail("not-verified");
+      if (adultMissing) throw fail("adult-required");
+      if (wantVenue) {
+        if (!venueOk) throw fail("venue-not-allowed");
+        const ns = await noShowsOf(c, b.id, uid);
+        if (ns >= NO_SHOW_LIMIT) throw fail("venue-blocked", { noShows: ns });
+        payment = "at_venue";
+      } else {
+        await ledger(c, uid, "biz", -total, { ref: id, note: label, points: Math.floor(total / 1000), peerId: b.owner_id ?? null });
+        // المبلغ يبقى محجوزاً (لا يُقيَّد لصاحب الدائرة) حتى تأكيد الاستلام أو مرور مهلة بعد الموعد أو الشراء،
+        // فالإلغاء والاسترداد أثناء الحجز يعيدانه للمشتري بلا خصم من صاحب الدائرة، والنزاع يجمّده
+        payment = "wallet"; funds = "held";
+        releaseAt = new Date((endAt ? endAt.getTime() : Date.now()) + holdDays() * DAY);
+      }
+    }
+    return { payment, funds, releaseAt };
+  }
+  // أخطاء الطلب المشتركة بين الصنف الواحد والسلة (itemId يدل التطبيق على السطر المقصود في السلة)؛ يعيد true إن رُدّ على الطلب
+  const ORDER_ERRORS = { "insufficient-funds": 402, "no-owner": 409, "not-verified": 403, "adult-required": 403, "venue-not-allowed": 409, "not-found": 404, "sold-out": 409, unavailable: 409,
+    "offer-unavailable": 409, "bad-slot": 400, "bad-date": 400, "bad-range": 400, "in-past": 400, "too-many": 400, "not-orderable": 400, "bad-options": 400, "options-required": 400, "bad-lines": 400, "bad-pickup": 400 };
+  function orderFail(reply, err) {
+    if (err.code === "venue-blocked") { bad(reply, 403, "venue-blocked", { noShows: err.noShows ?? NO_SHOW_LIMIT }); return true; }
+    const status = ORDER_ERRORS[err.code];
+    if (!status) return false;
+    const extra = {};
+    if (err.code === "sold-out" || err.code === "unavailable") extra.left = err.left ?? 0;
+    if (err.code === "offer-unavailable") extra.reason = err.reason ?? null;
+    if (err.itemId) extra.itemId = err.itemId;
+    if (err.group) extra.group = err.group;
+    bad(reply, status, err.code, extra);
+    return true;
+  }
+  const hhmm = (t) => new Date(new Date(t).getTime() + RIYADH_OFFSET_MIN * 60000).toISOString().slice(11, 16);
+
+  // ---- طلب السلة: طلب واحد بعدة أسطر من منتجات الدائرة بخياراتها؛ المجموع من الأسعار الحالية في الخادم (لا يُوثق بسعر من التطبيق)،
+  // ومخزون كل صنف يُنقص في المعاملة نفسها تحت قفل صفوفه، ثم الدفع والحجز والإلغاء والاستلام والنزاع بمسارات الصنف الواحد نفسها
+  const CART_MAX_LINES = 20, CART_MAX_QTY = 50;
+  function parseLines(body) {
+    const raw = Array.isArray(body.lines) ? body.lines : [{ itemId: body.itemId, qty: body.qty, options: body.options }];
+    if (!raw.length || raw.length > CART_MAX_LINES) throw fail("bad-lines");
+    const lines = raw.map((l) => {
+      if (!l || typeof l !== "object" || !SLUG_RE.test(l.itemId ?? "")) throw fail("bad-lines");
+      const qty = Math.round(Number(l.qty ?? 1));
+      if (!Number.isInteger(qty) || qty < 1 || qty > 20) throw fail("bad-lines");
+      const sel = {};
+      if (l.options != null) {
+        if (typeof l.options !== "object" || Array.isArray(l.options)) throw fail("bad-options", { itemId: l.itemId });
+        for (const [g, v] of Object.entries(l.options)) {
+          const ids = Array.isArray(v) ? v : v == null ? [] : [v];
+          if (!OPT_ID_RE.test(g) || ids.length > OPT_MAX_CHOICES || !ids.every((x) => typeof x === "string" && OPT_ID_RE.test(x))) throw fail("bad-options", { itemId: l.itemId });
+          sel[g] = ids;
+        }
+      }
+      return { itemId: l.itemId, qty, sel };
+    });
+    if (lines.reduce((n, l) => n + l.qty, 0) > CART_MAX_QTY) throw fail("too-many");
+    return lines;
+  }
+  async function cartOrder(req, reply, uid, body) {
+    let lines;
+    try { lines = parseLines(body); } catch (err) { if (orderFail(reply, err)) return; throw err; }
+    const note = str(body.note, 300);
+    if (rejectBanned(reply, note)) return;
+    // «في أقرب وقت» (لا وقت) أو وقت اليوم يُفحص بساعات الدائرة داخل المعاملة
+    let pickupAt = null;
+    if (body.pickupAt != null && body.pickupAt !== "" && body.pickupAt !== "asap") {
+      pickupAt = new Date(body.pickupAt);
+      if (isNaN(pickupAt)) return bad(reply, 400, "bad-pickup");
+    }
+    const wantVenue = body.payment === "at_venue";
+    let adultMissing = false;
+    try { const f = globalThis.naslifeAdultOk; adultMissing = typeof f === "function" ? !(await f(uid)) : false; } catch { adultMissing = false; }
+    const id = crypto.randomUUID();
+    let out;
+    try {
+      out = await tx(async (c) => {
+        const b = (await c.query("SELECT * FROM biz WHERE id=$1 AND active", [req.params.id])).rows[0];
+        if (!b) throw fail("not-found");
+        if (pickupAt && pickupError(b.hours, pickupAt)) throw fail("bad-pickup");
+        const ids = [...new Set(lines.map((l) => l.itemId))].sort();
+        // قفل الأصناف بترتيب ثابت (المعرّف) حتى لا تتشابك سلّتان متزامنتان، ثم فحص المخزون وإنقاصه تحت القفل (آخر قطعة لطلب واحد)
+        const rows = (await c.query("SELECT * FROM biz_items WHERE biz_id=$1 AND id = ANY($2::text[]) AND active ORDER BY id FOR UPDATE", [b.id, ids])).rows;
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        const need = new Map(), priced = [];
+        for (const l of lines) {
+          const it = byId.get(l.itemId);
+          if (!it) throw fail("not-found", { itemId: l.itemId });
+          // السلة للمنتجات وحدها: المواعيد والتذاكر والغرف والسيارات تبقى على مسار الصنف الواحد
+          if (it.kind !== "product") throw fail("not-orderable", { itemId: it.id });
+          const { unit, options } = priceLine(it, l.sel);
+          need.set(it.id, (need.get(it.id) ?? 0) + l.qty);
+          priced.push({ it, qty: l.qty, unit, options, total: unit * l.qty });
+        }
+        for (const [itemId, n] of need) { const it = byId.get(itemId); if (it.stock != null && it.stock < n) throw fail("sold-out", { left: it.stock, itemId }); }
+        for (const itemId of ids) if (byId.get(itemId).stock != null) await c.query("UPDATE biz_items SET stock=stock-$2 WHERE id=$1", [itemId, need.get(itemId)]);
+        const subtotal = priced.reduce((n, p) => n + p.total, 0);
+        // العروض (offers.js) لكل سطر كأنه طلب صنفه: سعر الأسبوع على سطره، والكوبون مرة واحدة (حدّه لكل مستخدم يُعدّ داخل المعاملة نفسها)
+        const applied = [];
+        if (body.offerId !== "none" && subtotal > 0 && globalThis.naslifeOffersApply) {
+          for (const p of priced) {
+            if (p.total <= 0) continue;
+            const a = await globalThis.naslifeOffersApply(c, { biz: b, uid, item: p.it, qty: p.qty, total: p.total, lat: body.lat, lng: body.lng, orderId: id });
+            if (a && a.discount > 0) { p.offer = { id: a.id, kind: a.kind, title: a.title, discount: Math.min(a.discount, p.total) }; applied.push(p.offer); }
+          }
+        }
+        const discount = applied.reduce((n, a) => n + a.discount, 0);
+        const total = Math.max(0, subtotal - discount);
+        const outLines = priced.map((p) => ({ itemId: p.it.id, title: p.it.title, qty: p.qty, options: p.options, unit: p.unit, total: p.total, ...(p.offer ? { offer: p.offer } : {}) }));
+        const title = cartTitle(outLines);
+        const meta = { cartTitle: title };
+        if (applied.length) meta.offer = { id: applied[0].id, kind: applied[0].kind, title: [...new Set(applied.map((a) => a.title))].join("، "), discount, before: subtotal };
+        const code = "NAS-" + crypto.randomBytes(4).toString("hex").toUpperCase();
+        const { payment, funds, releaseAt } = await settle(c, { b, uid, id, total, label: `${b.name_ar || b.name} · ${title}`, wantVenue,
+          // الدفع في المكان للسلة فقط حين يقبله كل صنف فيها
+          venueOk: priced.every((p) => p.it.pay_at_venue === true), adultMissing, endAt: pickupAt });
+        const qty = priced.reduce((n, p) => n + p.qty, 0);
+        await c.query("INSERT INTO biz_orders(id,biz_id,item_id,user_id,kind,qty,units,total,code,note,meta,payment,funds,release_at,lines,pickup_at) VALUES($1,$2,$3,$4,'product',$5,1,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+          [id, b.id, outLines[0].itemId, uid, qty, total, code, note, JSON.stringify(meta), payment, funds, releaseAt, JSON.stringify(outLines), pickupAt]);
+        return { id, code, total, b, title, payment, pickupAt };
+      });
+    } catch (err) { if (orderFail(reply, err)) return; throw err; }
+    await notify(await bizTeam(out.b), { kind: "biz_order", title: `طلب جديد · ${bizName(out.b)}`,
+      body: `${await nickOf(uid)}: ${out.title} بقيمة ${sar(out.total)}${out.payment === "at_venue" ? " يُدفع في المكان" : ""} · الاستلام ${out.pickupAt ? hhmm(out.pickupAt) : "في أقرب وقت"} · الرمز ${out.code}`,
+      data: { bizId: out.b.id, orderId: out.id }, exclude: uid });
+    const r = await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [out.id]);
+    return orderOut(r.rows[0]);
+  }
+
+  // ---- الشراء والحجز: منتج (كمية)، تذكرة سينما (موعد + عدد)، غرفة (من/إلى + عدد غرف)، سيارة (من/إلى)، أو سلة منتجات (lines)
   app.post("/biz/:id/orders", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (await isSuspended(uid)) return bad(reply, 403, "suspended");
     if (!SLUG_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const body = req.body ?? {};
+    // السلة: أسطر من منتجات الدائرة، أو صنف واحد بخياراته (options) فيُطلب سلةً بسطر واحد
+    if (Array.isArray(body.lines) || (body.options != null && typeof body.options === "object")) return cartOrder(req, reply, uid, body);
     if (!SLUG_RE.test(body.itemId ?? "")) return bad(reply, 400, "bad-item");
     const qty = Math.max(1, Math.min(20, Math.round(Number(body.qty) || 1)));
     const note = str(body.note, 300);
+    if (rejectBanned(reply, note)) return;
     const startAt = body.startAt ? new Date(body.startAt) : null, endAt = body.endAt ? new Date(body.endAt) : null;
     if ((startAt && isNaN(startAt)) || (endAt && isNaN(endAt))) return bad(reply, 400, "bad-date");
     // «احجز الآن وادفع في المكان»: لا خصم من المحفظة ولا مال يمر عبر ناس لايف؛ الافتراضي الدفع من المحفظة
@@ -923,6 +1174,8 @@ export default async function business(app, opts) {
         const it = (await c.query("SELECT * FROM biz_items WHERE id=$1 AND biz_id=$2 AND active FOR UPDATE", [body.itemId, b.id])).rows[0];
         if (!it || !KINDS.has(it.kind)) throw fail("not-found");
         if (it.kind === "info") throw fail("not-orderable");
+        // منتج بخيارات إلزامية لا يُطلب بلا اختيارها (التطبيق يرسلها بمسار السلة)
+        if (it.kind === "product" && hasRequiredOptions(it)) throw fail("options-required", { itemId: it.id });
         const price = Number(it.price);
         let units = 1, total = 0, s = null, e = null, meta = {};
         if (it.kind === "product") {
@@ -957,41 +1210,13 @@ export default async function business(app, opts) {
         }
         const code = "NAS-" + crypto.randomBytes(4).toString("hex").toUpperCase();
         const label = `${b.name_ar || b.name} · ${it.title}`;
-        let payment = "free", funds = null, releaseAt = null;
-        if (total > 0) {
-          // دائرة بلا مالك لا تستقبل مالاً: الخصم من المشتري بلا قيد مقابل يُضيع المبلغ؛ الأصناف المجانية تبقى قابلة للطلب
-          if (!b.owner_id) throw fail("no-owner");
-          // البيع مغلق حتى يُعتمد السجل التجاري أو وثيقة العمل الحر (قرار المالك، 21 أكتوبر 2026)؛ الأصناف المجانية تبقى قابلة للطلب
-          if (verStatus(b) !== "approved") throw fail("not-verified");
-          if (adultMissing) throw fail("adult-required");
-          if (wantVenue) {
-            if (it.pay_at_venue !== true) throw fail("venue-not-allowed");
-            const ns = await noShowsOf(c, b.id, uid);
-            if (ns >= NO_SHOW_LIMIT) throw fail("venue-blocked", { noShows: ns });
-            payment = "at_venue";
-          } else {
-            await ledger(c, uid, "biz", -total, { ref: id, note: label, points: Math.floor(total / 1000), peerId: b.owner_id ?? null });
-            // المبلغ يبقى محجوزاً (لا يُقيَّد لصاحب الدائرة) حتى تأكيد الاستلام أو مرور مهلة بعد الموعد أو الشراء،
-            // فالإلغاء والاسترداد أثناء الحجز يعيدانه للمشتري بلا خصم من صاحب الدائرة، والنزاع يجمّده
-            payment = "wallet"; funds = "held";
-            releaseAt = new Date((e ? e.getTime() : Date.now()) + holdDays() * DAY);
-          }
-        }
+        const { payment, funds, releaseAt } = await settle(c, { b, uid, id, total, label, wantVenue, venueOk: it.pay_at_venue === true, adultMissing, endAt: e });
         await c.query("INSERT INTO biz_orders(id,biz_id,item_id,user_id,kind,qty,start_at,end_at,units,total,code,note,meta,payment,funds,release_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
           [id, b.id, it.id, uid, it.kind, finalQty, s, e, units, total, code, note, JSON.stringify(meta), payment, funds, releaseAt]);
         return { id, code, total, b, it, qty: finalQty, payment };
       });
     } catch (err) {
-      if (err.code === "insufficient-funds") return bad(reply, 402, "insufficient-funds");
-      if (err.code === "no-owner") return bad(reply, 409, "no-owner");
-      if (err.code === "not-verified") return bad(reply, 403, "not-verified");
-      if (err.code === "adult-required") return bad(reply, 403, "adult-required");
-      if (err.code === "venue-not-allowed") return bad(reply, 409, "venue-not-allowed");
-      if (err.code === "venue-blocked") return bad(reply, 403, "venue-blocked", { noShows: err.noShows ?? NO_SHOW_LIMIT });
-      if (err.code === "not-found") return bad(reply, 404, "not-found");
-      if (["sold-out", "unavailable"].includes(err.code)) return bad(reply, 409, err.code, { left: err.left ?? 0 });
-      if (["bad-slot", "bad-date", "bad-range", "in-past", "too-many", "not-orderable"].includes(err.code)) return bad(reply, 400, err.code);
-      if (err.code === "offer-unavailable") return bad(reply, 409, "offer-unavailable", { reason: err.reason ?? null });
+      if (orderFail(reply, err)) return;
       throw err;
     }
     await notify(await bizTeam(out.b), { kind: "biz_order", title: `${orderNoun(out.it.kind)} جديد · ${bizName(out.b)}`,
@@ -1007,7 +1232,7 @@ export default async function business(app, opts) {
   });
 
   // ---- قيود المال على الطلب (داخل معاملة والطلب مقفل بـ LOCK_ORDER)
-  const LOCK_ORDER = "SELECT o.*, i.title AS item_title, i.stock, b.name_ar, b.name, b.owner_id FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id WHERE o.id=$1 FOR UPDATE OF o";
+  const LOCK_ORDER = `SELECT o.*, ${ITEM_TITLE}, i.stock, b.name_ar, b.name, b.owner_id FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id WHERE o.id=$1 FOR UPDATE OF o`;
   const orderLabel = (o) => `${o.name_ar || o.name} · ${o.item_title}`;
   // يُقرأ بعد قفل الطلب (لا من الربط في الاستعلام نفسه) حتى يرى نزاعاً فُتح في اللحظة نفسها
   const openDispute = async (c, id) => (await c.query("SELECT 1 FROM biz_disputes WHERE order_id=$1 AND status='open'", [id])).rowCount > 0;
@@ -1026,6 +1251,13 @@ export default async function business(app, opts) {
   // إرجاع ما حجزه الطلب: مخزون المنتج واستخدام العرض (المقعد أو الموعد يتحرر بتغيّر الحالة وحده)
   async function restock(c, o) {
     if (globalThis.naslifeOffersRelease) await globalThis.naslifeOffersRelease(c, o.id);
+    if (Array.isArray(o.lines)) {
+      // السلة: يعود مخزون كل صنف بمجموع كميات أسطره، بترتيب المعرّف نفسه الذي قُفلت به الأصناف عند الطلب
+      const back = new Map();
+      for (const l of o.lines) back.set(l.itemId, (back.get(l.itemId) ?? 0) + (Number(l.qty) || 0));
+      for (const itemId of [...back.keys()].sort()) if (back.get(itemId) > 0) await c.query("UPDATE biz_items SET stock=stock+$2 WHERE id=$1 AND stock IS NOT NULL", [itemId, back.get(itemId)]);
+      return;
+    }
     if (o.kind === "product" && o.stock != null) await c.query("UPDATE biz_items SET stock=stock+$2 WHERE id=$1", [o.item_id, o.qty]);
   }
 
@@ -1341,7 +1573,11 @@ export default async function business(app, opts) {
         COALESCE((SELECT count(*) FROM biz_orders o WHERE o.biz_id=$1 AND o.status IN ('confirmed','used') AND (o.created_at + interval '3 hours')::date = d::date),0)::int AS orders,
         COALESCE((SELECT SUM(total) FROM biz_orders o WHERE o.biz_id=$1 AND o.status IN ('confirmed','used') AND (o.created_at + interval '3 hours')::date = d::date),0)::bigint AS revenue
       FROM generate_series((now() + interval '3 hours')::date - 13, (now() + interval '3 hours')::date, '1 day') AS d ORDER BY d`, [id])).rows;
-    const topItems = (await pool.query("SELECT o.item_id, i.title, count(*)::int AS count, COALESCE(SUM(o.total),0)::bigint AS total FROM biz_orders o JOIN biz_items i ON i.id=o.item_id WHERE o.biz_id=$1 AND o.status IN ('confirmed','used') GROUP BY o.item_id, i.title ORDER BY total DESC LIMIT 5", [id])).rows;
+    // الأصناف الأعلى: طلب الصنف الواحد بمبلغه، وكل سطر في طلب السلة بمجموع سطره (لا تُنسب السلة كلها لصنفها الأول)
+    const topItems = (await pool.query(`SELECT x.item_id, i.title, count(*)::int AS count, COALESCE(SUM(x.total),0)::bigint AS total FROM (
+        SELECT o.item_id, o.total FROM biz_orders o WHERE o.biz_id=$1 AND o.status IN ('confirmed','used') AND o.lines IS NULL
+        UNION ALL SELECT l->>'itemId', COALESCE((l->>'total')::bigint, 0) FROM biz_orders o, jsonb_array_elements(o.lines) l WHERE o.biz_id=$1 AND o.status IN ('confirmed','used') AND jsonb_typeof(o.lines)='array'
+      ) x JOIN biz_items i ON i.id=x.item_id GROUP BY x.item_id, i.title ORDER BY total DESC LIMIT 5`, [id])).rows;
     const social = (await pool.query("SELECT (SELECT count(*) FROM biz_follows WHERE biz_id=$1)::int AS followers, (SELECT round(avg(rating)::numeric,1) FROM biz_reviews WHERE biz_id=$1) AS rating, (SELECT count(*) FROM biz_reviews WHERE biz_id=$1)::int AS reviews, (SELECT count(*) FROM biz_reviews WHERE biz_id=$1 AND reply IS NULL)::int AS unanswered, (SELECT views FROM biz WHERE id=$1) AS views", [id])).rows[0];
     const upcoming = (await pool.query("SELECT count(*)::int AS n FROM biz_orders WHERE biz_id=$1 AND status='confirmed' AND start_at IS NOT NULL AND start_at BETWEEN now() AND now() + interval '24 hours'", [id])).rows[0].n;
     // المال: المحجوز حتى الاستلام (ومنه ما تجمّد بنزاع)، والمُحرَّر لمحفظة صاحب الدائرة (ومنه الطلبات القديمة التي قُيّدت عند الشراء

@@ -141,6 +141,8 @@ class Biz {
   final String? entityKind;
   /// الكيان النظامي للعامة بعد اعتماد التوثيق فقط (سجل تجاري أو وثيقة عمل حر ورقمها)؛ null قبله.
   final BizEntity? entity;
+  /// أوقات استلام طلب السلة اليوم ضمن ساعات العمل (من GET /biz/:id)؛ null حين لا تُفهم الساعات فيبقى «في أقرب وقت» وحده.
+  final List<DateTime>? pickupTimes;
 
   const Biz({
     required this.id, required this.name, this.nameAr = '', required this.category, this.sector = '', this.description = '', required this.lat, required this.lng,
@@ -148,7 +150,7 @@ class Biz {
     this.following = false, this.followers = 0, this.rating, this.ratingCount = 0, this.minPrice, this.itemsCount = 0, this.items = const [], this.reviews = const [], this.myOrders = const [],
     this.posts = const [], this.logoUrl, this.coverUrl, this.ownerId, this.myRole, this.active = true, this.views = 0, this.createdAt, this.openNow, this.distanceKm, this.matchedItem, this.offers = 0, this.offerEndsAt,
     this.presence = 'fixed', this.serviceArea, this.here, this.verificationStatus = 'none', this.tier = 'published', this.canSell = false, this.phoneVerified = false, this.entityKind,
-    this.entity,
+    this.entity, this.pickupTimes,
   });
 
   factory Biz.fromJson(Map m) => Biz(
@@ -165,6 +167,7 @@ class Biz {
         verificationStatus: m['verificationStatus']?.toString() ?? (m['verified'] == true ? 'approved' : 'none'), tier: m['tier']?.toString() ?? 'published',
         canSell: m['canSell'] is bool ? m['canSell'] as bool : m['verified'] == true, phoneVerified: m['phoneVerified'] == true, entityKind: m['entityKind']?.toString(),
         entity: BizEntity.tryParse(m['entity']),
+        pickupTimes: m['pickupTimes'] is List ? [for (final t in m['pickupTimes'] as List) if (_t(t) != null) _t(t)!] : null,
       );
 
   bool get isMobile => presence == 'mobile';
@@ -234,6 +237,34 @@ class BizItem {
   String get unitLabel => switch (unit) { 'night' => 'لليلة', 'day' => 'لليوم', 'ticket' => 'للتذكرة', 'visit' => 'للزيارة', _ => '' };
   bool get isFree => price == 0;
   bool get soldOut => kind == 'product' && stock != null && stock! <= 0;
+  /// مجموعات خيارات المنتج من meta.options (الحجم، الحليب…).
+  List<ItemOptionGroup> get options => kind == 'product' ? [for (final g in asList(meta['options'])) ItemOptionGroup.fromJson(g)] : const [];
+  bool get hasOptions => options.isNotEmpty;
+  /// مجموع فروق الخيارات المختارة (sel: معرّف المجموعة ← معرّفات الخيارات).
+  int optionsDelta(Map<String, List<String>> sel) {
+    var d = 0;
+    for (final g in options) {
+      for (final c in g.choices) {
+        if (sel[g.id]?.contains(c.id) == true) d += c.delta;
+      }
+    }
+    return d;
+  }
+  /// أول مجموعة إلزامية لم يُختر منها شيء (null = الاختيار مكتمل).
+  ItemOptionGroup? missingGroup(Map<String, List<String>> sel) => options.where((g) => g.required && !(sel[g.id]?.any((id) => g.choices.any((c) => c.id == id)) ?? false)).firstOrNull;
+  /// هل الاختيار صالح للصنف الآن: لا خيار محذوف، ولا أكثر من خيار في مجموعة الاختيار الواحد، والإلزامي مكتمل.
+  bool selectionValid(Map<String, List<String>> sel) {
+    for (final e in sel.entries) {
+      final g = options.where((g) => g.id == e.key).firstOrNull;
+      if (g == null || e.value.any((id) => !g.choices.any((c) => c.id == id)) || (!g.multi && e.value.length > 1)) return false;
+    }
+    return missingGroup(sel) == null;
+  }
+  /// سطر الخيارات المختارة للعرض: «الحجم: كبير · الحليب: شوفان».
+  String optionsLabel(Map<String, List<String>> sel) => [
+        for (final g in options)
+          if (g.choices.any((c) => sel[g.id]?.contains(c.id) == true)) '${g.name}: ${g.choices.where((c) => sel[g.id]!.contains(c.id)).map((c) => c.name).join('، ')}',
+      ].join(' · ');
   /// أيام عمل صنف الموعد كما حفظها المالك (0 = الأحد … 6 = السبت)؛ null = كل الأيام.
   List<int>? get workDays {
     final d = meta['days'];
@@ -241,6 +272,29 @@ class BizItem {
     final out = [for (final v in d) if (v is num && v >= 0 && v <= 6) v.toInt()];
     return out.isEmpty ? null : out;
   }
+}
+
+/// خيار في مجموعة خيارات المنتج: اسم وفرق سعر بالهللة (صفر أو أكثر).
+class ItemOptionChoice {
+  final String id, name;
+  final int delta;
+  const ItemOptionChoice({this.id = '', required this.name, this.delta = 0});
+  factory ItemOptionChoice.fromJson(Map m) => ItemOptionChoice(id: m['id']?.toString() ?? '', name: m['name']?.toString() ?? '', delta: _i(m['delta']));
+  Map<String, dynamic> toJson() => {if (id.isNotEmpty) 'id': id, 'name': name, 'delta': delta};
+}
+
+/// مجموعة خيارات منتج (الحجم، الحليب…): إلزامية أو اختيارية، واختيار واحد أو عدة خيارات.
+class ItemOptionGroup {
+  final String id, name;
+  final bool required, multi;
+  final List<ItemOptionChoice> choices;
+  const ItemOptionGroup({this.id = '', required this.name, this.required = false, this.multi = false, this.choices = const []});
+  factory ItemOptionGroup.fromJson(Map m) => ItemOptionGroup(
+        id: m['id']?.toString() ?? '', name: m['name']?.toString() ?? '', required: m['required'] == true, multi: m['multi'] == true,
+        choices: asList(m['choices']).map(ItemOptionChoice.fromJson).toList(),
+      );
+  Map<String, dynamic> toJson() => {if (id.isNotEmpty) 'id': id, 'name': name, 'required': required, 'multi': multi, 'choices': [for (final c in choices) c.toJson()]};
+  String get ruleLabel => required ? (multi ? 'إلزامي · اختر واحداً أو أكثر' : 'إلزامي · اختر واحداً') : (multi ? 'اختياري · اختر ما تشاء' : 'اختياري');
 }
 
 class Showtime {
@@ -387,7 +441,10 @@ class BizOrder {
   /// مرات «لم يحضر» لهذا العميل في الدائرة (للفريق).
   final int? noShows;
   final Person? owner;
-  const BizOrder({this.offer,
+  /// طلب السلة: أسطره بخياراتها (فارغة لطلب الصنف الواحد)، ووقت الاستلام اليوم (null = في أقرب وقت).
+  final List<BizOrderLine> lines;
+  final DateTime? pickupAt;
+  const BizOrder({this.offer, this.lines = const [], this.pickupAt,
     required this.id, required this.bizId, required this.itemId, required this.kind, required this.status, required this.code, this.note = '', this.title = '', this.bizName = '',
     this.category = BizCategory.brand, this.qty = 1, this.units = 1, required this.total, this.startAt, this.endAt, this.createdAt, this.meta = const {}, this.cancellable = false, this.customer,
     this.payment = 'wallet', this.paid = true, this.funds, this.paidAt, this.releaseAt, this.releasedAt, this.usedAt, this.dispute, this.disputable = false, this.viewer, this.noShows, this.owner,
@@ -400,7 +457,11 @@ class BizOrder {
         payment: m['payment']?.toString() ?? (_i(m['total']) > 0 ? 'wallet' : 'free'), paid: m['paid'] != false, funds: m['funds']?.toString(), paidAt: _t(m['paidAt']), releaseAt: _t(m['releaseAt']),
         releasedAt: _t(m['releasedAt']), usedAt: _t(m['usedAt']), dispute: m['dispute'] is Map ? BizDispute.fromJson(_m(m['dispute'])) : null, disputable: m['disputable'] == true,
         viewer: m['viewer']?.toString(), noShows: m['noShows'] == null ? null : _i(m['noShows']), owner: m['owner'] is Map ? Person.fromJson(_m(m['owner'])) : null,
+        lines: asList(m['lines']).map(BizOrderLine.fromJson).toList(), pickupAt: _t(m['pickupAt']),
       );
+  bool get isCart => lines.isNotEmpty;
+  /// «في أقرب وقت» أو «اليوم 19:30».
+  String get pickupLabel => pickupAt == null ? 'في أقرب وقت' : 'اليوم ${pickupAt!.hour.toString().padLeft(2, '0')}:${pickupAt!.minute.toString().padLeft(2, '0')}';
 
   String get statusLabel => switch (status) { 'confirmed' => 'مؤكد', 'used' => 'مستخدم', 'cancelled' => 'ملغى', 'no_show' => 'لم يحضر', _ => status };
   bool get atVenue => payment == 'at_venue';
@@ -440,7 +501,7 @@ class BizOrder {
   bool get upcoming => status == 'confirmed' && (startAt == null || startAt!.isAfter(DateTime.now().subtract(const Duration(hours: 6))));
 
   /// وصف مختصر للكمية والمدة: "3 تذاكر" أو "غرفتان × ليلتان".
-  String get summary => switch (kind) {
+  String get summary => isCart ? lines.map((l) => '${l.qty} × ${l.title}').join('، ') : switch (kind) {
         'showtime' => '$qty ${qty == 1 ? 'تذكرة' : 'تذاكر'}',
         'clinic' => 'موعد لشخص واحد',
         'room' => '$qty ${qty == 1 ? 'غرفة' : 'غرف'} × $units ${units == 1 ? 'ليلة' : 'ليالٍ'}',
@@ -449,6 +510,30 @@ class BizOrder {
       };
 }
 
+
+/// سطر في طلب السلة كما حسبه الخادم: الصنف والكمية والخيارات وسعر الوحدة ومجموع السطر (قبل خصم العرض).
+class BizOrderLine {
+  final String itemId, title;
+  final int qty, unit, total;
+  final List<({String group, String choice, int delta})> options;
+  /// خصم عرض طُبّق على هذا السطر (بالهللة)، وعنوانه.
+  final int discount;
+  final String? offerTitle;
+  const BizOrderLine({required this.itemId, required this.title, this.qty = 1, this.unit = 0, this.total = 0, this.options = const [], this.discount = 0, this.offerTitle});
+  factory BizOrderLine.fromJson(Map m) => BizOrderLine(
+        itemId: m['itemId']?.toString() ?? '', title: m['title']?.toString() ?? '', qty: _i(m['qty']), unit: _i(m['unit']), total: _i(m['total']),
+        options: [for (final o in asList(m['options'])) (group: o['group']?.toString() ?? '', choice: o['choice']?.toString() ?? '', delta: _i(o['delta']))],
+        discount: m['offer'] is Map ? _i(m['offer']['discount']) : 0, offerTitle: m['offer'] is Map ? m['offer']['title']?.toString() : null,
+      );
+  /// «الحجم: كبير · إضافات: شوت، سيروب» بترتيب المجموعات.
+  String get optionsLabel {
+    final groups = <String, List<String>>{};
+    for (final o in options) {
+      (groups[o.group] ??= []).add(o.choice);
+    }
+    return [for (final e in groups.entries) '${e.key}: ${e.value.join('، ')}'].join(' · ');
+  }
+}
 
 /// نزاع «لدي مشكلة» على طلب دائرة: السبب والصور ورسائل الطرفين والإدارة وقرار الحسم.
 class BizDispute {
