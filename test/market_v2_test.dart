@@ -167,13 +167,16 @@ void main() {
     expect(srv.bodies['POST /market/orders/$_oid/stage']!['stage'], 'preparing');
     await tester.tap(find.byKey(const Key('stage-delivered'))); await tester.pumpAndSettle();
     expect(srv.orderStatus, 'delivered');
+    // ورقة المسح (لا كاميرا حية في الاختبار): الأرقام تُكتب فيها، ثم ملخص الطلب و«تأكيد التسليم»
     await tester.tap(find.byKey(const Key('seller-code'))); await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, '0000');
-    await tester.tap(find.text('تأكيد')); await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('qr-manual')), '0000');
+    await tester.tap(find.byKey(const Key('qr-manual-go'))); await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scan-confirm'))); await tester.pumpAndSettle();
     expect(find.text('الرمز غير صحيح'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('seller-code'))); await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, '4321');
-    await tester.tap(find.text('تأكيد')); await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scan-rescan'))); await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('qr-manual')), '4321');
+    await tester.tap(find.byKey(const Key('qr-manual-go'))); await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('scan-confirm'))); await tester.pumpAndSettle();
     expect(srv.orderStatus, 'completed');
   });
 
