@@ -339,7 +339,8 @@ export default async function accountDelete(app, opts = {}) {
       const T = await schema();
       for (const { user_id: id } of due) {
         const media = [];
-        if (T.has("map_posts")) for (const r of (await pool.query("DELETE FROM map_posts WHERE user_id=$1 AND status='hidden' RETURNING media_url, audio_url", [id]).catch(() => ({ rows: [] }))).rows) media.push(r.media_url, r.audio_url);
+        // RETURNING *: صور الألبوم (media، من map_posts.js) تُحذف مع الغلاف والصوت، ولا يفشل الكنس إن غاب العمود
+        if (T.has("map_posts")) for (const r of (await pool.query("DELETE FROM map_posts WHERE user_id=$1 AND status='hidden' RETURNING *", [id]).catch(() => ({ rows: [] }))).rows) media.push(r.media_url, ...(Array.isArray(r.media) ? r.media : []), r.audio_url);
         if (T.has("biz_community_posts")) await pool.query("DELETE FROM biz_community_posts WHERE user_id=$1 AND hidden_by='account-deleted'", [id]).catch(() => {});
         if (T.has("biz_community_replies")) await pool.query("DELETE FROM biz_community_replies WHERE user_id=$1 AND hidden", [id]).catch(() => {});
         for (const u of media) if (u) { try { await globalThis.naslifeMediaDelete?.(u); } catch { /* ignore */ } }

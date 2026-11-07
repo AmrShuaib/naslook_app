@@ -9,7 +9,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../api/client.dart';
 import '../../api/live_api.dart';
-import '../../api/posts_api.dart' show distanceText;
+import '../../api/posts_api.dart' show albumCountOf, distanceText;
 import '../../api/row_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/media/video_view.dart';
@@ -26,6 +26,7 @@ import '../home/row_open.dart';
 import '../jobs/jobs_page.dart';
 import '../market/market_page.dart';
 import '../search/search_page.dart';
+import 'album_badge.dart';
 import 'my_posts_page.dart';
 import 'overlay_canvas.dart' show colorFromHex;
 import 'post_media.dart' show videoPreviewUrl;
@@ -516,6 +517,8 @@ class _FeedCard extends StatelessWidget {
               height: mediaHeight,
               child: Stack(fit: StackFit.expand, children: [
                 _Media(item: it, videos: videos, noMotion: noMotion),
+                // لحظة الألبوم: الغلاف وحده هنا، والشارة تقول كم صورة خلفه
+                if (_isMoment && albumCountOf(it.payload) > 1) PositionedDirectional(top: 8, end: 8, child: AlbumBadge(key: Key('tl-album-${it.id}'), count: albumCountOf(it.payload))),
                 PositionedDirectional(
                   top: 8,
                   start: 8,

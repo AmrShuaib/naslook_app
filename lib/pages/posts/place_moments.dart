@@ -7,6 +7,7 @@ import '../../core/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../state/safety_providers.dart';
 import '../../ui/widgets.dart';
+import 'album_badge.dart';
 import 'overlay_canvas.dart' show colorFromHex;
 import 'post_viewer.dart';
 
@@ -94,6 +95,8 @@ class _Thumb extends StatelessWidget {
           child: Stack(fit: StackFit.expand, children: [
             hasFrame ? Image.network(thumbUrl(url), fit: BoxFit.cover, errorBuilder: (_, __, ___) => board()) : board(),
             if (p.kind == 'video') const Center(child: Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 30, shadows: [Shadow(color: Colors.black45, blurRadius: 8)])),
+            // لحظة الألبوم: الغلاف وحده هنا، والشارة تقول كم صورة خلفه
+            if (p.isAlbum) PositionedDirectional(top: 5, end: 5, child: AlbumBadge(key: Key('place-moment-album-${p.id}'), count: p.album.length)),
             PositionedDirectional(
               start: 0, end: 0, bottom: 0,
               child: Container(

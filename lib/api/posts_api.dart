@@ -4,6 +4,8 @@ import 'models.dart';
 int _i(dynamic v) => v is num ? v.toInt() : int.tryParse(v?.toString() ?? '') ?? 0;
 double _d(dynamic v, [double d = 0]) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? d;
 DateTime? _t(dynamic v) => v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
+/// روابط نصية غير فارغة من مصفوفة JSON (asList للخرائط فقط)
+List<String> _urls(dynamic v) => v is List ? [for (final u in v) if (u != null && u.toString().isNotEmpty) u.toString()] : const [];
 
 /// أنواع منشورات الخريطة وتسمياتها.
 const postTags = {'moment': 'لحظة', 'offer': 'عرض', 'ad': 'إعلان', 'invest': 'فرصة استثمار', 'event': 'فعالية', 'job': 'وظيفة'};
@@ -11,6 +13,18 @@ const postCtaTypes = {'link': 'رابط', 'whatsapp': 'واتساب', 'call': '�
 const postTtlOptions = <(int, String)>[(24, '24 ساعة'), (72, '3 أيام'), (168, 'أسبوع')];
 /// جمهور المنشور على الخريطة: الأصدقاء (من أضافهم الناشر إلى جهات اتصاله) أو الجميع.
 const postAudiences = {'friends': 'الأصدقاء', 'all': 'الجميع'};
+/// أقصى صور ألبوم اللحظة (حد الخادم MAX_MEDIA وحد الكاميرا kMaxShots)
+const kMaxAlbumPhotos = 8;
+
+/// عدد صور الألبوم للبطاقات: «صورتان» ثم «3 صور»… (الألبوم حتى 8 صور فلا حاجة لصيغة «11 صورة»)
+String albumCountLabel(int n) => n == 2 ? 'صورتان' : '$n صور';
+
+/// صور ألبوم لحظة من حمولتها الخام (بطاقة الصف والتغذية تحمل المنشور كما يعيده `/mapposts`): media، وإلا الغلاف وحده.
+int albumCountOf(Map post) {
+  if (post['kind']?.toString() != 'image') return 1;
+  final n = _urls(post['media']).length;
+  return n < 1 ? 1 : n;
+}
 
 /// طبقة فوق الوسائط: نص أو ملصق (إيموجي) بموضع نسبي (0..1) ومقياس ودوران ولون.
 class PostOverlay {
@@ -57,10 +71,12 @@ class MapPost {
   final int? audioSec;
   /// من يراه: 'friends' أو 'all' (خادم أقدم بلا الحقل = 'all' كما كانت كل اللحظات)
   final String audience;
+  /// صور الألبوم كما أرسلها الخادم (الغلاف أولاً = [mediaUrl]). فارغة من خادم أقدم أو منشور بُني محلياً: [album] يعيد الغلاف وحده
+  final List<String> media;
   const MapPost({
     required this.id, required this.user, required this.kind, this.mediaUrl, this.caption = '', this.bg, this.overlays = const [], this.tag = 'moment', this.title = '', this.price, this.cta,
     required this.lat, required this.lng, this.placeName, this.durationSec, this.status = 'active', this.views = 0, this.likes = 0, this.liked = false, this.mine = false, this.expired = false, this.expiresAt, this.createdAt,
-    this.distanceKm, this.place, this.audioUrl, this.audioSec, this.audience = 'all',
+    this.distanceKm, this.place, this.audioUrl, this.audioSec, this.audience = 'all', this.media = const [],
   });
   factory MapPost.fromJson(Map m) => MapPost(
         id: m['id'].toString(), user: Person.fromJson(asMap(m['user'])), kind: m['kind']?.toString() ?? 'text', mediaUrl: m['mediaUrl']?.toString(), caption: m['caption']?.toString() ?? '', bg: m['bg']?.toString(),
@@ -70,12 +86,22 @@ class MapPost {
         distanceKm: m['distanceKm'] == null ? null : _d(m['distanceKm']), place: m['place'] is Map ? PostPlace.fromJson(asMap(m['place'])) : null,
         audioUrl: m['audioUrl']?.toString(), audioSec: m['audioSec'] == null ? null : _i(m['audioSec']),
         audience: m['audience']?.toString() == 'friends' ? 'friends' : 'all',
+        media: _urls(m['media']),
       );
   MapPost copyWith({int? likes, bool? liked, int? views, String? status, String? audience}) => MapPost(
         id: id, user: user, kind: kind, mediaUrl: mediaUrl, caption: caption, bg: bg, overlays: overlays, tag: tag, title: title, price: price, cta: cta, lat: lat, lng: lng, placeName: placeName,
         durationSec: durationSec, status: status ?? this.status, views: views ?? this.views, likes: likes ?? this.likes, liked: liked ?? this.liked, mine: mine, expired: expired, expiresAt: expiresAt, createdAt: createdAt, distanceKm: distanceKm, place: place, audioUrl: audioUrl, audioSec: audioSec,
-        audience: audience ?? this.audience);
+        audience: audience ?? this.audience, media: media);
   String get tagLabel => postTags[tag] ?? tag;
+  /// صور اللحظة بالترتيب والغلاف أولاً: للصورة ألبومها (حتى 8)، ولغيرها وسيطها وحده؛ والغلاف دائماً [mediaUrl] كما يضمنه الخادم
+  List<String> get album {
+    final cover = mediaUrl;
+    if (cover == null || cover.isEmpty) return const [];
+    if (kind != 'image') return [cover];
+    return [cover, ...media.where((u) => u != cover)].take(kMaxAlbumPhotos).toList();
+  }
+  /// لحظة صورة بأكثر من صورة: العارض ينقطها ويُسحب بينها، والبطاقات تعرض عددها
+  bool get isAlbum => kind == 'image' && album.length > 1;
   bool get friendsOnly => audience == 'friends';
   String get audienceLabel => postAudiences[audience] ?? audience;
   String get kindLabel => switch (kind) { 'image' => 'صورة', 'video' => 'فيديو', 'audio' => 'تسجيل صوتي', _ => 'نص' };

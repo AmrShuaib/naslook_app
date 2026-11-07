@@ -632,8 +632,10 @@ class ModerationItem {
   final String? title, text, mediaUrl, bizId, listingId, wantedId, vesselId, parentId, jobId;
   final DateTime? firstAt, lastAt;
   final ModerationAction? action;
+  /// لحظة الألبوم: كل صورها والغلاف أولاً (فارغة لغيرها) حتى لا تخفى صورة مخالفة خلف الغلاف
+  final List<String> mediaUrls;
   const ModerationItem({required this.targetType, required this.targetId, this.typeName = '', this.status = 'visible', this.reports = 0, this.reasons = const [], this.owner, this.title, this.text, this.mediaUrl,
-      this.bizId, this.listingId, this.wantedId, this.vesselId, this.parentId, this.jobId, this.firstAt, this.lastAt, this.action});
+      this.bizId, this.listingId, this.wantedId, this.vesselId, this.parentId, this.jobId, this.firstAt, this.lastAt, this.action, this.mediaUrls = const []});
   factory ModerationItem.fromJson(Map m) => ModerationItem(
         targetType: m['targetType']?.toString() ?? '', targetId: m['targetId']?.toString() ?? '', typeName: m['typeName']?.toString() ?? '',
         status: m['status']?.toString() ?? (m['hidden'] == true ? 'hidden' : 'visible'), reports: _i(m['reports']),
@@ -642,6 +644,7 @@ class ModerationItem {
         title: m['title']?.toString(), text: m['text']?.toString(), mediaUrl: m['mediaUrl']?.toString(),
         bizId: m['bizId']?.toString(), listingId: m['listingId']?.toString(), wantedId: m['wantedId']?.toString(), vesselId: m['vesselId']?.toString(), parentId: m['parentId']?.toString(), jobId: m['jobId']?.toString(),
         firstAt: _t(m['firstAt']), lastAt: _t(m['lastAt']), action: m['action'] is Map ? ModerationAction.fromJson(_m(m['action'])) : null,
+        mediaUrls: [for (final u in _strs(m['mediaUrls'])) if (u.isNotEmpty) u],
       );
   bool get hidden => status == 'hidden';
   bool get missing => status == 'missing';
