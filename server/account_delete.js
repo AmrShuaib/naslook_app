@@ -210,6 +210,8 @@ export default async function accountDelete(app, opts = {}) {
       // الملف الشخصي v2 (profile_ext.js): الامتداد والمتابعات والزيارات والأحداث من الجانبين
       if (has("profile_ext", "user_id")) await run("profile_ext", "DELETE FROM profile_ext WHERE user_id=$1");
       if (has("user_follows", "follower_id", "user_id")) await run("user_follows", "DELETE FROM user_follows WHERE follower_id=$1 OR user_id=$1");
+      // سجل حد إشعار «لحظة جديدة»: من تابع من ومتى أُشعر، من الجانبين (لا يبقى أثر للعلاقة بعد الحذف)
+      if (has("follow_notify_log", "follower_id", "author_id")) await run("follow_notify_log", "DELETE FROM follow_notify_log WHERE follower_id=$1 OR author_id=$1");
       if (has("profile_views", "user_id", "viewer_id")) await run("profile_views", "DELETE FROM profile_views WHERE user_id=$1 OR viewer_id=$1");
       if (has("profile_events", "user_id", "actor_id")) await run("profile_events", "DELETE FROM profile_events WHERE user_id=$1 OR actor_id=$1");
       if (has("job_matches", "assignee_id")) await run("job_matches", "UPDATE job_matches SET assignee_id=NULL WHERE assignee_id=$1");

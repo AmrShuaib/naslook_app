@@ -246,6 +246,60 @@ void main() {
       expect(find.text('من غريب'), findsNothing);
       expect(srv.feeds.length, fetches, reason: 'الحمولة تأتي مع الحدث فلا جلب');
     });
+
+    testWidgets('a contact change refetches the ids: a new friend\'s live moment is inserted, a removed friend\'s is not and their card leaves in place', (tester) async {
+      final srv = _Srv()
+        ..following = [_moment(_post(1, user: 'SA0000003', caption: 'من صديق قديم', ago: const Duration(hours: 1)))]
+        ..people = 1
+        ..ids = ['SA0000003'];
+      await _pump(tester, const TimelinePage(), srv: srv);
+      await _tapChip(tester, 'following');
+      await _settle(tester);
+      expect(find.text('من صديق قديم'), findsOneWidget);
+      int idsCalls() => srv.calls.where((c) => c == 'GET /me/following/ids').length;
+      expect(idsCalls(), 1, reason: 'أول وصول لجهات الاتصال والمحظورين لا يعيد الجلب');
+      expect(srv.feeds.length, 2, reason: 'ولا يحدّث القائمة: «عام» ثم «أتابعهم» فقط');
+      // قبلتُ طلب سارة وأزلتُ خالداً: كل مسار يضيف صديقاً أو يقبله أو يزيله يُبطل contactsProvider
+      srv
+        ..ids = ['SA0000002']
+        ..following = [];
+      ProviderScope.containerOf(tester.element(find.byType(TimelinePage))).invalidate(contactsProvider);
+      await _settle(tester);
+      expect(idsCalls(), 2);
+      expect(find.text('من صديق قديم'), findsNothing, reason: 'البث خلا منه فتزول بطاقته في مكانها');
+      srv.live.add({'kind': 'post', 'data': _post(7, caption: 'من صديقة جديدة')});
+      srv.live.add({'kind': 'post', 'data': _post(8, user: 'SA0000003', caption: 'من صديق أُزيل')});
+      await tester.pump(const Duration(seconds: 2));
+      await _settle(tester);
+      expect(find.text('من صديقة جديدة'), findsOneWidget);
+      expect(find.text('من صديق أُزيل'), findsNothing);
+    });
+
+    testWidgets('unfollowing the only person I follow empties «أتابعهم» in place and invites following again', (tester) async {
+      final srv = _Srv()
+        ..following = [_moment(_post(1, user: 'SA0000003', caption: 'لحظة خالد'))]
+        ..people = 1
+        ..ids = ['SA0000003']
+        ..followersPage1 = [_person('SA0000003', 'khalid', following: true)];
+      await _pump(tester, const TimelinePage(), srv: srv);
+      await _tapChip(tester, 'following');
+      await _settle(tester);
+      expect(find.text('لحظة خالد'), findsOneWidget);
+      srv
+        ..following = []
+        ..people = 0
+        ..ids = [];
+      Navigator.of(tester.element(find.byType(TimelinePage))).push(MaterialPageRoute<void>(builder: (_) => const FollowListPage(userId: 'SA0000002', name: 'سارة')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('follow-row-btn-SA0000003')));
+      await _settle(tester);
+      expect(srv.calls, contains('DELETE /profiles/SA0000003/follow'));
+      Navigator.of(tester.element(find.byType(FollowListPage))).pop();
+      await _settle(tester);
+      expect(find.text('لحظة خالد'), findsNothing, reason: 'الصفحة الأولى الفارغة بلا مؤشر تعني أن البث خلا');
+      expect(find.byKey(const Key('tl-following-empty')), findsOneWidget);
+      expect(find.text('لا أحد تتابعه بعد'), findsOneWidget);
+    });
   });
 
   group('قائمتا «متابِعون» و«يتابع»', () {

@@ -157,7 +157,7 @@ class _TimelinePageState extends ConsumerState<TimelinePage> with WidgetsBinding
       _fresh.clear();
     });
     if (_scroll.hasClients) _scroll.jumpTo(0);
-    // معرّفات من أتابعهم لإدراج لحظاتهم الحيّة في «أتابعهم» (تُجلب مرة وتبقى حتى متابعة أو إلغائها)
+    // معرّفات من أتابعهم لإدراج لحظاتهم الحيّة في «أتابعهم» (تُجلب مرة وتتجدّد بعد متابعة أو إلغائها وتغيّر الأصدقاء أو المحظورين)
     if (k == followingFeed) ref.read(followFeedIdsProvider);
     // نوع فُتح من قبل يظهر فوراً من الذاكرة ثم يتحدّث في الخلفية؛ الجديد يجلب عند إنشائه
     if (ref.read(momentsProvider(k)).loaded) ref.read(momentsProvider(k).notifier).refresh();

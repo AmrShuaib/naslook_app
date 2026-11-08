@@ -22,6 +22,17 @@ bool get liveSupported {
 
 QrCamera createQrCamera() => _WebQrCamera();
 
+/// مثبّت على الشاشة الرئيسية (PWA): لا شريط عنوان، فإرشاد إذن الكاميرا يختلف. سفاري iOS يعلنها بـ navigator.standalone.
+bool get standaloneDisplay {
+  try {
+    if (web.window.matchMedia('(display-mode: standalone)').matches) return true;
+    final nav = web.window.navigator as JSObject;
+    return nav.has('standalone') && nav.getProperty<JSAny?>('standalone'.toJS).dartify() == true;
+  } catch (_) {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------- BarcodeDetector (كروم أندرويد وماك)
 
 @JS('BarcodeDetector')

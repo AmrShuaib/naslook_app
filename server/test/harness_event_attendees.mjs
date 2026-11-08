@@ -67,6 +67,21 @@ do {
   seen.push(...p.items.map((i) => i.ticketId)); cursor = p.next; pages++;
 } while (cursor && pages < 10);
 check(pages === 3 && seen.length === 5 && new Set(seen).size === 5, 'paging with limit=2 walks 3 pages with no duplicate or gap', JSON.stringify([pages, seen.length, new Set(seen).size]));
+// العدّادات للصفحة الأولى فقط (القائمة تعرض عدّادات الأولى)، لا لصفحات المؤشر ولا لبحث البوابة بالرمز
+const p1 = await call('GET', `${url}?limit=2`, { expect: 200 });
+const p2 = await call('GET', `${url}?limit=2&cursor=${encodeURIComponent(p1.next)}`, { expect: 200 });
+check(p1.total === 5 && !('total' in p2) && !('checkedIn' in p2) && !('people' in p2) && p2.items.length === 2, 'counts come with the first page only, not with cursor pages', JSON.stringify(Object.keys(p2)));
+// فهرس الفعالية: القائمة والعدّادات تبحث بالفعالية بدل مسح جدول التذاكر كله (الجدول صغير هنا فيُمنع المسح الكامل والنقطي ليظهر أن الفهرس يخدم الترتيب)
+const idx = (await pool.query("SELECT indexdef FROM pg_indexes WHERE tablename='tickets' AND indexname='tickets_event'")).rows[0]?.indexdef ?? '';
+check(/\(event_id, created_at, id\)/.test(idx), 'tickets has an (event_id, created_at, id) index', idx);
+const plan = await (async () => {
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN'); await c.query('SET LOCAL enable_seqscan = off'); await c.query('SET LOCAL enable_bitmapscan = off');
+    return (await c.query("EXPLAIN SELECT id FROM tickets t WHERE t.event_id=$1 AND t.status<>'refunded' ORDER BY t.created_at, t.id LIMIT 31", [ev.id])).rows.map((r) => r['QUERY PLAN']).join(' | ');
+  } finally { await c.query('ROLLBACK'); c.release(); }
+})();
+check(plan.includes('tickets_event') && !plan.includes('Sort'), 'the attendee page reads the event index in order, no sort', plan);
 check((await call('GET', `${url}?cursor=garbage`, { expect: 400 })).error === 'bad-cursor', 'a forged cursor is refused');
 check((await call('GET', `${url}?limit=1000`, { expect: 200 })).items.length === 5, 'limit is clamped, not an error');
 
@@ -82,6 +97,7 @@ check(out.checkedIn === 2 && out.total === 5, 'counts follow the check-ins');
 // البحث بالرمز بعد المسح: التذكرة نفسها برمزها، وأحرف صغيرة مقبولة، ورمز فعالية أخرى لا يظهر هنا
 const byCode = await call('GET', `${url}?code=${encodeURIComponent(ta[0].code.toLowerCase())}`, { expect: 200 });
 check(byCode.items.length === 1 && byCode.items[0].ticketId === ta[0].id && byCode.items[0].code === ta[0].code && byCode.items[0].status === 'valid', 'code lookup returns that ticket and its code');
+check(!('total' in byCode) && !('checkedIn' in byCode) && !('people' in byCode), 'the gate lookup by code skips the counts', JSON.stringify(Object.keys(byCode)));
 const used = await call('GET', `${url}?code=${encodeURIComponent(tb[0].code)}`, { expect: 200 });
 check(used.items[0]?.checkedIn === true && used.items[0]?.holder.id === B, 'code lookup of a used ticket says it is in');
 check((await call('GET', `${url}?code=${encodeURIComponent(to[0].code)}`, { expect: 200 })).items.length === 0, "another event's ticket is not found here");

@@ -21,6 +21,7 @@ import 'package:naslook/api/session.dart';
 import 'package:naslook/core/media/pick_image.dart';
 import 'package:naslook/pages/business/owner/dashboard_orders.dart';
 import 'package:naslook/pages/events/events_page.dart';
+import 'package:naslook/pages/market/market_page.dart' show marketErrText;
 import 'package:naslook/pages/market/orders_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/providers.dart';
@@ -191,6 +192,24 @@ void main() {
   });
 
   group('code checks', () {
+    test('camera permission help fits where the scanner runs: iOS Safari has no lock icon, the installed app has no address bar', () {
+      final safari = qrDeniedHelp(web: true, ios: true, standalone: false);
+      expect(safari, contains('aA'));
+      expect(safari, contains('إعدادات موقع الويب'));
+      expect(safari, isNot(contains('القفل')));
+      final iosApp = qrDeniedHelp(web: true, ios: true, standalone: true);
+      expect(iosApp, contains('Safari ← الكاميرا'));
+      expect(iosApp, isNot(contains('العنوان')), reason: 'لا شريط عنوان في التطبيق المثبّت');
+      final pwa = qrDeniedHelp(web: true, ios: false, standalone: true);
+      expect(pwa, contains('في المتصفح'));
+      final chrome = qrDeniedHelp(web: true, ios: false, standalone: false);
+      expect(chrome, contains('القفل'));
+      for (final t in [safari, iosApp, pwa, chrome]) {
+        expect(t, contains('التقط صورة للرمز'), reason: 'الصورة لا تحتاج إذن الموقع');
+      }
+      expect(qrDeniedHelp(web: false, ios: true, standalone: false), contains('ناس لايف ثم الكاميرا'));
+    });
+
     test('venue codes: scanned text must carry NAS-…, typed text is upper-cased', () {
       expect(checkVenueCode('nas-1a2b3c4d', scanned: true).code, 'NAS-1A2B3C4D');
       expect(checkVenueCode('https://naslife.app/t/NAS-1A2B3C4D', scanned: true).code, 'NAS-1A2B3C4D');
@@ -230,6 +249,48 @@ void main() {
       expect(find.byKey(const Key('qr-title')), findsNothing);
       expect(_result(tester), 'result:NAS-1A2B3C4D');
       expect(cam.disposed, isTrue);
+    });
+
+    testWidgets('going to the background releases the camera (the web reports hidden, never paused); coming back restarts it', (tester) async {
+      final cams = <_FakeCam>[];
+      QrCamera.factoryOverride = () { final c = _FakeCam(); cams.add(c); return c; };
+      await _pump(tester, _Srv((_, __) async => null), const _Opener());
+      await _tap(tester, find.byKey(const Key('open')));
+      expect(cams, hasLength(1));
+      // blur وحده (لوحة الإذن، شريط العنوان) لا يوقفها
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await _settle(tester);
+      expect(cams.single.disposed, isFalse);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      await _settle(tester);
+      expect(cams.single.disposed, isTrue, reason: 'تبويب مخفي يحرر الكاميرا ومؤقت الفكّ');
+      // العودة كما يولّدها الإطار: hidden ← inactive ← resumed
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _settle(tester);
+      expect(cams, hasLength(2));
+      expect(cams.last.started, isTrue);
+      expect(find.byKey(const Key('fake-cam')), findsOneWidget);
+      cams.last.queue.add('NAS-1A2B3C4D');
+      await _settle(tester);
+      expect(_result(tester), 'result:NAS-1A2B3C4D');
+    });
+
+    testWidgets('live camera refused: «التقط صورة للرمز» reads the code without the site permission', (tester) async {
+      var shots = 0;
+      QrCamera.factoryOverride = () => _FakeCam(startError: const MediaPermissionDenied('camera'));
+      pickImageOverride = ({bool camera = false}) async {
+        shots++;
+        expect(camera, isTrue);
+        return (bytes: _qrPng('NAS-5EED1234'), mime: 'image/png', name: 'q.png');
+      };
+      await _pump(tester, _Srv((_, __) async => null), const _Opener());
+      await _tap(tester, find.byKey(const Key('open')));
+      expect(find.byKey(const Key('qr-denied')), findsOneWidget);
+      expect(find.byKey(const Key('qr-retry')), findsOneWidget);
+      await _tap(tester, find.byKey(const Key('qr-photo')));
+      expect(shots, 1);
+      expect(_result(tester), 'result:NAS-5EED1234');
     });
 
     testWidgets('permission denied: clear Arabic help, open settings, and manual entry still works', (tester) async {
@@ -276,6 +337,7 @@ void main() {
       await _tap(tester, find.byKey(const Key('open')));
       await _tap(tester, find.byKey(const Key('qr-photo')));
       expect(find.byKey(const Key('qr-denied')), findsOneWidget);
+      expect(find.byKey(const Key('qr-photo')), findsNothing, reason: 'بلا كاميرا حية «أعد المحاولة» هي الصورة نفسها');
     });
   });
 
@@ -466,6 +528,46 @@ void main() {
       expect(srv.bodies['POST /market/orders/$oid/confirm'], {'code': '4321'});
       expect(find.text('اكتمل الطلب ووصلك المبلغ'), findsOneWidget);
       expect(find.byKey(const Key('scan-next')), findsNothing, reason: 'طلب واحد، لا «التالي»');
+    });
+
+    testWidgets('a code the server refused cannot be re-sent by tapping again; attempts left are shown; a new code completes', (tester) async {
+      var status = 'delivered', fails = 0;
+      final srv = _Srv((key, req) async {
+        if (key == 'GET /market/orders/$oid') return _json(order(asSeller: true, status: status));
+        if (key == 'GET /market/orders') return _json([order(asSeller: true, status: status)]);
+        if (key == 'POST /market/orders/$oid/confirm') {
+          if ((jsonDecode(req.body) as Map)['code'] != '4321') { fails++; return _json({'error': 'bad-code', 'left': 5 - fails}, 400); }
+          status = 'completed';
+          return _json({'ok': true});
+        }
+        return null;
+      });
+      await _pump(tester, srv, const OrderPage(oid));
+      await _tap(tester, find.byKey(const Key('seller-code')));
+      await tester.enterText(find.byKey(const Key('qr-manual')), '1111');
+      await _tap(tester, find.byKey(const Key('qr-manual-go')));
+      await _tap(tester, find.byKey(const Key('scan-confirm')));
+      expect(find.text('الرمز غير صحيح · بقيت ٤ محاولات'), findsOneWidget);
+      expect(find.byKey(const Key('scan-confirm')), findsNothing, reason: 'كل ضغطة كانت تحرق محاولة من الخمس بالرمز نفسه');
+      expect(srv.calls.where((c) => c == 'POST /market/orders/$oid/confirm'), hasLength(1));
+      expect(find.byKey(const Key('scan-done')), findsOneWidget);
+      await _tap(tester, find.byKey(const Key('scan-rescan')));
+      await tester.enterText(find.byKey(const Key('qr-manual')), '٤٣٢١');
+      await _tap(tester, find.byKey(const Key('qr-manual-go')));
+      await _tap(tester, find.byKey(const Key('scan-confirm')));
+      expect(srv.bodies['POST /market/orders/$oid/confirm'], {'code': '4321'});
+      expect(fails, 1);
+      expect(find.text('اكتمل الطلب ووصلك المبلغ'), findsOneWidget);
+    });
+
+    test('delivery code errors say how many attempts are left, and the lock', () {
+      ApiException bad(Object? left) => ApiException(400, 'bad-code', body: {'error': 'bad-code', 'left': ?left});
+      expect(marketErrText(bad(3)), 'الرمز غير صحيح · بقيت ٣ محاولات');
+      expect(marketErrText(bad(2)), 'الرمز غير صحيح · بقيت محاولتان');
+      expect(marketErrText(bad(1)), 'الرمز غير صحيح · بقيت محاولة واحدة');
+      expect(marketErrText(bad(0)), contains('أُقفل رمز التسليم'));
+      expect(marketErrText(bad(null)), 'الرمز غير صحيح', reason: 'بلا left (رمز كوبون مثلاً) الرسالة وحدها');
+      expect(marketErrText(const ApiException(429, 'code-locked', body: {'error': 'code-locked'})), contains('أُقفل رمز التسليم'));
     });
   });
 }

@@ -374,7 +374,7 @@ class OrderPage extends ConsumerWidget {
     try { await ref.read(apiClientProvider).clearCourier(x.id); ref.invalidate(orderProvider(x.id)); ref.invalidate(ordersProvider); } catch (e) { if (context.mounted) toast(context, marketErrText(e), error: true); }
   }
   /// البائع يمسح QR المشتري من صفحة طلبه (أو يكتب الأرقام الأربعة) ثم يرى ملخص الطلب ويؤكد التسليم بطلب الخادم نفسه.
-  /// رمز طلب آخر يُرفض في ورقة المسح قبل أي محاولة (خمس محاولات خاطئة تُقفل الرمز).
+  /// رمز طلب آخر يُرفض في ورقة المسح قبل أي محاولة (خمس محاولات خاطئة تُقفل الرمز)، والرمز الذي رفضه الخادم لا يُعاد بالزر نفسه.
   Future<void> _sellerCode(BuildContext context, WidgetRef ref, Order x) async {
     final api = ref.read(apiClientProvider);
     for (;;) {
@@ -407,6 +407,8 @@ class OrderPage extends ConsumerWidget {
           return x.cod ? 'اكتمل الطلب' : 'اكتمل الطلب ووصلك المبلغ';
         },
         errText: marketErrText,
+        // الرمز الخاطئ يُحسب من محاولات القفل الخمس والقفل نهائي: لا ضغطة ثانية ترسل الرمز المرفوض نفسه، بل رمز جديد من «امسح رمزاً آخر»
+        errFinal: (e) { final c = marketErrCode(e); return c.contains('bad-code') || c.contains('code-locked'); },
       );
       if (step != ScanStep.rescan) return;
     }

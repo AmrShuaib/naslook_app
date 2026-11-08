@@ -111,6 +111,14 @@ await bad({ mediaUrls: [rel(A[0]), 'https://evil.example/x.jpg'] }, 'bad-media',
 await bad({ mediaUrls: ['/files/x.jpg'] }, 'bad-media', 'a non /chat/media path → 400 bad-media');
 await bad({ mediaUrls: ['/chat/media/../../etc/passwd'] }, 'bad-media', 'a path that is not an upload name → 400 bad-media');
 await bad({ mediaUrls: rel(A[0]) }, 'bad-media', 'mediaUrls not an array → 400 bad-media');
+// صور فقط: الرفع يقبل PDF والفيديو والصوت، والألبوم يعرض كل عنصر صورة (والأول غلافاً)
+for (const ext of ['pdf', 'mp4', 'weba', 'm4a', 'mov']) {
+  await bad({ mediaUrls: [rel(A[0]), rel(name('x', 1).replace('.jpg', `.${ext}`))] }, 'bad-media', `a .${ext} upload in mediaUrls → 400 bad-media`);
+}
+await bad({ mediaUrls: [rel(name('x', 2).replace('.jpg', '.pdf')), rel(A[0])] }, 'bad-media', 'a .pdf as the album cover → 400 bad-media');
+await bad({ mediaUrls: [rel(A[0]), rel(name('x', 3).replace('.jpg', '.JPG'))] }, 'bad-media', 'an upper-case extension (never an upload name) → 400 bad-media');
+const kinds = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'image', mediaUrls: ['jpg', 'png', 'webp', 'gif'].map((e) => rel(name('k', e).replace('.jpg', `.${e}`))), lat: 21.54, lng: 39.17 }, expect: 200 });
+check(kinds.media?.length === 4, 'jpg, png, webp and gif uploads are album photos');
 await bad({ mediaUrls: Array.from({ length: 9 }, (_, i) => rel(name('n', i))) }, 'too-many-media', '9 photos → 400 too-many-media');
 await bad({ mediaUrl: rel(A[1]), mediaUrls: A.map(rel) }, 'cover-mismatch', 'mediaUrl that is not the first of mediaUrls → 400 cover-mismatch');
 const r9 = await call('POST', '/mapposts', { body: { audience: 'all', kind: 'video', mediaUrl: rel('x.mp4'), mediaUrls: [rel(A[0]), rel(A[1])], lat: 21.54, lng: 39.17 }, expect: 400 });

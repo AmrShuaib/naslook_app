@@ -7,4 +7,7 @@ bool get liveSupported => false;
 
 QrCamera createQrCamera() => throw UnsupportedError('QrCamera is web-only');
 
+/// لا شاشة رئيسية لتطبيق ويب خارج الويب.
+bool get standaloneDisplay => false;
+
 Future<String?> decodeImageBytes(Uint8List bytes) => decodeQrEncoded(bytes);

@@ -401,6 +401,12 @@ class ApiClient {
     'bad-title': 'اكتب عنواناً للعرض',
     'bad-item': 'المنتج غير موجود في القائمة',
     'ended': 'انتهى هذا العرض',
+    // ألبوم اللحظة (server/map_posts.js)
+    'too-many-media': 'الحد الأقصى 8 صور في اللحظة',
+    'bad-media': 'تعذّر قبول الصورة؛ أعد رفعها بصيغة صورة',
+    'cover-mismatch': 'الغلاف يجب أن يكون أول صور الألبوم',
+    'album-images-only': 'الألبوم للحظات الصور فقط',
+    'media-not-in-album': 'الصورة ليست من ألبوم هذه اللحظة',
   };
 
   String _errorMessage(int status, Map<String, dynamic> body) {

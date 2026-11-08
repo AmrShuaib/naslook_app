@@ -182,6 +182,22 @@ check(same(got.map((n) => n.user_id), [ME]), 'a private profile notifies only fo
 check((await pool.query('SELECT count(*)::int AS n FROM app_notifications WHERE kind=$1 AND user_id = ANY($2::text[])', ['follow_moment', [AUTH, PAUTH]])).rows[0].n === 0, 'the author is never notified of their own moment');
 // الدالة مباشرة: لحظة مخفية أو معرّف غير صالح لا تُرسل شيئاً
 check((await globalThis.naslifeNotifyFollowers({ id: M_OLD, user_id: FOL })).length === 0 && (await globalThis.naslifeNotifyFollowers({ id: 'x', user_id: FOL })).length === 0, 'a hidden moment or a bad id notifies nobody');
+// حساب له 250 متابِعاً: الإرسال بدفعات متتالية من 100 (نداء واحد بالكل كان يطلق مئات استعلامات الاشتراكات واتصالات الدفع معاً)
+{
+  const BURST = 'SA0000116', FANS = Array.from({ length: 250 }, (_, i) => `SA000${2000 + i}`);
+  await pool.query("INSERT INTO users(id, nickname) VALUES($1,'burst')", [BURST]);
+  await pool.query('INSERT INTO profiles(user_id, is_public) VALUES($1, true)', [BURST]);
+  await pool.query('INSERT INTO user_follows(follower_id, user_id) SELECT unnest($1::text[]), $2', [FANS, BURST]);
+  const realNotify = globalThis.naslifeNotify, sizes = [];
+  let inflight = 0, maxInflight = 0;
+  globalThis.naslifeNotify = async (list, p) => { inflight++; maxInflight = Math.max(maxInflight, inflight); sizes.push(list.length); try { return await realNotify(list, p); } finally { inflight--; } };
+  const PB = await post(BURST, { created: -0.1, caption: 'لحظة لجمهور كبير' });
+  const sent = await globalThis.naslifeNotifyFollowers({ id: PB, user_id: BURST, caption: 'لحظة لجمهور كبير', kind: 'text' });
+  globalThis.naslifeNotify = realNotify;
+  check(sent.length === 250 && same(sizes, [100, 100, 50]) && maxInflight === 1, 'a large audience is notified in sequential chunks of 100, never one call with everyone', `sent=${sent.length} chunks=${JSON.stringify(sizes)} inflight=${maxInflight}`);
+  check((await pool.query("SELECT count(DISTINCT user_id)::int AS n FROM app_notifications WHERE kind='follow_moment' AND data->>'postId'=$1", [PB])).rows[0].n === 250, 'every follower in every chunk gets the notification');
+  await pool.query('DELETE FROM user_follows WHERE user_id=$1', [BURST]);
+}
 
 // ---- القوائم: متابِعو ليلى بأزمنة متعادلة لثلاثة منهم حتى يُختبر فضّ التعادل في المؤشر
 await pool.query('DELETE FROM user_follows WHERE user_id=$1', [AUTH]);
@@ -214,9 +230,9 @@ check((await call('GET', '/profiles/SA0999999/followers')).code === 404, 'unknow
 // العملاء الأقدم (limit=50 وitems فقط) يعملون كما كانوا
 r = (await call('GET', `/profiles/${AUTH}/following?limit=50`, { expect: 200 })).j;
 check(Array.isArray(r.items) && r.next === null, 'old clients: limit=50 still returns items');
-// حذف الحساب يمسح سجل الحد
+// دالة الحذف المساعدة تمسح سجل الحد أيضاً (حذف الحساب الفعلي في account_delete.js يمسحه بنفسه، وتختبره harness_account_delete.mjs)
 await globalThis.naslifeProfileV2Delete(FRN);
-check((await pool.query('SELECT count(*)::int AS n FROM follow_notify_log WHERE follower_id=$1 OR author_id=$1', [FRN])).rows[0].n === 0, 'account deletion clears the notify log');
+check((await pool.query('SELECT count(*)::int AS n FROM follow_notify_log WHERE follower_id=$1 OR author_id=$1', [FRN])).rows[0].n === 0, 'naslifeProfileV2Delete clears the notify log (the real deletion path is covered in harness_account_delete)');
 
 await pool.query("DELETE FROM biz WHERE id LIKE 'flw-%'");
 await app.close(); await pool.end();

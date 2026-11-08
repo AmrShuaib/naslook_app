@@ -431,7 +431,15 @@ String marketErrText(Object e) {
   if (s.contains('spotlight-full')) return 'مساحة سبوت لايت ممتلئة حالياً، جرّب لاحقاً';
   // رمز التسليم: يُقفل بعد خمس محاولات خاطئة من البائع (code-locked)؛ وإلا فالرمز خاطئ (bad-code مع {left} محاولات)
   if (s.contains('code-locked')) return 'أُقفل رمز التسليم بعد خمس محاولات خاطئة؛ اطلب من المشتري تأكيد الاستلام من جهته';
-  if (s.contains('bad-code')) return 'الرمز غير صحيح';
+  if (s.contains('bad-code')) {
+    // الخادم يعيد ما تبقى قبل القفل ({left})؛ بلا هذا الحقل (رمز كوبون مثلاً) تبقى الرسالة وحدها
+    final Object? left = e is ApiException ? (e.body?['left']) : null;
+    if (left is! num) return 'الرمز غير صحيح';
+    final n = left.toInt();
+    if (n <= 0) return 'الرمز غير صحيح، وأُقفل رمز التسليم بعد خمس محاولات خاطئة؛ اطلب من المشتري تأكيد الاستلام من جهته';
+    final ar = '$n'.split('').map((d) => '٠١٢٣٤٥٦٧٨٩'[int.parse(d)]).join();
+    return 'الرمز غير صحيح · ${n == 1 ? 'بقيت محاولة واحدة' : n == 2 ? 'بقيت محاولتان' : 'بقيت $ar محاولات'}';
+  }
   if (s.contains('pending-review')) return 'العرض بانتظار مراجعة الإدارة';
   if (s.contains('blocked')) return 'أخفته الإدارة؛ تواصل مع الدعم';
   return e is ApiException ? e.message : s;

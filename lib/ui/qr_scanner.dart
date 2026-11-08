@@ -189,6 +189,18 @@ QrCheck checkMarketCode(String raw, {required String orderId, required bool scan
 
 // ---------------------------------------------------------------- ورقة المسح
 
+/// طريق السماح بالكاميرا بعد رفضها بحسب مكان التشغيل. سفاري iOS لا رمز قفل بجانب عنوانه (الإذن من زر قائمة الصفحة aA)،
+/// والتطبيق المثبّت على الشاشة الرئيسية بلا شريط عنوان أصلاً، فإرشاد كروم لا ينفع أكثر جمهور الماسح على الويب.
+/// على الويب الصورة بديل دائم: `<input capture>` يفتح كاميرا الجهاز بلا إذن الموقع.
+String qrDeniedHelp({required bool web, required bool ios, required bool standalone}) {
+  if (!web) return 'افتح الإعدادات ثم ناس لايف ثم الكاميرا وفعّلها، ثم عد وأعد المحاولة. أو اكتب الرمز أدناه.';
+  const tail = 'أو التقط صورة للرمز، أو اكتبه أدناه.';
+  if (ios && standalone) return 'افتح إعدادات الجوال ← التطبيقات ← Safari ← الكاميرا واختر «سماح» (في iOS الأقدم: الإعدادات ← Safari ← الكاميرا)، ثم أغلق ناس لايف وافتحه من جديد. $tail';
+  if (ios) return 'اضغط زر قائمة الصفحة (aA) في شريط العنوان ← إعدادات موقع الويب ← الكاميرا ← سماح، ثم أعد المحاولة. $tail';
+  if (standalone) return 'افتح naslife.app في المتصفح، واضغط الرمز بجانب العنوان ← الأذونات ← الكاميرا ← سماح، ثم عد إلى التطبيق وأعد المحاولة. $tail';
+  return 'اضغط الرمز بجانب العنوان (القفل أو رمز الإعدادات) ← الكاميرا ← سماح، ثم أعد المحاولة. $tail';
+}
+
 /// يفتح ورقة المسح: كاميرا (أو التقاط صورة حيث لا كاميرا حية) وتحتها الإدخال اليدوي. يعيد الرمز المعتمد بعد [check]، أو null عند الإغلاق.
 Future<String?> showQrScanSheet(
   BuildContext context, {
@@ -241,10 +253,11 @@ class _QrScanSheetState extends State<QrScanSheet> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  // التطبيق في الخلفية: نحرر الكاميرا (مؤشرها يبقى مضاءً وإلا)، ونعيدها عند العودة
+  // التطبيق في الخلفية: نحرر الكاميرا (مؤشرها يبقى مضاءً وإلا)، ونعيدها عند العودة.
+  // الويب (حيث الكاميرا الحية وحدها) لا يُبلغ paused أبداً: التبويب المخفي يصل hidden، فنوقف عندها أيضاً
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
-    if (s == AppLifecycleState.paused && _cam != null) {
+    if ((s == AppLifecycleState.hidden || s == AppLifecycleState.paused) && _cam != null) {
       _stop();
       if (mounted) setState(() => _state = _Cam.starting);
     } else if (s == AppLifecycleState.resumed && _state == _Cam.starting && _cam == null && !_done) {
@@ -422,11 +435,12 @@ class _QrScanSheetState extends State<QrScanSheet> with WidgetsBindingObserver {
           key: const Key('qr-denied'),
           icon: Icons.no_photography_outlined,
           title: 'لا إذن للكاميرا',
-          body: kIsWeb
-              ? 'اسمح لهذا الموقع باستخدام الكاميرا من إعدادات المتصفح (رمز القفل بجانب العنوان)، ثم أعد المحاولة. أو اكتب الرمز أدناه.'
-              : 'افتح الإعدادات ثم ناس لايف ثم الكاميرا وفعّلها، ثم عد وأعد المحاولة. أو اكتب الرمز أدناه.',
+          body: qrDeniedHelp(web: kIsWeb, ios: defaultTargetPlatform == TargetPlatform.iOS, standalone: kIsWeb && impl.standaloneDisplay),
           actions: [
             if (!kIsWeb) FilledButton.tonal(key: const Key('qr-open-settings'), onPressed: openAppSettings, child: const Text('فتح الإعدادات')),
+            // رُفضت الكاميرا الحية: صورة بكاميرا الجهاز (<input capture> على الويب) لا تحتاج إذن الموقع، والمتصفح يرفض إعادة المحاولة فوراً
+            // ما دام يتذكر الرفض. حيث لا كاميرا حية جاء الرفض من التقاط الصورة نفسه، فـ«أعد المحاولة» هي الصورة
+            if (QrCamera.liveSupported) FilledButton.tonal(key: const Key('qr-photo'), onPressed: _photoBusy ? null : _photo, child: const Text('التقط صورة للرمز')),
             OutlinedButton(key: const Key('qr-retry'), style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: const BorderSide(color: Colors.white54)), onPressed: QrCamera.liveSupported ? _start : _photo, child: const Text('أعد المحاولة')),
           ],
         );
@@ -459,18 +473,21 @@ class _QrScanSheetState extends State<QrScanSheet> with WidgetsBindingObserver {
     }
   }
 
-  Widget _note({required Key key, required IconData icon, required String title, required String body, required List<Widget> actions}) => Padding(
+  // المربع على جوال صغير أقصر من نص الإرشاد مع زرّين: يُمرَّر داخله بدل أن يفيض
+  Widget _note({required Key key, required IconData icon, required String title, required String body, required List<Widget> actions}) => Center(
         key: key,
-        padding: const EdgeInsets.all(20),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(icon, color: Colors.white, size: 44),
-          const SizedBox(height: 10),
-          Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
-          const SizedBox(height: 6),
-          Text(body, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.6)),
-          const SizedBox(height: 14),
-          Wrap(alignment: WrapAlignment.center, spacing: 8, runSpacing: 8, children: actions),
-        ]),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, color: Colors.white, size: 44),
+            const SizedBox(height: 10),
+            Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 6),
+            Text(body, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.6)),
+            const SizedBox(height: 14),
+            Wrap(alignment: WrapAlignment.center, spacing: 8, runSpacing: 8, children: actions),
+          ]),
+        ),
       );
 }
 
@@ -502,6 +519,8 @@ enum ScanStep { done, next, rescan }
 
 /// ورقة الملخص بعد قراءة الرمز: لمن هو وماذا يخص، ثم «تأكيد» يستدعي [onConfirm] (طلب الخادم نفسه كما في الإدخال اليدوي)
 /// ويعيد رسالة النجاح. [blocked] مع [warning] يخفي التأكيد (تذكرة مستخدمة، رمز لدائرة أخرى…).
+/// [errFinal]: خطأ لا يتغير بإعادة الرمز نفسه (رمز تسليم خاطئ يُحسب من محاولات القفل) يخفي التأكيد بعده، فلا يبقى إلا
+/// «امسح رمزاً آخر» و«إغلاق»؛ بدونه يبقى الزر لإعادة المحاولة (خطأ شبكة مثلاً).
 Future<ScanStep> showScanSummary(
   BuildContext context, {
   required String code,
@@ -512,6 +531,7 @@ Future<ScanStep> showScanSummary(
   required String confirmLabel,
   required Future<String> Function(BuildContext sheetContext) onConfirm,
   required String Function(Object e) errText,
+  bool Function(Object e)? errFinal,
   bool offerNext = true,
 }) async {
   final r = await showModalBottomSheet<ScanStep>(
@@ -519,7 +539,7 @@ Future<ScanStep> showScanSummary(
     isScrollControlled: true,
     showDragHandle: true,
     constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * .9),
-    builder: (_) => _ScanSummary(code: code, header: header, rows: rows, warning: warning, blocked: blocked, confirmLabel: confirmLabel, onConfirm: onConfirm, errText: errText, offerNext: offerNext),
+    builder: (_) => _ScanSummary(code: code, header: header, rows: rows, warning: warning, blocked: blocked, confirmLabel: confirmLabel, onConfirm: onConfirm, errText: errText, errFinal: errFinal, offerNext: offerNext),
   );
   return r ?? ScanStep.done;
 }
@@ -532,22 +552,24 @@ class _ScanSummary extends StatefulWidget {
   final bool blocked, offerNext;
   final Future<String> Function(BuildContext) onConfirm;
   final String Function(Object) errText;
-  const _ScanSummary({required this.code, required this.header, required this.rows, required this.warning, required this.blocked, required this.confirmLabel, required this.onConfirm, required this.errText, required this.offerNext});
+  final bool Function(Object)? errFinal;
+  const _ScanSummary({required this.code, required this.header, required this.rows, required this.warning, required this.blocked, required this.confirmLabel, required this.onConfirm, required this.errText, this.errFinal, required this.offerNext});
   @override
   State<_ScanSummary> createState() => _ScanSummaryState();
 }
 
 class _ScanSummaryState extends State<_ScanSummary> {
-  bool _busy = false;
+  bool _busy = false, _final = false;
   String? _ok, _err;
 
   Future<void> _confirm() async {
+    if (_busy || _final) return;
     setState(() { _busy = true; _err = null; });
     try {
       final msg = await widget.onConfirm(context);
       if (mounted) setState(() => _ok = msg);
     } catch (e) {
-      if (mounted) setState(() => _err = widget.errText(e));
+      if (mounted) setState(() { _err = widget.errText(e); _final = widget.errFinal?.call(e) ?? false; });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -593,7 +615,7 @@ class _ScanSummaryState extends State<_ScanSummary> {
             const SizedBox(height: 12),
             if (widget.offerNext) FilledButton.icon(key: const Key('scan-next'), onPressed: () => pop(ScanStep.next), icon: const Icon(Icons.qr_code_scanner_rounded), label: const Text('امسح التالي')),
             TextButton(key: const Key('scan-done'), onPressed: () => pop(ScanStep.done), child: const Text('تم')),
-          ] else if (widget.blocked) ...[
+          ] else if (widget.blocked || _final) ...[
             FilledButton.tonalIcon(key: const Key('scan-rescan'), onPressed: () => pop(ScanStep.rescan), icon: const Icon(Icons.qr_code_scanner_rounded), label: const Text('امسح رمزاً آخر')),
             TextButton(key: const Key('scan-done'), onPressed: () => pop(ScanStep.done), child: const Text('إغلاق')),
           ] else ...[

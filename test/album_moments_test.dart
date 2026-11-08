@@ -264,6 +264,36 @@ void main() {
     expect(opacity(), 1);
   });
 
+  testWidgets('leaving an album on a later photo keeps that photo through the page transition (no flash of the cover); coming back starts at the cover', (tester) async {
+    await _viewer(tester, [_post(1, photos: 3, overlays: [{'type': 'text', 'text': 'على الغلاف', 'x': .5, 'y': .4}]), _post(2)]);
+    bool shows(String url) => tester.widgetList<Image>(find.byType(Image)).any((w) => w.image is NetworkImage && (w.image as NetworkImage).url == mediaUrl(url));
+    double opacity() => tester.widget<AnimatedOpacity>(find.ancestor(of: find.byWidgetPredicate((w) => w is OverlayCanvas && w.overlays.isNotEmpty), matching: find.byType(AnimatedOpacity)).first).opacity;
+    await _swipe(tester);
+    expect(find.byKey(const Key('album-dot-on-1')), findsOneWidget);
+    // النقر إلى التالية: onPageChanged يأتي في منتصف الانتقال (220 م.ث) وصفحة الألبوم ما زالت ظاهرة بعده
+    await tester.tapAt(const Offset(380, 200));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const Key('moment-album')), findsNothing, reason: 'اللحظة التالية نشطة الآن والألبوم المغادِر بلا صفحات');
+    expect(shows(_photo(1, 1)), isTrue, reason: 'الصفحة المغادِرة على صورتها');
+    expect(shows(_photo(1, 0)), isFalse, reason: 'لا يعود الغلاف لحظة الانتقال');
+    expect(find.byKey(const Key('album-dot-on-1')), findsOneWidget, reason: 'ونقطتها كما كانت');
+    expect(opacity(), 0, reason: 'وطبقات الغلاف لا تعود');
+    await _frames(tester, 400);
+    expect(_showing('user2'), isTrue);
+    // بعد استقرار الصفحات: الرجوع إلى الألبوم يُظهره بغلافه منذ أول الانتقال، كما سيبدأ حين ينشط
+    await tester.tapAt(const Offset(40, 200));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(find.byKey(const Key('moment-album')), findsNothing, reason: 'لم تنشط بعد');
+    expect(shows(_photo(1, 0)), isTrue);
+    expect(shows(_photo(1, 1)), isFalse);
+    expect(find.byKey(const Key('album-dot-on-0')), findsOneWidget);
+    await _frames(tester, 400);
+    expect(_showing('user1'), isTrue);
+    expect(find.byKey(const Key('album-dot-on-0')), findsOneWidget);
+  });
+
   testWidgets('voice rules unchanged: a 20 s recording on a 3-photo album holds it 20 s and the photos follow the recording', (tester) async {
     await _viewer(tester, [_post(1, photos: 3, audioSec: 20), _post(2)]);
     final v = _FakeVoice.created.single;

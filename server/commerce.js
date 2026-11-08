@@ -32,6 +32,8 @@ export default async function commerce(app, opts) {
       id UUID PRIMARY KEY, event_id UUID NOT NULL, tier_id UUID NOT NULL, user_id TEXT NOT NULL, code TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL DEFAULT 'valid', paid BIGINT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), used_at TIMESTAMPTZ);
     CREATE INDEX IF NOT EXISTS tickets_user ON tickets(user_id, created_at DESC);
+    -- قائمة الحضور وصفحاتها بالترتيب (created_at, id) وعدّاداتها وإلغاء الفعالية تبحث بالفعالية، لا بمسح التذاكر كلها
+    CREATE INDEX IF NOT EXISTS tickets_event ON tickets(event_id, created_at, id);
     CREATE TABLE IF NOT EXISTS market_listings (
       id UUID PRIMARY KEY, seller_id TEXT NOT NULL, kind TEXT NOT NULL, category TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
       price BIGINT NOT NULL, image_url TEXT, place_name TEXT, lat DOUBLE PRECISION, lng DOUBLE PRECISION, status TEXT NOT NULL DEFAULT 'active',
@@ -401,7 +403,8 @@ export default async function commerce(app, opts) {
       const ids = [...new Set(page.map((r) => r.user_id))];
       if (ids.length) for (const u of (await pool.query("SELECT * FROM users WHERE id = ANY($1::text[])", [ids])).rows) people.set(u.id, { id: u.id, nickname: u.nickname ?? "", avatarUrl: u.avatar_url ?? u.avatarUrl ?? null });
     } catch { /* بلا جدول مستخدمين: الأسماء فارغة */ }
-    const n = (await pool.query(`SELECT count(*) FILTER (WHERE status<>'refunded')::int AS total, count(*) FILTER (WHERE status='used')::int AS checked_in,
+    // العدّادات للصفحة الأولى فقط: بحث البوابة بالرمز (مع كل حاضر يُمسح) وصفحات «عرض المزيد» لا تعرضها، فلا تُحسب في كل طلب
+    const n = code || cur ? null : (await pool.query(`SELECT count(*) FILTER (WHERE status<>'refunded')::int AS total, count(*) FILTER (WHERE status='used')::int AS checked_in,
       count(DISTINCT user_id) FILTER (WHERE status<>'refunded')::int AS people FROM tickets WHERE event_id=$1`, [ev.id])).rows[0];
     const last = page[page.length - 1];
     return {
@@ -410,7 +413,7 @@ export default async function commerce(app, opts) {
         checkedIn: r.status === "used", checkedInAt: r.used_at, boughtAt: r.created_at, paid: Number(r.paid), ...(code ? { code: r.code } : {}),
       })),
       next: rows.length > limit && last ? `${last.cur_at}~${last.id}` : null,
-      total: n.total, checkedIn: n.checked_in, people: n.people,
+      ...(n ? { total: n.total, checkedIn: n.checked_in, people: n.people } : {}),
     };
   });
   app.post("/events/:id/cancel", async (req, reply) => {

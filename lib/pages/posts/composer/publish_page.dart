@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../api/biz_api.dart';
 import '../../../api/biz_models.dart';
 import '../../../api/chat_tools_api.dart';
-import '../../../api/client.dart' show mediaUrl;
+import '../../../api/client.dart' show ApiException, mediaUrl;
 import '../../../api/commerce_api.dart';
 import '../../../api/commerce_models.dart';
 import '../../../api/community_api.dart';
@@ -116,6 +116,8 @@ class _PublishPageState extends ConsumerState<PublishPage> {
         final baked = await bakePhoto(cover.bytes, filter: filterById(d.filter), adjust: d.adjust, frame: d.frame, name: cover.name, mime: cover.mime);
         urls.add((await api.uploadMedia(baked.bytes, contentType: baked.mime, fileName: baked.name)).url);
         for (final (i, s) in d.shots.indexed) {
+          // حتى 8 مع الغلاف (حد الكاميرا، وحد الخادم لألبوم الخريطة ولصور السوق): ما بعدها كان يُرفع ثم يرفض الخادم اللحظة كلها
+          if (urls.length >= kMaxAlbumPhotos) break;
           if (i == d.cover) continue;
           urls.add((await api.uploadMedia(s.bytes, contentType: s.mime, fileName: s.name)).url);
         }
@@ -174,7 +176,8 @@ class _PublishPageState extends ConsumerState<PublishPage> {
       if (mounted) {
         setState(() => busy = false);
         final s = e.toString();
-        toast(context, s.contains('suspended') ? 'حسابك موقوف ولا يمكنه النشر' : s.contains('banned-words') ? 'النص يحتوي كلمة غير مسموحة' : s.contains('contact-in-text') ? 'لا تكتب أرقام جوال أو روابط في العرض' : s, error: true);
+        // رسالة الخادم بالعربية (client.dart) بلا بادئة «ApiException(400):»
+        toast(context, s.contains('suspended') ? 'حسابك موقوف ولا يمكنه النشر' : s.contains('banned-words') ? 'النص يحتوي كلمة غير مسموحة' : s.contains('contact-in-text') ? 'لا تكتب أرقام جوال أو روابط في العرض' : e is ApiException ? e.message : s, error: true);
       }
     }
   }

@@ -90,8 +90,14 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
 
   void _addShot(Shot s) {
     if (!mounted) return;
+    if (shots.length >= kMaxShots) {
+      // اللقطات تبقى بعد إطفاء «متعدد»، ولقطة تاسعة كانت تصل الخادم فيرفض الألبوم (too-many-media) بعد رفع التسع كلها؛ فنرفضها هنا
+      // ونعيد شريط اللقطات وزر «التالي» إن كان «متعدد» مطفأ حتى يرى ما جمعه
+      toast(context, 'الحد الأقصى $kMaxShots صور');
+      if (!multi) setState(() => multi = true);
+      return;
+    }
     if (multi) {
-      if (shots.length >= kMaxShots) { toast(context, 'الحد الأقصى $kMaxShots صور'); return; }
       setState(() => shots.add(s));
     } else {
       _finish(kind: 'image', list: [...shots, s]);
@@ -180,7 +186,7 @@ class _CapturePageState extends State<CapturePage> with WidgetsBindingObserver {
       ..cover = 0
       ..video = video
       ..videoSec = videoSec;
-    if (list != null) d.shots.addAll(list);
+    if (list != null) d.shots.addAll(list.take(kMaxShots));
     _cam?.dispose();
     _cam = null;
     Navigator.pop(context, d);

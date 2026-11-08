@@ -134,6 +134,10 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   int _photo = 0, _photoMark = 0;
   /// قلب برمجي جارٍ: لا يُعامل onPageChanged الناتج عنه سحباً من المستخدم
   bool _albumAuto = false;
+  /// اللحظة التي يملكها [_album]، والألبوم الذي غادرناه وصورته: onPageChanged يأتي في منتصف انتقال الصفحة، فتبقى الصفحة المغادِرة
+  /// على صورتها حتى تستقر الصفحات بدل أن تعود إلى غلافها (وطبقاته ونقطته الأولى) أمام المشاهد في بقية الانتقال
+  String? _albumId;
+  ({String id, int photo})? _leftAlbum;
   final _warmedPhotos = <String>{};
   late final PageController _ctl = PageController(initialPage: widget.initial);
   late List<MapPost> posts = List.of(widget.posts);
@@ -326,6 +330,10 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
   void _showAlbum(MapPost p) {
     final old = _album;
     if (old != null) WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    // اللحظة نفسها تُعرض من جديد (تعديل) تبدأ من غلافها؛ غيرها يبقى على صورته حتى يختفي
+    final leftId = _albumId;
+    _leftAlbum = old != null && leftId != null && leftId != p.id ? (id: leftId, photo: _photo) : null;
+    _albumId = p.isAlbum ? p.id : null;
     _album = p.isAlbum ? PageController() : null;
     _photo = _photoMark = 0;
     _albumAuto = false;
@@ -801,34 +809,42 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
           backgroundColor: Colors.black,
           body: SafeArea(
             // متحكم فيديو اللحظة النشطة لوسائطها ومنطقة لمسها
-            child: MomentPlayback(controller: _video, child: PageView.builder(
-              controller: _ctl,
-              itemCount: posts.length,
-              onPageChanged: (i) {
-                setState(() => index = i);
-                _onShown();
+            child: MomentPlayback(controller: _video, child: NotificationListener<ScrollEndNotification>(
+              // استقرت صفحات العارض (لا صفحات الألبوم الأعمق): الألبوم المغادَر خرج من الشاشة، فإن عاد إليه المشاهد بدأ من غلافه كما
+              // سيبدأ حين ينشط (بلا setState: صفحته غير مبنية الآن)
+              onNotification: (n) {
+                if (n.depth == 0) _leftAlbum = null;
+                return false;
               },
-              itemBuilder: (_, i) => PostView(
-                post: posts[i],
-                active: i == index,
-                progress: i == index ? progress : 0,
-                total: posts.length,
-                position: i,
-                onPrev: _prev,
-                onNext: _next,
-                onLike: () => _like(i),
-                onMenu: posts[i].mine ? () => _menu(i) : () => _otherMenu(i),
-                // الضغطة المطوّلة على صورة أو نص توقف التقدّم؛ وأفعال العمود (التفاعل، المشاركة) توقف العارض حتى تنتهي سلسلتها
-                onPress: (h) {
-                  _pressed = h;
-                  _syncCovered();
+              child: PageView.builder(
+                controller: _ctl,
+                itemCount: posts.length,
+                onPageChanged: (i) {
+                  setState(() => index = i);
+                  _onShown();
                 },
-                onHold: _hold,
-                voice: i == index ? _voiceView : null,
-                onVoiceTap: _voiceTap,
-                album: i == index ? _album : null,
-                photo: i == index ? _photo : 0,
-                onPhoto: _onPhoto,
+                itemBuilder: (_, i) => PostView(
+                  post: posts[i],
+                  active: i == index,
+                  progress: i == index ? progress : 0,
+                  total: posts.length,
+                  position: i,
+                  onPrev: _prev,
+                  onNext: _next,
+                  onLike: () => _like(i),
+                  onMenu: posts[i].mine ? () => _menu(i) : () => _otherMenu(i),
+                  // الضغطة المطوّلة على صورة أو نص توقف التقدّم؛ وأفعال العمود (التفاعل، المشاركة) توقف العارض حتى تنتهي سلسلتها
+                  onPress: (h) {
+                    _pressed = h;
+                    _syncCovered();
+                  },
+                  onHold: _hold,
+                  voice: i == index ? _voiceView : null,
+                  onVoiceTap: _voiceTap,
+                  album: i == index ? _album : null,
+                  photo: i == index ? _photo : _leftAlbum?.id == posts[i].id ? _leftAlbum!.photo : 0,
+                  onPhoto: _onPhoto,
+                ),
               ),
             )),
           ),
@@ -852,7 +868,8 @@ class PostView extends ConsumerWidget {
   final ValueListenable<MomentVoice?>? voice;
   /// لمسة شريحة الصوت أو رقاقة «اضغط لتشغيل الصوت»
   final VoidCallback? onVoiceTap;
-  /// صفحات ألبوم اللحظة النشطة (null لغيرها: الغلاف وحده)، والصورة المعروضة، وسحب المشاهد إلى صورة
+  /// صفحات ألبوم اللحظة النشطة (null لغيرها: صورة [photo] ثابتة، والغلاف إلا للألبوم المغادَر أثناء الانتقال)، والصورة المعروضة،
+  /// وسحب المشاهد إلى صورة
   final PageController? album;
   final int photo;
   final ValueChanged<int>? onPhoto;
@@ -878,7 +895,7 @@ class PostView extends ConsumerWidget {
                 if (p.isAlbum && album != null)
                   MomentAlbum(key: ObjectKey(album), urls: p.album, controller: album!, onPage: (i) => onPhoto?.call(i), onPastEnd: onNext, onPastStart: onPrev)
                 else
-                  PostMedia(kind: p.kind, url: p.mediaUrl, bg: p.bg, durationSec: p.durationSec, play: active),
+                  PostMedia(kind: p.kind, url: p.isAlbum ? p.album[photo.clamp(0, p.album.length - 1)] : p.mediaUrl, bg: p.bg, durationSec: p.durationSec, play: active),
                 // نصوص الألبوم وملصقاته رُسمت على الغلاف في «راجع وعدّل» (كالفلتر والقصّ)، فتظهر معه وتختفي عن بقية الصور
                 IgnorePointer(
                   child: AnimatedOpacity(
@@ -887,7 +904,7 @@ class PostView extends ConsumerWidget {
                     child: OverlayCanvas(overlays: p.overlays, shadow: p.kind != 'text'),
                   ),
                 ),
-                if (p.isAlbum) Positioned(top: 64, left: 0, right: 0, child: IgnorePointer(child: Center(child: AlbumDots(count: p.album.length, index: active ? photo : 0)))),
+                if (p.isAlbum) Positioned(top: 64, left: 0, right: 0, child: IgnorePointer(child: Center(child: AlbumDots(count: p.album.length, index: photo)))),
                 // الطبقة الصوتية: تعليق صوتي على الصورة أو لوحة النص، يشغّله العارض وحده والشريحة تعرض موجته وتقدّمه
                 if (p.audioUrl != null && p.audioUrl!.isNotEmpty) Positioned(bottom: 96, left: 0, right: 0, child: Center(child: _voiceChip(p))),
                 // مناطق النقر للتنقل (النصف الأعلى فقط حتى تبقى أدوات الفيديو والأزرار متاحة)

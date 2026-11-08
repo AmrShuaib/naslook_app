@@ -519,6 +519,10 @@ export default async function profileV2(app, opts) {
   // الواحدة (لحظة «الأصدقاء» لأصدقائه وحدهم، والملف الخاص كذلك)، لا من حظره الناشر أو حظره، ولا من أطفأ «إشعارات من أتابعهم»، ومرة لكل
   // ناشر ومتابِع كل 6 ساعات: الحجز في سجل follow_notify_log بالاستعلام نفسه (ON CONFLICT ... WHERE) فلحظتان معاً لا ترسلان إشعارين
   const FOLLOW_NOTIFY_HOURS = 6;
+  // الإرسال بدفعات متتالية بينها مهلة: naslifeNotify يدرج صفاً لكل مستلم ويطلق لكلٍّ دفعاً للمتصفح لا ينتظره (استعلام اشتراكات ثم اتصال
+  // HTTPS)، فنداء واحد بآلاف المتابِعين يملأ مجمّع القاعدة المشترك ويفتح آلاف الاتصالات معاً فتنتظر طلبات الخادم كلها خلفه
+  const FOLLOW_NOTIFY_CHUNK = Math.max(1, Math.floor(Number(opts.followNotifyChunk ?? 100)) || 100);
+  const FOLLOW_NOTIFY_PAUSE_MS = Math.max(0, Number(opts.followNotifyPauseMs ?? 250) || 0);
   const MEDIA_WORD = { image: "صورة", video: "فيديو", audio: "تسجيل صوتي", text: "لحظة" };
   globalThis.naslifeNotifyFollowers = async (post) => {
     const author = String(post?.user_id ?? ""), pid = String(post?.id ?? "");
@@ -536,7 +540,11 @@ export default async function profileV2(app, opts) {
     const nickname = u?.nickname ?? null, name = String(ext?.display_name ?? "").trim() || nickname || author;
     const text = String(post.caption ?? "").replace(/\s+/g, " ").trim() || String(post.title ?? "").trim();
     const body = text ? (text.length > 100 ? `${text.slice(0, 99).trimEnd()}…` : text) : MEDIA_WORD[post.kind] ?? "لحظة";
-    try { await globalThis.naslifeNotify?.(ids, { kind: "follow_moment", title: `لحظة جديدة من ${name}`, body, data: { postId: pid, userId: author, nickname } }); } catch { /* ignore */ }
+    const note = { kind: "follow_moment", title: `لحظة جديدة من ${name}`, body, data: { postId: pid, userId: author, nickname } };
+    for (let i = 0; i < ids.length; i += FOLLOW_NOTIFY_CHUNK) {
+      if (i) await new Promise((r) => setTimeout(r, FOLLOW_NOTIFY_PAUSE_MS));
+      try { await globalThis.naslifeNotify?.(ids.slice(i, i + FOLLOW_NOTIFY_CHUNK), note); } catch { /* دفعة فشلت لا توقف البقية */ }
+    }
     return ids;
   };
 

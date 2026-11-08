@@ -143,8 +143,10 @@ export default async function posts(app, opts) {
     return `${publicOrigin(req)}${s}`;
   };
   const bbox = (s) => { const p = String(s ?? "").split(",").map(Number); return p.length === 4 && p.every(Number.isFinite) ? { minLng: p[0], minLat: p[1], maxLng: p[2], maxLat: p[3] } : null; };
-  // ---- الألبوم: صورة الألبوم ملف رفعه التطبيق عبر /chat/upload فقط (اسم ذلك المسار)، لا رابط خارجي ولا مسار آخر
-  const MEDIA_PATH = /^\/chat\/media\/[a-z0-9]{6,16}-[a-f0-9]{24}\.[a-z0-9]{2,5}$/i;
+  // ---- الألبوم: صورة الألبوم ملف رفعه التطبيق عبر /chat/upload فقط (اسم ذلك المسار)، لا رابط خارجي ولا مسار آخر، وصورةٌ لا غير:
+  // الرفع يقبل الفيديو والصوت وPDF أيضاً، وصفحة الألبوم والغلاف والبطاقات وog:image تعرضها صورة فتظهر مكسورة. الامتدادات هي امتدادات
+  // الصور في TYPES بـ chat_tools.js، بأحرف صغيرة كـ NAME_RE هناك (المسار بغيرها لا يُقدَّم)
+  const MEDIA_PATH = /^\/chat\/media\/[a-z0-9]{6,16}-[a-f0-9]{24}\.(?:jpg|png|webp|gif)$/;
   const ownMedia = (req, url) => { const u = absUrl(req, url); const own = u ? OWN_MEDIA.exec(u) : null; return own && MEDIA_PATH.test(own[1]) ? u : null; };
   // مفتاح المقارنة بين رابطين لملف واحد: المسار (المضيف قد يختلف بين رابط مخزّن وآخر مرسل)
   const mediaKey = (u) => OWN_MEDIA.exec(String(u ?? ""))?.[1] ?? String(u ?? "");

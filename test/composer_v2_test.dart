@@ -21,7 +21,7 @@ import 'package:naslook/core/media/pick_image.dart';
 import 'package:naslook/core/media/voice_player.dart';
 import 'package:naslook/core/media/voice_record.dart';
 import 'package:naslook/pages/posts/post_composer.dart';
-import 'package:naslook/pages/posts/composer/publish_page.dart' show composerDraftKey, composerDraftKeyV2, restoreComposerDraft;
+import 'package:naslook/pages/posts/composer/publish_page.dart' show PublishPage, composerDraftKey, composerDraftKeyV2, restoreComposerDraft;
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/notify_providers.dart';
 import 'package:naslook/state/providers.dart';
@@ -107,6 +107,8 @@ class _Srv {
   final uploads = <String>[];
   /// إقرار 18+: null خادم بلا المسار (الافتراضي، لا يحبس)، false لم يُقرّ بعد
   bool? adult;
+  /// رفض POST /mapposts بهذا الجسم (400) بدل قبوله
+  Map<String, dynamic>? mapError;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   Map<String, dynamic> _post(Map<String, dynamic> b) => {
         'id': _pid, 'user': {'id': 'SA0000001', 'nickname': 'amr'}, 'status': 'active', 'views': 0, 'likes': 0, 'liked': false, 'mine': true, 'expired': false, 'createdAt': DateTime.now().toUtc().toIso8601String(),
@@ -123,6 +125,7 @@ class _Srv {
         final n = uploads.length;
         return _json({'url': ct.startsWith('audio') ? '/chat/media/voice$n.weba' : ct.startsWith('video') ? '/chat/media/clip$n.webm' : '/chat/media/img$n.jpg', 'type': ct, 'kind': ct.split('/').first, 'size': req.bodyBytes.length});
       case 'POST /mapposts':
+        if (mapError != null) return _json(mapError!, 400);
         return _json(_post(bodies[key]!));
       case 'PATCH /mapposts/$_pid':
         return _json(_post({'kind': 'image', 'mediaUrl': '/chat/media/old.jpg', ...bodies[key]!}));
@@ -498,6 +501,76 @@ void main() {
     await _settle(tester);
     expect(tester.widget<Text>(find.byKey(const Key('pub-thumb-label'))).data, 'صورتان');
     expect(find.text('ألبوم · صورتان · الأولى هي الغلاف، ويُسحب بينها في العارض'), findsOneWidget);
+  });
+
+  testWidgets('a 9th shot is refused with «متعدد» off too: the limit toast, the 8 shots come back, and they publish as an 8-photo album', (tester) async {
+    final srv = await _pump(tester);
+    await tester.tap(find.byKey(const Key('cam-multi')));
+    await _settle(tester);
+    for (var i = 0; i < 8; i++) {
+      await tester.tap(find.byKey(const Key('shutter')));
+      await _settle(tester);
+    }
+    expect(find.text('8 لقطة'), findsOneWidget);
+    // إطفاء «متعدد» يخفي اللقطات ولا يمسحها، وضغطة الزر بعده كانت تنهي الالتقاط بتسع فيرفضها الخادم (too-many-media) بعد رفعها
+    await tester.tap(find.byKey(const Key('cam-multi')));
+    await _settle(tester);
+    expect(find.text('8 لقطة'), findsNothing);
+    await tester.tap(find.byKey(const Key('shutter')));
+    await tester.pump();
+    expect(_snack(tester), 'الحد الأقصى 8 صور');
+    await _settle(tester);
+    expect(find.byKey(const Key('edit-next')), findsNothing, reason: 'تبقى الكاميرا: لا انتقال بتسع لقطات');
+    expect(find.text('8 لقطة'), findsOneWidget, reason: 'يعود شريط اللقطات وزر «التالي»');
+    await tester.tap(find.byKey(const Key('cam-done')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    expect(tester.widget<Text>(find.byKey(const Key('pub-thumb-label'))).data, '8 صور');
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.uploads.length, 8, reason: 'calls: ${srv.calls} snack: ${_snack(tester)}');
+    expect(srv.bodies['POST /mapposts']!['mediaUrls'], [for (var i = 1; i <= 8; i++) '/chat/media/img$i.jpg']);
+  });
+
+  /// شاشة النشر مباشرة بمسودة جاهزة (مسودة لا تصنعها الكاميرا الآن، كلقطات تسع من إصدار سابق)
+  Future<_Srv> publishDraft(WidgetTester tester, ComposerDraft draft) async {
+    SharedPreferences.setMockInitialValues({});
+    bakePhotoOverride = (src, {required filter, adjust = const PhotoAdjust(), frame = const PhotoFrame(), name = 'photo.jpg', mime = 'image/jpeg'}) async => (bytes: src, mime: 'image/jpeg', name: 'baked-${filter.id}.jpg');
+    addTearDown(() => bakePhotoOverride = null);
+    tester.view.physicalSize = const Size(420, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final srv = _Srv();
+    final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(srv.handle));
+    await tester.pumpWidget(ProviderScope(
+      overrides: [apiClientProvider.overrideWithValue(api), socketProvider.overrideWithValue(null), appStateProvider.overrideWith((ref) => _SignedIn(api, SessionStore())), notifyPollIntervalProvider.overrideWithValue(null)],
+      child: MaterialApp(locale: const Locale('ar'), home: Scaffold(body: Builder(builder: (ctx) => Center(child: TextButton(onPressed: () => Navigator.push(ctx, MaterialPageRoute<void>(builder: (_) => PublishPage(draft: draft))), child: const Text('open')))))),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    return srv;
+  }
+
+  ComposerDraft nineShots() => ComposerDraft(lat: 21.5, lng: 39.2, kind: 'image', shots: [for (var i = 0; i < 9; i++) (bytes: _png, mime: 'image/png', name: 'shot$i.png')]);
+
+  testWidgets('a draft with 9 shots uploads 8 (cover first) and sends an 8-photo album, not a 9th upload the server refuses', (tester) async {
+    final srv = await publishDraft(tester, nineShots());
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.uploads.length, 8, reason: 'calls: ${srv.calls} snack: ${_snack(tester)}');
+    expect((srv.bodies['POST /mapposts']!['mediaUrls'] as List).length, 8);
+  });
+
+  testWidgets('an album refused by the server reads in Arabic, without the «ApiException» prefix or the raw code', (tester) async {
+    final srv = await publishDraft(tester, nineShots());
+    srv.mapError = {'error': 'too-many-media', 'max': 8};
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(_snack(tester), 'الحد الأقصى 8 صور في اللحظة');
+    expect(find.byKey(const Key('pub-go')), findsOneWidget, reason: 'شاشة النشر باقية');
   });
 
   testWidgets('editing an album keeps it: no new uploads, no mediaUrl or mediaUrls in the PATCH, and the thumb shows its count', (tester) async {

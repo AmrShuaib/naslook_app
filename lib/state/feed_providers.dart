@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/profile_v2_api.dart';
 import '../api/row_api.dart';
 import 'app_state.dart';
-import 'providers.dart' show signedInProvider;
+import 'providers.dart' show contactsProvider, signedInProvider;
+import 'safety_providers.dart' show blockedUsersProvider;
 import 'search_providers.dart';
 
 /// مفتاح «أتابعهم» في [momentsProvider]: التغذية كلها (`kind=all`) بنطاق `scope=following`، بجانب أنواع [feedKinds].
@@ -111,7 +113,7 @@ class MomentsNotifier extends StateNotifier<MomentsState> {
       if (applyNow || state.items.isEmpty) return _replace(page.items, page.next, page.located, followPeople: page.followPeople, followCircles: page.followCircles);
       final inPage = {for (final it in page.items) it.pinKey};
       final items = _withoutGone(state.items, page, inPage);
-      if (items.isEmpty) return _replace(page.items, page.next, page.located);
+      if (items.isEmpty) return _replace(page.items, page.next, page.located, followPeople: page.followPeople, followCircles: page.followCircles);
       final keys = {for (final it in items) it.pinKey};
       final top = page.items.isEmpty ? null : page.items.first.feedTime;
       // ما وصل حيّاً بعد أن حسب الخادم ردّه (أحدث من أوله) يبقى منتظراً؛ وما سواه شمله الردّ أو زال
@@ -191,9 +193,10 @@ class MomentsNotifier extends StateNotifier<MomentsState> {
   static bool _newer(RowItem x, DateTime? top) => top == null || x.feedTime == null || x.feedTime!.isAfter(top);
 
   /// يزيل ما زال من مدى الصفحة الأولى: عنصر معروض يقع زمنه بين آخرها وأولها ولم يرد فيها = حُذف أو أُخفي أو حُظر ناشره أو خرج
-  /// من النطاق. الصفحة بلا مؤشر تحمل البث كله فمداها حتى الأقدم. ما بعد آخرها أو بلا زمن يبقى كما هو.
+  /// من النطاق. الصفحة بلا مؤشر تحمل البث كله فمداها حتى الأقدم، فالفارغة بلا مؤشر تعني أن البث خلا (ألغيتُ متابعة الوحيد الذي
+  /// أتابعه مثلاً) فيزول كل ما له زمن. ما بعد آخرها أو بلا زمن يبقى كما هو.
   static List<RowItem> _withoutGone(List<RowItem> items, FeedPage page, Set<String> inPage) {
-    if (page.items.isEmpty) return items;
+    if (page.items.isEmpty) return page.next == null ? items.where((x) => x.feedTime == null).toList() : items;
     final top = page.items.first.feedTime;
     final floor = page.next == null ? null : page.items.last.feedTime;
     if (top == null || (page.next != null && floor == null)) return items;
@@ -207,19 +210,38 @@ class MomentsNotifier extends StateNotifier<MomentsState> {
 }
 
 /// «اللحظات» لكل نوع (`all`، `moment`، …) ولـ«أتابعهم» ([followingFeed]): يبقى بعد تبديل الرقاقة فتعود القائمة فوراً، والصفحة تحدّثه
-/// عند الفتح والعودة. «أتابعهم» تخص الحساب فتُبنى من جديد حين يتبدّل.
+/// عند الفتح والعودة. «أتابعهم» تخص الحساب فتُبنى من جديد حين يتبدّل، وتتحدّث في مكانها حين تتغيّر معرّفاتها ([followFeedIdsProvider]).
 final momentsProvider = StateNotifierProvider.family<MomentsNotifier, MomentsState, String>((ref, kind) {
-  if (kind == followingFeed) ref.watch(appStateProvider.select((s) => s.session?.user.id));
-  return MomentsNotifier(ref, kind);
+  if (kind != followingFeed) return MomentsNotifier(ref, kind);
+  ref.watch(appStateProvider.select((s) => s.session?.user.id));
+  final n = MomentsNotifier(ref, kind);
+  // تغيّر من أتابعهم (متابعة أو إلغاؤها، صديق أُضيف أو أُزيل، حظر أو إلغاؤه): الجديد خلف الكبسولة وما خرج يُزال في مكانه. أول وصول
+  // للمعرّفات لا يحدّث (القائمة جُلبت معه)، ومجموعة لم تتغيّر لا تغيّر البث. بلا معرّفات (خادم أقدم أو خطأ) نحدّث احتياطاً
+  ref.listen<AsyncValue<Set<String>?>>(followFeedIdsProvider, (prev, next) {
+    if (next.isLoading || prev == null || !prev.hasValue || !n.mounted) return;
+    final a = prev.value, b = next.valueOrNull;
+    if (a != null && b != null && setEquals(a, b)) return;
+    n.refresh(applyNow: false);
+  });
+  return n;
 });
 
 /// قوائم «اللحظات» المفتوحة فعلاً (نوع لم يُفتح لا يُنشأ فيبدأ جلبه): لتطبيق الحذف والحظر والتحديث والحيّ عليها كلها لا المرئية وحدها.
 List<MomentsNotifier> openMoments(WidgetRef ref) => [for (final k in momentsKeys) if (ref.exists(momentsProvider(k))) ref.read(momentsProvider(k).notifier)];
 
 /// من تُدرج لحظاتهم الحيّة في «أتابعهم» بلا جلب: من أتابعهم ومن أضفتهم (`GET /me/following/ids`، بأحرف كبيرة). null للزائر أو حين
-/// يتعذّر الجلب (خادم أقدم): القائمة تتحدّث حينها بالجلب الدوري وحده. يُبطَل بعد متابعة أو إلغائها.
+/// يتعذّر الجلب (خادم أقدم): القائمة تتحدّث حينها بالجلب الدوري وحده. يُبطَل بعد متابعة أو إلغائها ([onFollowChanged])، ويُجلب من
+/// جديد حين يصل جديد جهات الاتصال أو المحظورين.
 final followFeedIdsProvider = FutureProvider<Set<String>?>((ref) async {
   if (!ref.watch(signedInProvider)) return null;
+  // المجموعة = من أتابعهم ∪ من أضفتهم − طرفا الحظر. كل مسار يضيف صديقاً أو يقبله أو يزيله يُبطل contactsProvider، والحظر وإلغاؤه
+  // يُبطلان blockedUsersProvider: نعيد الجلب حين يصل جديدهما لا عند أول وصول (فلا يتكرر الجلب عند الفتح)
+  void refetch(Object? prev, Object? next) {
+    if (prev != null && next != null && !identical(prev, next)) ref.invalidateSelf();
+  }
+
+  ref.listen<Object?>(contactsProvider.select((a) => a.valueOrNull), refetch);
+  ref.listen<Object?>(blockedUsersProvider.select((a) => a.valueOrNull), refetch);
   try {
     return {for (final id in await ref.watch(apiClientProvider).followFeedIds()) id.toUpperCase()};
   } catch (_) {
@@ -227,8 +249,6 @@ final followFeedIdsProvider = FutureProvider<Set<String>?>((ref) async {
   }
 });
 
-/// بعد متابعة شخص أو إلغائها: معرّفات «أتابعهم» تُجلب من جديد، وقائمتها المفتوحة تتحدّث في مكانها (الجديد خلف الكبسولة وما زال يُزال).
-void onFollowChanged(WidgetRef ref) {
-  ref.invalidate(followFeedIdsProvider);
-  if (ref.exists(momentsProvider(followingFeed))) ref.read(momentsProvider(followingFeed).notifier).refresh(applyNow: false);
-}
+/// بعد متابعة شخص أو إلغائها: معرّفات «أتابعهم» تُجلب من جديد، وقائمتها المفتوحة تتحدّث في مكانها حين تتغيّر (مستمعها في
+/// [momentsProvider]: الجديد خلف الكبسولة وما زال يُزال، ولو خلا البث كله).
+void onFollowChanged(WidgetRef ref) => ref.invalidate(followFeedIdsProvider);
