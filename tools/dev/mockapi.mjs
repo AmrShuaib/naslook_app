@@ -1332,7 +1332,10 @@ http.createServer((req, res) => {
       const t = BI.threads[bm[1]]; if (!t) return bj(404, { error: 'not-found' });
       const viewer = t.userId === me.id ? 'customer' : t.bizId === 'biz-ikea' ? 'team' : null; if (!viewer) return bj(404, { error: 'not-found' });
       const act = bm[2];
-      if (!act && req.method === 'GET') return bj(200, { viewer, role: viewer === 'team' ? 'owner' : null, biz: circleOf(t.bizId), thread: threadOut(t, viewer), messages: (BI.msgs[t.id] ?? []).map((m) => msgOut(m, t, viewer)), hasMore: false, canSend: true, reason: null, orders: myOrders(t.bizId, t.userId), ...(viewer === 'team' ? { team: teamOf(t.bizId), canAssignOthers: true } : {}) });
+      // ?before=<معرّف رسالة> كالخادم (والوقت للتوافق): ما قبلها فقط
+      const before = url.searchParams.get('before'), all = BI.msgs[t.id] ?? [], at = before ? all.findIndex((m) => m.id === before) : -1;
+      const page = !before ? all : at >= 0 ? all.slice(0, at) : all.filter((m) => m.createdAt < before);
+      if (!act && req.method === 'GET') return bj(200, { viewer, role: viewer === 'team' ? 'owner' : null, biz: circleOf(t.bizId), thread: threadOut(t, viewer), messages: page.map((m) => msgOut(m, t, viewer)), hasMore: false, canSend: true, reason: null, orders: myOrders(t.bizId, t.userId), ...(viewer === 'team' ? { team: teamOf(t.bizId), canAssignOthers: true } : {}) });
       if (act === 'read') { if (viewer === 'customer') { t.userUnread = 0; t.userReadAt = new Date().toISOString(); } else { t.teamUnread = 0; t.teamReadAt = new Date().toISOString(); } return bj(200, { ok: true }); }
       if (act === 'messages') return bb((b) => { const m = append(t, viewer, b); if (!m) return bj(400, { error: 'empty' }); bj(200, { thread: threadOut(t, viewer), message: msgOut(m, t, viewer), duplicate: false }); });
       if (viewer !== 'team') return bj(403, { error: 'forbidden' });

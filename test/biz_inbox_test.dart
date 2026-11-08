@@ -48,6 +48,8 @@ class _Srv {
   String role = 'owner';
   String reason = '';
   bool hiddenMsg = false;
+  /// المحادثة أطول من صفحة: الصفحة الأقدم رسالة في الميلي ثانية نفسها لأقدم رسالة محمّلة
+  bool olderPage = false;
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
 
   Map<String, dynamic> _thread({bool team = false, String status = 'open', Map? assignee}) => {
@@ -87,8 +89,10 @@ class _Srv {
         return _json({'threads': threadExists ? [_thread()] : [], 'unread': threadExists ? 1 : 0});
       case 'GET /bizinbox/threads/t1':
         final team = role != 'customer';
+        final older = olderPage && req.url.queryParameters.containsKey('before');
         return _json({
-          'viewer': team ? 'team' : 'customer', 'role': team ? role : null, 'biz': _circle, 'thread': _thread(team: team), 'messages': _msgs(team: team), 'hasMore': false,
+          'viewer': team ? 'team' : 'customer', 'role': team ? role : null, 'biz': _circle, 'thread': _thread(team: team), 'hasMore': olderPage && !older,
+          'messages': older ? [{'id': 'm0', 'threadId': 't1', 'side': 'customer', 'mine': !team, 'text': 'رسالة أقدم في الميلي ثانية نفسها', 'photos': [], 'hidden': false, 'createdAt': _ago(20)}] : _msgs(team: team),
           'canSend': reason.isEmpty, 'reason': reason.isEmpty ? null : reason, 'orders': [_order],
           if (team) 'team': [{'id': 'SA0000001', 'nickname': 'amr', 'role': 'owner'}, {'id': 'SA0000003', 'nickname': 'sara', 'role': 'staff'}],
           if (team) 'canAssignOthers': role == 'owner' || role == 'manager',
@@ -133,11 +137,12 @@ class _Srv {
   }
 }
 
-Future<_Srv> _pump(WidgetTester tester, Widget home, {_Srv? srv, bool guest = false}) async {
+Future<_Srv> _pump(WidgetTester tester, Widget home, {_Srv? srv, bool guest = false, Duration? poll}) async {
   tester.view.physicalSize = const Size(800, 2000);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  BizThreadPage.pollEvery = null;
+  BizThreadPage.pollEvery = poll;
+  addTearDown(() => BizThreadPage.pollEvery = null);
   final s = srv ?? _Srv();
   final api = ApiClient(baseUrl: 'https://test.local', httpClient: MockClient(s.handle));
   // مفتاح جديد لكل ضخ: حاوية Riverpod جديدة (التجاوز بـ overrideWith لا يتبدّل في الحاوية نفسها)
@@ -238,6 +243,25 @@ void main() {
     expect(find.byKey(const Key('biz-thread-reason')), findsOneWidget);
     expect(find.text('لا يمكن المراسلة بسبب الحظر.'), findsOneWidget);
     expect(find.byKey(const Key('biz-thread-input')), findsNothing);
+  });
+
+  testWidgets('older messages page by message id and survive the poll even in the same millisecond', (tester) async {
+    final srv = _Srv()
+      ..role = 'customer'
+      ..olderPage = true;
+    await _pump(tester, const BizThreadPage(threadId: 't1'), srv: srv, poll: const Duration(seconds: 15));
+    await tester.tap(find.byKey(const Key('biz-thread-older')));
+    await tester.pumpAndSettle();
+    // المؤشر معرّف أقدم رسالة محمّلة لا وقتها (الوقت في JSON مقطوع إلى الميلي ثانية)
+    expect(srv.calls, contains('GET /bizinbox/threads/t1?before=m1'));
+    expect(find.byKey(const Key('biz-msg-m0')), findsOneWidget);
+    srv.calls.clear();
+    await tester.pump(const Duration(seconds: 16));
+    await tester.pumpAndSettle();
+    expect(srv.calls, contains('GET /bizinbox/threads/t1'));
+    // m0 في الميلي ثانية نفسها لأقدم رسالة في آخر صفحة: الجلب الدوري لا يسقطها
+    expect(find.byKey(const Key('biz-msg-m0')), findsOneWidget);
+    expect(find.byKey(const Key('biz-msg-m1')), findsOneWidget);
   });
 
   testWidgets('team thread: teammate label, assign sheet, close and reply as the circle', (tester) async {

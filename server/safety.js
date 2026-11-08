@@ -314,7 +314,12 @@ export default async function safety(app, opts) {
         // و«إعادة الإظهار» ترجع حالته قبل الإخفاء (منشور أو موقوف أو مسودة…)
         if (hide) { await savePrev(type, id, "SELECT status AS v FROM jobs WHERE id=$1"); return upd("UPDATE jobs SET status='blocked', updated_at=now() WHERE id=$1 AND status<>'blocked'", [id]); }
         return upd("UPDATE jobs SET status=$2, updated_at=now() WHERE id=$1 AND status='blocked'", [id, await takePrev(type, id, ["draft", "pending", "open", "paused", "closed", "filled"], "open")]);
-      case "biz-msg": return flag("biz_thread_msgs");
+      case "biz-msg": {
+        const ok = await flag("biz_thread_msgs");
+        // معاينة المحادثة في القائمتين نسخة من نص آخر رسالة: تُعاد من biz_inbox.js حتى لا يبقى نص المخفية ظاهراً
+        if (ok) { try { await globalThis.naslifeBizInboxRefreshPreview?.(info?.thread_id ?? (await one("SELECT thread_id FROM biz_thread_msgs WHERE id=$1", [id]))?.thread_id); } catch { /* ignore */ } }
+        return ok;
+      }
       case "vessel-post": {
         try {
           return hide ? !!(await globalThis.naslifeVesselPostHide?.(id, { vesselId: info?.vessel_id ?? "", by, reason })) : !!(await globalThis.naslifeVesselPostUnhide?.(id));
@@ -407,6 +412,12 @@ export default async function safety(app, opts) {
     let hidden = false;
     // الدائرة (تجارية أو دائرة النواة) لا تُخفى تلقائياً (ثلاثة حسابات لا تُسقط نشاطاً أو مجتمعاً)؛ تذهب لطابور الإشراف وتُنبَّه الإدارة
     if (type === "biz" || type === "vessel") { if (n === threshold()) await notifyAdmins({ kind: "content_reported_many", title: `${n} بلاغات على ${typeName(type)}`, body: `«${info.title}» — راجعها في طابور الإشراف`, data: { targetType: type, targetId: id, reports: n } }); }
+    // الرسالة الخاصة لا تُخفى تلقائياً: لا يبلّغ عنها إلا الطرف الآخر، وفريق الدائرة (مالك ومدير وموظف) يبلغ الحد وحده فيُسكت
+    // شكوى العميل بلا قرار من الإدارة؛ البلاغ الأول ينبّه الإدارة وبلوغ الحد يذكّرها، والقرار لطابور الإشراف
+    else if (type === "biz-msg") {
+      if (n === threshold()) await notifyAdmins({ kind: "content_reported_many", title: `${n} بلاغات على ${typeName(type)}`, body: `«${info.title}» — راجعها في طابور الإشراف`, data: { targetType: type, targetId: id, reports: n } });
+      else if (n === 1) await notifyAdmins({ kind: "report_new", title: `بلاغ على ${typeName(type)}`, body: `«${info.title}»${reason ? ` — ${reason}` : ""}`, data: { targetType: type, targetId: id, reports: n }, push: false });
+    }
     else if (n >= threshold() && info.status !== "blocked") hidden = await autoHide(type, id, info, n);
     else if (n === 1) await notifyAdmins({ kind: "report_new", title: `بلاغ على ${typeName(type)}`, body: `«${info.title}»${reason ? ` — ${reason}` : ""}`, data: { targetType: type, targetId: id, reports: n }, push: false });
     return { ok: true, reports: n, hidden, threshold: threshold() };

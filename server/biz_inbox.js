@@ -28,7 +28,8 @@ export const FILTERS = ["open", "closed", "mine", "all"];
 const str = (v, max) => String(v ?? "").trim().slice(0, max);
 export const mediaPath = (v) => String(v ?? "").trim().match(MEDIA_RE)?.[1] ?? null;
 const clip = (t, n = 100) => (t.length > n ? t.slice(0, n) + "…" : t);
-/// معاينة آخر رسالة في القوائم: النص، أو «صورة»، أو اسم المرجع
+/// معاينة آخر رسالة في القوائم: النص، أو «صورة»، أو اسم المرجع؛ والمخفية بالإشراف HIDDEN_PREVIEW
+export const HIDDEN_PREVIEW = "أُخفيت هذه الرسالة";
 export const previewOf = (text, photos, ref) => (text ? clip(text.replace(/\s+/g, " "), 120) : photos > 0 ? (photos > 1 ? `${photos} صور` : "صورة") : ref === "order" ? "طلب" : ref === "item" ? "صنف" : "");
 
 export default async function bizInbox(app, opts) {
@@ -58,6 +59,8 @@ export default async function bizInbox(app, opts) {
   const notify = async (ids, payload) => { try { await globalThis.naslifeNotify?.(ids, payload); } catch { /* الإشعار لا يُفشل الرسالة */ } };
   const banned = (...texts) => { try { return globalThis.naslifeCheckText?.(...texts.filter(Boolean)) ?? null; } catch { return null; } };
   const isBlocked = async (a, b) => { if (!a || !b || a === b) return false; try { return !!(await globalThis.naslifeIsBlocked?.(a, b)); } catch { return false; } };
+  // اتجاه الحظر (a حظر b): «blocked» يُقال لمن حظر وحده كقاعدة «من يراسلني» في profile_ext.js
+  const hasBlocked = async (a, b) => { if (!a || !b || a === b) return false; try { return !!(await globalThis.naslifeHasBlocked?.(a, b)); } catch { return false; } };
   const blockedIds = async (uid) => { try { return (await globalThis.naslifeBlockedIds?.(uid)) ?? []; } catch { return []; } };
   const isSuspended = async (uid) => {
     if (typeof globalThis.naslifeIsSuspended === "function") { try { return !!(await globalThis.naslifeIsSuspended(uid)); } catch { return false; } }
@@ -119,7 +122,8 @@ export default async function bizInbox(app, opts) {
       if (!b.owner_id) return "no-owner";
       if (fresh && b.active === false) return "unavailable";
       if (b.owner_id === uid || (await onStaff(uid, b))) return "own-circle";
-      if (await isBlocked(uid, b.owner_id)) return "blocked";
+      // من حظره المالك يرى الدائرة «غير متاحة» كأي دائرة موقوفة حتى لا يعرف أنه حُظر؛ «blocked» لمن حظر المالك بنفسه
+      if (await isBlocked(uid, b.owner_id)) return (await hasBlocked(uid, b.owner_id)) ? "blocked" : "unavailable";
     } else {
       if (await isBlocked(uid, customerId) || await isBlocked(b.owner_id, customerId)) return "blocked";
     }
@@ -189,8 +193,12 @@ export default async function bizInbox(app, opts) {
         .map((o) => ({ kind: "order", id: o.id, title: o.title ?? "", code: o.code, status: o.status, total: Number(o.total), startAt: o.start_at, itemKind: o.kind, qty: o.qty }));
     } catch { return []; }
   }
-  async function messagesOf(t, viewer, uid, { before = null } = {}) {
-    const rows = (await pool.query(`SELECT * FROM biz_thread_msgs WHERE thread_id=$1 AND ($2::timestamptz IS NULL OR created_at < $2) ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`, [t.id, before])).rows;
+  /// before: معرّف أقدم رسالة محمّلة (مؤشر صفّي على (created_at, id) يُقرأ من الصف المخزّن بدقته الكاملة)، أو وقت للتوافق.
+  /// الوقت في JSON مقطوع إلى الميلي ثانية بينما يخزّن pg الميكروثانية، فالمقارنة به تُسقط رسالة أقدم في الميلي ثانية نفسها
+  async function messagesOf(t, viewer, uid, { before = null, beforeId = null } = {}) {
+    const rows = (await pool.query(`SELECT * FROM biz_thread_msgs WHERE thread_id=$1 AND ($2::timestamptz IS NULL OR created_at < $2)
+      AND ($3::uuid IS NULL OR (created_at, id) < (SELECT created_at, id FROM biz_thread_msgs WHERE id=$3 AND thread_id=$1))
+      ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`, [t.id, before, beforeId])).rows;
     const hasMore = rows.length > PAGE;
     const page = rows.slice(0, PAGE).reverse();
     const refs = await refsFor(page);
@@ -198,9 +206,10 @@ export default async function bizInbox(app, opts) {
     return { messages: page.map((m) => msgOut(m, viewer, uid, refs, pm)), hasMore };
   }
 
-  // ---- حدود المعدّل من القاعدة نفسها (تصمد بعد إعادة التشغيل وعبر العمليات)
-  const sentLastMinute = async (uid) => (await pool.query("SELECT count(*)::int AS n FROM biz_thread_msgs WHERE sender_id=$1 AND created_at > now() - interval '1 minute'", [uid])).rows[0].n;
-  const threadsToday = async (uid) => (await pool.query("SELECT count(*)::int AS n FROM biz_threads WHERE user_id=$1 AND created_at > now() - interval '1 day'", [uid])).rows[0].n;
+  // ---- حدود المعدّل من القاعدة نفسها (تصمد بعد إعادة التشغيل وعبر العمليات). العدّ والكتابة في معاملة واحدة تحت قفل لكل مرسل
+  // (store)، وإلا ترى طلبات متوازية العدد نفسه فتمر كلها فوق الحد. clock_timestamp لا now(): وقت المعاملة يسبق انتظار القفل
+  const sentLastMinute = async (c, uid) => (await c.query("SELECT count(*)::int AS n FROM biz_thread_msgs WHERE sender_id=$1 AND created_at > clock_timestamp() - interval '1 minute'", [uid])).rows[0].n;
+  const threadsToday = async (c, uid) => (await c.query("SELECT count(*)::int AS n FROM biz_threads WHERE user_id=$1 AND created_at > clock_timestamp() - interval '1 day'", [uid])).rows[0].n;
 
   /// يتحقق من جسم الرسالة: { text, photos, clientId } أو رمز خطأ
   function parseBody(body) {
@@ -215,51 +224,77 @@ export default async function bizInbox(app, opts) {
     return { text, photos, clientId };
   }
 
-  /// يضيف رسالة إلى المحادثة ويحدّث عدّاداتها وحالتها، ثم يرسل الإشعار عند أول رسالة غير مقروءة للطرف الآخر
-  async function append(t, b, { side, uid, text, photos, ref, clientId }) {
-    if (clientId) {
-      const dup = (await pool.query("SELECT * FROM biz_thread_msgs WHERE thread_id=$1 AND sender_id=$2 AND client_id=$3", [t.id, uid, clientId])).rows[0];
-      if (dup) return { m: dup, t, duplicate: true };
-    }
-    const id = crypto.randomUUID();
-    let m;
+  /// يحفظ رسالة تحت قفل مرسلها في معاملة واحدة: يعيد المحفوظة إن تكرر clientId، ثم يفحص الحدّين، وينشئ المحادثة إن لزم،
+  /// ويحدّث عدّاداتها وحالتها. threadId للمحادثة بمعرّفها، وبدونه محادثة المرسل (العميل) مع الدائرة.
+  /// يعيد { m, t, duplicate, preview }، أو { limit: [رمز, تفاصيل] } عند تجاوز حد، أو { gone } إن حُذفت المحادثة
+  async function store(b, { threadId = null, side, uid, text, photos, ref, clientId }) {
+    const c = await pool.connect();
     try {
-      m = (await pool.query("INSERT INTO biz_thread_msgs(id,thread_id,side,sender_id,text,photos,ref_kind,ref_id,client_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
-        [id, t.id, side, uid, text, JSON.stringify(photos), ref?.kind ?? null, ref?.id ?? null, clientId])).rows[0];
+      await c.query("BEGIN");
+      await c.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`bizinbox:${uid}`]);
+      const done = async (out) => { await c.query(out.limit || out.gone ? "ROLLBACK" : "COMMIT"); return out; };
+      let t = (await (threadId ? c.query("SELECT * FROM biz_threads WHERE id=$1", [threadId]) : c.query("SELECT * FROM biz_threads WHERE biz_id=$1 AND user_id=$2", [b.id, uid]))).rows[0] ?? null;
+      const dupOf = async (tid) => (clientId ? (await c.query("SELECT * FROM biz_thread_msgs WHERE thread_id=$1 AND sender_id=$2 AND client_id=$3", [tid, uid, clientId])).rows[0] ?? null : null);
+      // إعادة إرسال من صندوق الصادر: الرسالة المحفوظة تعود ولا تُحسب في الحد
+      const dup = t ? await dupOf(t.id) : null;
+      if (dup) return done({ m: dup, t, duplicate: true });
+      if (await sentLastMinute(c, uid) >= perMin) return done({ limit: ["rate-limit", { perMin }] });
+      if (!t) {
+        if (threadId) return done({ gone: true });
+        if (await threadsToday(c, uid) >= perDay) return done({ limit: ["too-many-threads", { perDay }] });
+        t = (await c.query("INSERT INTO biz_threads(id,biz_id,user_id,created_at,last_at) VALUES($1,$2,$3,clock_timestamp(),clock_timestamp()) ON CONFLICT (biz_id,user_id) DO UPDATE SET biz_id=EXCLUDED.biz_id RETURNING *",
+          [crypto.randomUUID(), b.id, uid])).rows[0];
+      }
+      const m = (await c.query(`INSERT INTO biz_thread_msgs(id,thread_id,side,sender_id,text,photos,ref_kind,ref_id,client_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp())
+        ON CONFLICT (thread_id, sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING RETURNING *`,
+        [crypto.randomUUID(), t.id, side, uid, text, JSON.stringify(photos), ref?.kind ?? null, ref?.id ?? null, clientId])).rows[0];
+      if (!m) return done({ m: await dupOf(t.id), t, duplicate: true });
+      const preview = previewOf(text, photos.length, ref?.kind);
+      // رسالة جديدة تعيد فتح المحادثة المغلقة؛ وكاتبها قرأ ما قبلها
+      const sql = side === "customer"
+        ? "UPDATE biz_threads SET status='open', closed_at=NULL, closed_by=NULL, last_at=$2, last_text=$3, last_side='customer', team_unread=team_unread+1, user_unread=0, user_read_at=$2 WHERE id=$1 RETURNING *"
+        : "UPDATE biz_threads SET status='open', closed_at=NULL, closed_by=NULL, last_at=$2, last_text=$3, last_side='team', user_unread=user_unread+1, team_unread=0, team_read_at=$2 WHERE id=$1 RETURNING *";
+      const nt = (await c.query(sql, [t.id, m.created_at, preview])).rows[0];
+      return done({ m, t: nt, duplicate: false, preview });
     } catch (e) {
-      // إرسالان متزامنان بالمعرّف نفسه: الثاني يعيد الأول
-      if (e?.code === "23505" && clientId) return { m: (await pool.query("SELECT * FROM biz_thread_msgs WHERE thread_id=$1 AND sender_id=$2 AND client_id=$3", [t.id, uid, clientId])).rows[0], t, duplicate: true };
+      try { await c.query("ROLLBACK"); } catch { /* ignore */ }
       throw e;
-    }
-    const preview = previewOf(text, photos.length, ref?.kind);
-    // رسالة جديدة تعيد فتح المحادثة المغلقة؛ وكاتبها قرأ ما قبلها
-    const sql = side === "customer"
-      ? "UPDATE biz_threads SET status='open', closed_at=NULL, closed_by=NULL, last_at=$2, last_text=$3, last_side='customer', team_unread=team_unread+1, user_unread=0, user_read_at=$2 WHERE id=$1 RETURNING *"
-      : "UPDATE biz_threads SET status='open', closed_at=NULL, closed_by=NULL, last_at=$2, last_text=$3, last_side='team', user_unread=user_unread+1, team_unread=0, team_read_at=$2 WHERE id=$1 RETURNING *";
-    const nt = (await pool.query(sql, [t.id, m.created_at, preview])).rows[0];
+    } finally { c.release(); }
+  }
+  /// بعد الحفظ: الإشعار عند أول رسالة غير مقروءة للطرف الآخر فقط
+  async function notifyNew(b, side, uid, nt, preview) {
     const name = bizName(b);
     if (side === "customer" && nt.team_unread === 1) {
-      // المحادثة المسندة تُنبّه المسؤول وحده (إن بقي في الفريق)، وإلا الفريق كله؛ من بينه وبين العميل حظر لا يُنبَّه
-      const team = await inboxTeam(b);
-      let to = nt.assignee_id && team.some((x) => x.id === nt.assignee_id) ? [nt.assignee_id] : team.map((x) => x.id);
+      // المسندة تُنبّه المسؤول وحده، وإلا الفريق كله؛ ومن بينه وبين العميل حظر لا يُنبَّه، فإن كان هو المسؤول (أو خرج من الفريق)
+      // نُبّه بقية الفريق حتى لا تبقى رسالة العميل بلا من يُنبَّه بها
       const blocked = new Set(await blockedIds(uid));
-      to = to.filter((x) => !blocked.has(x));
+      const team = (await inboxTeam(b)).filter((x) => !blocked.has(x.id));
+      const to = nt.assignee_id && team.some((x) => x.id === nt.assignee_id) ? [nt.assignee_id] : team.map((x) => x.id);
       const nick = (await people([uid])).get(uid)?.nickname || uid;
-      await notify(to, { kind: "biz_inbox_message", title: `رسالة جديدة · ${name}`, body: `${nick}: ${preview}`, data: { bizId: b.id, threadId: t.id, manage: true }, exclude: uid });
+      await notify(to, { kind: "biz_inbox_message", title: `رسالة جديدة · ${name}`, body: `${nick}: ${preview}`, data: { bizId: b.id, threadId: nt.id, manage: true }, exclude: uid });
     } else if (side === "team" && nt.user_unread === 1) {
-      await notify([nt.user_id], { kind: "biz_inbox_reply", title: `رد من ${name}`, body: preview, data: { bizId: b.id, threadId: t.id } });
+      await notify([nt.user_id], { kind: "biz_inbox_reply", title: `رد من ${name}`, body: preview, data: { bizId: b.id, threadId: nt.id } });
     }
-    return { m, t: nt, duplicate: false };
   }
-  // يرد بخطأ إن لم يُقبل الإرسال؛ يعيد true عند الرفض
-  async function rejectSend(reply, uid, parsed, { fresh = false } = {}) {
+  // يرد بخطأ إن لم يُقبل جسم الرسالة؛ يعيد true عند الرفض (الحدّان يُفحصان في store تحت القفل)
+  function rejectBody(reply, parsed) {
     if (parsed.error) { bad(reply, 400, parsed.error, parsed.error === "too-many-photos" ? { max: MAX_PHOTOS } : {}); return true; }
     const w = banned(parsed.text);
     if (w) { bad(reply, 400, "banned-words", { word: w }); return true; }
-    if (await sentLastMinute(uid) >= perMin) { bad(reply, 429, "rate-limit", { perMin }); return true; }
-    if (fresh && await threadsToday(uid) >= perDay) { bad(reply, 429, "too-many-threads", { perDay }); return true; }
     return false;
   }
+  /// معاينة المحادثة في القائمتين (last_text) نسخة من آخر رسالة، فإخفاؤها بالإشراف (safety.js) يعيد حسابها من أحدث رسالة:
+  /// المخفية تظهر «أُخفيت هذه الرسالة» لا نصها، والمعادة يعود نصها
+  async function refreshPreview(threadId) {
+    if (!UUID_RE.test(String(threadId ?? ""))) return false;
+    const m = (await pool.query("SELECT id, side, text, photos, ref_kind, hidden FROM biz_thread_msgs WHERE thread_id=$1 ORDER BY created_at DESC, id DESC LIMIT 1", [threadId])).rows[0];
+    if (!m) return false;
+    const preview = m.hidden ? HIDDEN_PREVIEW : previewOf(m.text, Array.isArray(m.photos) ? m.photos.length : 0, m.ref_kind);
+    // رسالة أحدث وصلت بين القراءة والكتابة كتبت معاينتها بنفسها فلا نطمسها
+    return (await pool.query(`UPDATE biz_threads SET last_text=$2, last_side=$3 WHERE id=$1 AND NOT EXISTS (SELECT 1 FROM biz_thread_msgs x, biz_thread_msgs n
+      WHERE n.id=$4 AND x.thread_id=$1 AND (x.created_at, x.id) > (n.created_at, n.id))`, [threadId, preview, m.side, m.id])).rowCount > 0;
+  }
+  globalThis.naslifeBizInboxRefreshPreview = refreshPreview;
 
   app.get("/bizinbox/status", async () => ({ ok: true, perMin, threadsPerDay: perDay, maxPhotos: MAX_PHOTOS, maxText: MAX_TEXT, roles: [...INBOX_ROLES], filters: FILTERS }));
 
@@ -271,7 +306,7 @@ export default async function bizInbox(app, opts) {
     const t0 = b ? (await pool.query("SELECT * FROM biz_threads WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0] ?? null : null;
     // الدائرة المخفية بالإشراف لا تُفتح لمن لم يراسلها قبل الإخفاء
     if (!b || (b.hidden === true && !t0)) return bad(reply, 404, "not-found");
-    // حظر بيني وبين مالكها: لا تُعرض المحادثة السابقة (الحظر يخفي بالاتجاهين) ويبقى السبب ظاهراً
+    // حظر بيني وبين مالكها: لا تُعرض المحادثة السابقة (الحظر يخفي بالاتجاهين)، والسبب «blocked» إن كنت أنا من حظر وإلا «unavailable»
     const t = t0 && (await viewerOf(uid, t0, b)) ? t0 : null;
     const reason = await sendBlockReason(uid, "customer", b, { fresh: !t0 });
     const msgs = t ? await messagesOf(t, "customer", uid) : { messages: [], hasMore: false };
@@ -282,17 +317,17 @@ export default async function bizInbox(app, opts) {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     const b = await loadBiz(req.params.id);
     if (!b) return bad(reply, 404, "not-found");
-    let t = (await pool.query("SELECT * FROM biz_threads WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0] ?? null;
-    const reason = await sendBlockReason(uid, "customer", b, { fresh: !t });
+    const t0 = (await pool.query("SELECT 1 FROM biz_threads WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rowCount > 0;
+    const reason = await sendBlockReason(uid, "customer", b, { fresh: !t0 });
     if (reason) return bad(reply, REASON_CODE[reason] ?? 403, reason);
     const parsed = parseBody(req.body);
-    if (await rejectSend(reply, uid, parsed, { fresh: !t })) return;
+    if (rejectBody(reply, parsed)) return;
     const r = await parseRef(req.body?.ref, b, uid);
     if (!r.ok) return bad(reply, 400, "bad-ref");
-    if (!t) {
-      t = (await pool.query("INSERT INTO biz_threads(id,biz_id,user_id) VALUES($1,$2,$3) ON CONFLICT (biz_id,user_id) DO UPDATE SET biz_id=EXCLUDED.biz_id RETURNING *", [crypto.randomUUID(), b.id, uid])).rows[0];
-    }
-    const out = await append(t, b, { side: "customer", uid, ...parsed, ref: r.ref });
+    // المحادثة تُنشأ داخل store تحت القفل مع فحص حد المحادثات اليومي
+    const out = await store(b, { side: "customer", uid, ...parsed, ref: r.ref });
+    if (out.limit) return bad(reply, 429, ...out.limit);
+    if (!out.duplicate) await notifyNew(b, "customer", uid, out.t, out.preview);
     const refs = await refsFor([out.m]);
     return { thread: threadOut(out.t, "customer", b), message: msgOut(out.m, "customer", uid, refs, new Map()), duplicate: out.duplicate };
   });
@@ -317,10 +352,13 @@ export default async function bizInbox(app, opts) {
   }
   app.get("/bizinbox/threads/:tid", async (req, reply) => {
     const g = await open(req, reply); if (!g) return;
-    const before = req.query?.before && !Number.isNaN(Date.parse(req.query.before)) ? new Date(req.query.before).toISOString() : null;
+    // ?before=<معرّف أقدم رسالة محمّلة> (التطبيق)، أو وقت ISO للتوافق مع النسخ الأقدم
+    const rawBefore = String(req.query?.before ?? "");
+    const beforeId = UUID_RE.test(rawBefore) ? rawBefore.toLowerCase() : null;
+    const before = !beforeId && rawBefore && !Number.isNaN(Date.parse(rawBefore)) ? new Date(rawBefore).toISOString() : null;
     const pm = g.side === "team" ? await people([g.t.user_id, g.t.assignee_id]) : new Map();
     const reason = await sendBlockReason(g.uid, g.side, g.b, { customerId: g.t.user_id });
-    const msgs = await messagesOf(g.t, g.side, g.uid, { before });
+    const msgs = await messagesOf(g.t, g.side, g.uid, { before, beforeId });
     const out = { viewer: g.side, role: g.role, biz: bizRef(g.b), thread: threadOut(g.t, g.side, g.b, pm), ...msgs, canSend: !reason, reason, orders: await customerOrders(g.b, g.t.user_id) };
     if (g.side === "team") {
       const team = await inboxTeam(g.b);
@@ -335,10 +373,13 @@ export default async function bizInbox(app, opts) {
     const reason = await sendBlockReason(g.uid, g.side, g.b, { customerId: g.t.user_id });
     if (reason) return bad(reply, REASON_CODE[reason] ?? 403, reason);
     const parsed = parseBody(req.body);
-    if (await rejectSend(reply, g.uid, parsed)) return;
+    if (rejectBody(reply, parsed)) return;
     const r = await parseRef(req.body?.ref, g.b, g.t.user_id);
     if (!r.ok) return bad(reply, 400, "bad-ref");
-    const out = await append(g.t, g.b, { side: g.side, uid: g.uid, ...parsed, ref: r.ref });
+    const out = await store(g.b, { threadId: g.t.id, side: g.side, uid: g.uid, ...parsed, ref: r.ref });
+    if (out.gone) return bad(reply, 404, "not-found");
+    if (out.limit) return bad(reply, 429, ...out.limit);
+    if (!out.duplicate) await notifyNew(g.b, g.side, g.uid, out.t, out.preview);
     const refs = await refsFor([out.m]);
     const pm = g.side === "team" ? await people([g.uid, out.t.user_id, out.t.assignee_id]) : new Map();
     return { thread: threadOut(out.t, g.side, g.b, pm), message: msgOut(out.m, g.side, g.uid, refs, pm), duplicate: out.duplicate };
@@ -443,10 +484,12 @@ export default async function bizInbox(app, opts) {
     if (!m) return bad(reply, 404, "not-found");
     const t = await loadThread(m.thread_id);
     const b = await loadBiz(t.biz_id);
-    const ctx = (await pool.query(`(SELECT * FROM biz_thread_msgs WHERE thread_id=$1 AND (created_at, id) < ($2, $3) ORDER BY created_at DESC, id DESC LIMIT 10)
-      UNION ALL (SELECT * FROM biz_thread_msgs WHERE id=$3)
-      UNION ALL (SELECT * FROM biz_thread_msgs WHERE thread_id=$1 AND (created_at, id) > ($2, $3) ORDER BY created_at, id LIMIT 10)`, [t.id, m.created_at, id])).rows
-      .sort((a, z) => new Date(a.created_at) - new Date(z.created_at) || String(a.id).localeCompare(String(z.id)));
+    // المقارنة والترتيب بالصف المخزّن في SQL لا بوقته في JS (مقطوع إلى الميلي ثانية)، وإلا دخلت الرسالة نفسها في «ما بعدها» مرتين
+    const ctx = (await pool.query(`WITH r AS (SELECT created_at, id FROM biz_thread_msgs WHERE id=$2)
+      SELECT * FROM ((SELECT * FROM biz_thread_msgs WHERE thread_id=$1 AND (created_at, id) < (SELECT created_at, id FROM r) ORDER BY created_at DESC, id DESC LIMIT 10)
+        UNION ALL (SELECT * FROM biz_thread_msgs WHERE id=$2)
+        UNION ALL (SELECT * FROM biz_thread_msgs WHERE thread_id=$1 AND (created_at, id) > (SELECT created_at, id FROM r) ORDER BY created_at, id LIMIT 10)) z
+      ORDER BY created_at, id`, [t.id, id])).rows;
     const refs = await refsFor(ctx);
     const pm = await people([t.user_id, ...ctx.map((x) => x.sender_id)]);
     // الإدارة ترى النص حتى للرسائل المخفية (للمراجعة) ومن كتبها من الفريق

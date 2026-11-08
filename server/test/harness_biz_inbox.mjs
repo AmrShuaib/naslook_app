@@ -8,13 +8,13 @@ process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0'; pr
 let fails = 0;
 const check = (cond, label, extra = '') => { if (!cond) fails++; console.log((cond ? 'OK  ' : 'FAIL') + ' ' + label + (extra ? ' ' + extra : '')); };
 const O = 'SI0000001', M = 'SI0000002', S = 'SI0000003', H = 'SI0000004', C = 'SI0000005', C2 = 'SI0000006', X = 'SI0000007', A = 'SI0000008',
-  SUS = 'SI0000009', LIM = 'SI0000010', O2 = 'SI0000011', DAY = 'SI0000012';
-const OURS = [O, M, S, H, C, C2, X, A, SUS, LIM, O2, DAY];
+  SUS = 'SI0000009', LIM = 'SI0000010', O2 = 'SI0000011', DAY = 'SI0000012', PAR = 'SI0000013', PDAY = 'SI0000014';
+const OURS = [O, M, S, H, C, C2, X, A, SUS, LIM, O2, DAY, PAR, PDAY];
 const ids = `('${OURS.join("','")}')`;
 
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
-await pool.query(`INSERT INTO users(id,nickname) VALUES ${OURS.map((u, i) => `('${u}','${['owner', 'manager', 'staff', 'hr', 'cust', 'cust2', 'stranger', 'sysadmin', 'susp', 'limit', 'owner2', 'daily'][i]}')`).join(',')}
+await pool.query(`INSERT INTO users(id,nickname) VALUES ${OURS.map((u, i) => `('${u}','${['owner', 'manager', 'staff', 'hr', 'cust', 'cust2', 'stranger', 'sysadmin', 'susp', 'limit', 'owner2', 'daily', 'parallel', 'pdaily'][i]}')`).join(',')}
   ON CONFLICT (id) DO UPDATE SET nickname=EXCLUDED.nickname`);
 await pool.query("CREATE TABLE IF NOT EXISTS user_blocks (user_id TEXT NOT NULL, blocked_id TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY (user_id, blocked_id))");
 await pool.query("CREATE TABLE IF NOT EXISTS user_flags (user_id TEXT PRIMARY KEY, suspended BOOLEAN NOT NULL DEFAULT false, note TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ NOT NULL DEFAULT now())");
@@ -52,6 +52,7 @@ await mk('bi-unver', O);
 await mk('bi-noowner', null);
 await mk('bi-hidden', O, { hidden: true });
 for (let i = 1; i <= 6; i++) await mk('bi-c' + i, O2, { verified: true });
+for (let i = 1; i <= 10; i++) await mk('bi-p' + i, O2, { verified: true });
 await pool.query("INSERT INTO biz_staff(biz_id,user_id,role) VALUES('bi-shop',$1,'manager'),('bi-shop',$2,'staff'),('bi-shop',$3,'hr')", [M, S, H]);
 await pool.query("INSERT INTO biz_items(id,biz_id,kind,title,price) VALUES('bi-shop-oil','bi-shop','product','زيت',5000),('bi-c1-x','bi-c1','product','آخر',100)");
 const order = (await pool.query("INSERT INTO biz_orders(id,biz_id,item_id,user_id,kind,total,code) VALUES(gen_random_uuid(),'bi-shop','bi-shop-oil',$1,'product',5000,'BI-' || substr(md5(random()::text),1,8)) RETURNING id, code", [C])).rows[0];
@@ -186,9 +187,10 @@ check(u1.thread.biz.verified === false && (await call('GET', '/bizinbox/threads'
 console.log('\n--- blocks');
 // العميل الثاني محظور من المالك: القناة مغلقة للدائرة كلها
 await pool.query("INSERT INTO user_blocks(user_id,blocked_id) VALUES($1,$2)", [O, C2]);
-check((await call('POST', '/biz/bi-shop/thread', { user: C2, body: { text: 'هلا' }, expect: 403 })).error === 'blocked', 'a customer blocked by the owner cannot message the circle');
+// المحظور لا يعرف أنه حُظر (كقاعدة «من يراسلني»): يرى الدائرة غير متاحة كأي دائرة موقوفة
+check((await call('POST', '/biz/bi-shop/thread', { user: C2, body: { text: 'هلا' }, expect: 409 })).error === 'unavailable', 'a customer blocked by the owner cannot message the circle and gets the neutral unavailable');
 g = await call('GET', '/biz/bi-shop/thread', { user: C2, expect: 200 });
-check(g.canSend === false && g.reason === 'blocked' && g.thread === null, 'GET shows the blocked reason');
+check(g.canSend === false && g.reason === 'unavailable' && g.thread === null, 'GET shows the neutral unavailable reason, not blocked', JSON.stringify({ reason: g.reason }));
 await pool.query("DELETE FROM user_blocks WHERE user_id=$1 AND blocked_id=$2", [O, C2]);
 const t2 = (await call('POST', '/biz/bi-shop/thread', { user: C2, body: { text: 'بعد فك الحظر' }, expect: 200 })).thread.id;
 // حظر بين الموظف والعميل الثاني: يخفي المحادثة عن الموظف وحده
@@ -204,9 +206,22 @@ await call('POST', `/bizinbox/threads/${t2}/messages`, { user: C2, body: { text:
 ns = take('biz_inbox_message');
 check(ns.length === 1 && !ns[0].ids.includes(S) && ns[0].ids.includes(O) && ns[0].ids.includes(M), 'the blocked member is not notified', JSON.stringify(ns.map((n) => n.ids)));
 await pool.query("DELETE FROM user_blocks WHERE user_id=$1 AND blocked_id=$2", [C2, S]);
+// المسؤول نفسه محظور مع العميل: تُنبَّه بقية الفريق بدل لا أحد
+await call('POST', `/bizinbox/threads/${t2}/assign`, { user: O, body: { userId: M }, expect: 200 });
+await pool.query("INSERT INTO user_blocks(user_id,blocked_id) VALUES($1,$2)", [C2, M]);
+await call('POST', `/bizinbox/threads/${t2}/read`, { user: O, expect: 200 });
+take();
+await call('POST', `/bizinbox/threads/${t2}/messages`, { user: C2, body: { text: 'هل من أحد؟' }, expect: 200 });
+ns = take('biz_inbox_message');
+check(ns.length === 1 && ns[0].ids.includes(O) && ns[0].ids.includes(S) && !ns[0].ids.includes(M), 'the assignee blocked with the customer: the rest of the team is notified instead of nobody', JSON.stringify(ns.map((n) => n.ids)));
+await pool.query("DELETE FROM user_blocks WHERE user_id=$1 AND blocked_id=$2", [C2, M]);
+await call('POST', `/bizinbox/threads/${t2}/assign`, { user: O, body: { userId: null }, expect: 200 });
 // العميل يحظر المالك بعد المحادثة: تختفي من قائمته، ولا يرد الفريق
 await pool.query("INSERT INTO user_blocks(user_id,blocked_id) VALUES($1,$2)", [C2, O]);
 check(!(await call('GET', '/bizinbox/threads', { user: C2, expect: 200 })).threads.some((t) => t.id === t2), 'blocking the owner hides the thread from the customer list');
+g = await call('GET', '/biz/bi-shop/thread', { user: C2, expect: 200 });
+check(g.canSend === false && g.reason === 'blocked', 'the customer who blocked the owner is told it is their block');
+check((await call('POST', '/biz/bi-shop/thread', { user: C2, body: { text: 'هلا' }, expect: 403 })).error === 'blocked', 'POST from the customer who blocked the owner → 403 blocked');
 await call('GET', `/bizinbox/threads/${t2}`, { user: C2, expect: 404 });
 check((await call('POST', `/bizinbox/threads/${t2}/messages`, { user: M, body: { text: 'هلا' }, expect: 403 })).error === 'blocked', 'the team cannot reply while the customer and the owner are blocked');
 check((await call('GET', `/bizinbox/threads/${t2}`, { user: M, expect: 200 })).canSend === false, 'the team view shows canSend:false');
@@ -232,12 +247,35 @@ const lt = (await call('GET', '/bizinbox/threads', { user: LIM, expect: 200 })).
 const page = await call('GET', `/bizinbox/threads/${lt}`, { user: LIM, expect: 200 });
 check(page.messages.length === 31 && page.hasMore === false && page.messages[0].text === 'رسالة 1' && page.messages.at(-1).text === 'بعد دقيقة', 'thread messages are oldest first');
 const older = await call('GET', `/bizinbox/threads/${lt}?before=${encodeURIComponent(page.messages[10].createdAt)}`, { user: LIM, expect: 200 });
-check(older.messages.length === 10 && older.messages.at(-1).text === 'رسالة 10', 'before= pages back to older messages');
+check(older.messages.length === 10 && older.messages.at(-1).text === 'رسالة 10', 'before=<time> (older apps) still pages back to older messages');
+// المؤشر بمعرّف الرسالة: رسالتان في الميلي ثانية نفسها (pg يخزّن الميكروثانية، وJSON يقطعها) لا تضيع أقدمهما بين الصفحتين
+await pool.query(`UPDATE biz_thread_msgs m SET created_at = '2026-01-01T10:00:00Z'::timestamptz + (s.rn * interval '1 second')
+  FROM (SELECT id, row_number() OVER (ORDER BY created_at, id) AS rn FROM biz_thread_msgs WHERE thread_id=$1) s WHERE m.id=s.id`, [lt]);
+await pool.query("UPDATE biz_thread_msgs SET created_at='2026-01-01T10:00:10.100100Z' WHERE thread_id=$1 AND text='رسالة 10'", [lt]);
+await pool.query("UPDATE biz_thread_msgs SET created_at='2026-01-01T10:00:10.100700Z' WHERE thread_id=$1 AND text='رسالة 11'", [lt]);
+const page2 = await call('GET', `/bizinbox/threads/${lt}`, { user: LIM, expect: 200 });
+const m11 = page2.messages.find((m) => m.text === 'رسالة 11');
+check(m11 && page2.messages.find((m) => m.text === 'رسالة 10')?.createdAt === m11.createdAt, 'two messages share the boundary millisecond in JSON');
+const byId = await call('GET', `/bizinbox/threads/${lt}?before=${m11.id}`, { user: LIM, expect: 200 });
+check(byId.messages.length === 10 && byId.messages.at(-1).text === 'رسالة 10' && byId.messages[0].text === 'رسالة 1' && byId.hasMore === false,
+  'before=<message id> keeps the older message in the same millisecond', JSON.stringify(byId.messages.map((m) => m.text)));
+check((await call('GET', `/bizinbox/threads/${lt}?before=${s1.message.id}`, { user: LIM, expect: 200 })).messages.length === 0, 'a message id from another thread pages nothing');
 for (let i = 1; i <= 5; i++) await call('POST', `/biz/bi-c${i}/thread`, { user: DAY, body: { text: 'سؤال' }, expect: 200 });
 const td = await call('POST', '/biz/bi-c6/thread', { user: DAY, body: { text: 'سؤال' }, expect: 429 });
 check(td.error === 'too-many-threads' && td.perDay === 5, 'the sixth new thread in a day → 429 too-many-threads');
 await call('POST', '/biz/bi-c1/thread', { user: DAY, body: { text: 'متابعة' }, expect: 200 });
 check(true, 'continuing an existing thread is not counted as a new one');
+// طلبات متوازية: العدّ والكتابة تحت قفل لكل مرسل، فلا تمر دفعة واحدة فوق الحدين
+const burst = await Promise.all(Array.from({ length: 40 }, (_, i) => app.inject({ method: 'POST', url: '/biz/bi-shop/thread', headers: { 'x-user': PAR, 'content-type': 'application/json' }, payload: JSON.stringify({ text: 'دفعة ' + i }) })));
+const bOk = burst.filter((r) => r.statusCode === 200).length, b429 = burst.filter((r) => r.statusCode === 429 && r.json().error === 'rate-limit').length;
+check(bOk === 30 && b429 === 10, '40 parallel messages: exactly 30 accepted and 10 rate-limited', `${bOk} ok, ${b429} limited, codes ${[...new Set(burst.map((r) => r.statusCode))]}`);
+check((await pool.query("SELECT count(*)::int AS n FROM biz_thread_msgs WHERE sender_id=$1", [PAR])).rows[0].n === 30 && (await pool.query("SELECT count(*)::int AS n FROM biz_threads WHERE user_id=$1", [PAR])).rows[0].n === 1,
+  'the burst stored 30 messages in one thread');
+const fan = await Promise.all(Array.from({ length: 10 }, (_, i) => app.inject({ method: 'POST', url: `/biz/bi-p${i + 1}/thread`, headers: { 'x-user': PDAY, 'content-type': 'application/json' }, payload: JSON.stringify({ text: 'سؤال' }) })));
+const fOk = fan.filter((r) => r.statusCode === 200).length, f429 = fan.filter((r) => r.statusCode === 429 && r.json().error === 'too-many-threads').length;
+check(fOk === 5 && f429 === 5, '10 parallel new threads: exactly 5 accepted', `${fOk} ok, ${f429} limited`);
+check((await pool.query("SELECT count(*)::int AS n FROM biz_threads WHERE user_id=$1", [PDAY])).rows[0].n === 5, 'only five threads exist for that user');
+take();
 
 console.log('\n--- reports and admin reading');
 const custMsg = s1.message.id, staffMsg = r1.message.id;
@@ -256,6 +294,9 @@ await call('GET', `/adminapi/bizinbox/reported/${custMsg}`, { user: X, expect: 4
 await call('GET', `/adminapi/bizinbox/reported/${custMsg}`, { user: O, expect: 403 });
 const ar = await call('GET', `/adminapi/bizinbox/reported/${custMsg}`, { user: A, expect: 200 });
 check(ar.reports === 1 && ar.messages.some((m) => m.id === custMsg && m.reported === true) && ar.messages.length <= 21 && ar.thread.customer.id === C && ar.biz.id === 'bi-shop', 'admin reads the reported message with its context', JSON.stringify(ar).slice(0, 200));
+const inT = (await pool.query("SELECT id FROM biz_thread_msgs WHERE thread_id=$1 ORDER BY created_at, id", [T])).rows.map((r) => r.id);
+check(ar.messages.filter((m) => m.id === custMsg).length === 1 && ar.messages.map((m) => m.id).join() === inT.slice(0, 11).join(),
+  'the reported message appears once and the ten after it fill the context in order', `${ar.messages.length} of ${inT.length}`);
 check(ar.messages.find((m) => m.side === 'team')?.sender?.id != null, 'admin sees which member wrote each team reply');
 const q = await call('GET', '/adminapi/moderation?type=biz-msg', { user: A, expect: 200 });
 const qi = q.items.find((i) => i.targetId === custMsg);
@@ -272,9 +313,30 @@ cv = await call('GET', `/bizinbox/threads/${T}`, { expect: 200 });
 const hm = cv.messages.find((m) => m.id === staffMsg);
 check(hm.hidden === true && hm.text === '' && hm.photos.length === 0 && hm.ref === null, 'a hidden message keeps its place without content');
 check((await call('POST', `/adminapi/moderation/biz-msg/${staffMsg}`, { user: A, body: { action: 'restore' }, expect: 200 })).status === 'visible', 'restore brings it back');
+// فريق الدائرة الواحد لا يُخفي شكوى العميل تلقائياً: ثلاثة بلاغات من المالك والمدير والموظف تذهب للإدارة وتبقى الرسالة
+take();
+const r2 = await call('POST', '/safety/report', { user: M, body: { targetType: 'biz-msg', targetId: custMsg, reason: 'إزعاج أو سبام' }, expect: 200 });
+const r3 = await call('POST', '/safety/report', { user: O, body: { targetType: 'biz-msg', targetId: custMsg, reason: 'إزعاج أو سبام' }, expect: 200 });
+check(r2.reports === 2 && r3.reports === 3 && r3.hidden === false, 'three teammates reporting a customer message do not auto-hide it', JSON.stringify(r3));
+ns = take();
+check(ns.some((n) => n.kind === 'content_reported_many' && n.data.targetId === custMsg) && !ns.some((n) => n.kind === 'content_hidden' || n.kind === 'content_autohidden'), 'admins are asked to decide; the customer is not told it was hidden', JSON.stringify(ns.map((n) => n.kind)));
+check((await pool.query("SELECT hidden FROM biz_thread_msgs WHERE id=$1", [custMsg])).rows[0].hidden === false && !(await call('GET', `/bizinbox/threads/${T}`, { expect: 200 })).messages.find((m) => m.id === custMsg).hidden, 'the customer still sees the message');
 
 const upRef = await call('POST', '/biz/bi-shop/thread', { body: { text: 'الطلب نفسه', ref: { kind: 'order', id: order.id.toUpperCase() } }, expect: 200 });
 check(upRef.message.ref?.code === order.code && !upRef.message.ref.missing, 'an upper-case order id still resolves the order card');
+// إخفاء آخر رسالة يمسح نصها من معاينة القائمتين، والإعادة ترجعه
+const lastId = upRef.message.id;
+await call('POST', '/safety/report', { user: O, body: { targetType: 'biz-msg', targetId: lastId, reason: 'إزعاج أو سبام' }, expect: 200 });
+await call('POST', `/adminapi/moderation/biz-msg/${lastId}`, { user: A, body: { action: 'hide' }, expect: 200 });
+const lastOf = async () => [(await call('GET', '/biz/bi-shop/inbox?filter=all', { user: O, expect: 200 })).threads.find((t) => t.id === T)?.lastText, (await call('GET', '/bizinbox/threads', { expect: 200 })).threads.find((t) => t.id === T)?.lastText];
+let lt2 = await lastOf();
+check(lt2.every((x) => x === 'أُخفيت هذه الرسالة'), 'hiding the latest message replaces its text in both list previews', JSON.stringify(lt2));
+await call('POST', `/adminapi/moderation/biz-msg/${lastId}`, { user: A, body: { action: 'restore' }, expect: 200 });
+lt2 = await lastOf();
+check(lt2.every((x) => x === 'الطلب نفسه'), 'restoring it brings the preview back', JSON.stringify(lt2));
+// إخفاء رسالة أقدم لا يمس المعاينة
+await call('POST', `/adminapi/moderation/biz-msg/${staffMsg}`, { user: A, body: { action: 'hide' }, expect: 200 });
+check((await lastOf()).every((x) => x === 'الطلب نفسه'), 'hiding an older message leaves the preview alone');
 
 console.log('\n--- clean up');
 await pool.query(`DELETE FROM biz_threads WHERE biz_id LIKE 'bi-%' OR user_id IN ${ids}`);

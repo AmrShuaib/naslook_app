@@ -77,10 +77,10 @@ class _BizThreadPageState extends ConsumerState<BizThreadPage> {
       setState(() {
         _view = v;
         _thread = v.thread;
-        // الصفحات الأقدم المحمّلة تبقى؛ آخر خمسين من الخادم تحلّ محل ما يقابلها
+        // الصفحات الأقدم المحمّلة تبقى؛ آخر خمسين من الخادم تحلّ محل ما يقابلها. كل محمّلة ليست بينها أقدم منها
+        // (الرسائل لا تُحذف)، فلا مقارنة بالوقت: وقت JSON مقطوع إلى الميلي ثانية فتسقط رسالة في الميلي ثانية نفسها
         final fresh = {for (final m in v.messages) m.id};
-        final firstFresh = v.messages.isEmpty ? null : v.messages.first.createdAt;
-        final older = firstFresh == null ? const <BizThreadMessage>[] : _msgs.where((m) => !fresh.contains(m.id) && m.createdAt != null && m.createdAt!.isBefore(firstFresh)).toList();
+        final older = v.messages.isEmpty ? const <BizThreadMessage>[] : _msgs.where((m) => !fresh.contains(m.id)).toList();
         _msgs = [...older, ...v.messages];
         _error = null;
       });
@@ -102,7 +102,7 @@ class _BizThreadPageState extends ConsumerState<BizThreadPage> {
     if (t == null || _msgs.isEmpty || _loadingOlder) return;
     setState(() => _loadingOlder = true);
     try {
-      final v = await ref.read(apiClientProvider).bizThread(t.id, before: _msgs.first.createdAt);
+      final v = await ref.read(apiClientProvider).bizThread(t.id, beforeId: _msgs.first.id);
       if (!mounted) return;
       final have = {for (final m in _msgs) m.id};
       setState(() {

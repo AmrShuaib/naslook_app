@@ -138,8 +138,10 @@ extension BizInboxApi on ApiClient {
   }
 
   // ---- المحادثة بمعرّفها (للعميل أو للفريق)
-  Future<BizThreadView> bizThread(String threadId, {DateTime? before}) async =>
-      BizThreadView.fromJson(await get('/bizinbox/threads/$threadId', query: {if (before != null) 'before': before.toUtc().toIso8601String()}));
+  /// beforeId: معرّف أقدم رسالة محمّلة؛ المؤشر بالمعرّف لا بالوقت لأن الوقت في JSON مقطوع إلى الميلي ثانية
+  /// فتضيع رسالة أقدم في الميلي ثانية نفسها.
+  Future<BizThreadView> bizThread(String threadId, {String? beforeId}) async =>
+      BizThreadView.fromJson(await get('/bizinbox/threads/$threadId', query: {if (beforeId != null) 'before': beforeId}));
   Future<BizSendResult> sendBizThread(String threadId, {String text = '', List<String> photos = const [], BizMsgRef? ref, String? clientId}) async =>
       _sent(await post('/bizinbox/threads/$threadId/messages', {'text': text, 'photos': photos, if (ref != null) 'ref': ref.toJson(), if (clientId != null) 'clientId': clientId}));
   Future<void> readBizThread(String threadId) => post('/bizinbox/threads/$threadId/read', const {}, prompt: false);
