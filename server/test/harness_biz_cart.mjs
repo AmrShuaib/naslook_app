@@ -1,6 +1,7 @@
 // سلة الدوائر (server/business.js، نوفمبر 2026): خيارات صنف المنتج وفحصها في الخادم، طلب السلة الواحد بأسطره وخياراته ومجموعه
 // المحسوب من الأسعار الحالية، المخزون لكل سطر وآخر قطعة تحت التزامن، وقت الاستلام بساعات العمل، والدفع والحجز والإلغاء والاستلام
-// والنزاع وقاعدة الدفع في المكان (كل صنف في السلة يقبله) بمسارات الصنف الواحد نفسها.
+// والنزاع وقاعدة الدفع في المكان (كل صنف مدفوع في السلة يقبله) بمسارات الصنف الواحد نفسها، والعروض على الطلب كله (offers.js
+// الحقيقية: الكوبون والحد الأدنى والحدود مرة لكل طلب، والسعر الخاص لا يمس فروق الخيارات) ومعاينة المبلغ (quote) وexpectTotal.
 import Fastify from 'fastify';
 import pg from 'pg';
 process.env.WALLET_TEST_TOPUP = '1'; process.env.NASLIFE_HEALTH_BRIDGE = '0'; process.env.NODE_ENV = 'test';
@@ -10,12 +11,14 @@ await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DE
 const USERS = ['SC0000001', 'SC0000002', 'SC0000003', 'SC0000004', 'SC0000005', 'SC0000006', 'SC0000007', 'SC0000008', 'SC0000009'];
 for (const u of USERS) await pool.query("INSERT INTO users(id,nickname,is_admin) VALUES($1,$2,$3) ON CONFLICT (id) DO UPDATE SET is_admin=EXCLUDED.is_admin", [u, 'u' + u.slice(-1), u === 'SC0000004']);
 // بقايا تشغيل سابق (أو حزم أخرى على القاعدة نفسها): نحذف ما يخص هذه الحزمة وحدها
-for (const sql of ["DELETE FROM biz_disputes WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_orders WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_staff WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_items WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz WHERE id LIKE 'bc-%'",
+for (const sql of ["DELETE FROM biz_offer_uses WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_offer_grants WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_offers WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_follows WHERE biz_id LIKE 'bc-%'",
+  "DELETE FROM biz_disputes WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_orders WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_staff WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_items WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz WHERE id LIKE 'bc-%'",
   "DELETE FROM wallet_tx WHERE user_id LIKE 'SC%'", "DELETE FROM wallet_accounts WHERE user_id LIKE 'SC%'"]) { try { await pool.query(sql); } catch { /* أول تشغيل */ } }
 const auth = async (req) => req.headers['x-user'] || null;
 const app = Fastify();
 app.register((await import('../commerce.js')).default, { pool, auth });
 app.register((await import('../business.js')).default, { pool, auth });
+app.register((await import('../offers.js')).default, { pool, auth });
 await app.ready(); await new Promise((r) => setTimeout(r, 500));
 const { normOptions, priceLine, pickupSlots, pickupError, cartTitle } = await import('../business.js');
 const sent = [];
@@ -216,6 +219,11 @@ check(await stock(latte.id) === sv[0] - 2, 'pay-at-venue cart reserves stock');
 await pool.query("UPDATE biz_orders SET created_at=now() - interval '25 hours' WHERE id=$1", [v1.id]);
 const ns = await call('POST', `/biz/${B}/orders/${v1.id}/no-show`, { user: STAFF, expect: 200 });
 check(ns.status === 'no_show' && await stock(latte.id) === sv[0], 'no-show on a cart restocks its lines');
+// السطر المجاني (ماء بلا مفتاح الدفع في المكان) لا يمنع الدفع في المكان عن بقية السلة، والمعاينة تقول ذلك
+check((await call('POST', `/biz/${B}/orders/quote`, { body: cart([{ itemId: beans.id }, { itemId: water.id }]), user: C, expect: 200 })).venueOk === true
+  && (await call('POST', `/biz/${B}/orders/quote`, { body: cart([{ itemId: beans.id }, { itemId: croissant.id }]), user: C, expect: 200 })).venueOk === false, 'quote venueOk ignores free lines but not a paid line without the toggle');
+const vw = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: beans.id }, { itemId: water.id }], { payment: 'at_venue' }), user: C, expect: 200 });
+check(vw.payment === 'at_venue' && vw.total === 6500 && vw.lines.length === 2, 'a free line does not block pay at venue for the cart');
 const v2 = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: beans.id }], { payment: 'at_venue' }), user: C, expect: 200 });
 const pd = await call('POST', `/biz/${B}/orders/${v2.id}/paid`, { user: STAFF, expect: 200 });
 check(pd.paid === true && pd.status === 'used', '«تم الدفع» on a cart');
@@ -259,21 +267,97 @@ check(detail.myOrders.find((o) => o.id === k1.id)?.cart === true, 'circle page �
 const st = await call('GET', `/biz/${B}/stats`, { user: STAFF, expect: 200 });
 check(st.topItems.some((t) => t.itemId === croissant.id) && st.topItems.some((t) => t.itemId === latte.id), 'top items count cart lines per item', JSON.stringify(st.topItems));
 
-// ================= 9) العروض لكل سطر (بديل محلي لـ offers.js)
-console.log('\n--- offers per line');
-const released = [];
-globalThis.naslifeOffersApply = async (c, { item, total }) => (item.id === beans.id ? { id: '00000000-0000-4000-8000-000000000001', kind: 'deal', title: 'سعر الأسبوع', discount: Math.min(total, 1000) } : null);
-globalThis.naslifeOffersRelease = async (c, orderId) => { released.push(orderId); return 0; };
-const of1 = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: beans.id, qty: 2 }, { itemId: latte.id, options: { size: 'sm' } }]), user: C, expect: 200 });
-check(of1.total === 13000 + 1900 - 1000 && of1.lines[0].offer?.discount === 1000 && !of1.lines[1].offer && of1.offer?.discount === 1000 && of1.offer?.before === 14900, 'the offer applies to its line and the order shows the saving', JSON.stringify({ t: of1.total, o: of1.offer }));
-const of2 = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: beans.id }], { offerId: 'none' }), user: C, expect: 200 });
-check(of2.total === 6500 && of2.offer === null, 'offerId none skips offers');
-await call('POST', `/biz/orders/${of1.id}/cancel`, { user: C, expect: 200 });
-check(released.includes(of1.id), 'cancelling a cart releases its offer uses');
-delete globalThis.naslifeOffersApply; delete globalThis.naslifeOffersRelease;
+// ================= 9) العروض على الطلب كله (offers.js الحقيقية) ومعاينة المبلغ
+console.log('\n--- offers on the whole order (real offers.js), quote and expectTotal');
+const F = ['SC0000010', 'SC0000011', 'SC0000012', 'SC0000013', 'SC0000014', 'SC0000015'];
+for (const u of F) {
+  await pool.query('INSERT INTO users(id,nickname) VALUES($1,$2) ON CONFLICT (id) DO NOTHING', [u, 'f' + u.slice(-2)]);
+  await call('POST', '/wallet/topup', { body: { amount: 100000 }, user: u, expect: 200 });
+  await call('POST', `/biz/${B}/follow`, { user: u, expect: 200 });
+}
+await pool.query('UPDATE biz_items SET stock=100 WHERE id IN ($1,$2)', [latte.id, croissant.id]);
+const inH = (n) => new Date(Date.now() + n * 3600e3).toISOString();
+const mkOffer = (body) => call('POST', `/biz/${B}/manage/offers`, { body: { endsAt: inH(24), ...body }, user: O, expect: 200 });
+const endOffer = (id) => call('PATCH', `/biz/${B}/manage/offers/${id}`, { body: { endNow: true }, user: O, expect: 200 });
+const usesOf = async (orderId) => (await pool.query("SELECT offer_id, amount FROM biz_offer_uses WHERE order_id=$1 AND kind='use' ORDER BY amount DESC", [orderId])).rows;
+const offerUses = async (offerId) => (await pool.query("SELECT count(*)::int AS n FROM biz_offer_uses WHERE offer_id=$1 AND kind='use'", [offerId])).rows[0].n;
+const statsOf = async (offerId) => (await call('GET', `/biz/${B}/manage/offers`, { user: O, expect: 200 })).offers.find((o) => o.id === offerId)?.stats;
+const quote = (lines, user, extra = {}) => call('POST', `/biz/${B}/orders/quote`, { body: cart(lines, extra), user, expect: 200 });
+const lineCuts = (o) => JSON.stringify(o.lines.map((l) => l.offer?.discount ?? 0));
+const three = [{ itemId: latte.id, options: { size: 'sm' } }, { itemId: croissant.id }, { itemId: beans.id }]; // 1900 + 1200 + 6500 = 9600
+
+// (1) كوبون «أول طلب» 20٪ مرة واحدة لكل مستخدم: يغطي السلة كلها، لا السطر الأول وحده
+const firstOrder = await mkOffer({ kind: 'coupon', title: 'أول طلب', value: { type: 'percent', amount: 20 }, conditions: { firstOrder: true, perUser: 1 }, template: 'first_order' });
+const sq = await stock(croissant.id);
+const q1 = await quote(three, F[0]);
+check(q1.subtotal === 9600 && q1.discount === 1920 && q1.total === 7680 && q1.offer?.id === firstOrder.id && q1.offer.before === 9600, 'quote: the first-order coupon covers the whole cart (20% of 96)', JSON.stringify(q1.offer) + ' ' + q1.total);
+check(q1.lines.length === 3 && q1.lines.reduce((n, l) => n + (l.offer?.discount ?? 0), 0) === 1920 && q1.lines.every((l) => l.offer && l.offer.discount <= l.total), 'quote: the discount is spread over the lines for display and sums to the order discount', lineCuts(q1));
+check(await stock(croissant.id) === sq && await offerUses(firstOrder.id) === 0, 'a quote writes nothing: no stock taken, no use recorded');
+const fo = await call('POST', `/biz/${B}/orders`, { body: cart(three, { expectTotal: q1.total }), user: F[0], expect: 200 });
+check(fo.total === q1.total && fo.offer?.discount === 1920 && lineCuts(fo) === lineCuts(q1), 'the order charges exactly the quoted total with the same line split', String(fo.total));
+const fu = await usesOf(fo.id);
+check(fu.length === 1 && Number(fu[0].amount) === 1920, 'one use row for the whole order', JSON.stringify(fu));
+check((await quote(three, F[0])).total === 9600, 'the coupon is used: the next quote has no discount');
+const fst = await statsOf(firstOrder.id);
+check(fst.uses === 1 && fst.discount === 1920 && fst.revenue === 7680, 'offer stats count the order once (revenue = order total, not × lines)', JSON.stringify(fst));
+const myOffers = await call('GET', '/offers/mine', { user: F[0], expect: 200 });
+check(myOffers.used.find((u) => u.orderId === fo.id)?.itemTitle === 'لاتيه وصنفان آخران', '«عروضي» used list names the cart, not its first item', JSON.stringify(myOffers.used.map((u) => u.itemTitle)));
+await call('POST', `/biz/orders/${fo.id}/cancel`, { user: F[0], expect: 200 });
+check((await usesOf(fo.id)).length === 0 && (await quote(three, F[0])).total === 7680, 'cancelling the cart releases its use: the coupon is back');
+// (2) expectTotal: مبلغ غير الذي عرضته المعاينة لا يُخصم بصمت
+const bx = await bal(F[0]); const sx = await stock(croissant.id);
+const tc = await call('POST', `/biz/${B}/orders`, { body: cart(three, { expectTotal: 9600 }), user: F[0], expect: 409 });
+check(tc.error === 'total-changed' && tc.total === 7680 && await bal(F[0]) === bx && await stock(croissant.id) === sx && await offerUses(firstOrder.id) === 0, 'a stale expected total is refused with the new total: nothing charged, taken or used', JSON.stringify(tc));
+await endOffer(firstOrder.id);
+
+// (3) الحد الأدنى على مجموع السلة: سطران كل منهما دون 30 ر.س ومجموعهما 31 ر.س
+const minCoupon = await mkOffer({ kind: 'coupon', title: 'عشرة ريالات', value: { type: 'amount', amount: 1000 }, conditions: { minTotal: 3000, perUser: 1 } });
+const mo = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: latte.id, options: { size: 'sm' } }, { itemId: croissant.id }]), user: F[1], expect: 200 });
+check(mo.offer?.id === minCoupon.id && mo.total === 3100 - 1000, 'minimum total is checked on the cart total, not each line', JSON.stringify(mo.offer) + ' ' + mo.total);
+check((await quote([{ itemId: croissant.id }, { itemId: croissant.id }], F[2])).discount === 0, 'a cart under the minimum (24 SAR) gets no amount coupon');
+await endOffer(minCoupon.id);
+
+// (4) سعر خاص بعدد محدود (أول عميلين): السلة بثلاثة أسطر استخدام واحد
+const capped = await mkOffer({ kind: 'deal', title: 'ساعة هادئة', value: { type: 'percent', amount: 10 }, membersOnly: false, conditions: { total: 2 } });
+const c1 = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: latte.id, qty: 2, options: { size: 'lg' } }, { itemId: croissant.id }, { itemId: beans.id }]), user: F[2], expect: 200 });
+// الخصم على سعر القائمة لكل قطعة (190 للاتيه، 120، 650) وفرق الحجم كامل
+check(c1.offer?.id === capped.id && c1.offer.discount === 2 * 190 + 120 + 650 && c1.total === 2 * 2400 + 1200 + 6500 - 1150 && lineCuts(c1) === '[380,120,650]', 'a percent deal prices each line at its menu price; the size surcharge is not discounted', lineCuts(c1) + ' ' + c1.total);
+check((await usesOf(c1.id)).length === 1 && (await call('GET', `/biz/${B}/offers`, { user: F[3], expect: 200 })).active.find((o) => o.id === capped.id)?.left === 1, 'a three-line cart uses one of the two', String(await offerUses(capped.id)));
+const c2 = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: beans.id }]), user: F[3], expect: 200 });
+const c3 = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: beans.id }]), user: F[4], expect: 200 });
+check(c2.offer?.id === capped.id && c3.offer === null && c3.total === 6500, 'the second customer still gets it, the third does not');
+const cst = await statsOf(capped.id);
+check(cst.uses === 2 && cst.discount === 1150 + 650 && cst.revenue === c1.total + c2.total, 'deal stats: two orders, revenue counted once per order', JSON.stringify(cst));
+
+// (5) «لاتيه بـ15»: السطر يدفع سعر العرض + فرق الحجم كما يعرضه التطبيق، لا نسبة من الفرق
+const latteDeal = await mkOffer({ kind: 'deal', title: 'لاتيه بـ15', value: { type: 'price', amount: 1500 }, itemId: latte.id, membersOnly: false });
+check((await call('GET', `/biz/${B}`, { user: F[4], expect: 200 })).items.find((i) => i.id === latte.id).deal?.price === 1500, 'the menu shows the deal price');
+const pdl = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: latte.id, qty: 2, options: { size: 'lg' } }]), user: F[4], expect: 200 });
+check(pdl.total === 2 * (1500 + 500) && pdl.lines[0].offer?.discount === 2 * 400, 'price deal with a size surcharge: deal price + surcharge per piece', JSON.stringify({ t: pdl.total, l: pdl.lines[0].offer }));
+
+// (6) سعران خاصان معاً، والكوبون الأكثر توفيراً يحل محلهما (بلا تراكب)، ثم يعودان بعد استخدامه
+const crDeal = await mkOffer({ kind: 'deal', title: 'كرواسون بـ8', value: { type: 'price', amount: 800 }, itemId: croissant.id, membersOnly: false });
+const two = [{ itemId: latte.id, options: { size: 'lg' } }, { itemId: croissant.id }]; // 2400 + 1200
+const q2 = await quote(two, F[5]);
+check(q2.discount === 800 && q2.total === 2800 && q2.lines[0].offer?.id === latteDeal.id && q2.lines[1].offer?.id === crDeal.id, 'two menu deals apply together, each on its line', JSON.stringify(q2.lines.map((l) => l.offer?.title)));
+const bigCoupon = await mkOffer({ kind: 'coupon', title: 'ثلاثون بالمئة', value: { type: 'percent', amount: 30 }, conditions: { perUser: 1 } });
+const q3 = await quote(two, F[5]);
+check(q3.offer?.id === bigCoupon.id && q3.discount === 1080 && q3.total === 2520, 'a coupon saving more than the deals together replaces them', JSON.stringify(q3.offer));
+const o3 = await call('POST', `/biz/${B}/orders`, { body: cart(two, { expectTotal: q3.total }), user: F[5], expect: 200 });
+check(o3.total === 2520 && (await usesOf(o3.id)).map((u) => u.offer_id).join() === bigCoupon.id, 'only the coupon is recorded');
+const q4 = await quote(two, F[5]);
+check(q4.total === 2800 && q4.offer?.title === 'لاتيه بـ15، كرواسون بـ8', 'coupon used: back to both deals', JSON.stringify(q4.offer));
+const o4 = await call('POST', `/biz/${B}/orders`, { body: cart(two, { expectTotal: q4.total }), user: F[5], expect: 200 });
+check(o4.total === 2800 && (await usesOf(o4.id)).length === 2, 'one use row per deal used in the order');
+const gq = await quote(two, null);
+check(gq.total === 2800 && gq.offer?.kind === 'deal', 'a guest quote applies public deals only', JSON.stringify(gq.offer));
+const of2 = await call('POST', `/biz/${B}/orders`, { body: cart([{ itemId: croissant.id }], { offerId: 'none' }), user: F[5], expect: 200 });
+check(of2.total === 1200 && of2.offer === null, 'offerId none skips offers');
+check((await call('POST', `/biz/${B}/orders/quote`, { body: cart([{ itemId: latte.id }]), user: F[5], expect: 400 })).error === 'options-required', 'the quote refuses what the order would refuse');
 
 // دوائر هذه الحزمة لا تبقى في القاعدة المشتركة (حزمة البحث تقيس ترتيب المقاهي)
-for (const sql of ["DELETE FROM biz_disputes WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_orders WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_staff WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_items WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz WHERE id LIKE 'bc-%'"]) await pool.query(sql);
+for (const sql of ["DELETE FROM biz_offer_uses WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_offers WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_follows WHERE biz_id LIKE 'bc-%'",
+  "DELETE FROM biz_disputes WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_orders WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_staff WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz_items WHERE biz_id LIKE 'bc-%'", "DELETE FROM biz WHERE id LIKE 'bc-%'"]) await pool.query(sql);
 await app.close(); await pool.end();
 console.log(fails ? `\n${fails} FAILED` : '\nALL BIZ CART TESTS PASSED');
 process.exit(fails ? 1 : 0);

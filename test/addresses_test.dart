@@ -11,9 +11,11 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:naslook/api/client.dart';
+import 'package:naslook/api/commerce_models.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/core/share/legal_links.dart';
 import 'package:naslook/pages/addresses/addresses_page.dart';
+import 'package:naslook/pages/market/market_delivery.dart';
 import 'package:naslook/pages/market/market_page.dart';
 import 'package:naslook/pages/myspace/myspace_page.dart';
 import 'package:naslook/state/app_state.dart';
@@ -41,17 +43,21 @@ class _Srv {
   int fee = 1500;
   String status = 'paid', payment = 'wallet';
   bool asSeller = false, purged = false, tooFar = false, orderDelivery = true;
+  /// المدير يفتح الطلب (من إشعار النزاع): ليس مشترياً ولا بائعاً؛ hideAddr: الخادم لا يعيد العنوان لهذا الطرف
+  bool asAdmin = false, hideAddr = false;
+  int price = 5000;
+  String? place = 'الروضة';
   http.Response _json(Object body, [int code = 200]) => http.Response(jsonEncode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
   Map<String, dynamic> listing() => {
         'id': _lid, 'seller': _seller, 'sellerRating': null, 'sellerRatingCount': 0, 'sellerBadges': [], 'kind': 'product', 'category': 'food', 'condition': 'new', 'delivery': delivery, 'deliveryFee': fee, 'deliveryMaxKm': 20,
-        'title': 'كيك عيد ميلاد', 'description': 'فانيلا', 'price': 5000, 'imageUrl': null, 'images': [], 'placeName': 'الروضة', 'city': 'جدة', 'lat': 21.5, 'lng': 39.1, 'status': 'active', 'stock': null, 'sold': 0, 'views': 1,
+        'title': 'كيك عيد ميلاد', 'description': 'فانيلا', 'price': price, 'imageUrl': null, 'images': [], 'placeName': place, 'city': 'جدة', 'lat': 21.5, 'lng': 39.1, 'status': 'active', 'stock': null, 'sold': 0, 'views': 1,
         'variants': [], 'availability': null, 'spotlight': false, 'mine': false, 'payOnReceipt': cod, 'createdAt': '2026-11-05T08:00:00Z',
       };
   Map<String, dynamic> order() => {
         'id': _oid, 'listingId': _lid, 'title': 'كيك عيد ميلاد', 'imageUrl': null, 'kind': 'product', 'qty': 1, 'total': 5000 + (orderDelivery ? fee : 0), 'discount': 0, 'commission': asSeller ? 0 : null, 'status': status, 'note': '', 'variant': null,
-        'code': asSeller ? null : '4321', 'buyer': _buyer, 'seller': _seller, 'mineAsSeller': asSeller, 'reviewed': false, 'createdAt': '2026-11-06T10:00:00Z', 'payment': payment,
+        'code': asSeller || asAdmin ? null : '4321', 'buyer': asAdmin ? {'id': 'SA0000003', 'nickname': 'nora', 'avatarUrl': null} : _buyer, 'seller': _seller, 'mineAsSeller': asSeller, 'reviewed': false, 'createdAt': '2026-11-06T10:00:00Z', 'payment': payment,
         'fulfilment': orderDelivery ? 'delivery' : 'pickup', 'deliveryFee': orderDelivery ? fee : 0, 'deliveryKm': orderDelivery ? 1.5 : null, 'addressPurged': purged,
-        'address': orderDelivery && !purged && !(asSeller && status == 'requested') ? {'label': 'البيت', 'district': 'الروضة', 'details': 'شارع الأمير سلطان', 'city': 'جدة', 'lat': 21.55, 'lng': 39.16, 'phone': '+966551234567'} : null,
+        'address': orderDelivery && !purged && !hideAddr && !(asSeller && status == 'requested') ? {'label': 'البيت', 'district': 'الروضة', 'details': 'شارع الأمير سلطان', 'city': 'جدة', 'lat': 21.55, 'lng': 39.16, 'phone': '+966551234567'} : null,
       };
   Future<http.Response> handle(http.Request req) async {
     final key = '${req.method} ${req.url.path}';
@@ -377,6 +383,144 @@ void main() {
       final s = _Srv()..orderDelivery = false;
       await _pump(tester, const OrderPage(_oid), srv: s);
       expect(find.byKey(const Key('order-delivery')), findsNothing);
+    });
+
+    testWidgets('seller of a pay-on-receipt order that was never accepted: «not accepted», not «delivery ended»', (tester) async {
+      final s = _Srv()..asSeller = true..status = 'cancelled'..payment = 'cod'..hideAddr = true;
+      await _pump(tester, const OrderPage(_oid), srv: s);
+      expect(find.textContaining('لم يُقبل الطلب فلم يظهر لك العنوان'), findsOneWidget);
+      expect(find.textContaining('انتهاء التوصيل'), findsNothing);
+    });
+
+    testWidgets('admin outside a dispute is told the address shows in disputes only', (tester) async {
+      final s = _Srv()..asAdmin = true..status = 'completed'..hideAddr = true;
+      await _pump(tester, const OrderPage(_oid), srv: s);
+      expect(find.textContaining('يظهر العنوان للإدارة عند النزاع فقط'), findsOneWidget);
+      expect(find.textContaining('انتهاء التوصيل'), findsNothing);
+    });
+
+    testWidgets('seller after completion: delivery ended', (tester) async {
+      final s = _Srv()..asSeller = true..status = 'completed'..hideAddr = true;
+      await _pump(tester, const OrderPage(_oid), srv: s);
+      expect(find.textContaining('لم يعد العنوان ظاهراً لك بعد انتهاء التوصيل'), findsOneWidget);
+    });
+
+    for (final w in [320.0, 360.0]) {
+      testWidgets('order card row fits a ${w.toInt()} px phone with the delivery chip (seller, pay on receipt, new)', (tester) async {
+        final s = _Srv()..asSeller = true..status = 'requested'..payment = 'cod';
+        await _pump(tester, const OrdersPage(), srv: s, size: Size(w, 800));
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(const Key('order-ful-$_oid')), findsOneWidget);
+        expect(find.byKey(const Key('card-accept-$_oid')), findsOneWidget);
+      });
+      testWidgets('order card row fits a ${w.toInt()} px phone (seller, paid from the wallet)', (tester) async {
+        final s = _Srv()..asSeller = true..status = 'paid';
+        await _pump(tester, const OrdersPage(), srv: s, size: Size(w, 800));
+        expect(tester.takeException(), isNull);
+        expect(find.text('بدء التحضير'), findsOneWidget);
+      });
+    }
+  });
+
+  group('delivery fee before the order button', () {
+    Listing lst({int price = 5000, bool delivery = true, int fee = 1500, String? place = 'الروضة'}) => Listing.fromJson({..._Srv().listing(), 'id': _lid, 'price': price, 'delivery': delivery, 'deliveryFee': fee, 'placeName': place});
+
+    test('price parts: «+ توصيل» beside a price, never «مجاناً» for a delivery-only listing with a fee', () {
+      expect(listingPriceParts(lst()), (price: '50 ر.س', fee: '+ توصيل 15 ر.س'));
+      expect(listingPriceParts(lst(price: 0, place: null)), (price: 'توصيل 15 ر.س', fee: null));
+      expect(listingPriceParts(lst(price: 0, place: '  ')).price, 'توصيل 15 ر.س');
+      // مكان استلام مجاني: السلعة مجانية والتوصيل برسم
+      expect(listingPriceParts(lst(price: 0)), (price: 'مجاناً', fee: '+ توصيل 15 ر.س'));
+      expect(listingPriceParts(lst(fee: 0)), (price: '50 ر.س', fee: null));
+      // رسم محفوظ والتوصيل مطفأ: لا يُطبَّق فلا يُعرض
+      expect(listingPriceParts(lst(delivery: false)), (price: '50 ر.س', fee: null));
+      expect(listingPriceParts(lst(), price: 7000).price, '70 ر.س');
+      expect(listingPriceText(lst()), '50 ر.س + توصيل 15 ر.س');
+    });
+
+    testWidgets('market card shows the fee next to the price', (tester) async {
+      await _pump(tester, Scaffold(body: Center(child: SizedBox(width: 170, height: 236, child: ListingCard(lst())))));
+      expect(tester.takeException(), isNull);
+      expect(find.text('+ توصيل 15 ر.س'), findsOneWidget);
+      expect(find.byKey(const Key('lc-fee-$_lid')), findsOneWidget);
+    });
+
+    testWidgets('market card of a zero price, delivery-only listing with a fee is not «مجاناً»', (tester) async {
+      await _pump(tester, Scaffold(body: Center(child: SizedBox(width: 170, height: 236, child: ListingCard(lst(price: 0, place: null))))));
+      expect(find.text('مجاناً'), findsNothing);
+      expect(find.text('توصيل 15 ر.س'), findsOneWidget);
+    });
+
+    testWidgets('listing header carries the fee; delivery-only zero price shows the fee instead of «مجاناً»', (tester) async {
+      await _pump(tester, const ListingPage(_lid));
+      expect(tester.widget<Text>(find.byKey(const Key('listing-price'))).data, '50 ر.س');
+      expect(tester.widget<Text>(find.byKey(const Key('listing-fee'))).data, '+ توصيل 15 ر.س');
+    });
+
+    testWidgets('zero price, no pickup place: header and button show the fee, «مجاناً» nowhere', (tester) async {
+      final s = _Srv()..price = 0..place = null;
+      await _pump(tester, const ListingPage(_lid), srv: s);
+      expect(tester.widget<Text>(find.byKey(const Key('listing-price'))).data, 'توصيل 15 ر.س');
+      expect(find.byKey(const Key('listing-fee')), findsNothing);
+      expect(find.text('مجاناً'), findsNothing);
+      expect(find.textContaining('اطلب بالمحفظة · 15 ر.س'), findsOneWidget);
+    });
+
+    testWidgets('the checkout heading names both choices', (tester) async {
+      await _pump(tester, const ListingPage(_lid));
+      expect(find.text('طريقة الاستلام'), findsOneWidget);
+    });
+  });
+
+  group('«عناويني» from checkout', () {
+    Future<void> openSheet(WidgetTester tester) async {
+      await tester.ensureVisible(find.byKey(const Key('ful-delivery')));
+      await tester.tap(find.byKey(const Key('ful-delivery'))); await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('delivery-address'))); await tester.pumpAndSettle();
+    }
+
+    testWidgets('the pick sheet opens «عناويني»; deleting the chosen address there clears it on the listing', (tester) async {
+      final s = await _pump(tester, const ListingPage(_lid));
+      await openSheet(tester);
+      await tester.tap(find.byKey(const Key('pick-addr-manage'))); await tester.pumpAndSettle();
+      expect(find.byType(AddressesPage), findsOneWidget);
+      await tester.tap(find.byKey(const Key('addr-menu-$_home'))); await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('addr-delete'))); await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('addr-delete-go'))); await tester.pumpAndSettle();
+      await tester.pageBack(); await tester.pumpAndSettle();
+      // الورقة ما زالت مفتوحة بالدفتر المحدَّث
+      expect(find.byKey(const Key('pick-addr-$_home')), findsNothing);
+      expect(find.byKey(const Key('pick-addr-$_work')), findsOneWidget);
+      await tester.tapAt(const Offset(10, 10)); await tester.pumpAndSettle();
+      expect(s.calls, contains('DELETE /me/addresses/$_home'));
+      expect(find.byKey(const Key('delivery-address')), findsNothing);
+      expect(find.byKey(const Key('delivery-pick')), findsOneWidget);
+    });
+
+    testWidgets('a full book: the sheet still offers «إدارة عناويني»', (tester) async {
+      final s = _Srv()..book = [for (var i = 0; i < 10; i++) _addr('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa${(20 + i)}', 'عنوان $i', def: i == 0)];
+      await _pump(tester, const ListingPage(_lid), srv: s);
+      await openSheet(tester);
+      expect(find.byKey(const Key('pick-addr-add')), findsNothing);
+      await tester.ensureVisible(find.byKey(const Key('pick-addr-manage')));
+      await tester.tap(find.byKey(const Key('pick-addr-manage'))); await tester.pumpAndSettle();
+      expect(find.byType(AddressesPage), findsOneWidget);
+    });
+
+    testWidgets('edit the chosen address in place (e.g. to set its point) and keep it selected', (tester) async {
+      final s = _Srv()..book = [_addr(_home, 'البيت', def: true, lat: null, lng: null)];
+      await _pump(tester, const ListingPage(_lid), srv: s);
+      await tester.ensureVisible(find.byKey(const Key('ful-delivery')));
+      await tester.tap(find.byKey(const Key('ful-delivery'))); await tester.pumpAndSettle();
+      expect(find.textContaining('عدّل العنوان وحدّد موقعه'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('delivery-address-edit'))); await tester.pumpAndSettle();
+      expect(find.text('تعديل العنوان'), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('addr-district')), 'النعيم');
+      await tester.tap(find.byKey(const Key('addr-save'))); await tester.pumpAndSettle();
+      expect(s.bodies['PATCH /me/addresses/$_home']!.single['district'], 'النعيم');
+      expect(find.descendant(of: find.byKey(const Key('delivery-address')), matching: find.textContaining('النعيم')), findsOneWidget);
+      await _orderNow(tester);
+      expect(s.bodies['POST /market/$_lid/order']!.single['addressId'], _home);
     });
   });
 }

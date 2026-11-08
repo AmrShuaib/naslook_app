@@ -19,6 +19,7 @@ import '../../ui/widgets.dart';
 import 'bazaar_page.dart';
 import 'listing_form.dart';
 import 'listing_page.dart';
+import 'market_delivery.dart';
 import 'orders_page.dart';
 import 'seller_tools.dart';
 import 'wanted_page.dart';
@@ -191,7 +192,14 @@ class SpotlightStrip extends ConsumerWidget {
                   Positioned(right: 12, left: 12, bottom: 10, child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                     Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14.5)),
                     const SizedBox(height: 2),
-                    Row(children: [Text(l.price == 0 ? 'مجاناً' : money(l.price), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)), const Spacer(), Text(l.seller.nickname, style: const TextStyle(color: Colors.white70, fontSize: 11.5))]),
+                    Builder(builder: (_) {
+                      final pr = listingPriceParts(l);
+                      return Row(children: [
+                        Text(pr.price, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
+                        if (pr.fee != null) ...[const SizedBox(width: 6), Flexible(child: Text(pr.fee!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontWeight: FontWeight.w600)))],
+                        const Spacer(), Text(l.seller.nickname, style: const TextStyle(color: Colors.white70, fontSize: 11.5)),
+                      ]);
+                    }),
                   ])),
                   Positioned(top: 10, right: 10, child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: Joy.sun, borderRadius: BorderRadius.circular(999)), child: const Text('مميز', style: TextStyle(color: Joy.sunText, fontSize: 11, fontWeight: FontWeight.w800)))),
                 ]),
@@ -352,13 +360,16 @@ class ListingCard extends StatelessWidget {
           Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
           const SizedBox(height: 3),
           Row(children: [
-            Text(l.price == 0 ? 'مجاناً' : money(l.price), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.text, fontSize: 14)),
+            Text(_price.price, key: Key('lc-price-${l.id}'), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.text, fontSize: 14)),
+            // رسم التوصيل بجانب السعر في السطر نفسه (ارتفاع البطاقة ثابت في الشبكة)
+            if (_price.fee != null) ...[const SizedBox(width: 4), Flexible(child: Text(_price.fee!, key: Key('lc-fee-${l.id}'), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11, fontWeight: FontWeight.w600)))],
             const Spacer(),
             if (l.ratingAvg != null || l.sellerRating != null) ...[const Icon(Icons.star_rounded, size: 14, color: Joy.sunText), Text((l.ratingAvg ?? l.sellerRating)!.toStringAsFixed(1), style: const TextStyle(fontSize: 11.5, color: Joy.textMuted))],
           ]),
           Text('${l.seller.nickname}${l.placeName != null && l.placeName!.isNotEmpty ? ' · ${l.placeName}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
         ]),
       );
+  ({String price, String? fee}) get _price => listingPriceParts(l);
   Widget _ph() => Container(color: Joy.surface2, alignment: Alignment.center, child: Icon(l.kind == 'service' ? Icons.handshake_outlined : Icons.shopping_bag_outlined, size: 34, color: Joy.control));
   static Widget _tag(String t, Color bg, Color fg) => Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)), child: Text(t, style: TextStyle(color: fg, fontSize: 10.5, fontWeight: FontWeight.w700)));
 }

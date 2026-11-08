@@ -1037,7 +1037,7 @@ export default async function business(app, opts) {
   }
   // أخطاء الطلب المشتركة بين الصنف الواحد والسلة (itemId يدل التطبيق على السطر المقصود في السلة)؛ يعيد true إن رُدّ على الطلب
   const ORDER_ERRORS = { "insufficient-funds": 402, "no-owner": 409, "not-verified": 403, "adult-required": 403, "venue-not-allowed": 409, "not-found": 404, "sold-out": 409, unavailable: 409,
-    "offer-unavailable": 409, "bad-slot": 400, "bad-date": 400, "bad-range": 400, "in-past": 400, "too-many": 400, "not-orderable": 400, "bad-options": 400, "options-required": 400, "bad-lines": 400, "bad-pickup": 400 };
+    "offer-unavailable": 409, "bad-slot": 400, "bad-date": 400, "bad-range": 400, "in-past": 400, "too-many": 400, "not-orderable": 400, "bad-options": 400, "options-required": 400, "bad-lines": 400, "bad-pickup": 400, "total-changed": 409 };
   function orderFail(reply, err) {
     if (err.code === "venue-blocked") { bad(reply, 403, "venue-blocked", { noShows: err.noShows ?? NO_SHOW_LIMIT }); return true; }
     const status = ORDER_ERRORS[err.code];
@@ -1045,6 +1045,7 @@ export default async function business(app, opts) {
     const extra = {};
     if (err.code === "sold-out" || err.code === "unavailable") extra.left = err.left ?? 0;
     if (err.code === "offer-unavailable") extra.reason = err.reason ?? null;
+    if (err.code === "total-changed") extra.total = err.total ?? null;
     if (err.itemId) extra.itemId = err.itemId;
     if (err.group) extra.group = err.group;
     bad(reply, status, err.code, extra);
@@ -1076,6 +1077,43 @@ export default async function business(app, opts) {
     if (lines.reduce((n, l) => n + l.qty, 0) > CART_MAX_QTY) throw fail("too-many");
     return lines;
   }
+  // تسعير السلة من الكتالوج الحالي: الأسطر بخياراتها، المخزون، والعرض (offers.js مرة واحدة للطلب كله). يتشاركه الطلب والمعاينة
+  // (/orders/quote) فيرى العميل قبل الدفع المبلغ نفسه الذي يُخصم؛ المعاينة بلا قفل ولا إنقاص للمخزون ولا تسجيل لاستخدام العرض
+  async function priceCart(c, b, lines, { uid, lat, lng, orderId = null, offers = true, quote = false }) {
+    const ids = [...new Set(lines.map((l) => l.itemId))].sort();
+    // قفل الأصناف بترتيب ثابت (المعرّف) حتى لا تتشابك سلّتان متزامنتان، ثم فحص المخزون وإنقاصه تحت القفل (آخر قطعة لطلب واحد)
+    const rows = (await c.query(`SELECT * FROM biz_items WHERE biz_id=$1 AND id = ANY($2::text[]) AND active ORDER BY id${quote ? "" : " FOR UPDATE"}`, [b.id, ids])).rows;
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const need = new Map(), priced = [];
+    for (const l of lines) {
+      const it = byId.get(l.itemId);
+      if (!it) throw fail("not-found", { itemId: l.itemId });
+      // السلة للمنتجات وحدها: المواعيد والتذاكر والغرف والسيارات تبقى على مسار الصنف الواحد
+      if (it.kind !== "product") throw fail("not-orderable", { itemId: it.id });
+      const { unit, options } = priceLine(it, l.sel);
+      need.set(it.id, (need.get(it.id) ?? 0) + l.qty);
+      priced.push({ it, qty: l.qty, unit, options, total: unit * l.qty });
+    }
+    for (const [itemId, n] of need) { const it = byId.get(itemId); if (it.stock != null && it.stock < n) throw fail("sold-out", { left: it.stock, itemId }); }
+    if (!quote) for (const itemId of ids) if (byId.get(itemId).stock != null) await c.query("UPDATE biz_items SET stock=stock-$2 WHERE id=$1", [itemId, need.get(itemId)]);
+    const subtotal = priced.reduce((n, p) => n + p.total, 0);
+    // العرض على الطلب كله (لا لكل سطر): الأهلية والحد الأدنى على مجموع السلة، وصف استخدام واحد للطلب، والسعر الخاص سعرٌ لوحدة الصنف
+    // الأصلية فتبقى فروق الخيارات كاملة (base = السعر الأصلي × الكمية)؛ القواعد في apply في offers.js
+    const a = offers && subtotal > 0 && globalThis.naslifeOffersApply
+      ? await globalThis.naslifeOffersApply(c, { biz: b, uid, lines: priced.map((p) => ({ item: p.it, qty: p.qty, total: p.total, base: Number(p.it.price) * p.qty })), lat, lng, orderId, dryRun: quote })
+      : null;
+    const discount = a && a.discount > 0 ? Math.min(subtotal, Math.round(a.discount)) : 0;
+    const outLines = priced.map((p, i) => {
+      const lo = discount ? a.lines?.[i] : null;
+      return { itemId: p.it.id, title: p.it.title, qty: p.qty, options: p.options, unit: p.unit, total: p.total, ...(lo?.discount > 0 ? { offer: { id: lo.id, kind: lo.kind, title: lo.title, discount: Math.min(p.total, lo.discount) } } : {}) };
+    });
+    return {
+      outLines, subtotal, discount, total: Math.max(0, subtotal - discount), title: cartTitle(outLines), qty: priced.reduce((n, p) => n + p.qty, 0),
+      offer: discount ? { id: a.id, kind: a.kind, title: a.title, discount, before: subtotal } : null,
+      // الدفع في المكان للسلة حين يقبله كل صنف مدفوع فيها؛ السطر المجاني (ماء، عينة) لا يُدفع له شيء فلا يمنعه
+      venueOk: priced.every((p) => p.total <= 0 || p.it.pay_at_venue === true),
+    };
+  }
   async function cartOrder(req, reply, uid, body) {
     let lines;
     try { lines = parseLines(body); } catch (err) { if (orderFail(reply, err)) return; throw err; }
@@ -1087,6 +1125,8 @@ export default async function business(app, opts) {
       pickupAt = new Date(body.pickupAt);
       if (isNaN(pickupAt)) return bad(reply, 400, "bad-pickup");
     }
+    // المبلغ الذي عرضته المعاينة على العميل: إن تغيّر قبل الطلب (سعر أو عرض أو خيار) يُرفض الطلب بالمبلغ الجديد بدل خصم غيره بصمت
+    const expectTotal = body.expectTotal == null ? null : Number(body.expectTotal);
     const wantVenue = body.payment === "at_venue";
     let adultMissing = false;
     try { const f = globalThis.naslifeAdultOk; adultMissing = typeof f === "function" ? !(await f(uid)) : false; } catch { adultMissing = false; }
@@ -1097,46 +1137,15 @@ export default async function business(app, opts) {
         const b = (await c.query("SELECT * FROM biz WHERE id=$1 AND active", [req.params.id])).rows[0];
         if (!b) throw fail("not-found");
         if (pickupAt && pickupError(b.hours, pickupAt)) throw fail("bad-pickup");
-        const ids = [...new Set(lines.map((l) => l.itemId))].sort();
-        // قفل الأصناف بترتيب ثابت (المعرّف) حتى لا تتشابك سلّتان متزامنتان، ثم فحص المخزون وإنقاصه تحت القفل (آخر قطعة لطلب واحد)
-        const rows = (await c.query("SELECT * FROM biz_items WHERE biz_id=$1 AND id = ANY($2::text[]) AND active ORDER BY id FOR UPDATE", [b.id, ids])).rows;
-        const byId = new Map(rows.map((r) => [r.id, r]));
-        const need = new Map(), priced = [];
-        for (const l of lines) {
-          const it = byId.get(l.itemId);
-          if (!it) throw fail("not-found", { itemId: l.itemId });
-          // السلة للمنتجات وحدها: المواعيد والتذاكر والغرف والسيارات تبقى على مسار الصنف الواحد
-          if (it.kind !== "product") throw fail("not-orderable", { itemId: it.id });
-          const { unit, options } = priceLine(it, l.sel);
-          need.set(it.id, (need.get(it.id) ?? 0) + l.qty);
-          priced.push({ it, qty: l.qty, unit, options, total: unit * l.qty });
-        }
-        for (const [itemId, n] of need) { const it = byId.get(itemId); if (it.stock != null && it.stock < n) throw fail("sold-out", { left: it.stock, itemId }); }
-        for (const itemId of ids) if (byId.get(itemId).stock != null) await c.query("UPDATE biz_items SET stock=stock-$2 WHERE id=$1", [itemId, need.get(itemId)]);
-        const subtotal = priced.reduce((n, p) => n + p.total, 0);
-        // العروض (offers.js) لكل سطر كأنه طلب صنفه: سعر الأسبوع على سطره، والكوبون مرة واحدة (حدّه لكل مستخدم يُعدّ داخل المعاملة نفسها)
-        const applied = [];
-        if (body.offerId !== "none" && subtotal > 0 && globalThis.naslifeOffersApply) {
-          for (const p of priced) {
-            if (p.total <= 0) continue;
-            const a = await globalThis.naslifeOffersApply(c, { biz: b, uid, item: p.it, qty: p.qty, total: p.total, lat: body.lat, lng: body.lng, orderId: id });
-            if (a && a.discount > 0) { p.offer = { id: a.id, kind: a.kind, title: a.title, discount: Math.min(a.discount, p.total) }; applied.push(p.offer); }
-          }
-        }
-        const discount = applied.reduce((n, a) => n + a.discount, 0);
-        const total = Math.max(0, subtotal - discount);
-        const outLines = priced.map((p) => ({ itemId: p.it.id, title: p.it.title, qty: p.qty, options: p.options, unit: p.unit, total: p.total, ...(p.offer ? { offer: p.offer } : {}) }));
-        const title = cartTitle(outLines);
-        const meta = { cartTitle: title };
-        if (applied.length) meta.offer = { id: applied[0].id, kind: applied[0].kind, title: [...new Set(applied.map((a) => a.title))].join("، "), discount, before: subtotal };
+        const q = await priceCart(c, b, lines, { uid, lat: body.lat, lng: body.lng, orderId: id, offers: body.offerId !== "none" });
+        if (expectTotal != null && expectTotal !== q.total) throw fail("total-changed", { total: q.total });
+        const meta = { cartTitle: q.title };
+        if (q.offer) meta.offer = q.offer;
         const code = "NAS-" + crypto.randomBytes(4).toString("hex").toUpperCase();
-        const { payment, funds, releaseAt } = await settle(c, { b, uid, id, total, label: `${b.name_ar || b.name} · ${title}`, wantVenue,
-          // الدفع في المكان للسلة فقط حين يقبله كل صنف فيها
-          venueOk: priced.every((p) => p.it.pay_at_venue === true), adultMissing, endAt: pickupAt });
-        const qty = priced.reduce((n, p) => n + p.qty, 0);
+        const { payment, funds, releaseAt } = await settle(c, { b, uid, id, total: q.total, label: `${b.name_ar || b.name} · ${q.title}`, wantVenue, venueOk: q.venueOk, adultMissing, endAt: pickupAt });
         await c.query("INSERT INTO biz_orders(id,biz_id,item_id,user_id,kind,qty,units,total,code,note,meta,payment,funds,release_at,lines,pickup_at) VALUES($1,$2,$3,$4,'product',$5,1,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
-          [id, b.id, outLines[0].itemId, uid, qty, total, code, note, JSON.stringify(meta), payment, funds, releaseAt, JSON.stringify(outLines), pickupAt]);
-        return { id, code, total, b, title, payment, pickupAt };
+          [id, b.id, q.outLines[0].itemId, uid, q.qty, q.total, code, note, JSON.stringify(meta), payment, funds, releaseAt, JSON.stringify(q.outLines), pickupAt]);
+        return { id, code, total: q.total, b, title: q.title, payment, pickupAt };
       });
     } catch (err) { if (orderFail(reply, err)) return; throw err; }
     await notify(await bizTeam(out.b), { kind: "biz_order", title: `طلب جديد · ${bizName(out.b)}`,
@@ -1145,6 +1154,21 @@ export default async function business(app, opts) {
     const r = await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [out.id]);
     return orderOut(r.rows[0]);
   }
+
+  // ---- معاينة السلة قبل الدفع: المبلغ النهائي بالعرض الذي سيُطبَّق، بحساب الطلب نفسه (التطبيق يعرضه ثم يرسله expectTotal).
+  // الزائر يرى الأسعار الخاصة العامة فقط (الكوبونات لأعضاء بحساب). لا تكتب شيئاً.
+  app.post("/biz/:id/orders/quote", async (req, reply) => {
+    let uid = null; try { uid = (await auth(req)) || null; } catch { uid = null; }
+    if (!SLUG_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
+    const body = req.body ?? {};
+    try {
+      const lines = parseLines(body);
+      const b = (await pool.query("SELECT * FROM biz WHERE id=$1 AND active", [req.params.id])).rows[0];
+      if (!b) throw fail("not-found");
+      const q = await priceCart(pool, b, lines, { uid, lat: body.lat, lng: body.lng, offers: body.offerId !== "none", quote: true });
+      return { subtotal: q.subtotal, discount: q.discount, total: q.total, offer: q.offer, lines: q.outLines, venueOk: q.venueOk, title: q.title };
+    } catch (err) { if (orderFail(reply, err)) return; throw err; }
+  });
 
   // ---- الشراء والحجز: منتج (كمية)، تذكرة سينما (موعد + عدد)، غرفة (من/إلى + عدد غرف)، سيارة (من/إلى)، أو سلة منتجات (lines)
   app.post("/biz/:id/orders", async (req, reply) => {

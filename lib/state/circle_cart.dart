@@ -1,4 +1,5 @@
-// سلة الدائرة على الجهاز (نوفمبر 2026): سلة لكل دائرة تُحفظ في SharedPreferences (naslife.cart.<bizId>) فتبقى بعد إغلاق التطبيق.
+// سلة الدائرة على الجهاز (نوفمبر 2026): سلة لكل حساب ودائرة تُحفظ في SharedPreferences (naslife.cart.<uid>.<bizId>) فتبقى بعد إغلاق
+// التطبيق، ولا يراها حساب آخر يدخل على الجهاز نفسه.
 // السطر يحفظ الصنف وكميته وخياراته فقط؛ السعر يُعاد حسابه من الكتالوج الحالي عند العرض، والخادم يحسب المبلغ النهائي عند الطلب.
 import 'dart:convert';
 
@@ -6,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/biz_models.dart';
+import 'app_state.dart';
 
 /// سطر في السلة: الصنف والكمية والخيارات المختارة (معرّف المجموعة ← معرّفات الخيارات).
 class CartLine {
@@ -36,19 +38,38 @@ class CartLine {
 /// حدود الخادم نفسها: 20 قطعة للسطر، و20 سطراً، و50 قطعة في السلة.
 const maxCartQty = 20, maxCartLines = 20, maxCartPieces = 50;
 
+/// مفتاح سلة الحساب في الدائرة؛ الزائر لا يضيف إلى السلة (الإضافة تطلب الدخول) فمفتاحه احتياط فقط.
+String cartStorageKey(String? uid, String bizId) => 'naslife.cart.${uid ?? 'guest'}.$bizId';
+
+/// يمسح سلال حساب من الجهاز (عند حذف الحساب: لا تبقى أسطره في تخزين جهاز قد يستعمله غيره).
+Future<void> forgetSavedCarts(String uid) async {
+  try {
+    final sp = await SharedPreferences.getInstance();
+    for (final k in sp.getKeys().where((k) => k.startsWith('naslife.cart.$uid.')).toList()) {
+      await sp.remove(k);
+    }
+  } catch (_) {
+    // التخزين غير متاح: لا شيء محفوظ أصلاً
+  }
+}
+
 class CircleCart extends StateNotifier<List<CartLine>> {
   final String bizId;
+  final String? uid;
   late final Future<void> _loaded = _load();
-  CircleCart(this.bizId) : super(const []) {
+  CircleCart(this.bizId, {this.uid}) : super(const []) {
     _loaded.ignore();
   }
 
-  String get _key => 'naslife.cart.$bizId';
+  String get _key => cartStorageKey(uid, bizId);
 
   /// يقرأ المحفوظ ويدمج معه ما أُضيف قبل اكتمال القراءة (لا تمحو الإضافة الأولى سلة الجلسة السابقة).
   Future<void> _load() async {
     try {
-      final raw = (await SharedPreferences.getInstance()).getString(_key);
+      final sp = await SharedPreferences.getInstance();
+      // المفتاح القديم بلا حساب (naslife.cart.<bizId>) لا يُعرف صاحبه فلا يُقرأ لأحد ويُحذف
+      if (sp.containsKey('naslife.cart.$bizId')) await sp.remove('naslife.cart.$bizId');
+      final raw = sp.getString(_key);
       final list = raw == null || raw.isEmpty ? const [] : jsonDecode(raw);
       if (list is! List || !mounted) return;
       final restored = [for (final e in list) if (e is Map) CartLine.fromJson(e)].where((l) => l.itemId.isNotEmpty).toList();
@@ -65,13 +86,15 @@ class CircleCart extends StateNotifier<List<CartLine>> {
   }
 
   Future<void> _save() async {
+    // الأسطر تُلتقط قبل الانتظار: تبديل الحساب يتلف هذه السلة وقد يأتي الحفظ بعده
+    final lines = state;
     await _loaded;
     try {
       final sp = await SharedPreferences.getInstance();
-      if (state.isEmpty) {
+      if (lines.isEmpty) {
         await sp.remove(_key);
       } else {
-        await sp.setString(_key, jsonEncode([for (final l in state) l.toJson()]));
+        await sp.setString(_key, jsonEncode([for (final l in lines) l.toJson()]));
       }
     } catch (_) {
       // كما في القراءة
@@ -109,20 +132,28 @@ class CircleCart extends StateNotifier<List<CartLine>> {
   }
 }
 
-final circleCartProvider = StateNotifierProvider.family<CircleCart, List<CartLine>, String>((ref, bizId) => CircleCart(bizId));
+/// السلة تتبع الحساب الداخل: الخروج أو تبديل الحساب على الجهاز نفسه يعيد بناءها من سلة الحساب الجديد (لا يرى أحد سلة من قبله).
+final circleCartProvider = StateNotifierProvider.family<CircleCart, List<CartLine>, String>((ref, bizId) {
+  final uid = ref.watch(appStateProvider.select((s) => s.session?.user.id));
+  return CircleCart(bizId, uid: uid);
+});
 
 /// سطر السلة كما يُعرض الآن: الصنف من الكتالوج الحالي، وسعر الوحدة التقديري، وهل ما زال متاحاً للطلب.
 class ResolvedCartLine {
   final CartLine line;
   final BizItem? item;
-  /// سعر الوحدة التقديري: سعر العرض الخاص إن انطبق ثم فروق الخيارات (الخادم يحسب النهائي).
+  /// سعر الوحدة التقديري: السعر الخاص للوحدة إن انطبق ثم فروق الخيارات كاملة، كما يحسبه الخادم للسطر
+  /// (المبلغ النهائي بالكوبونات من معاينة الخادم في ورقة الإتمام).
   final int unit;
   /// null = متاح؛ وإلا سبب عدم الإتاحة للعرض.
   final String? problem;
   const ResolvedCartLine({required this.line, this.item, this.unit = 0, this.problem});
   int get total => unit * line.qty;
   bool get ok => problem == null;
-  bool get venueOk => item?.venueOk == true;
+  /// السطر مجاني بسعر الصنف وفروقه (قبل أي عرض)، كما يعدّه الخادم.
+  bool get free => item != null && item!.price + item!.optionsDelta(line.options) == 0;
+  /// يقبل الدفع في المكان: الصنف يقبله، أو السطر مجاني فلا يُدفع له شيء (كقاعدة الخادم).
+  bool get venueOk => item != null && (free || item!.payAtVenue);
   String get title => item?.title ?? 'صنف محذوف';
   String get optionsLabel => item?.optionsLabel(line.options) ?? '';
 }

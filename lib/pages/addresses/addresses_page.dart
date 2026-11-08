@@ -250,7 +250,7 @@ class _PickSheet extends ConsumerWidget {
           const SizedBox(height: 12),
           for (final a in b.items) Padding(padding: const EdgeInsets.only(bottom: 8), child: KeyedSubtree(key: Key('pick-addr-${a.id}'), child: AddressTile(a, selected: a.id == selectedId, onTap: () => Navigator.pop(context, a)))),
           if (b.full)
-            const Text('وصلت إلى ١٠ عناوين. احذف أحدها من «عناويني» لتضيف غيره.', style: TextStyle(color: Joy.warning, fontSize: 12))
+            const Text('وصلت إلى ١٠ عناوين. احذف أحدها من «إدارة عناويني» لتضيف غيره.', style: TextStyle(color: Joy.warning, fontSize: 12))
           else
             OutlinedButton.icon(
               key: const Key('pick-addr-add'),
@@ -260,6 +260,16 @@ class _PickSheet extends ConsumerWidget {
               },
               icon: const Icon(Icons.add_location_alt_outlined), label: Text(b.items.isEmpty ? 'أضف عنوان التوصيل' : 'عنوان جديد'),
             ),
+          // «عناويني» كاملة من الطلب نفسه (تعديل وحذف وافتراضي) دون مغادرة العرض؛ الورقة تُبنى من جديد بالدفتر المحدَّث عند العودة
+          if (b.items.isNotEmpty)
+            Align(alignment: AlignmentDirectional.centerStart, child: TextButton.icon(
+              key: const Key('pick-addr-manage'),
+              onPressed: () async {
+                await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddressesPage()));
+                if (context.mounted) ref.invalidate(addressBookProvider);
+              },
+              icon: const Icon(Icons.edit_location_alt_outlined, size: 18), label: const Text('إدارة عناويني'),
+            )),
         ]),
         loading: () => const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(addressBookProvider)),

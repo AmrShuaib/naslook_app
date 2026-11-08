@@ -92,7 +92,14 @@ class _ListingPageState extends ConsumerState<ListingPage> {
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Expanded(child: Text(x.title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20, height: 1.3))),
               const SizedBox(width: 12),
-              Text(x.price == 0 ? 'مجاناً' : money(x.variants.isEmpty ? x.price : _unit(x)), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary, fontSize: 20)),
+              // رسم التوصيل تحت السعر: لا يكتشفه المشتري على زر الطلب فقط
+              Builder(builder: (_) {
+                final pr = listingPriceParts(x, price: x.variants.isEmpty ? x.price : _unit(x));
+                return Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Text(pr.price, key: const Key('listing-price'), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary, fontSize: 20)),
+                  if (pr.fee != null) Text(pr.fee!, key: const Key('listing-fee'), style: const TextStyle(color: Joy.textMuted, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                ]);
+              }),
             ]),
             const SizedBox(height: 8),
             Wrap(spacing: 6, runSpacing: 6, children: [
@@ -255,7 +262,15 @@ class _ListingPageState extends ConsumerState<ListingPage> {
   Future<void> _pickAddress(Listing x) async {
     if (!requireAccount(context)) return;
     final a = await pickDeliveryAddress(context, ref, selectedId: deliveryAddress?.id);
-    if (a != null && mounted) setState(() { deliveryAddress = a; wantDelivery = true; });
+    if (!mounted) return;
+    if (a != null) { setState(() { deliveryAddress = a; wantDelivery = true; }); return; }
+    // أُغلقت الورقة بلا اختيار، وربما عُدّل العنوان المختار أو حُذف من «إدارة عناويني»: نأخذ نسخته الحالية من الدفتر
+    final cur = deliveryAddress;
+    if (cur == null) return;
+    try {
+      final book = await ref.read(addressBookProvider.future);
+      if (mounted && deliveryAddress?.id == cur.id) setState(() => deliveryAddress = book.items.where((b) => b.id == cur.id).firstOrNull);
+    } catch (_) { /* الدفتر لم يُقرأ: يبقى الاختيار، والخادم يرفض عنواناً محذوفاً بـ address-not-found */ }
   }
 
   void _toggleCompare(Listing x) {

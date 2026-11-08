@@ -7,6 +7,7 @@ import '../../api/commerce_models.dart' show money;
 import '../../core/app_theme.dart';
 import '../../core/share/legal_links.dart';
 import '../../state/app_state.dart';
+import '../../state/circle_cart.dart' show forgetSavedCarts;
 import '../../ui/widgets.dart';
 
 final deletionPreviewProvider = FutureProvider.autoDispose<DeletionPreview>((ref) => ref.watch(apiClientProvider).deletionPreview());
@@ -54,6 +55,9 @@ class _DeleteAccountPageState extends ConsumerState<DeleteAccountPage> {
       final msg = status == 'pending_refund' ? 'حُذف حسابك. سيُعاد رصيدك إلى وسيلة الدفع خلال ${p.refundDays} يوماً' : 'حُذف حسابك. شكراً لأنك كنت معنا';
       final messenger = ScaffoldMessenger.of(context);
       Navigator.of(context).popUntil((r) => r.isFirst);
+      // سلال الحساب المحذوف لا تبقى في تخزين الجهاز
+      final uid = ref.read(appStateProvider).user?.id;
+      if (uid != null) await forgetSavedCarts(uid);
       await ref.read(appStateProvider.notifier).logout();
       messenger.showSnackBar(SnackBar(content: Text(msg)));
     } on ApiException catch (e) {
@@ -95,6 +99,7 @@ class _DeleteAccountPageState extends ConsumerState<DeleteAccountPage> {
                   _Bullet('بريدك واسم المستخدم وصورتك وملفك الشخصي'),
                   _Bullet('منشوراتك وعروضك وتعليقاتك (تُخفى الآن وتُمسح خلال 30 يوماً)'),
                   _Bullet('متابعاتك وتنبيهاتك وعمليات البحث المحفوظة واشتراك الإشعارات'),
+                  _Bullet('عناوين التوصيل المحفوظة في «عناويني»'),
                   _Bullet('جلسات الدخول على كل أجهزتك'),
                   SizedBox(height: 8),
                   Text('ما يُحفظ نظاماً:', style: TextStyle(fontWeight: FontWeight.w600)),

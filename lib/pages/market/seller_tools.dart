@@ -17,6 +17,7 @@ import '../business/business_page.dart';
 import '../chat/chat_thread_page.dart';
 import '../wallet/wallet_page.dart';
 import 'listing_page.dart';
+import 'market_delivery.dart';
 import 'market_page.dart';
 
 final sellerProfileProvider = FutureProvider.family<SellerProfile, String>((ref, id) => ref.watch(apiClientProvider).seller(id));
@@ -213,7 +214,7 @@ class ComparePage extends ConsumerWidget {
               for (final l in items) SizedBox(width: 200, child: Padding(padding: const EdgeInsets.only(left: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 ListingCard(l),
                 const SizedBox(height: 8),
-                for (final (k, v) in [('السعر', l.price == 0 ? 'مجاناً' : money(l.price)), ('التقييم', l.ratingAvg?.toStringAsFixed(1) ?? (l.sellerRating?.toStringAsFixed(1) ?? '—')), ('الحالة', marketConditions[l.condition] ?? '—'), ('التوصيل', l.delivery ? 'متاح' : 'لا'), ('المسافة', l.distanceKm != null ? '${l.distanceKm!.toStringAsFixed(1)} كم' : '—'), ('المبيعات', '${l.sold}'), ('البائع', l.seller.nickname)])
+                for (final (k, v) in [('السعر', listingPriceText(l)), ('التقييم', l.ratingAvg?.toStringAsFixed(1) ?? (l.sellerRating?.toStringAsFixed(1) ?? '—')), ('الحالة', marketConditions[l.condition] ?? '—'), ('التوصيل', l.delivery ? 'متاح' : 'لا'), ('المسافة', l.distanceKm != null ? '${l.distanceKm!.toStringAsFixed(1)} كم' : '—'), ('المبيعات', '${l.sold}'), ('البائع', l.seller.nickname)])
                   Padding(padding: const EdgeInsets.symmetric(vertical: 3), child: Row(children: [Text('$k: ', style: const TextStyle(color: Joy.textMuted, fontSize: 12)), Expanded(child: Text(v, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)))])),
                 TextButton(onPressed: () => ref.read(compareProvider.notifier).state = items.where((x) => x.id != l.id).toList(), child: const Text('إزالة')),
               ]))),

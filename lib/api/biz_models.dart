@@ -460,8 +460,16 @@ class BizOrder {
         lines: asList(m['lines']).map(BizOrderLine.fromJson).toList(), pickupAt: _t(m['pickupAt']),
       );
   bool get isCart => lines.isNotEmpty;
-  /// «في أقرب وقت» أو «اليوم 19:30».
-  String get pickupLabel => pickupAt == null ? 'في أقرب وقت' : 'اليوم ${pickupAt!.hour.toString().padLeft(2, '0')}:${pickupAt!.minute.toString().padLeft(2, '0')}';
+  /// «في أقرب وقت»، أو «اليوم 19:30» لطلب اليوم، و«أمس 19:30» أو «5/11 19:30» لطلب أقدم (الاستلام دائماً في يوم الطلب).
+  String get pickupLabel => pickupLabelAt(DateTime.now());
+  String pickupLabelAt(DateTime now) {
+    final t = pickupAt;
+    if (t == null) return 'في أقرب وقت';
+    final clock = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    // فرق الأيام بتواريخ UTC من مكوّنات التاريخ المحلي حتى لا يخطئه تغيير التوقيت الصيفي
+    final days = DateTime.utc(now.year, now.month, now.day).difference(DateTime.utc(t.year, t.month, t.day)).inDays;
+    return days == 0 ? 'اليوم $clock' : days == 1 ? 'أمس $clock' : '${t.day}/${t.month} $clock';
+  }
 
   String get statusLabel => switch (status) { 'confirmed' => 'مؤكد', 'used' => 'مستخدم', 'cancelled' => 'ملغى', 'no_show' => 'لم يحضر', _ => status };
   bool get atVenue => payment == 'at_venue';
@@ -533,6 +541,20 @@ class BizOrderLine {
     }
     return [for (final e in groups.entries) '${e.key}: ${e.value.join('، ')}'].join(' · ');
   }
+}
+
+/// معاينة السلة من الخادم (POST /biz/:id/orders/quote) بحساب الطلب نفسه: الأسطر بأسعارها الحالية وخصم العرض موزّعاً عليها،
+/// والمجموع قبل العرض، والعرض الذي سيُطبَّق، والإجمالي الذي يُخصم، وهل يقبل كل صنف مدفوع فيها الدفع في المكان.
+class CartQuote {
+  final List<BizOrderLine> lines;
+  final int subtotal, discount, total;
+  final OrderOffer? offer;
+  final bool venueOk;
+  const CartQuote({this.lines = const [], this.subtotal = 0, this.discount = 0, required this.total, this.offer, this.venueOk = false});
+  factory CartQuote.fromJson(Map m) => CartQuote(
+        lines: asList(m['lines']).map(BizOrderLine.fromJson).toList(), subtotal: _i(m['subtotal']), discount: _i(m['discount']), total: _i(m['total']),
+        offer: m['offer'] is Map ? OrderOffer.fromJson(_m(m['offer'])) : null, venueOk: m['venueOk'] == true,
+      );
 }
 
 /// نزاع «لدي مشكلة» على طلب دائرة: السبب والصور ورسائل الطرفين والإدارة وقرار الحسم.

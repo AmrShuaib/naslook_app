@@ -80,8 +80,8 @@ export default async function offers(app, opts = {}) {
   const state = (o, now = Date.now()) => !o.active ? "off" : new Date(o.starts_at).getTime() > now ? "upcoming" : o.ends_at && new Date(o.ends_at).getTime() <= now ? "ended" : "active";
   const live = (o, now = Date.now()) => state(o, now) === "active";
   const perUser = (o) => (o.kind === "deal" ? Math.max(0, Number(o.conditions?.perUser) || 0) : Math.max(1, Math.min(10, Number(o.conditions?.perUser) || 1)));
-  /// قيمة الخصم على طلب بمجموع total وسعر وحدة price (بالهللات)
-  function discountFor(o, { total, price, qty = 1 }) {
+  /// قيمة الخصم على مبلغ total وسعر وحدة price (بالهللات)
+  function discountFor(o, { total, price }) {
     const v = o.value ?? {}; const t = Number(total) || 0; if (t <= 0) return 0;
     switch (v.type) {
       case "percent": return Math.min(t, Math.round((t * Math.max(0, Math.min(100, Number(v.amount) || 0))) / 100));
@@ -91,7 +91,30 @@ export default async function offers(app, opts = {}) {
       default: return 0;
     }
   }
+  /// خصم السعر الخاص على وحدة واحدة بسعر الصنف الأصلي: هو نفسه السعر المعروض على القائمة (annotateItems) فيطابقه التطبيق
+  const dealUnit = (o, price) => discountFor(o, { total: price, price });
   const scoped = (o, itemId) => (!o.item_id || o.item_id === itemId) && (!Array.isArray(o.conditions?.items) || !o.conditions.items.length || o.conditions.items.includes(itemId));
+  /// خصم العرض موزّعاً على أسطر الطلب ([مقدار كل سطر]) لما يشمله منها. السعر الخاص (deal) سعرٌ لوحدة الصنف الأصلية: السطر يدفع
+  /// سعر العرض × الكمية وفروق الخيارات كاملة (لا تُخصم بنسبة السعر). بقية العروض على الطلب كله: النسبة من مجموع الأسطر المشمولة
+  /// بفروقها، والمبلغ مرة واحدة، والمنتج المجاني وحدة واحدة بسعره الأصلي.
+  function sharesFor(o, ls) {
+    const out = ls.map(() => 0);
+    const idx = ls.map((l, i) => (l.total > 0 && scoped(o, l.item.id) ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length) return out;
+    if (o.kind === "deal") {
+      // عدد الوحدات من مجموع السطر بالسعر الأصلي (منتج × الكمية، غرفة × الليالي × الغرف…)
+      for (const i of idx) { const p = Number(ls[i].item.price) || 0; if (p > 0) out[i] = Math.min(ls[i].total, dealUnit(o, p) * Math.round(ls[i].base / p)); }
+      return out;
+    }
+    if (o.value?.type === "free_item") { const i = idx[0]; out[i] = Math.min(ls[i].total, Math.max(0, Math.round(Number(ls[i].item.price) || 0))); return out; }
+    const t = idx.reduce((n, i) => n + ls[i].total, 0);
+    const d = discountFor(o, { total: t });
+    // توزيع الخصم على الأسطر بنسبة مجموعها (للعرض فقط)، وبواقي الهللات للأكبر كسراً؛ فلا يتجاوز سطرٌ مجموعه ويبقى المجموع d
+    let left = d;
+    const rest = idx.map((i) => { const x = (d * ls[i].total) / t; out[i] = Math.floor(x); left -= out[i]; return { i, r: x - out[i] }; }).sort((a, b) => b.r - a.r);
+    for (const p of rest) { if (left <= 0) break; out[p.i] += 1; left -= 1; }
+    return out;
+  }
   const useCount = async (c, offerId, uid, { today = false } = {}) => (await c.query(`SELECT count(*)::int AS n FROM biz_offer_uses WHERE offer_id=$1 AND user_id=$2 AND kind IN ('use','transfer')${today ? " AND created_at > now() - interval '24 hours'" : ""}`, [offerId, uid])).rows[0].n;
   const totalUses = async (c, offerId) => (await c.query("SELECT count(*)::int AS n FROM biz_offer_uses WHERE offer_id=$1 AND kind='use'", [offerId])).rows[0].n;
   const openGrant = async (c, offerId, uid) => (await c.query("SELECT * FROM biz_offer_grants WHERE offer_id=$1 AND user_id=$2 AND used_at IS NULL AND (expires_at IS NULL OR expires_at > now()) ORDER BY created_at LIMIT 1", [offerId, uid])).rows[0] ?? null;
@@ -136,28 +159,60 @@ export default async function offers(app, opts = {}) {
     return { every, count: n % every, total: n };
   }
 
-  /// يُستدعى من مسار الطلب داخل معاملة business.js: يختار أفضل عرض (أو المطلوب) ويسجّل استخدامه ويعيد الخصم
-  async function apply(c, { biz, uid, item, qty, total, offerId, lat, lng, orderId }) {
-    if (!biz || !uid || !item || !(Number(total) > 0)) return null;
+  /// يُستدعى مرة واحدة لكل طلب من business.js داخل معاملته (صنف واحد: item/qty/total؛ سلة: lines [{item, qty, total, base}] حيث
+  /// base سعر الصنف الأصلي × الكمية بلا فروق الخيارات). الأهلية تُفحص مرة على الطلب كله: الحد الأدنى على مجموعه، وأول طلب،
+  /// والحد لكل مستخدم والعدد الإجمالي يُعدّان طلباتٍ (صف استخدام واحد لكل عرض في الطلب). ثم الأكثر توفيراً للطلب: الأسعار الخاصة معاً
+  /// (لكل سطر أفضل سعر يشمله، كما تعرضها القائمة) أو أفضل عرض واحد على الطلب (كوبون، لمن هنا الآن، مكافأة)؛ والتعادل للأسعار الخاصة
+  /// فيبقى الكوبون لطلب لاحق. offerId يقصر الطلب على عرض بعينه. dryRun للمعاينة: يحسب بلا تسجيل استخدام ولا حجز هدية.
+  /// يعيد {id, kind, title, discount, via, offers: [...], lines: [{discount, id, kind, title} | null]} أو null.
+  async function apply(c, { biz, uid, item, qty, total, lines, offerId, lat, lng, orderId, dryRun = false }) {
+    const ls = (Array.isArray(lines) ? lines : item ? [{ item, qty, total, base: total }] : []).filter((l) => l?.item)
+      .map((l) => ({ item: l.item, qty: Math.max(1, Math.round(Number(l.qty) || 1)), total: Math.max(0, Number(l.total) || 0), base: Math.max(0, Number(l.base ?? l.total) || 0) }));
+    const subtotal = ls.reduce((n, l) => n + l.total, 0);
+    if (!biz || (!uid && !dryRun) || !ls.length || !(subtotal > 0)) return null;
     const rows = (await c.query("SELECT * FROM biz_offers WHERE biz_id=$1 AND active AND starts_at <= now() AND (ends_at IS NULL OR ends_at > now())", [biz.id])).rows;
     const member = await isMember(biz.id, uid);
-    const first = await hadOrder(c, biz.id, uid);
+    const first = uid ? await hadOrder(c, biz.id, uid) : false;
     const la = num(lat), ln = num(lng);
-    let best = null;
+    const unavailable = (reason) => Object.assign(new Error("offer-unavailable"), { code: "offer-unavailable", reason });
+    const sooner = (a, b) => !!a.o.ends_at && (!b.o.ends_at || new Date(a.o.ends_at) < new Date(b.o.ends_at));
+    const cands = [];
     for (const o of rows) {
       if (offerId && o.id !== offerId) continue;
-      const e = await eligibility(c, o, { biz, uid, member, item, qty, total, lat: la, lng: ln, first });
-      if (!e.ok) { if (offerId) throw Object.assign(new Error("offer-unavailable"), { code: "offer-unavailable", reason: e.reason }); continue; }
-      const d = discountFor(o, { total, price: Number(item.price), qty });
-      if (d <= 0) continue;
-      if (!best || d > best.discount || (d === best.discount && o.ends_at && (!best.o.ends_at || new Date(o.ends_at) < new Date(best.o.ends_at)))) best = { o, discount: d, e };
+      const e = ls.some((l) => scoped(o, l.item.id)) ? await eligibility(c, o, { biz, uid, member, item: null, qty: ls.reduce((n, l) => n + l.qty, 0), total: subtotal, lat: la, lng: ln, first }) : { ok: false, reason: "item" };
+      if (!e.ok) { if (offerId) throw unavailable(e.reason); continue; }
+      const shares = sharesFor(o, ls);
+      const discount = shares.reduce((n, d) => n + d, 0);
+      if (discount > 0) cands.push({ o, e, shares, discount });
     }
-    if (offerId && !best) throw Object.assign(new Error("offer-unavailable"), { code: "offer-unavailable", reason: "not-found" });
-    if (!best) return null;
-    const useId = crypto.randomUUID();
-    await c.query("INSERT INTO biz_offer_uses(id,offer_id,biz_id,user_id,order_id,kind,amount,grant_id) VALUES($1,$2,$3,$4,$5,'use',$6,$7)", [useId, best.o.id, biz.id, uid, orderId ?? null, best.discount, best.e.grant?.id ?? null]);
-    if (best.e.grant) await c.query("UPDATE biz_offer_grants SET used_at=now(), order_id=$2 WHERE id=$1", [best.e.grant.id, orderId ?? null]);
-    return { id: best.o.id, kind: best.o.kind, title: best.o.title, discount: best.discount, via: best.e.via };
+    if (offerId && !cands.length) throw unavailable("not-found");
+    if (!cands.length) return null;
+    // الأسعار الخاصة معاً: كل سطر بأفضل سعر خاص يشمله، وكل عرض منها بمجموع ما خصمه من أسطره
+    const picked = new Map();
+    ls.forEach((_, i) => {
+      let best = null;
+      for (const x of cands) if (x.o.kind === "deal" && x.shares[i] > 0 && (!best || x.shares[i] > best.shares[i] || (x.shares[i] === best.shares[i] && sooner(x, best)))) best = x;
+      if (!best) return;
+      const g = picked.get(best.o.id) ?? { o: best.o, e: best.e, shares: ls.map(() => 0), discount: 0 };
+      g.shares[i] = best.shares[i]; g.discount += best.shares[i]; picked.set(best.o.id, g);
+    });
+    const deals = [...picked.values()];
+    const dealTotal = deals.reduce((n, g) => n + g.discount, 0);
+    let top = null;
+    for (const x of cands) if (x.o.kind !== "deal" && (!top || x.discount > top.discount || (x.discount === top.discount && sooner(x, top)))) top = x;
+    const chosen = (top && top.discount > dealTotal ? [top] : deals).sort((a, b) => b.discount - a.discount);
+    if (!dryRun) {
+      for (const g of chosen) {
+        await c.query("INSERT INTO biz_offer_uses(id,offer_id,biz_id,user_id,order_id,kind,amount,grant_id) VALUES($1,$2,$3,$4,$5,'use',$6,$7)", [crypto.randomUUID(), g.o.id, biz.id, uid, orderId ?? null, g.discount, g.e.grant?.id ?? null]);
+        if (g.e.grant) await c.query("UPDATE biz_offer_grants SET used_at=now(), order_id=$2 WHERE id=$1", [g.e.grant.id, orderId ?? null]);
+      }
+    }
+    const head = chosen[0];
+    return {
+      id: head.o.id, kind: head.o.kind, title: [...new Set(chosen.map((g) => g.o.title))].join("، "), discount: chosen.reduce((n, g) => n + g.discount, 0), via: head.e.via,
+      offers: chosen.map((g) => ({ id: g.o.id, kind: g.o.kind, title: g.o.title, discount: g.discount })),
+      lines: ls.map((_, i) => { const g = chosen.find((x) => x.shares[i] > 0); return g ? { discount: g.shares[i], id: g.o.id, kind: g.o.kind, title: g.o.title } : null; }),
+    };
   }
   /// إلغاء طلب يعيد الاستحقاق
   async function release(c, orderId) {
@@ -198,10 +253,10 @@ export default async function offers(app, opts = {}) {
     if (!rows.length) return;
     const member = uid ? await isMember(bizId, uid) : false;
     for (const it of items) {
-      const o = rows.find((x) => scoped(x, it.id) && (!x.members_only || member));
-      if (!o) continue;
-      const d = discountFor(o, { total: it.price, price: it.price, qty: 1 });
-      if (d > 0) it.deal = { id: o.id, title: o.title, price: it.price - d, endsAt: o.ends_at, membersOnly: o.members_only };
+      // أفضل سعر خاص للصنف، كما يختاره الطلب لسطره (apply)، فيطابق السعر المعروض ما يُخصم
+      let o = null, d = 0;
+      for (const x of rows) { if (!scoped(x, it.id) || (x.members_only && !member)) continue; const dx = dealUnit(x, Number(it.price)); if (dx > d) { o = x; d = dx; } }
+      if (o) it.deal = { id: o.id, title: o.title, price: Number(it.price) - d, endsAt: o.ends_at, membersOnly: o.members_only };
     }
   }
   async function counts(bizIds) {
@@ -303,7 +358,7 @@ export default async function offers(app, opts = {}) {
       if (state(o) === "active") { if (out.eligible || out.lockedReason === "loyalty") active.push(out); }
       else if (state(o) === "ended" && !out.usedByMe) expired.push(out);
     }
-    const used = (await pool.query(`SELECT u.*, o.title, o.kind, b.name AS biz_name, b.name_ar AS biz_name_ar, b.logo_url, ord.code, ord.total AS order_total, i.title AS item_title
+    const used = (await pool.query(`SELECT u.*, o.title, o.kind, b.name AS biz_name, b.name_ar AS biz_name_ar, b.logo_url, ord.code, ord.total AS order_total, COALESCE(ord.meta->>'cartTitle', i.title) AS item_title
       FROM biz_offer_uses u JOIN biz_offers o ON o.id=u.offer_id JOIN biz b ON b.id=u.biz_id LEFT JOIN biz_orders ord ON ord.id=u.order_id LEFT JOIN biz_items i ON i.id=ord.item_id
       WHERE u.user_id=$1 AND u.kind='use' AND u.created_at > now() - interval '180 days' ORDER BY u.created_at DESC LIMIT 200`, [uid])).rows;
     const sums = (await pool.query("SELECT COALESCE(SUM(amount) FILTER (WHERE created_at >= date_trunc('month', now())),0)::bigint AS month, COALESCE(SUM(amount),0)::bigint AS total, count(*) FILTER (WHERE kind='use')::int AS n FROM biz_offer_uses WHERE user_id=$1 AND kind='use'", [uid])).rows[0];

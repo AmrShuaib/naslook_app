@@ -1,11 +1,14 @@
 // سلة الدائرة في صفحتها العامة (نوفمبر 2026): اختيار خيارات المنتج، شريط السلة، ورقة السلة، وإتمام الطلب بملاحظة ووقت استلام
-// («في أقرب وقت» أو وقت اليوم ضمن ساعات العمل) ثم الدفع من المحفظة (المبلغ محجوز حتى الاستلام) أو في المكان حين يقبله كل صنف.
+// («في أقرب وقت» أو وقت اليوم ضمن ساعات العمل) ثم الدفع من المحفظة (المبلغ محجوز حتى الاستلام) أو في المكان حين يقبله كل صنف مدفوع.
+// مبلغ الإتمام من معاينة الخادم (POST /biz/:id/orders/quote) بالعرض الذي سيُطبَّق، ويُرسل مع الطلب expectTotal فلا يُخصم غيره.
 // المواعيد والتذاكر والغرف والسيارات تبقى على مسار الصنف الواحد في business_page.dart.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:latlong2/latlong.dart' show LatLng;
 
 import '../../api/biz_api.dart';
 import '../../api/biz_models.dart';
+import '../../api/client.dart' show ApiException;
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
@@ -111,7 +114,7 @@ Future<void> openCircleCart(BuildContext context, WidgetRef ref, Biz biz) async 
   final fresh = ref.read(bizDetailProvider(biz.id)).valueOrNull ?? biz;
   final choice = await _showCheckout(context, ref, fresh);
   if (choice == null || !context.mounted) return;
-  await placeCartOrder(context, ref, fresh, payment: choice.payment, pickupAt: choice.pickupAt, note: choice.note);
+  await placeCartOrder(context, ref, fresh, payment: choice.payment, pickupAt: choice.pickupAt, note: choice.note, quote: choice.quote, loc: choice.loc);
 }
 
 class _CartSheet extends ConsumerWidget {
@@ -198,39 +201,75 @@ class _CartSheet extends ConsumerWidget {
   }
 }
 
-typedef _Checkout = ({String payment, DateTime? pickupAt, String note});
+typedef _Priced = ({CartQuote? quote, LatLng? loc});
+typedef _Checkout = ({String payment, DateTime? pickupAt, String note, CartQuote? quote, LatLng? loc});
 
-/// إتمام الطلب: الأسطر والملاحظة ووقت الاستلام، ثم الدفع من المحفظة أو في المكان (إن قبله كل صنف في السلة).
+/// معاينة الخادم بحساب الطلب نفسه (الأسعار الحالية والعرض الذي سيُطبَّق)، والموقع حين للدائرة عروض ليُفتح «لمن هنا الآن» في
+/// المعاينة والطلب معاً. تعذّرها يُبقي التقدير المحلي والخادم يحسب المبلغ عند الطلب.
+Future<_Priced> _priceCart(WidgetRef ref, Biz biz, List<CartLine> lines) async {
+  LatLng? loc;
+  try {
+    loc = biz.offers > 0 ? await DeviceLocation.current(precise: true, timeout: const Duration(seconds: 3)) : null;
+  } catch (_) {
+    loc = null;
+  }
+  try {
+    final q = await ref.read(apiClientProvider).quoteBizCart(biz.id, lines: [for (final l in lines) l.toJson()], lat: loc?.latitude, lng: loc?.longitude);
+    // معاينة لا تطابق أسطر السلة (خادم أقدم) لا يُعتمد عليها
+    return (quote: q.lines.length == lines.length ? q : null, loc: loc);
+  } catch (_) {
+    return (quote: null, loc: loc);
+  }
+}
+
+/// إتمام الطلب: الأسطر والملاحظة ووقت الاستلام، ثم الدفع من المحفظة أو في المكان (إن قبله كل صنف مدفوع في السلة).
+/// المبلغ المعروض والمكتوب على زر الدفع من معاينة الخادم، وهو نفسه ما يُخصم (يُرسل expectTotal)؛ الزر ينتظر المعاينة.
 Future<_Checkout?> _showCheckout(BuildContext context, WidgetRef ref, Biz biz) async {
-  final resolved = resolveCart(biz, ref.read(circleCartProvider(biz.id)));
+  final lines = ref.read(circleCartProvider(biz.id));
+  final resolved = resolveCart(biz, lines);
   if (resolved.isEmpty || resolved.any((r) => !r.ok)) return null;
-  final total = resolved.fold(0, (n, r) => n + r.total);
-  final venue = total > 0 && resolved.every((r) => r.venueOk);
+  final estimate = resolved.fold(0, (n, r) => n + r.total);
+  _Priced? got;
+  final priced = _priceCart(ref, biz, lines).then((v) => got = v);
   final times = biz.pickupTimes;
   var note = '';
   DateTime? pickup;
   String two(int n) => n.toString().padLeft(2, '0');
   String clock(DateTime t) => '${two(t.hour)}:${two(t.minute)}';
+  Widget priceOf(Widget Function(CartQuote? q, bool waiting) build) =>
+      FutureBuilder<_Priced>(future: priced, builder: (_, snap) => build(snap.data?.quote, snap.connectionState != ConnectionState.done));
   final pay = await showActionSheet<String>(
     context,
     body: (ctx, setS) => Column(key: const Key('checkout-sheet'), mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('إتمام الطلب', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
       Text(biz.title, style: const TextStyle(color: Joy.textMuted, fontSize: 13)),
       const SizedBox(height: 10),
-      for (final (i, r) in resolved.indexed)
-        Padding(
-          key: Key('checkout-line-$i'),
-          padding: const EdgeInsets.symmetric(vertical: 3),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('${r.line.qty} × ${r.title}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                if (r.optionsLabel.isNotEmpty) Text(r.optionsLabel, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
-              ]),
-            ),
-            Text(money(r.total), style: const TextStyle(fontWeight: FontWeight.w600)),
-          ]),
-        ),
+      priceOf((q, waiting) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            for (final (i, r) in resolved.indexed)
+              Padding(
+                key: Key('checkout-line-$i'),
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('${r.line.qty} × ${r.title}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                      if (r.optionsLabel.isNotEmpty) Text(r.optionsLabel, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+                    ]),
+                  ),
+                  // بالمعاينة: مجموع السطر بأسعار الدائرة الحالية قبل العرض، والتوفير في سطره تحت الأسطر
+                  Text(money(q != null ? q.lines[i].total : r.total), key: Key('checkout-line-total-$i'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            if (q != null && q.discount > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(children: [
+                  const Icon(Icons.local_offer_rounded, size: 15, color: Joy.success),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text('وفّرت ${money(q.discount)} بعرض «${q.offer?.title ?? ''}»', key: const Key('checkout-savings'), style: const TextStyle(color: Joy.success, fontWeight: FontWeight.w700, fontSize: 13))),
+                ]),
+              ),
+          ])),
       const Divider(height: 18),
       const Text('وقت الاستلام', style: TextStyle(fontWeight: FontWeight.w700)),
       const SizedBox(height: 6),
@@ -246,31 +285,42 @@ Future<_Checkout?> _showCheckout(BuildContext context, WidgetRef ref, Biz biz) a
         const Padding(padding: EdgeInsets.only(top: 4), child: Text('لا أوقات متبقية اليوم ضمن ساعات العمل', key: Key('pickup-none-left'), style: TextStyle(color: Joy.textMuted, fontSize: 12))),
       const SizedBox(height: 10),
       _NoteField(onChanged: (v) => note = v),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
-        child: Row(children: [
-          const Text('الإجمالي', style: TextStyle(fontWeight: FontWeight.w600)),
-          const Spacer(),
-          Text(money(total), key: const Key('checkout-total'), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary, fontSize: 17)),
-        ]),
-      ),
-      const Padding(padding: EdgeInsets.only(top: 6), child: Text('يُحسب المبلغ النهائي من أسعار الدائرة الحالية عند الطلب، والعروض تُطبَّق تلقائياً.', style: TextStyle(color: Joy.textMuted, fontSize: 11.5))),
+      priceOf((q, waiting) => Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(12)),
+            child: Row(children: [
+              const Text('الإجمالي', style: TextStyle(fontWeight: FontWeight.w600)),
+              const Spacer(),
+              if (waiting) const Padding(padding: EdgeInsetsDirectional.only(end: 8), child: SizedBox(key: Key('checkout-quoting'), width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))),
+              Text(money(q?.total ?? estimate), key: const Key('checkout-total'), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary, fontSize: 17)),
+            ]),
+          )),
+      priceOf((q, waiting) => Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              q != null ? 'هذا ما يُخصم عند الطلب، بأسعار الدائرة الحالية والعروض المتاحة لك.' : 'يُحسب المبلغ النهائي من أسعار الدائرة الحالية عند الطلب، والعروض تُطبَّق تلقائياً.',
+              style: const TextStyle(color: Joy.textMuted, fontSize: 11.5),
+            ),
+          )),
     ]),
-    action: (ctx, _) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      FilledButton.icon(
-        key: const Key('checkout-pay-wallet'),
-        onPressed: () => Navigator.pop(ctx, 'wallet'),
-        icon: const Icon(Icons.account_balance_wallet_outlined),
-        label: Text(total == 0 ? 'أرسل الطلب' : venue ? 'ادفع الآن من المحفظة · ${money(total)}' : 'ادفع ${money(total)} من المحفظة'),
-      ),
-      if (venue) ...[
-        const SizedBox(height: 8),
-        OutlinedButton.icon(key: const Key('checkout-pay-venue'), onPressed: () => Navigator.pop(ctx, 'at_venue'), icon: const Icon(Icons.storefront_outlined), label: const Text('اطلب الآن وادفع في المكان')),
-      ],
-    ]),
+    action: (ctx, _) => priceOf((q, waiting) {
+      final total = q?.total ?? estimate;
+      final venue = total > 0 && (q?.venueOk ?? resolved.every((r) => r.venueOk));
+      return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        FilledButton.icon(
+          key: const Key('checkout-pay-wallet'),
+          onPressed: waiting ? null : () => Navigator.pop(ctx, 'wallet'),
+          icon: const Icon(Icons.account_balance_wallet_outlined),
+          label: Text(total == 0 ? 'أرسل الطلب' : venue ? 'ادفع الآن من المحفظة · ${money(total)}' : 'ادفع ${money(total)} من المحفظة'),
+        ),
+        if (venue) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(key: const Key('checkout-pay-venue'), onPressed: waiting ? null : () => Navigator.pop(ctx, 'at_venue'), icon: const Icon(Icons.storefront_outlined), label: const Text('اطلب الآن وادفع في المكان')),
+        ],
+      ]);
+    }),
   );
-  return pay == null ? null : (payment: pay, pickupAt: pickup, note: note.trim());
+  return pay == null ? null : (payment: pay, pickupAt: pickup, note: note.trim(), quote: got?.quote, loc: got?.loc);
 }
 
 /// حقل الملاحظة يملك متحكّمه فيُتلف مع الورقة بعد انتهاء حركة إغلاقها (لا قبلها)
@@ -296,26 +346,34 @@ class _NoteFieldState extends State<_NoteField> {
       );
 }
 
-/// يرسل السلة طلباً واحداً؛ عند «الرصيد غير كافٍ» يعرض الدفع في المكان مخرجاً حين يقبله كل صنف (وفي iOS لا دعوة للشحن).
-Future<void> placeCartOrder(BuildContext context, WidgetRef ref, Biz biz, {required String payment, DateTime? pickupAt, String note = ''}) async {
+/// يرسل السلة طلباً واحداً بالمبلغ الذي عرضته المعاينة [quote] (expectTotal)؛ عند «الرصيد غير كافٍ» يعرض الدفع في المكان مخرجاً
+/// حين يقبله كل صنف مدفوع (وفي iOS لا دعوة للشحن)، وعند تغيّر المبلغ منذ المعاينة لا يُخصم شيء ويُخبر بالمبلغ الجديد.
+Future<void> placeCartOrder(BuildContext context, WidgetRef ref, Biz biz, {required String payment, DateTime? pickupAt, String note = '', CartQuote? quote, LatLng? loc}) async {
   if (!requireAccount(context)) return;
   final lines = ref.read(circleCartProvider(biz.id));
   final resolved = resolveCart(biz, lines);
   if (resolved.isEmpty) return;
-  final total = resolved.fold(0, (n, r) => n + r.total);
+  final total = quote?.total ?? resolved.fold<int>(0, (n, r) => n + r.total);
   // الطلب المدفوع (والدفع في المكان كذلك) يحتاج إقرار 18+ مرة واحدة؛ السلة المجانية لا
   if (total > 0 && (!await requireAdult(context, ref) || !context.mounted)) return;
-  final venue = total > 0 && resolved.every((r) => r.venueOk);
+  final venue = total > 0 && (quote?.venueOk ?? resolved.every((r) => r.venueOk));
   try {
-    final loc = biz.offers > 0 ? await DeviceLocation.current(precise: true, timeout: const Duration(seconds: 3)) : null;
+    final at = quote != null ? loc : biz.offers > 0 ? await DeviceLocation.current(precise: true, timeout: const Duration(seconds: 3)) : null;
     final o = await ref.read(apiClientProvider).orderBizCart(biz.id,
-        lines: [for (final l in lines) l.toJson()], note: note, pickupAt: pickupAt, payment: payment, lat: loc?.latitude, lng: loc?.longitude);
+        lines: [for (final l in lines) l.toJson()], note: note, pickupAt: pickupAt, payment: payment, lat: at?.latitude, lng: at?.longitude, expectTotal: quote?.total);
     ref.read(circleCartProvider(biz.id).notifier).clear();
     invalidateBiz(ref, biz.id);
     ref.invalidate(walletProvider);
     if (context.mounted) showOrderSheet(context, o, biz: biz);
   } catch (e) {
     if (!context.mounted) return;
+    // تغيّر السعر أو العرض بين المعاينة والطلب: الخادم لم يخصم شيئاً، والسلة باقية ليراجعها بالمبلغ الجديد
+    if (e is ApiException && e.body?['error'] == 'total-changed') {
+      invalidateBiz(ref, biz.id);
+      final now = e.body?['total'];
+      toast(context, now is num ? 'تغيّر مبلغ الطلب إلى ${money(now.toInt())}، راجع سلتك وأعد المحاولة' : 'تغيّر مبلغ الطلب، راجع سلتك وأعد المحاولة', error: true);
+      return;
+    }
     if (!e.toString().contains('insufficient-funds')) {
       // سعر أو مخزون أو خيار تغيّر: نحدّث الكتالوج فتظهر المشكلة على سطرها في السلة
       invalidateBiz(ref, biz.id);
@@ -338,7 +396,7 @@ Future<void> placeCartOrder(BuildContext context, WidgetRef ref, Biz biz, {requi
           ],
         ),
       );
-      if (atVenue == true && context.mounted) await placeCartOrder(context, ref, biz, payment: 'at_venue', pickupAt: pickupAt, note: note);
+      if (atVenue == true && context.mounted) await placeCartOrder(context, ref, biz, payment: 'at_venue', pickupAt: pickupAt, note: note, quote: quote, loc: loc);
       return;
     }
     final go = await showDialog<String>(
@@ -356,6 +414,6 @@ Future<void> placeCartOrder(BuildContext context, WidgetRef ref, Biz biz, {requi
     );
     if (!context.mounted) return;
     if (go == 'wallet') Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletPage()));
-    if (go == 'venue') await placeCartOrder(context, ref, biz, payment: 'at_venue', pickupAt: pickupAt, note: note);
+    if (go == 'venue') await placeCartOrder(context, ref, biz, payment: 'at_venue', pickupAt: pickupAt, note: note, quote: quote, loc: loc);
   }
 }

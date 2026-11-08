@@ -129,7 +129,8 @@ class OwnerOrderCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = o.customer;
     final active = o.status == 'confirmed';
-    final when = o.startAt == null ? 'طُلب ${timeAgo(o.createdAt)}' : isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} ${shortDate(o.startAt!)}${o.endAt != null ? ' → ${shortDate(o.endAt!)}' : ''}';
+    // السلة بلا موعد: وقت الاستلام في البطاقة نفسها حتى يرتّب الفريق التجهيز («في أقرب وقت» أو «اليوم 19:30») دون فتح كل طلب
+    final when = o.isCart ? 'الاستلام ${o.pickupLabel} · طُلب ${timeAgo(o.createdAt)}' : o.startAt == null ? 'طُلب ${timeAgo(o.createdAt)}' : isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} ${shortDate(o.startAt!)}${o.endAt != null ? ' → ${shortDate(o.endAt!)}' : ''}';
     return JoyCard(
       onTap: () => showOwnerOrderSheet(context, ref, biz, o),
       child: Row(children: [

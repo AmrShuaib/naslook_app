@@ -13,7 +13,8 @@ export const SWEEP_MS = 10 * 60 * 1000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const latinDigits = (s) => String(s ?? "").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
-const clean = (v, max) => { const a = Array.from(String(v ?? "").replace(/\s+/g, " ").trim()); return (a.length > max ? a.slice(0, max) : a).join(""); };
+// محارف التحكم (ومنها NUL الذي يرفضه Postgres في TEXT فيصير الرد 500) تُحذف قبل ضم المسافات؛ الأسطر الجديدة والجدولة تصير مسافة
+const clean = (v, max) => { const a = Array.from(String(v ?? "").replace(/[\t\n\r\v\f]/g, " ").replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim()); return (a.length > max ? a.slice(0, max) : a).join(""); };
 const len = (s) => Array.from(s).length;
 /// جوال سعودي بأي صيغة شائعة إلى +9665XXXXXXXX (كما في biz_onboard.js)؛ null إن لم يكن جوالاً سعودياً
 export function normalizePhone(v) {

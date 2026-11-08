@@ -115,6 +115,8 @@ void main() {
     await pump(tester, const DeleteAccountPage());
     expect(find.byKey(const Key('del-blocker-open-orders')), findsOneWidget);
     expect(find.textContaining('طلبات مفتوحة'), findsOneWidget);
+    // دفتر العناوين يُحذف مع الحساب في الخطوة نفسها، فيُذكر فيما يُحذف
+    expect(find.textContaining('عناوين التوصيل المحفوظة'), findsOneWidget);
     expect(tester.widget<FilledButton>(find.byKey(const Key('del-submit'))).onPressed, isNull);
   });
 

@@ -464,10 +464,12 @@ export default async function commerce(app, opts) {
   const COD_OPEN = ["requested", "paid", "preparing", "on_the_way", "delivered"];
   // التوصيل: سقف الرسم (١٠٠٠ ر.س) والمسافة القصوى (٥٠٠ كم)، ومدة بقاء نسخة العنوان بعد انتهاء الطلب
   const DELIVERY_FEE_MAX = 100000, DELIVERY_KM_MAX = 500, ADDRESS_KEEP_DAYS = 30;
+  // رقم أو نص رقمي فقط: Number(true)=1 وNumber([5])=5 فلا يُقبل غيرهما رسماً أو مسافة
+  const numOf = (v) => (typeof v === "number" ? v : typeof v === "string" && /^\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : NaN);
   // رسم بالهللة: 0 = مجاني؛ null = غير صالح (400)
-  const feeOf = (v) => { if (v == null || v === "") return 0; const n = Number(v); return Number.isFinite(n) && n >= 0 && n <= DELIVERY_FEE_MAX ? Math.round(n) : null; };
-  // أقصى مسافة: null = بلا حد؛ undefined = غير صالح (400)
-  const maxKmOf = (v) => { if (v == null || v === "" || Number(v) === 0) return null; const n = Number(v); return Number.isFinite(n) && n >= 1 && n <= DELIVERY_KM_MAX ? Math.round(n * 10) / 10 : undefined; };
+  const feeOf = (v) => { if (v == null || v === "") return 0; const n = numOf(v); return Number.isFinite(n) && n >= 0 && n <= DELIVERY_FEE_MAX ? Math.round(n) : null; };
+  // أقصى مسافة: null = بلا حد (فارغ أو 0)؛ undefined = غير صالح (400)
+  const maxKmOf = (v) => { if (v == null || v === "") return null; const n = numOf(v); if (n === 0) return null; return Number.isFinite(n) && n >= 1 && n <= DELIVERY_KM_MAX ? Math.round(n * 10) / 10 : undefined; };
   const kmBetween = (a, b) => {
     const r = (d) => (d * Math.PI) / 180;
     const x = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lng - a.lng) / 2) ** 2;
@@ -835,9 +837,10 @@ export default async function commerce(app, opts) {
           if (subtotal < Number(cp.min_total ?? 0)) throw fail("coupon-min", { minTotal: Number(cp.min_total) });
           discount = cp.percent != null ? Math.floor(subtotal * Number(cp.percent) / 100) : Math.min(subtotal, Number(cp.amount ?? 0)); coupon = cp.code;
         }
-        // رسم التوصيل يُضاف بعد الخصم (الكوبون على البضاعة)، ولا عمولة عليه: يصل البائع كاملاً
+        // رسم التوصيل يُضاف بعد الخصم (الكوبون على البضاعة)، والعمولة على الإجمالي كله (البضاعة والرسم): لو استُثني الرسم لنقل
+        // البائع السعر إليه (عرض بصفر ورسم ١٠٠٠ ر.س) فلا يدفع عمولة أبداً
         const goods = Math.max(0, subtotal - discount);
-        total = goods + fee; commission = Math.floor(goods * commissionPct() / 100);
+        total = goods + fee; commission = Math.floor(total * commissionPct() / 100);
         if (total > 0 && adultMissing) throw fail("adult-required");
         // الطلب المجاني لا طريقة دفع له: يسلك مسار الطلب العادي بلا قبول مسبق
         payment = wantCod && total > 0 ? "cod" : "wallet";

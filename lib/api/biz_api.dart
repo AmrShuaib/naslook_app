@@ -36,12 +36,21 @@ extension BizApi on ApiClient {
       }));
   /// طلب السلة: أسطر {itemId, qty, options: {groupId: [choiceId]}}؛ المجموع يحسبه الخادم من الأسعار الحالية.
   /// [pickupAt] null = «في أقرب وقت»، وإلا وقت اليوم ضمن ساعات العمل.
-  Future<BizOrder> orderBizCart(String id, {required List<Map<String, dynamic>> lines, String note = '', DateTime? pickupAt, String payment = 'wallet', double? lat, double? lng}) async =>
+  /// [expectTotal] المبلغ الذي عرضته المعاينة: إن تغيّر عند الخادم يُرفض الطلب 409 total-changed بالمبلغ الجديد بدل خصم غيره.
+  Future<BizOrder> orderBizCart(String id, {required List<Map<String, dynamic>> lines, String note = '', DateTime? pickupAt, String payment = 'wallet', double? lat, double? lng, int? expectTotal}) async =>
       BizOrder.fromJson(await post('/biz/$id/orders', {
         'lines': lines,
         'note': note,
         if (pickupAt != null) 'pickupAt': pickupAt.toUtc().toIso8601String(),
         if (payment == 'at_venue') 'payment': 'at_venue',
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+        if (expectTotal != null) 'expectTotal': expectTotal,
+      }));
+  /// معاينة السلة: المبلغ النهائي بالعرض الذي سيُطبَّق، بحساب الطلب نفسه، بلا حجز ولا خصم.
+  Future<CartQuote> quoteBizCart(String id, {required List<Map<String, dynamic>> lines, double? lat, double? lng}) async =>
+      CartQuote.fromJson(await post('/biz/$id/orders/quote', {
+        'lines': lines,
         if (lat != null) 'lat': lat,
         if (lng != null) 'lng': lng,
       }));

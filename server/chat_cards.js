@@ -154,7 +154,7 @@ async function setup(app, opts) {
       }
       case "o": {
         const code = String(b ?? "").toUpperCase(); if (!CODE_RE.test(code)) return null;
-        const o = (await pool.query("SELECT o.*, i.title AS item_title, b.name, b.name_ar, b.category FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id WHERE o.code=$1", [code])).rows[0]; if (!o) return null;
+        const o = (await pool.query("SELECT o.*, COALESCE(o.meta->>'cartTitle', i.title) AS item_title, b.name, b.name_ar, b.category FROM biz_orders o JOIN biz_items i ON i.id=o.item_id JOIN biz b ON b.id=o.biz_id WHERE o.code=$1", [code])).rows[0]; if (!o) return null;
         return { type: "order", id: o.id, code: o.code, bizId: o.biz_id, itemId: o.item_id, title: o.item_title, subtitle: o.name_ar || o.name, category: o.category, kind: o.kind, qty: o.qty, startAt: o.start_at, total: Number(o.total), status: o.status, owner: personOf(await userRow(o.user_id)), link: `/c/${o.biz_id}` };
       }
       default: {

@@ -186,6 +186,55 @@ function applyOffer(b, it, qty, total, body) {
   return best;
 }
 
+// تسعير السلة كالخادم (business.js priceCart + offers.js apply): الأسطر من الكتالوج، ثم الأسعار الخاصة لكل سطر (السعر − سعر العرض لكل قطعة،
+// والفروق كاملة) أو أفضل عرض واحد على الطلب كله (الحد الأدنى على مجموع السلة) أيهما أوفر، والتعادل للأسعار الخاصة. يعيد {error} أو المعاينة.
+function mockPriceCart(b, body) {
+  const raw = Array.isArray(body.lines) ? body.lines : [{ itemId: body.itemId, qty: body.qty, options: body.options }];
+  const lines = [];
+  for (const l of raw) {
+    const ci = b.items.find(i => i.id === l.itemId);
+    if (!ci) return { status: 404, error: { error: 'not-found', itemId: l.itemId } };
+    if ((ci.kind ?? 'product') !== 'product') return { status: 400, error: { error: 'not-orderable', itemId: ci.id } };
+    let unit = ci.price; const opts = [];
+    for (const g of ci.meta?.options ?? []) { const ids = [].concat(l.options?.[g.id] ?? []); if (g.required && !ids.length) return { status: 400, error: { error: 'options-required', itemId: ci.id, group: g.name } }; for (const c of g.choices.filter(c => ids.includes(c.id))) { unit += c.delta; opts.push({ groupId: g.id, group: g.name, choiceId: c.id, choice: c.name, delta: c.delta }); } }
+    const q = Math.max(1, Math.min(20, Number(l.qty) || 1));
+    lines.push({ itemId: ci.id, title: ci.title, qty: q, unit, total: unit * q, options: opts, item: ci });
+  }
+  const subtotal = lines.reduce((n, l) => n + l.total, 0);
+  const member = bizFollows.has(b.id);
+  let cuts = lines.map(() => null);
+  if (body.offerId !== 'none' && subtotal > 0) {
+    const deals = lines.map((l) => { const d = dealFor(b, l.item); return d && l.total > 0 && (!d.membersOnly || member) ? { id: d.id, kind: 'deal', title: d.title, discount: Math.min(l.total, (l.item.price - d.price) * l.qty) } : null; });
+    const dealTotal = deals.reduce((n, d) => n + (d?.discount ?? 0), 0);
+    let top = null;
+    for (const o of activeOffersOf(b.id)) {
+      if (o.kind === 'deal' || o.kind === 'loyalty' || (o.membersOnly && !member)) continue;
+      const covered = lines.filter((l) => !o.itemId || o.itemId === l.itemId); if (!covered.length) continue;
+      if (offerUses.filter(u => u.offerId === o.id && u.kind === 'use').length >= (o.conditions.perUser ?? 99)) continue;
+      if (o.conditions.firstOrder && bizOrders.some(x => x.bizId === b.id && x.status !== 'cancelled')) continue;
+      if (o.conditions.minTotal && subtotal < o.conditions.minTotal) continue;
+      if (o.kind === 'checkin' && !(Number.isFinite(Number(body.lat)) && Number.isFinite(Number(body.lng)))) continue;
+      const t = covered.reduce((n, l) => n + l.total, 0);
+      const d = Math.min(t, o.value.type === 'percent' ? Math.round(t * o.value.amount / 100) : o.value.type === 'amount' ? o.value.amount : o.value.type === 'free_item' ? covered[0].item.price : 0);
+      if (d > 0 && (!top || d > top.d)) top = { o, d, covered };
+    }
+    if (top && top.d > dealTotal) {
+      // التوزيع على الأسطر للعرض فقط، والباقي على آخر سطر مشمول
+      const t = top.covered.reduce((n, l) => n + l.total, 0); let left = top.d;
+      cuts = lines.map((l) => { if (!top.covered.includes(l)) return null; const x = l === top.covered.at(-1) ? left : Math.floor(top.d * l.total / t); left -= x; return { id: top.o.id, kind: top.o.kind, title: top.o.title, discount: x }; });
+    } else cuts = deals;
+  }
+  const discount = cuts.reduce((n, c) => n + (c?.discount ?? 0), 0);
+  const used = [...new Map(cuts.filter(Boolean).map((c) => [c.id, c])).values()];
+  return {
+    subtotal, discount, total: subtotal - discount, title: mockCartTitle(lines),
+    offer: discount ? { id: used[0].id, kind: used[0].kind, title: used.map((c) => c.title).join('، '), discount, before: subtotal } : null,
+    lines: lines.map(({ item: _i, ...l }, i) => (cuts[i]?.discount > 0 ? { ...l, offer: cuts[i] } : l)),
+    venueOk: lines.every((l) => l.total <= 0 || l.item.payAtVenue === true),
+    used: used.map((u) => ({ id: u.id, title: u.title, amount: cuts.reduce((n, c) => n + (c?.id === u.id ? c.discount : 0), 0) })),
+  };
+}
+
 const OWNED = new Set(['biz-ikea']); const posts = {}; const staff = {}; const replies = {};
 // كالخادم: الموعد (clinic) أسبوع في أيام العمل meta.days (0=الأحد … 6=السبت بتاريخ السعودية)، والعرض ثلاثة أيام
 const slotsOf = (it) => { const out = []; const now = new Date(); const loc = new Date(now.getTime() + 180 * 60000); const work = Array.isArray(it.meta?.days) && it.meta.days.length ? it.meta.days.map(Number) : null; for (let d = 0; d < (it.kind === 'clinic' ? 7 : 3); d++) { if (work && !work.includes(new Date(Date.UTC(loc.getUTCFullYear(), loc.getUTCMonth(), loc.getUTCDate() + d)).getUTCDay())) continue; for (const t of (it.meta?.times || [])) { const [h, m] = t.split(':').map(Number); const at = new Date(Date.UTC(loc.getUTCFullYear(), loc.getUTCMonth(), loc.getUTCDate() + d, h, m) - 180 * 60000); if (at > now) out.push({ startsAt: at.toISOString(), seatsLeft: (it.stock ?? 0) - bizOrders.filter(o => o.itemId === it.id && o.startAt === at.toISOString() && o.status === 'confirmed').reduce((n, o) => n + o.qty, 0) }); } } return out; };
@@ -324,26 +373,22 @@ function bizRoute(req, res, url, key) {
   m = key.match(/^GET \/biz\/([a-z0-9-]+)$/); if (m) { const b = SEED.find(x => x.id === m[1]); if (!b) return json(404, { error: 'not-found' }); return json(200, { ...ownerBiz(b), posts: posts[b.id] ?? [], items: b.items.map(it => itemOut(b, it)), reviews: bizReviews[b.id] ? [{ user: { id: 'SA0000001', nickname: 'amr' }, rating: bizReviews[b.id].rating, text: bizReviews[b.id].text, createdAt: now, mine: true, reply: replies[b.id + 'SA0000001'] ?? null }] : [{ user: { id: 'SA0000002', nickname: 'sara' }, rating: 4, text: 'خدمة ممتازة', createdAt: now, mine: false, reply: replies[b.id + 'SA0000002'] ?? null }], myOrders: bizOrders.filter(o => o.bizId === b.id).map(orderOut), pickupTimes: mockPickupTimes(b.hours) }); }
   m = key.match(/^(POST|DELETE) \/biz\/([a-z0-9-]+)\/follow$/); if (m) { readBody(() => { if (m[1] === 'POST') bizFollows.add(m[2]); else bizFollows.delete(m[2]); json(200, { ok: true }); }); return true; }
   m = key.match(/^POST \/biz\/([a-z0-9-]+)\/reviews$/); if (m) { readBody((b) => { bizReviews[m[1]] = { rating: b.rating, text: b.text }; json(200, { ok: true }); }); return true; }
+  // معاينة السلة (business.js /orders/quote): المبلغ النهائي بالعرض بلا حجز
+  m = key.match(/^POST \/biz\/([a-z0-9-]+)\/orders\/quote$/); if (m) { readBody((body) => { const b = SEED.find(x => x.id === m[1]); if (!b) return json(404, { error: 'not-found' }); const q = mockPriceCart(b, body); if (q.error) return json(q.status, q.error); const { used: _u, ...out } = q; json(200, out); }); return true; }
   m = key.match(/^POST \/biz\/([a-z0-9-]+)\/orders$/); if (m) { readBody((body) => { const b = SEED.find(x => x.id === m[1]);
     if (b && (Array.isArray(body.lines) || (body.options && typeof body.options === 'object'))) {
-      const raw = Array.isArray(body.lines) ? body.lines : [{ itemId: body.itemId, qty: body.qty, options: body.options }];
-      const lines = [];
-      for (const l of raw) {
-        const ci = b.items.find(i => i.id === l.itemId);
-        if (!ci) return json(404, { error: 'not-found', itemId: l.itemId });
-        if ((ci.kind ?? 'product') !== 'product') return json(400, { error: 'not-orderable', itemId: ci.id });
-        let unit = ci.price; const opts = [];
-        for (const g of ci.meta?.options ?? []) { const ids = [].concat(l.options?.[g.id] ?? []); if (g.required && !ids.length) return json(400, { error: 'options-required', itemId: ci.id, group: g.name }); for (const c of g.choices.filter(c => ids.includes(c.id))) { unit += c.delta; opts.push({ groupId: g.id, group: g.name, choiceId: c.id, choice: c.name, delta: c.delta }); } }
-        const q = Math.max(1, Math.min(20, Number(l.qty) || 1));
-        lines.push({ itemId: ci.id, title: ci.title, qty: q, unit, total: unit * q, options: opts, venue: ci.payAtVenue === true });
-      }
+      const q = mockPriceCart(b, body);
+      if (q.error) return json(q.status, q.error);
+      // المبلغ الذي عرضته المعاينة: إن تغيّر لا يُخصم غيره
+      if (body.expectTotal != null && Number(body.expectTotal) !== q.total) return json(409, { error: 'total-changed', total: q.total });
       const venue = body.payment === 'at_venue';
-      if (venue && !lines.every(l => l.venue)) return json(409, { error: 'venue-not-allowed' });
-      if (process.env.MOCK_BROKE && !venue) return json(402, { error: 'insufficient-funds' });
-      const total = lines.reduce((n, l) => n + l.total, 0), title = mockCartTitle(lines);
-      const o = { id: 'ord-' + (bizOrders.length + 1), bizId: b.id, bizName: b.name, bizNameAr: b.nameAr, category: b.category, itemId: lines[0].itemId, title, kind: 'product', qty: lines.reduce((n, l) => n + l.qty, 0), startAt: null, endAt: null, units: 1, total, status: 'confirmed', code: 'NAS-MOCK' + (bizOrders.length + 1), note: body.note ?? '', meta: { cartTitle: title }, createdAt: new Date().toISOString(),
+      if (venue && q.total > 0 && !q.venueOk) return json(409, { error: 'venue-not-allowed' });
+      if (process.env.MOCK_BROKE && !venue && q.total > 0) return json(402, { error: 'insufficient-funds' });
+      const total = q.total, title = q.title;
+      const o = { id: 'ord-' + (bizOrders.length + 1), bizId: b.id, bizName: b.name, bizNameAr: b.nameAr, category: b.category, itemId: q.lines[0].itemId, title, kind: 'product', qty: q.lines.reduce((n, l) => n + l.qty, 0), startAt: null, endAt: null, units: 1, total, status: 'confirmed', code: 'NAS-MOCK' + (bizOrders.length + 1), note: body.note ?? '', meta: { cartTitle: title }, createdAt: new Date().toISOString(),
         payment: total > 0 ? (venue ? 'at_venue' : 'wallet') : 'free', funds: total > 0 && !venue ? 'held' : null, releaseAt: total > 0 && !venue ? new Date(Date.now() + 3 * 86400000).toISOString() : null,
-        cart: true, lines: lines.map(({ venue: _v, ...l }) => l), pickupAt: body.pickupAt ?? null };
+        cart: true, lines: q.lines, pickupAt: body.pickupAt ?? null, ...(q.offer ? { offer: q.offer } : {}) };
+      for (const u of q.used) offerUses.push({ id: 'u-' + Date.now() + u.id, offerId: u.id, bizId: b.id, kind: 'use', amount: u.amount, total, orderId: o.id, orderCode: o.code, title: u.title, itemTitle: title, usedAt: new Date().toISOString() });
       bizOrders.unshift(o); return json(200, orderOut(o));
     }
     const it = b?.items.find(i => i.id === body.itemId); if (!it) return json(404, { error: 'not-found' }); const atVenue = body.payment === 'at_venue'; if (atVenue && !it.payAtVenue) return json(409, { error: 'venue-not-allowed' }); if (process.env.MOCK_BROKE && !atVenue) return json(402, { error: 'insufficient-funds' }); const qty = Math.max(1, Math.min(20, Number(body.qty) || 1)); let units = 1, total = it.price * qty, startAt = body.startAt ?? null, endAt = body.endAt ?? null; if (it.kind === 'room' || it.kind === 'car') { units = Math.round((new Date(endAt) - new Date(startAt)) / 86400000); total = it.price * units * (it.kind === 'room' ? qty : 1); } const o = { id: 'ord-' + (bizOrders.length + 1), bizId: b.id, bizName: b.name, bizNameAr: b.nameAr, category: b.category, itemId: it.id, title: it.title, kind: it.kind, qty: it.kind === 'car' ? 1 : qty, startAt, endAt, units, total, status: 'confirmed', code: 'NAS-MOCK' + (bizOrders.length + 1), note: body.note ?? '', meta: (it.kind === 'showtime' || it.kind === 'clinic') ? { movie: it.title, hall: it.meta.hall } : {}, createdAt: new Date().toISOString(), payment: total > 0 ? (atVenue ? 'at_venue' : 'wallet') : 'free', funds: total > 0 && !atVenue ? 'held' : null, releaseAt: total > 0 && !atVenue ? new Date(Date.now() + 3 * 86400000).toISOString() : null }; if (body.offerId === 'none') { /* بلا عرض */ } else { const best = applyOffer(b, it, qty, total, body); if (body.offerId && body.offerId !== 'none' && (!best || best.o.id !== body.offerId)) return json(409, { error: 'offer-unavailable', reason: 'not-found' }); if (best) { o.total = total - best.d; o.offer = { id: best.o.id, kind: best.o.kind, title: best.o.title, discount: best.d, before: total }; offerUses.push({ id: 'u-' + Date.now(), offerId: best.o.id, bizId: b.id, kind: 'use', amount: best.d, total: o.total, orderId: o.id, orderCode: o.code, title: best.o.title, itemTitle: it.title, usedAt: new Date().toISOString() }); } } bizOrders.unshift(o); json(200, orderOut(o)); }); return true; }

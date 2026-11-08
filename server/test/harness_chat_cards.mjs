@@ -83,6 +83,10 @@ await pool.query("UPDATE biz SET owner_id='SA0000002', verified=true, verificati
 const ord = await call('POST', '/biz/biz-brew92/orders', { body: { itemId: 'brew92-v60', qty: 1 }, user: 'SA0000001', expect: 200 });
 c = await cards([`#o/${ord.code}`], 'SA0000002');
 check(c[`#o/${ord.code}`]?.type === 'order' && c[`#o/${ord.code}`].bizId === 'biz-brew92' && c[`#o/${ord.code}`].owner?.nickname === 'amr' && c[`#o/${ord.code}`].status === 'confirmed', '#o/code → order card', JSON.stringify(c[`#o/${ord.code}`]));
+// طلب السلة: البطاقة بعنوان السلة («… وصنف آخر») لا بعنوان صنفها الأول مع مجموعها كله
+const cartOrd = await call('POST', '/biz/biz-brew92/orders', { body: { lines: [{ itemId: 'brew92-v60' }, { itemId: 'brew92-croissant' }] }, user: 'SA0000001', expect: 200 });
+c = await cards([`#o/${cartOrd.code}`], 'SA0000002');
+check(c[`#o/${cartOrd.code}`]?.title === cartOrd.title && /وصنف آخر$/.test(c[`#o/${cartOrd.code}`].title) && c[`#o/${cartOrd.code}`].total === cartOrd.total, '#o/code of a cart → the cart title, not its first item', JSON.stringify(c[`#o/${cartOrd.code}`]));
 
 // الحد الأقصى للإشارات وتكرارها
 const many = Array.from({ length: 60 }, (_, i) => `@u${i}`);

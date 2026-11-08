@@ -157,7 +157,7 @@ class _ListingFormPageState extends State<ListingFormPage> {
           Wrap(spacing: 8, children: [for (final e in marketConditions.entries) ChoiceChip(key: Key('lf-cond-${e.key}'), label: Text(e.value), selected: condition == e.key, showCheckmark: false, selectedColor: Joy.primarySoft, onSelected: (_) => setState(() => condition = condition == e.key ? null : e.key))]),
         ],
         SwitchListTile(key: const Key('lf-delivery'), contentPadding: EdgeInsets.zero, value: delivery, onChanged: (v) => setState(() => delivery = v), title: const Text('التوصيل متاح'), subtitle: const Text('يختار المشتري «توصيل» وعنواناً من عناوينه، ويظهر في الفلاتر', style: TextStyle(fontSize: 12))),
-        // رسم التوصيل وأقصى مسافة: يُضاف الرسم إلى إجمالي الطلب ويصلك كاملاً بلا عمولة؛ المسافة تُفحص حين يحدد المشتري موقعه وللعرض موقع
+        // رسم التوصيل وأقصى مسافة: يُضاف الرسم إلى إجمالي الطلب، والعمولة على الإجمالي كله (البضاعة والرسم)؛ المسافة تُفحص حين يحدد المشتري موقعه وللعرض موقع
         if (delivery) Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(child: TextField(key: const Key('lf-delivery-fee'), controller: fee, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'رسم التوصيل (ر.س)', hintText: 'فارغ = مجاني'))),
           const SizedBox(width: 10),

@@ -120,7 +120,7 @@ class MyListingRow extends ConsumerWidget {
           const SizedBox(width: 10),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-            Text('${l.price == 0 ? 'مجاناً' : money(l.price)} · ${listingStatusLabel(l.status)}${l.spotlight ? ' · سبوت لايت' : ''}', style: TextStyle(color: listingStatusColor(l.status), fontSize: 12.5, fontWeight: FontWeight.w600)),
+            Text('${listingPriceText(l)} · ${listingStatusLabel(l.status)}${l.spotlight ? ' · سبوت لايت' : ''}', style: TextStyle(color: listingStatusColor(l.status), fontSize: 12.5, fontWeight: FontWeight.w600)),
             Text('${l.views} مشاهدة · ${l.sold} مبيعة${l.stock != null ? ' · المتوفر ${l.stock}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 11.5)),
           ])),
           if (l.status == 'blocked') const Icon(Icons.block_rounded, color: Joy.danger)
@@ -184,7 +184,7 @@ class OrderPayChip extends StatelessWidget {
         decoration: BoxDecoration(color: o.cod ? Joy.sunSoft : Joy.surface2, borderRadius: BorderRadius.circular(999)),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(o.cod ? Icons.payments_outlined : Icons.account_balance_wallet_outlined, size: 14, color: o.cod ? Joy.sunText : Joy.textMuted), const SizedBox(width: 4),
-          Text(orderPaymentLabel(o), style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: o.cod ? Joy.sunText : Joy.textMuted)),
+          Flexible(child: Text(orderPaymentLabel(o), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: o.cod ? Joy.sunText : Joy.textMuted))),
         ]),
       );
 }
@@ -206,10 +206,13 @@ class OrderCard extends ConsumerWidget {
       ]),
       const SizedBox(height: 10),
       Row(children: [
-        Flexible(child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: orderStatusColor(o.status).withValues(alpha: .12), borderRadius: BorderRadius.circular(999)), child: Text(orderStatusText(o), key: Key('order-status-${o.id}'), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: orderStatusColor(o.status), fontSize: 12, fontWeight: FontWeight.w700)))),
-        const SizedBox(width: 6), OrderPayChip(o),
-        if (o.isDelivery) ...[const SizedBox(width: 6), OrderDeliveryChip(o)],
-        const Spacer(),
+        // الشارات تلتف إلى سطر ثانٍ في الجوالات الضيقة (٣٢٠–٣٦٠) بدل أن تدفع زر «قبول الطلب» خارج البطاقة
+        Expanded(child: Wrap(spacing: 6, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: orderStatusColor(o.status).withValues(alpha: .12), borderRadius: BorderRadius.circular(999)), child: Text(orderStatusText(o), key: Key('order-status-${o.id}'), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: orderStatusColor(o.status), fontSize: 12, fontWeight: FontWeight.w700))),
+          OrderPayChip(o),
+          if (o.isDelivery) OrderDeliveryChip(o),
+        ])),
+        const SizedBox(width: 6),
         if (o.status == 'completed' && !o.mineAsSeller && !o.reviewed) TextButton(onPressed: () => reviewOrder(context, ref, o), child: const Text('قيّم')),
         if (o.status == 'requested' && o.mineAsSeller) FilledButton(key: Key('card-accept-${o.id}'), style: FilledButton.styleFrom(minimumSize: const Size(44, 38)), onPressed: () => acceptCodOrder(context, ref, o), child: const Text('قبول الطلب')),
         if (o.status == 'paid' && o.mineAsSeller) FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(44, 38)), onPressed: () => advanceOrder(context, ref, o, 'preparing'), child: const Text('بدء التحضير')),

@@ -5,6 +5,7 @@ import '../../api/offers_map_api.dart';
 import '../../api/models.dart';
 import '../../api/posts_api.dart';
 import '../../api/row_api.dart';
+import '../market/market_delivery.dart' show listingPriceText;
 
 /// نوع العنصر المعروض على الخريطة. الفعالية والوظيفة تأتيان من «الصف» فقط (لا طبقة خريطة لهما).
 enum MapItemKind { person, story, pin, business, post, listing, offer, event, job }
@@ -54,7 +55,7 @@ class MapItem {
         lat: l.lat ?? 0,
         lng: l.lng ?? 0,
         title: l.title,
-        subtitle: '${l.price == 0 ? 'مجاناً' : money(l.price)} · ${l.seller.nickname}${l.placeName != null && l.placeName!.isNotEmpty ? ' · ${l.placeName}' : ''}',
+        subtitle: '${listingPriceText(l)} · ${l.seller.nickname}${l.placeName != null && l.placeName!.isNotEmpty ? ' · ${l.placeName}' : ''}',
         at: l.publishAt,
         author: l.seller,
         data: l,

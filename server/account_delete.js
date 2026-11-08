@@ -102,7 +102,7 @@ export default async function accountDelete(app, opts = {}) {
     return { blockers: out, warnings: warn, balance };
   }
 
-  const REMOVES = ["email", "profile", "photo", "location", "posts", "listings", "community", "follows", "notifications", "sessions"];
+  const REMOVES = ["email", "profile", "photo", "location", "posts", "listings", "community", "follows", "notifications", "addresses", "sessions"];
   const KEEPS = ["financial-records", "delivered-messages", "reports"];
 
   app.get("/me/account/delete/preview", async (req, reply) => {
@@ -219,6 +219,8 @@ export default async function accountDelete(app, opts = {}) {
       if (has("market_seller_upgrades", "seller_id")) await run("market_seller_upgrades", "DELETE FROM market_seller_upgrades WHERE seller_id=$1");
       if (has("biz_offer_grants", "user_id", "used_at", "expires_at")) await run("biz_offer_grants", "UPDATE biz_offer_grants SET expires_at=now() WHERE user_id=$1 AND used_at IS NULL");
       if (has("events", "host_id", "cancelled", "starts_at")) await run("events", "UPDATE events SET cancelled=true WHERE host_id=$1 AND starts_at > now() AND NOT cancelled");
+      // دفتر العناوين (addresses.js) يُحذف داخل المعاملة؛ كنس الإضافة الدوري يبقى احتياطاً. نسخ العناوين على الطلبات القائمة تبقى للتوصيل
+      if (has("user_addresses", "user_id")) await run("user_addresses", "DELETE FROM user_addresses WHERE user_id=$1");
       // ملاحظات الطلبات المنتهية قد تحمل عناوين أو أرقاماً
       if (has("market_orders", "buyer_id", "seller_id", "note")) await run("market_orders.notes", "UPDATE market_orders SET note='' WHERE (buyer_id=$1 OR seller_id=$1) AND note<>'' AND status IN ('completed','cancelled','refunded')");
       if (has("user_flags", "user_id", "suspended", "note")) await run("user_flags", "INSERT INTO user_flags(user_id, suspended, note) VALUES($1, true, 'account-deleted') ON CONFLICT (user_id) DO UPDATE SET suspended=true, note='account-deleted', updated_at=now()");

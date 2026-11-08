@@ -11,7 +11,7 @@ const OPS = new URL('./ops-test', import.meta.url).pathname;
 fs.rmSync(OPS, { recursive: true, force: true });
 const pool = new pg.Pool({ host: '127.0.0.1', user: 'postgres', password: 'pg', database: 'naslife_test' });
 await pool.query(`DROP TABLE IF EXISTS login_aliases, account_recovery, legal_consents, account_deletions, sessions, profiles, push_subscriptions, contacts, user_flags, admins, team_members CASCADE`);
-await pool.query(`DROP TABLE IF EXISTS wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders, biz_disputes, admin_audit, chat_live, user_follows, follow_notify_log CASCADE`);
+await pool.query(`DROP TABLE IF EXISTS wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders, biz_disputes, admin_audit, chat_live, user_follows, follow_notify_log, user_addresses CASCADE`);
 await pool.query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, nickname TEXT, avatar_url TEXT, is_admin BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
 await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ");
 await pool.query("DELETE FROM users");
@@ -37,7 +37,8 @@ await pool.query(`CREATE TABLE sessions (token TEXT PRIMARY KEY, user_id TEXT NO
   CREATE TABLE chat_live (id UUID PRIMARY KEY, from_id TEXT NOT NULL, to_id TEXT NOT NULL, lat DOUBLE PRECISION, lng DOUBLE PRECISION, accuracy REAL, updated_at TIMESTAMPTZ,
     until TIMESTAMPTZ NOT NULL, stopped_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
   CREATE TABLE user_follows (follower_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (follower_id, user_id));
-  CREATE TABLE follow_notify_log (follower_id TEXT NOT NULL, author_id TEXT NOT NULL, last_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (follower_id, author_id));`);
+  CREATE TABLE follow_notify_log (follower_id TEXT NOT NULL, author_id TEXT NOT NULL, last_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (follower_id, author_id));
+  CREATE TABLE user_addresses (id UUID PRIMARY KEY, user_id TEXT NOT NULL, label TEXT NOT NULL, district TEXT NOT NULL);`);
 
 // ---- نواة وهمية تقرأ الأسماء من جدول users (فتغيير الاسم في القاعدة يُلغي الدخول بالاسم القديم)
 const secrets = new Map(); // id -> {password, phrase}
@@ -109,6 +110,7 @@ r = await call('GET', '/me/account/delete/preview');
 check(r.code === 401, 'preview requires auth');
 r = await call('GET', '/me/account/delete/preview', { token: monaTok });
 check(r.code === 200 && r.json.canDelete === true && r.json.confirmWord === 'حذف' && r.json.hasRecovery === true, 'clean account can be deleted', JSON.stringify(r.json));
+check(r.json.removes.includes('addresses'), 'the preview lists saved addresses among what is removed');
 const listing = crypto.randomUUID(), order = crypto.randomUUID();
 await pool.query("INSERT INTO market_listings(id,seller_id,title) VALUES($1,'SA0000009','lamp')", [listing]);
 await pool.query("INSERT INTO market_orders(id,listing_id,buyer_id,seller_id,total,status) VALUES($1,$2,$3,'SA0000009',5000,'paid')", [order, listing, mona]);
@@ -184,6 +186,8 @@ await pool.query(`INSERT INTO chat_live(id,from_id,to_id,lat,lng,accuracy,update
 // المتابعات وسجل حد إشعار «لحظة جديدة» (profile_ext.js) منها وإليها، وزوج لا يخصها
 await pool.query("INSERT INTO user_follows(follower_id,user_id) VALUES($1,'SA0000009'),('SA0000009',$1),('SA0000008','SA0000009')", [mona]);
 await pool.query("INSERT INTO follow_notify_log(follower_id,author_id) VALUES($1,'SA0000009'),('SA0000009',$1),('SA0000008','SA0000009')", [mona]);
+// دفتر العناوين (addresses.js): عنوانان لها وعنوان لغيرها
+await pool.query("INSERT INTO user_addresses(id,user_id,label,district) VALUES($1,$3,'البيت','الروضة'),($2,$3,'العمل','الشاطئ'),($4,'SA0000008','البيت','الصفا')", [crypto.randomUUID(), crypto.randomUUID(), mona, crypto.randomUUID()]);
 const walletSumBefore = await n('SELECT COALESCE(sum(amount),0)::bigint AS n FROM wallet_tx');
 const txBefore = await n('SELECT count(*)::int AS n FROM wallet_tx WHERE user_id=$1', [mona]);
 r = await call('POST', '/me/account/delete', { token: monaTok, body: { password: 'Password1', confirm: 'حذف', refund: true, reason: 'test' } });
@@ -201,6 +205,7 @@ check(lives[liveOther].stopped_at === null && lives[liveOther].lat === 21.7, 'ot
 check(await n('SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id=$1', [mona]) === 0 && await n('SELECT count(*)::int AS n FROM contacts WHERE user_id=$1 OR contact_id=$1', [mona]) === 0, 'push subscriptions and contacts removed');
 check((await pool.query('SELECT status FROM map_posts WHERE id=$1', [post])).rows[0].status === 'hidden' && await n("SELECT count(*)::int AS n FROM market_listings WHERE seller_id=$1 AND status='hidden'", [mona]) === 1, 'posts and listings hidden');
 check(await n('SELECT count(*)::int AS n FROM user_follows WHERE follower_id=$1 OR user_id=$1', [mona]) === 0 && await n('SELECT count(*)::int AS n FROM follow_notify_log WHERE follower_id=$1 OR author_id=$1', [mona]) === 0, 'follows and the follow-notify log removed on both sides');
+check(await n('SELECT count(*)::int AS n FROM user_addresses WHERE user_id=$1', [mona]) === 0 && await n("SELECT count(*)::int AS n FROM user_addresses WHERE user_id='SA0000008'") === 1, 'saved addresses deleted in the deletion itself (not left for the sweep); others untouched');
 check(await n("SELECT count(*)::int AS n FROM user_follows WHERE follower_id='SA0000008'") === 1 && await n("SELECT count(*)::int AS n FROM follow_notify_log WHERE follower_id='SA0000008'") === 1, 'other users\' follows and notify log untouched');
 const bz = Object.fromEntries((await pool.query('SELECT id, owner_id, active FROM biz')).rows.map((x) => [x.id, x]));
 check(bz.mine.active === false && bz.mine.owner_id === null && bz.seeded.active === true && bz.seeded.owner_id === null, 'own circle deactivated, claimed seeded circle released', JSON.stringify(bz));
@@ -251,6 +256,6 @@ check((await pool.query('SELECT purged_at FROM account_deletions WHERE user_id=$
 console.log(fails ? `${fails} FAILED` : 'ALL OK');
 await app.close();
 // جداول هذه الحزمة مختصرة؛ تُحذف كي تنشئها الإضافات كاملة في الحزم التالية (run.sh all)
-await pool.query(`DROP TABLE IF EXISTS sessions, profiles, push_subscriptions, contacts, user_flags, admins, team_members, admin_audit, wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders, biz_disputes CASCADE`);
+await pool.query(`DROP TABLE IF EXISTS sessions, profiles, push_subscriptions, contacts, user_flags, admins, team_members, admin_audit, wallet_tx, wallet_accounts, market_orders, market_listings, map_posts, map_post_likes, events, tickets, biz, biz_claims, biz_orders, biz_disputes, user_addresses CASCADE`);
 await pool.end();
 process.exit(fails ? 1 : 0);

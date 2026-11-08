@@ -1,7 +1,7 @@
 // دفتر العناوين وتوصيل السوق (بند 13 من نواقص الإطلاق، 7 نوفمبر 2026) على Postgres المحلي:
 // الدفتر: الإنشاء والتحقق (الحي، النقطة، الجوال، الكلمات الممنوعة)، الافتراضي، الحد ١٠ (ومتوازياً)، الخصوصية (غيري لا يقرأ ولا يعدّل ولا يحذف)،
 // ومسح عناوين الحساب المحذوف. التوصيل: رسم التوصيل وأقصى مسافة على العرض، الرسم في الإجمالي للمحفظة وللدفع عند الاستلام (والكوبون
-// على البضاعة، ولا عمولة على الرسم)، فحص المسافة، نسخة العنوان على الطلب، من يراها (المشتري، البائع بعد القبول، المندوب ما دام مكلّفاً،
+// على البضاعة، والعمولة على الإجمالي ومنه الرسم فلا يُنقل السعر إلى الرسم)، فحص المسافة، نسخة العنوان على الطلب، من يراها (المشتري، البائع بعد القبول، المندوب ما دام مكلّفاً،
 // الإدارة في النزاع)، الاسترداد بالرسم، الفاتورة، والكنس بعد ٣٠ يوماً ولحساب محذوف. الحزمة متينة أمام صفوف حزم أخرى في القاعدة نفسها.
 import Fastify from 'fastify';
 import pg from 'pg';
@@ -66,6 +66,12 @@ check((await call('POST', '/me/addresses', { body: { label: 'البيت', distri
 check((await call('POST', '/me/addresses', { body: { label: 'البيت', district: 'الروضة', lat: 200, lng: 39 }, expect: 400 })).error === 'bad-point', 'point out of range');
 check((await call('POST', '/me/addresses', { body: { label: 'البيت', district: 'حي ممنوعة' }, expect: 400 })).error === 'banned-words', 'banned words in the address');
 check((await call('POST', '/me/addresses', { body: { label: 'البيت', district: 'الروضة', details: 'x'.repeat(201) }, expect: 400 })).error === 'bad-details', 'details are capped at 200');
+// محارف التحكم: NUL يرفضه Postgres في TEXT (كان 500)؛ تُحذف، والتسمية التي لا يبقى منها شيء 400
+check((await call('POST', '/me/addresses', { body: { label: '\u0000', district: 'الروضة' }, expect: 400 })).error === 'bad-label', 'a label of only NUL is refused, not a 500');
+const ctl = await call('POST', '/me/addresses', { user: OTHER, body: { label: 'الب\u0000يت', district: 'الرو\u0007ضة', details: 'سطر\nثانٍ\u0000', city: 'جدة\u001f' }, expect: 200 });
+check(ctl.label === 'البيت' && ctl.district === 'الروضة' && ctl.details === 'سطر ثانٍ' && ctl.city === 'جدة', 'control characters are stripped from every field (newline becomes a space)');
+check((await call('PATCH', `/me/addresses/${ctl.id}`, { user: OTHER, body: { details: '\u0000\u0000' }, expect: 200 })).details === '', 'edit strips NUL too');
+await call('DELETE', `/me/addresses/${ctl.id}`, { user: OTHER, expect: 200 });
 // قرب البائع في جدة (الروضة) وبعيد في الدمام وبلا نقطة
 const HOME = await call('POST', '/me/addresses', { body: { label: 'البيت', district: 'الروضة', details: 'شارع الأمير سلطان، عمارة ٣، الدور الثاني', city: 'جدة', lat: 21.55, lng: 39.16, phone: '0551234567' }, expect: 200 });
 check(HOME.isDefault === true && HOME.phone === '+966551234567' && HOME.lat === 21.55 && HOME.city === 'جدة', 'first address is the default, phone normalised');
@@ -112,6 +118,13 @@ const LP = await call('POST', '/market', { user: SELLER, body: { title: 'قهو�
 check(LP.delivery === false && LP.deliveryFee === 0 && LP.deliveryMaxKm === null, 'defaults: no delivery, free, no limit');
 const LF = await call('POST', '/market', { user: SELLER, body: { title: 'توصيل مجاني بلا موقع', kind: 'product', category: 'gifts', price: 2000, delivery: true }, expect: 200 });
 check((await call('PATCH', `/market/${LF.id}`, { user: SELLER, body: { deliveryFee: 'abc' }, expect: 400 })).error === 'bad-delivery-fee', 'edit validates the fee');
+// رقم أو نص رقمي فقط (Number(true)=1 كان يُحفظ رسماً بهللة واحدة)
+check((await call('PATCH', `/market/${LF.id}`, { user: SELLER, body: { deliveryFee: true }, expect: 400 })).error === 'bad-delivery-fee', 'a boolean fee is refused');
+check((await call('PATCH', `/market/${LF.id}`, { user: SELLER, body: { deliveryFee: [500] }, expect: 400 })).error === 'bad-delivery-fee', 'an array fee is refused');
+check((await call('PATCH', `/market/${LF.id}`, { user: SELLER, body: { deliveryMaxKm: true }, expect: 400 })).error === 'bad-delivery-km', 'a boolean max distance is refused');
+check((await call('POST', '/market', { user: SELLER, body: { title: 'رسم منطقي', kind: 'product', category: 'food', price: 5000, delivery: true, deliveryFee: false }, expect: 400 })).error === 'bad-delivery-fee', 'a boolean fee is refused on create');
+check((await call('PATCH', `/market/${LF.id}`, { user: SELLER, body: { deliveryFee: '300', deliveryMaxKm: '12.5' }, expect: 200 })).deliveryMaxKm === 12.5, 'numeric strings still work');
+check((await call('GET', `/market/${LF.id}`, { user: OTHER })).deliveryFee === 300, 'and the string fee is stored as a number');
 check((await call('PATCH', `/market/${LF.id}`, { user: SELLER, body: { deliveryFee: 500, deliveryMaxKm: 0 }, expect: 200 })).deliveryFee === 500, 'edit sets the fee; 0 km = no limit');
 check((await call('PATCH', `/market/${LF.id}`, { user: SELLER, body: { deliveryFee: 0 }, expect: 200 })).deliveryFee === 0, 'and back to free');
 check((await call('GET', `/market/${L.id}`, { user: OTHER, expect: 200 })).deliveryFee === 1500, 'public listing shows the fee');
@@ -130,8 +143,8 @@ check(await balance(BUYER) === 100000, 'nothing charged for refused orders');
 await call('POST', '/market/coupons', { user: SELLER, body: { code: 'ADR10', percent: 10 }, expect: 200 });
 const n0 = notes.length;
 const W1 = await call('POST', `/market/${L.id}/order`, { body: { qty: 2, fulfilment: 'delivery', addressId: HOME.id, coupon: 'ADR10' }, expect: 200 });
-// البضاعة ١٠٠٠٠ − خصم ١٠٠٠ = ٩٠٠٠ + رسم ١٥٠٠ = ١٠٥٠٠؛ العمولة ١٠٪ من البضاعة = ٩٠٠
-check(W1.total === 10500 && W1.discount === 1000 && W1.commission === 900 && W1.deliveryFee === 1500 && W1.fulfilment === 'delivery' && W1.deliveryKm > 0 && W1.deliveryKm < 3, `wallet total = goods − coupon + fee, commission on goods only (${W1.total}/${W1.commission}/${W1.deliveryKm} km)`);
+// البضاعة ١٠٠٠٠ − خصم ١٠٠٠ = ٩٠٠٠ + رسم ١٥٠٠ = ١٠٥٠٠؛ العمولة ١٠٪ من الإجمالي ومنه الرسم = ١٠٥٠
+check(W1.total === 10500 && W1.discount === 1000 && W1.commission === 1050 && W1.deliveryFee === 1500 && W1.fulfilment === 'delivery' && W1.deliveryKm > 0 && W1.deliveryKm < 3, `wallet total = goods − coupon + fee, commission on the whole total (${W1.total}/${W1.commission}/${W1.deliveryKm} km)`);
 check(await balance(BUYER) === 100000 - 10500, 'wallet charged the fee too');
 const nW = notes.slice(n0).find((n) => n.kind === 'market_order');
 check(nW && /توصيل/.test(nW.body) && !/الروضة|سلطان|0551234567|\+966/.test(nW.body), 'seller notification mentions delivery but not the address');
@@ -174,13 +187,20 @@ check((await call('GET', `/market/orders/${W1.id}`, { user: RIDER, expect: 200 }
 // الاكتمال: البائع يستلم الإجمالي ناقص العمولة (الرسم كاملاً)، ولا يرى العنوان بعدها
 const sBefore = await balance(SELLER);
 await call('POST', `/market/orders/${W1.id}/confirm`, { expect: 200 });
-check(await balance(SELLER) - sBefore === 10500 - 900, 'seller receives goods − commission + the full fee');
+check(await balance(SELLER) - sBefore === 10500 - 1050, 'seller receives the total − commission (the fee pays commission like the goods)');
 check((await call('GET', `/market/orders/${W1.id}`, { user: SELLER })).address === null, 'seller no longer sees the address after completion');
 check((await call('GET', `/market/orders/${W1.id}`)).address?.district === 'الروضة', 'buyer still sees it');
 // الإلغاء يرد الرسم مع البضاعة
 const bBefore = await balance(BUYER);
 await call('POST', `/market/orders/${N1.id}/cancel`, { expect: 200 });
 check(await balance(BUYER) - bBefore === 6500, 'cancel refunds the fee too');
+// السعر لا يُنقل إلى الرسم: عرض بصفر ورسم ٢٠٠ ر.س (توصيل فقط) يدفع العمولة على الرسم، وكان يدفع صفراً
+const LZ = await call('POST', '/market', { user: SELLER, body: { title: 'سعر في الرسم', kind: 'product', category: 'gifts', price: 0, delivery: true, deliveryFee: 20000 }, expect: 200 });
+const Z1 = await call('POST', `/market/${LZ.id}/order`, { body: { qty: 1, fulfilment: 'delivery', addressId: HOME.id }, expect: 200 });
+check(Z1.total === 20000 && Z1.commission === 2000, `a zero price with a 200 SAR fee pays commission on the fee (${Z1.total}/${Z1.commission})`);
+const zBefore = await balance(SELLER);
+await call('POST', `/market/orders/${Z1.id}/confirm`, { expect: 200 });
+check(await balance(SELLER) - zBefore === 18000, 'seller receives the fee less commission');
 // الإدارة: العنوان في النزاع فقط
 const D1 = await call('POST', `/market/${L.id}/order`, { body: { qty: 1, fulfilment: 'delivery', addressId: HOME.id }, expect: 200 });
 check((await call('GET', `/market/orders/${D1.id}`, { user: ADMIN, expect: 200 })).address === null, 'admin does not see the address of an ordinary order');
