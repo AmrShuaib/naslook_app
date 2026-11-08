@@ -393,7 +393,7 @@ class _PostViewerPageState extends ConsumerState<PostViewerPage> {
     final url = mediaUrl(album[i]);
     final o = PostViewerPage.warmPhotoOverride;
     if (o != null) return o(url);
-    unawaited(precacheImage(NetworkImage(url), context, onError: (_, __) {}));
+    unawaited(precacheImage(NetworkImage(mediaUrl(album[i])), context, onError: (_, __) {}));
   }
 
   // --- الطبقة الصوتية ---

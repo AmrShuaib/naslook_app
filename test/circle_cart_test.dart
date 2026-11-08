@@ -343,9 +343,12 @@ void main() {
     expect(find.text('في أقرب وقت'), findsOneWidget);
     await tester.tapAt(const Offset(400, 20));
     await _settle(tester);
+    // الاستلام بورقة المسح (الإدخال اليدوي في الورقة نفسها) ثم ملخص الطلب ثم «تأكيد»
     await _tap(tester, find.byKey(const Key('orders-checkin-code')));
-    await tester.enterText(find.byType(TextField).last, 'NAS-C1');
-    await _tap(tester, find.text('تأكيد'));
+    await tester.enterText(find.byKey(const Key('qr-manual')), 'NAS-C1');
+    await _tap(tester, find.byKey(const Key('qr-manual-go')));
+    expect(find.byKey(const Key('scan-summary')), findsOneWidget);
+    await _tap(tester, find.byKey(const Key('scan-confirm')));
     expect(srv.last('POST /biz/biz-cafe/checkin')!['code'], 'NAS-C1');
     expect(find.byKey(const Key('checkin-lines-dialog')), findsOneWidget);
     expect(find.descendant(of: find.byKey(const Key('checkin-lines-dialog')), matching: find.text('كرواسون')), findsOneWidget);
