@@ -53,6 +53,8 @@ jobs:
       - run: flutter analyze
       # بدون Service Worker (كما في النسخ المنشورة سابقاً) حتى يصل كل تحديث فوراً دون ملفات مخزّنة قديمة
       - run: flutter build web --release --pwa-strategy=none
+      # مفتاح إطفاء عامل الخدمة القديم مكان الملف الفارغ (انظر web/sw_reset.js)
+      - run: cp web/sw_reset.js build/web/flutter_service_worker.js
 
       - name: Checkout webapp-build branch
         uses: actions/checkout@v4

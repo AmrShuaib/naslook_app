@@ -25,6 +25,28 @@ void main() {
     expect(AppUpdate.available.value, isTrue);
   });
 
+  test('a compiled build id beats the first-read baseline: a stale page still sees the newer build', () async {
+    AppUpdate.buildIdOverride = 'old-1';
+    // الصفحة جاءت قديمة لكن أول قراءة من الشبكة هي النسخة الجديدة: البصمة وحدها لا تكشف ذلك، المعرّف يكشفه
+    AppUpdate.fetchOverride = () async => '{"bundle":"bbbb","id":"new-2"}';
+    await AppUpdate.check();
+    expect(AppUpdate.available.value, isTrue);
+  });
+
+  test('matching build id keeps quiet; build.json without id falls back to the bundle baseline', () async {
+    AppUpdate.buildIdOverride = 'same-1';
+    AppUpdate.fetchOverride = () async => '{"bundle":"aaaa","id":"same-1"}';
+    await AppUpdate.check();
+    await AppUpdate.check();
+    expect(AppUpdate.available.value, isFalse);
+    AppUpdate.fetchOverride = () async => '{"bundle":"aaaa"}';
+    await AppUpdate.check();
+    expect(AppUpdate.current, 'aaaa');
+    AppUpdate.fetchOverride = () async => '{"bundle":"cccc"}';
+    await AppUpdate.check();
+    expect(AppUpdate.available.value, isTrue);
+  });
+
   testWidgets('the banner appears when an update is available and «تحديث الآن» reloads', (tester) async {
     var reloaded = 0;
     AppUpdate.reloadOverride = () => reloaded++;
