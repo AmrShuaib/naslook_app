@@ -46,57 +46,8 @@
   </style>
 </head>
 <body>
-  <script>
-    // نسخ سابقة سجّلت Service Worker يخزّن ملفات قديمة؛ نلغيه كي يصل التحديث فوراً
-    // (نُبقي push_sw.js الخاص بالإشعارات الفورية لأنه لا يخزّن شيئاً)
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function (rs) {
-        rs.forEach(function (r) {
-          var w = r.active || r.waiting || r.installing;
-          if (!w || !/push_sw\.js/.test(w.scriptURL)) r.unregister();
-        });
-      });
-      if (window.caches) { caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); }); }
-    }
-  </script>
-  <script>
-    // احتياط للحقول التي تُنشأ داخل shadow DOM حيث لا تصل قاعدة CSS أعلاه: نضبط اتجاهها وخطها عند ظهورها
-    (function () {
-      var fix = function (el) {
-        if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
-        if (el.style.direction !== 'rtl') el.style.direction = 'rtl';
-      };
-      var scan = function (root) {
-        if (!root || !root.querySelectorAll) return;
-        root.querySelectorAll('input, textarea').forEach(fix);
-      };
-      var observe = function (root) {
-        if (!root || root.__naslifeObserved) return;
-        root.__naslifeObserved = true;
-        scan(root);
-        new MutationObserver(function (muts) {
-          muts.forEach(function (m) {
-            m.addedNodes.forEach(function (n) {
-              if (n.nodeType !== 1) return;
-              fix(n); scan(n);
-              if (n.shadowRoot) observe(n.shadowRoot);
-            });
-          });
-        }).observe(root, { childList: true, subtree: true });
-      };
-      observe(document);
-      // نحمّل أوزان Rubik مسبقاً حتى يكون الخط جاهزاً في حقل الإدخال الخفي منذ أول لمسة
-      if (document.fonts && document.fonts.load) {
-        ['400', '500', '600', '700'].forEach(function (w) { document.fonts.load(w + ' 16px Rubik').catch(function () {}); });
-        document.fonts.load('700 16px BalooBhaijaan2').catch(function () {});
-      }
-      // flutter-view قد يُنشأ لاحقاً مع shadow root
-      var tick = setInterval(function () {
-        document.querySelectorAll('flutter-view, flt-glass-pane').forEach(function (v) { if (v.shadowRoot) observe(v.shadowRoot); });
-      }, 1000);
-      setTimeout(function () { clearInterval(tick); }, 30000);
-    })();
-  </script>
+  <!-- لا سكربتات مضمّنة: سياسة الأمان (CSP) في الموقع الحي تمنعها؛ كل كود ما قبل Flutter في boot.js -->
+  <script src="boot.js"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
