@@ -43,9 +43,27 @@
     /* التطبيق كله من اليمين إلى اليسار بينما يترك Flutter اتجاه الحقل الخفي LTR، فيرسم المتصفح النص المختلط
        (عربي + إنجليزي) بترتيب مغاير لما يُرسم على الشاشة؛ نوحّد الاتجاه حتى يطابق التحديد والمؤشر ما يراه المستخدم. */
     flt-text-editing-host input, flt-text-editing-host textarea, flutter-view input, flutter-view textarea, flt-glass-pane input, flt-glass-pane textarea { direction: rtl !important; }
+    /* مقدمة التطبيق: الشعار فوق كل شيء حتى يرسم Flutter أول إطار (web/boot.js يخفيه)، وبالمقاس والموضع نفسيهما في
+       lib/ui/launch_splash.dart فلا يرى المستخدم قفزة. لا سكربت هنا: CSP يمنع المضمّن. */
+    #splash { position: fixed; inset: 0; z-index: 2147483000; background: #FFFFFF; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; transition: opacity .35s ease, visibility .35s; }
+    #splash.out { opacity: 0; visibility: hidden; }
+    #splash img { width: min(56vw, 260px); height: auto; animation: splash-in .6s cubic-bezier(.2, .8, .2, 1) both; }
+    #splash .dots { display: flex; gap: 8px; }
+    #splash .dots i { width: 8px; height: 8px; border-radius: 50%; animation: splash-dot 1s ease-in-out infinite; }
+    #splash .dots i:nth-child(1) { background: #FEB304; }
+    #splash .dots i:nth-child(2) { background: #0275FD; animation-delay: .15s; }
+    #splash .dots i:nth-child(3) { background: #29B25F; animation-delay: .3s; }
+    #splash .dots i:nth-child(4) { background: #EE3B2A; animation-delay: .45s; }
+    @keyframes splash-in { from { opacity: 0; transform: scale(.86); } to { opacity: 1; transform: none; } }
+    @keyframes splash-dot { 0%, 80%, 100% { transform: scale(.6); opacity: .4; } 40% { transform: scale(1); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { #splash img, #splash .dots i { animation: none; } #splash { transition: none; } }
   </style>
 </head>
 <body>
+  <div id="splash" aria-hidden="true">
+    <img src="assets/assets/brand/naslife_logo.png" alt="" width="600" height="600">
+    <div class="dots"><i></i><i></i><i></i><i></i></div>
+  </div>
   <!-- لا سكربتات مضمّنة: سياسة الأمان (CSP) في الموقع الحي تمنعها؛ كل كود ما قبل Flutter في boot.js -->
   <script src="boot.js"></script>
   <script src="flutter_bootstrap.js" async></script>
