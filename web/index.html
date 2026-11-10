@@ -47,7 +47,7 @@
        lib/ui/launch_splash.dart فلا يرى المستخدم قفزة. لا سكربت هنا: CSP يمنع المضمّن. */
     #splash { position: fixed; inset: 0; z-index: 2147483000; background: #FFFFFF; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; transition: opacity .35s ease, visibility .35s; }
     #splash.out { opacity: 0; visibility: hidden; }
-    #splash img { width: min(56vw, 260px); height: auto; animation: splash-in .6s cubic-bezier(.2, .8, .2, 1) both; }
+    #splash img { width: min(70vw, 320px); height: auto; animation: splash-in .6s cubic-bezier(.2, .8, .2, 1) both; }
     #splash .dots { display: flex; gap: 8px; }
     #splash .dots i { width: 8px; height: 8px; border-radius: 50%; animation: splash-dot 1s ease-in-out infinite; }
     #splash .dots i:nth-child(1) { background: #FEB304; }
@@ -61,7 +61,7 @@
 </head>
 <body>
   <div id="splash" aria-hidden="true">
-    <img src="assets/assets/brand/naslife_logo.png" alt="" width="600" height="600">
+    <img src="assets/assets/brand/naslife_logo.png" alt="" width="800" height="800">
     <div class="dots"><i></i><i></i><i></i><i></i></div>
   </div>
   <!-- لا سكربتات مضمّنة: سياسة الأمان (CSP) في الموقع الحي تمنعها؛ كل كود ما قبل Flutter في boot.js -->

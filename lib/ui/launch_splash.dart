@@ -13,8 +13,8 @@ class LaunchSplash extends StatefulWidget {
   /// ألوان الشعار بترتيب النقاط في index.html (أصفر، أزرق، أخضر، أحمر)
   static const dotColors = [Color(0xFFFEB304), Color(0xFF0275FD), Color(0xFF29B25F), Color(0xFFEE3B2A)];
 
-  /// عرض الشعار: 56% من عرض الشاشة بحد 260 (يطابق `min(56vw, 260px)` في index.html)
-  static double logoWidth(double screenWidth) => math.min(screenWidth * 0.56, 260);
+  /// عرض الشعار: 70% من عرض الشاشة بحد 320 (يطابق `min(70vw, 320px)` في index.html)
+  static double logoWidth(double screenWidth) => math.min(screenWidth * 0.70, 320);
 
   @override
   State<LaunchSplash> createState() => _LaunchSplashState();

@@ -4,14 +4,14 @@
 
 ## المصدر
 - الشعار الأصلي من المالك، مقصوص ومربع: `tools/brand/naslife_logo_1024.png`.
-- نسخة التطبيق والويب: `assets/brand/naslife_logo.png` (600×600، خلفية بيضاء). يخدمها الويب على `assets/assets/brand/naslife_logo.png`.
+- نسخة التطبيق والويب: `assets/brand/naslife_logo.png` (800×800، خلفية بيضاء). يخدمها الويب على `assets/assets/brand/naslife_logo.png`.
 - ألوان النقاط من الشعار: أصفر `#FEB304`، أزرق `#0275FD`، أخضر `#29B25F`، أحمر `#EE3B2A`.
 
 ## التسلسل
-1. **الويب قبل Flutter**: `#splash` في `web/index.html` (تنسيق CSS مضمّن مسموح؛ لا سكربت مضمّن لأن CSP يمنعه): الشعار بعرض `min(56vw, 260px)` على أبيض مع أربع نقاط نابضة.
+1. **الويب قبل Flutter**: `#splash` في `web/index.html` (تنسيق CSS مضمّن مسموح؛ لا سكربت مضمّن لأن CSP يمنعه): الشعار بعرض `min(70vw, 320px)` (كُبّر بطلب المالك في 10 نوفمبر 2026) على أبيض مع أربع نقاط نابضة.
 2. **إخفاؤه**: `web/boot.js` ينتظر حدث `flutter-first-frame` ثم يخفيه بتلاشٍ (350 م.ث) ويزيله، بحد أدنى ثانية من بدء الصفحة حتى يُرى الشعار، واحتياط بعد دقيقة إن تعثّر الإقلاع.
 3. **داخل Flutter**: `LaunchSplash` (`lib/ui/launch_splash.dart`) يحل محل مؤشر التحميل في `AuthGate` (حالة `AuthStatus.loading`) بالمقاس والموضع نفسيهما، فيختفي شعار المتصفح فوق شعار التطبيق بلا قفزة حتى تُستعاد الجلسة.
-4. **iOS**: `LaunchScreen.storyboard` يعرض `LaunchImage` (200 نقطة، صور 200/400/600) على أبيض، ثم `LaunchSplash`.
+4. **iOS**: `LaunchScreen.storyboard` يعرض `LaunchImage` (260 نقطة، صور 260/520/780) على أبيض، ثم `LaunchSplash`.
 5. **تطبيق الويب المثبّت**: `background_color` في `web/manifest.json` أبيض ليطابق.
 
 تقليل الحركة في النظام يوقف النبض والتلاشي في الويب وFlutter.
@@ -20,5 +20,9 @@
 - `flutter test test/launch_splash_test.dart`: المقاس والأصل والألوان وثبات النقاط مع تقليل الحركة.
 - `node tools/dev/web_boot_check.mjs build/web` بعد البناء: الشعار يظهر فوراً، يُزال بعد أول إطار، `boot.js` يُحمَّل، ولا مخالفة CSP.
 
-## لم يتغير
-أيقونة التطبيق (`tools/brand/app_icon_1024.png`) وأيقونات الويب ما زالت الدبوس «ناس» القديم؛ توحيدها مع الشعار الجديد قرار منفصل للمالك.
+## أيقونة التطبيق
+بقرار المالك (10 نوفمبر 2026) الأيقونة هي **الرمز وحده** (فقاعة المحادثة والأشخاص) بلا كلمة Naslife، على أبيض.
+- الأصل: `tools/brand/naslife_symbol.png` (مقصوص من شعار المالك).
+- التوليد: `tools/brand/make_icons.py` (يحتاج Pillow) يكتب أيقونات الويب (`favicon.png` و`icons/Icon-*.png`، والقابلة للقص بهامش الدائرة الآمنة)، وأيقونات iOS كلها من `AppIcon.appiconset/Contents.json` بلا شفافية، وأيقونات أندرويد، و`tools/brand/app_icon_1024.png`.
+- نسبة الرمز: 74% من الأيقونة العادية، 56% من القابلة للقص، 92% من أيقونة المتصفح الصغيرة.
+- `tools/brand/app_icon.html` و`launch_logo.html` يولّدان الهوية القديمة (الدبوس «ناس») وبقيا للتاريخ فقط.

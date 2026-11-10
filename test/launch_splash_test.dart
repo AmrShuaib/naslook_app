@@ -1,12 +1,12 @@
-// مقدمة التطبيق: الشعار بمقاس index.html نفسه (56% بحد 260) ونقاط بألوان الشعار، وثابتة مع تقليل الحركة.
+// مقدمة التطبيق: الشعار بمقاس index.html نفسه (70% بحد 320) ونقاط بألوان الشعار، وثابتة مع تقليل الحركة.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:naslook/ui/launch_splash.dart';
 
 void main() {
-  test('logo width matches index.html: min(56vw, 260px)', () {
-    expect(LaunchSplash.logoWidth(390), closeTo(218.4, .01));
-    expect(LaunchSplash.logoWidth(1280), 260);
+  test('logo width matches index.html: min(70vw, 320px)', () {
+    expect(LaunchSplash.logoWidth(390), closeTo(273, .01));
+    expect(LaunchSplash.logoWidth(1280), 320);
   });
 
   testWidgets('shows the Naslife logo asset on white with four brand dots', (tester) async {
@@ -17,7 +17,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     final img = tester.widget<Image>(find.byKey(const Key('launch-logo')));
     expect((img.image as AssetImage).assetName, LaunchSplash.asset);
-    expect(img.width, closeTo(218.4, .01));
+    expect(img.width, closeTo(273, .01));
     expect(tester.widget<Scaffold>(find.byKey(const Key('launch-splash'))).backgroundColor, Colors.white);
     final dots = tester.widgetList<Container>(find.descendant(of: find.byType(Row), matching: find.byType(Container)));
     expect(dots.map((c) => (c.decoration as BoxDecoration).color), LaunchSplash.dotColors);
