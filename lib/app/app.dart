@@ -43,6 +43,7 @@ import '../pages/search/search_page.dart';
 import '../pages/chat/chats_page.dart';
 import '../core/update/app_update.dart';
 import '../ui/update_banner.dart';
+import '../ui/launch_splash.dart';
 
 export '../core/require_account.dart' show guestWantsLoginProvider, guestBrowseProvider;
 
@@ -83,7 +84,8 @@ class AuthGate extends ConsumerWidget {
     final status = ref.watch(appStateProvider.select((s) => s.status));
     switch (status) {
       case AuthStatus.loading:
-        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        // مقدمة التطبيق: الشعار نفسه الذي عرضه index.html قبل تحميل Flutter، حتى تُستعاد الجلسة
+        return const LaunchSplash();
       case AuthStatus.signedOut:
         // رابط عام (دائرة أو حساب) بلا جلسة: نعرض الوجهة كزائر مع شريط للدخول؛ ووضع التصفّح بلا حساب يعرض تبويبات الزائر،
         // إلا إن طلب الزائر الدخول

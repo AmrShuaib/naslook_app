@@ -33,7 +33,26 @@
     .catch(function () {});
 })();
 
-// 2) احتياط للحقول التي تُنشأ داخل shadow DOM حيث لا تصل قاعدة CSS في index.html: نضبط اتجاهها عند ظهورها،
+// 2) مقدمة التطبيق (#splash في index.html): تبقى حتى يرسم Flutter أول إطار، وهو الشعار نفسه (lib/ui/launch_splash.dart)
+// فتختفي فوقه بلا قفزة. حد أدنى ثانية من بدء الصفحة حتى يُرى الشعار، واحتياط بعد دقيقة إن تعثّر الإقلاع.
+(function () {
+  var splash = document.getElementById('splash');
+  if (!splash) return;
+  var gone = false;
+  var hide = function () {
+    if (gone) return;
+    gone = true;
+    var since = window.performance && performance.now ? performance.now() : 1000;
+    setTimeout(function () {
+      splash.className = 'out';
+      setTimeout(function () { if (splash.parentNode) splash.parentNode.removeChild(splash); }, 450);
+    }, Math.max(0, 1000 - since));
+  };
+  window.addEventListener('flutter-first-frame', hide);
+  setTimeout(hide, 60000);
+})();
+
+// 3) احتياط للحقول التي تُنشأ داخل shadow DOM حيث لا تصل قاعدة CSS في index.html: نضبط اتجاهها عند ظهورها،
 // ونحمّل أوزان الخط مسبقاً حتى يكون جاهزاً في حقل الإدخال الخفي منذ أول لمسة.
 (function () {
   var fix = function (el) {

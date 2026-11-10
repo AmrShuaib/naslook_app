@@ -3,7 +3,7 @@
     "short_name": "Naslife",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0A6E78",
+    "background_color": "#FFFFFF",
     "theme_color": "#0A6E78",
     "description": "Naslife — تطبيق ناس لايف",
     "orientation": "portrait-primary",
