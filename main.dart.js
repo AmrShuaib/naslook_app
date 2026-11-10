@@ -47880,7 +47880,7 @@ return A.c(A.aN7(),$async$RN)
 case 7:h=a0
 m=h
 l=B.cb.t_(m,null)
-k="06f75ce-20261110102109"
+k="d283632-20261110114201"
 c=t.f
 if(c.b(l)){g=l.h(0,"id")
 f=g==null?null:J.n(g)}else f=null
@@ -210202,7 +210202,7 @@ r=s.r
 if(!(r!=null&&r.a!=null))s.wa()}},
 k(){this.gGY().k()
 this.aEv()},
-t(a){var s=null,r=Math.min(A.ay(a,B.c7,t.w).w.a.a*0.56,260)
+t(a){var s=null,r=Math.min(A.ay(a,B.c7,t.w).w.a.a*0.7,320)
 return A.bY(s,B.k,A.cR(A.w(A.a([A.ahC("assets/brand/naslife_logo.png",s,s,!0,r,B.bEA,"\u0646\u0627\u0633 \u0644\u0627\u064a\u0641",r),B.cm,A.iU(this.gGY(),new A.c0u(this),s,s)],t.p),B.f,s,B.c,B.v,0,B.i),s,s,s),s,s,!1,s,B.bCp,s)}}
 A.c0u.prototype={
 $2(a,b){var s,r,q,p=null,o=t.p,n=A.a([],o)
