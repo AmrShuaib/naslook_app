@@ -1,0 +1,506 @@
+<title>الشراء من اللحظة</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@600;800&family=Rubik:wght@400;500;700&display=swap">
+<style>
+  /* التخطيط: صفحة نقاش، هاتف تفاعلي لكل نوع منشور يفتح ورقة فعل فوق اللحظة نفسها، ثم الجدول والقواعد والأسئلة. ألوان «بحر جدة». */
+  :root {
+    --bg: #F4F8F8; --surface: #FFFFFF; --fg: #10201F; --muted: #5A6B6C; --line: #D8E3E3;
+    --sea: #0A6E78; --sea-on: #FFFFFF; --sea-soft: #DDF1F2; --coral: #BF3A1E; --coral-soft: #FCE9E3; --frame: #17221F;
+    --ph-bg: #0A1315; --ph-fg: #FFFFFF; --ph-muted: rgba(255,255,255,.74); --ph-chip: rgba(255,255,255,.16);
+    --ph-action: #FFD66B; --ph-action-on: #2B2000; --ph-sea: #39B3BE;
+    --sh-bg: #FFFFFF; --sh-fg: #10201F; --sh-muted: #63716F; --sh-line: #E3EAEA; --sh-pick: #0A6E78; --sh-pick-soft: #E0F3F4; --ok: #1FA35A;
+    --font-display: 'Baloo Bhaijaan 2', 'Rubik', system-ui, sans-serif;
+    --font-body: 'Rubik', system-ui, -apple-system, 'Segoe UI', Tahoma, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #0B1213; --surface: #132022; --fg: #E6EFEF; --muted: #9AB0B1; --line: #233739; --sea: #45BAC4; --sea-on: #032629; --sea-soft: #12343A; --coral: #F27C5E; --coral-soft: #3A1F18; --frame: #2B3A3C; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --bg: #0B1213; --surface: #132022; --fg: #E6EFEF; --muted: #9AB0B1; --line: #233739; --sea: #45BAC4; --sea-on: #032629; --sea-soft: #12343A; --coral: #F27C5E; --coral-soft: #3A1F18; --frame: #2B3A3C; color-scheme: dark; }
+
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); direction: rtl; line-height: 1.65; font-size: 15px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; display: grid; gap: 40px; }
+  h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.25; margin: 0; }
+  h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 800; color: var(--sea); }
+  h2 { font-size: clamp(22px, 3.2vw, 28px); font-weight: 800; }
+  h3 { font-size: 20px; font-weight: 800; }
+  p { margin: 0; }
+  .lead { color: var(--muted); max-width: 64ch; font-size: 16px; }
+  header.top, section { display: grid; gap: 14px; }
+  .sec-head { display: grid; gap: 6px; }
+  .sec-head p { color: var(--muted); max-width: 66ch; }
+
+  /* الآن مقابل المقترح */
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; }
+  .flowbox { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: grid; gap: 10px; }
+  .flowbox b.lbl { font-size: 13px; color: var(--muted); font-weight: 500; }
+  .steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .step { padding: 6px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-size: 14px; }
+  .step.hot { background: var(--sea); color: var(--sea-on); border-color: transparent; font-weight: 500; }
+  .arrow { color: var(--muted); }
+  .count { font-family: var(--font-display); font-size: 22px; font-weight: 800; color: var(--coral); }
+  .flowbox.new .count { color: var(--sea); }
+
+  /* الهواتف */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 540px), 1fr)); gap: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 18px; display: grid; grid-template-columns: 252px minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (max-width: 600px) { .card { grid-template-columns: minmax(0, 1fr); justify-items: center; } .card .txt { justify-self: stretch; } }
+  .txt { display: grid; gap: 8px; min-width: 0; }
+  .titlerow { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .num { font-family: var(--font-display); color: var(--sea); font-weight: 800; }
+  .btnname { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #FFD66B; color: #2B2000; font-size: 12.5px; font-weight: 700; }
+  .txt ul { margin: 0; padding-inline-start: 18px; display: grid; gap: 4px; font-size: 14px; }
+  .cond { font-size: 13px; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--line); }
+  .try { font-size: 12.5px; color: var(--sea); font-weight: 500; }
+
+  .phone { width: 252px; height: 540px; max-width: 100%; padding: 8px; border-radius: 36px; background: var(--frame); box-shadow: 0 18px 40px -22px rgba(0,0,0,.45); flex: none; }
+  .screen { position: relative; height: 100%; border-radius: 29px; overflow: hidden; background: var(--ph-bg); color: var(--ph-fg); font-size: 12px; line-height: 1.5; isolation: isolate; }
+  .notch { position: absolute; top: 7px; left: 50%; transform: translateX(-50%); width: 74px; height: 18px; border-radius: 10px; background: #000; z-index: 40; }
+  .prog { position: absolute; top: 30px; inset-inline: 12px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.25); z-index: 4; overflow: hidden; }
+  .prog i { display: block; height: 100%; width: 35%; background: #fff; animation: play 9s linear infinite; }
+  .screen.paused .prog i { animation-play-state: paused; }
+  @keyframes play { from { width: 0; } to { width: 100%; } }
+  .art { position: absolute; inset: 0; }
+  .art .glyph { position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%); font-size: 84px; filter: drop-shadow(0 10px 18px rgba(0,0,0,.35)); }
+  .shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.3) 0%, transparent 22%, transparent 45%, rgba(0,0,0,.85) 100%); }
+  .s-bike { background: linear-gradient(160deg, #0D3329, #2E8A5E 60%, #BFE3A8); }
+  .s-coffee { background: linear-gradient(160deg, #2E1C12, #7A4A2B 55%, #D09A66); }
+  .s-jazz { background: linear-gradient(160deg, #0B1640, #2B3FA0 58%, #E0B84C); }
+  .s-offer { background: linear-gradient(160deg, #431210, #C2412B 60%, #F7C25C); }
+  .s-club { background: linear-gradient(160deg, #0A3D62, #1E90A8 55%, #F3E3B3); }
+  .s-salon { background: linear-gradient(160deg, #3A1530, #B04A86 60%, #F6C1D9); }
+  .s-job { background: linear-gradient(160deg, #241A38, #6B4FA0 60%, #F2C6A0); }
+  .pausedtag { position: absolute; top: 40px; right: 12px; z-index: 5; padding: 2px 9px; border-radius: 999px; background: rgba(0,0,0,.55); font-size: 10.5px; }
+  .rail { position: absolute; left: 9px; bottom: 96px; display: grid; gap: 11px; justify-items: center; z-index: 2; }
+  .rb { display: grid; justify-items: center; font-size: 10px; color: var(--ph-muted); }
+  .rb span { width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,.14); display: grid; place-items: center; font-size: 15px; }
+  .info { position: absolute; right: 12px; left: 56px; bottom: 64px; display: grid; gap: 3px; z-index: 2; }
+  .tchip { justify-self: start; padding: 2px 9px; border-radius: 999px; background: var(--ph-chip); font-size: 10.5px; font-weight: 500; }
+  .who { display: flex; gap: 6px; align-items: center; font-weight: 500; }
+  .who .v { color: #8FE3A1; font-size: 10px; }
+  .av { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--ph-sea); color: #032629; flex: none; }
+  .ttl { font-size: 15px; font-weight: 700; line-height: 1.35; }
+  .meta { color: var(--ph-muted); font-size: 11.5px; }
+  .proof { color: #FFD66B; font-size: 10.5px; }
+  .act { position: absolute; right: 12px; left: 12px; bottom: 14px; z-index: 3; height: 40px; border: 0; border-radius: 13px; background: var(--ph-action); color: var(--ph-action-on); font: 700 14px var(--font-body); cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 6px 18px -6px rgba(0,0,0,.6); }
+  .act:focus-visible, .sheet button:focus-visible { outline: 3px solid var(--ph-sea); outline-offset: 2px; }
+  .act.joined { background: rgba(255,255,255,.18); color: #fff; }
+  .rate { position: absolute; right: 12px; left: 12px; bottom: 62px; z-index: 3; background: rgba(0,0,0,.55); border-radius: 12px; padding: 8px 10px; display: grid; gap: 4px; }
+  .rate small { color: var(--ph-muted); }
+  .stars { display: flex; gap: 4px; direction: ltr; justify-content: flex-end; }
+  .stars button { border: 0; background: none; padding: 0; font-size: 22px; line-height: 1; color: rgba(255,255,255,.35); cursor: pointer; }
+  .stars button.on { color: #FFD66B; }
+  .toast { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); z-index: 30; background: #fff; color: #10201F; border-radius: 999px; padding: 6px 14px; font-weight: 500; white-space: nowrap; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+
+  /* ورقة الفعل */
+  .backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.35); z-index: 10; }
+  .sheet { position: absolute; inset-inline: 0; bottom: 0; z-index: 11; background: var(--sh-bg); color: var(--sh-fg); border-radius: 22px 22px 0 0; padding: 10px 14px 14px; display: grid; gap: 10px; max-height: 76%; overflow-y: auto; scrollbar-width: none; transform: translateY(0); animation: up .28s cubic-bezier(.2,.8,.2,1); }
+  .sheet::-webkit-scrollbar { display: none; }
+  @keyframes up { from { transform: translateY(100%); } }
+  .grab { justify-self: center; width: 38px; height: 4px; border-radius: 2px; background: var(--sh-line); }
+  .shead { display: flex; align-items: center; gap: 8px; }
+  .thumb { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; flex: none; }
+  .shead b { display: block; font-size: 13px; line-height: 1.3; }
+  .shead small { color: var(--sh-muted); font-size: 11px; }
+  .x { margin-inline-start: auto; border: 0; background: var(--sh-pick-soft); color: var(--sh-fg); width: 28px; height: 28px; border-radius: 50%; cursor: pointer; font-size: 14px; }
+  .grp { display: grid; gap: 5px; }
+  .grp > span { font-size: 11px; color: var(--sh-muted); font-weight: 500; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--sh-line); background: #fff; color: var(--sh-fg); border-radius: 10px; padding: 5px 9px; font: 500 11.5px var(--font-body); cursor: pointer; }
+  .chip small { color: var(--sh-muted); font-weight: 400; }
+  .chip[aria-pressed="true"] { border-color: var(--sh-pick); background: var(--sh-pick-soft); color: var(--sh-pick); }
+  .stepper { display: inline-flex; align-items: center; gap: 10px; border: 1px solid var(--sh-line); border-radius: 10px; padding: 2px 6px; }
+  .stepper button { border: 0; background: none; font: 700 16px var(--font-body); width: 22px; cursor: pointer; color: var(--sh-pick); }
+  .stepper output { min-width: 14px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .sum { border-top: 1px dashed var(--sh-line); padding-top: 8px; display: grid; gap: 2px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .sum .tot { font-weight: 700; font-size: 13px; }
+  .pay { height: 40px; border: 0; border-radius: 12px; background: var(--sh-pick); color: #fff; font: 700 14px var(--font-body); cursor: pointer; }
+  .fine { font-size: 10.5px; color: var(--sh-muted); text-align: center; }
+  .done { display: grid; justify-items: center; gap: 6px; text-align: center; padding: 6px 0 2px; }
+  .tick { width: 46px; height: 46px; border-radius: 50%; background: var(--ok); color: #fff; display: grid; place-items: center; font-size: 26px; font-weight: 700; }
+  .done b { font-size: 15px; }
+  .done small { color: var(--sh-muted); font-size: 11.5px; }
+  .qr { width: 104px; height: 104px; }
+  .coupon { border: 2px dashed var(--coral); border-radius: 14px; padding: 10px; display: grid; justify-items: center; gap: 4px; text-align: center; }
+  .coupon .code { font-family: ui-monospace, Menlo, monospace; font-weight: 700; letter-spacing: 1px; }
+  .timer { color: var(--coral); font-weight: 700; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .avs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pav { border: 2px solid transparent; background: none; padding: 0; cursor: pointer; display: grid; justify-items: center; gap: 1px; font: 500 10px var(--font-body); color: var(--sh-fg); }
+  .pav span { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #fff; }
+  .pav[aria-pressed="true"] span { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--sh-pick); }
+
+  /* الجدول والقواعد */
+  .tablebox { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; min-width: 720px; font-size: 14px; }
+  th, td { text-align: right; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 500; color: var(--muted); font-size: 12.5px; background: var(--bg); }
+  tr:last-child td { border-bottom: 0; }
+  td .btnname { white-space: nowrap; }
+  .rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; list-style: none; padding: 0; margin: 0; }
+  .rules li { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 4px; }
+  .rules b { font-size: 15px; }
+  .rules span { color: var(--muted); font-size: 13.5px; }
+  .build { background: var(--sea-soft); border-radius: 18px; padding: 18px; display: grid; gap: 8px; }
+  .build ul { margin: 0; padding-inline-start: 20px; display: grid; gap: 4px; }
+  .qs { background: var(--sea); color: var(--sea-on); border-radius: 22px; padding: 22px; display: grid; gap: 10px; }
+  .qs h2 { color: var(--sea-on); }
+  .qs ol { margin: 0; padding-inline-start: 22px; display: grid; gap: 8px; }
+
+  @media (prefers-reduced-motion: reduce) { .prog i { animation: none; width: 35%; } .sheet { animation: none; } }
+</style>
+
+<div class="wrap" dir="rtl" lang="ar">
+  <header class="top">
+    <h1>الشراء من اللحظة</h1>
+    <p class="lead">الزر على اللحظة نفسها يفتح ورقة صغيرة فوق الفيديو: يختار المستخدم ويؤكد ويرجع للحظة، بلا انتقال لصفحة العرض ثم شاشة الطلب. الزر يتغير حسب نوع المنشور. كل شاشة هنا تعمل: اضغط الزر الأصفر.</p>
+  </header>
+
+  <section aria-labelledby="h-flow">
+    <h2 id="h-flow">الفرق</h2>
+    <div class="flow">
+      <div class="flowbox">
+        <b class="lbl">الآن</b>
+        <div class="steps"><span class="step">اللحظة</span><span class="arrow">←</span><span class="step">«اطلب الآن»</span><span class="arrow">←</span><span class="step">صفحة العرض</span><span class="arrow">←</span><span class="step">شاشة الطلب</span><span class="arrow">←</span><span class="step">الدفع</span></div>
+        <p><span class="count">4 شاشات</span> ويخرج المستخدم من اللحظة، وكثيرون يتوقفون في الطريق.</p>
+      </div>
+      <div class="flowbox new">
+        <b class="lbl">المقترح</b>
+        <div class="steps"><span class="step">اللحظة</span><span class="arrow">←</span><span class="step hot">ورقة فوق الفيديو</span><span class="arrow">←</span><span class="step">تم ✓</span></div>
+        <p><span class="count">ورقة واحدة</span> والفيديو متوقف خلفها، ثم يكمل من حيث توقف.</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-types">
+    <div class="sec-head">
+      <h2 id="h-types">الزر حسب نوع المنشور</h2>
+      <p>كل هاتف نوع منشور مختلف. اضغط الزر الأصفر لترى الورقة، وجرّب الخيارات والعدد، ثم أكّد.</p>
+    </div>
+    <div class="grid" id="cards"></div>
+  </section>
+
+  <section aria-labelledby="h-table">
+    <h2 id="h-table">الملخص</h2>
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>نوع المنشور</th><th>الزر</th><th>ما يحدث في الورقة</th><th>يظهر متى</th></tr></thead>
+        <tbody>
+          <tr><td>إعلان في السوق</td><td><span class="btnname">اشترِ</span></td><td>الكمية، توصيل أو استلام، الدفع، ثم تأكيد</td><td>الإعلان نشط وفيه كمية</td></tr>
+          <tr><td>صنف من دائرة</td><td><span class="btnname">اطلب</span></td><td>الخيارات بفرق السعر، وقت الاستلام، ثم رمز الاستلام</td><td>الدائرة موثّقة</td></tr>
+          <tr><td>فعالية</td><td><span class="btnname">احجز تذكرة</span></td><td>الفئة، العدد، ولمن من أصحابك</td><td>فيها تذاكر متاحة</td></tr>
+          <tr><td>عرض دائرة</td><td><span class="btnname">استخدم العرض</span></td><td>قسيمة برمز وعدّاد حتى الانتهاء</td><td>العرض ساري</td></tr>
+          <tr><td>دائرة أو مجتمع</td><td><span class="btnname">انضم</span></td><td>بلا ورقة: يتحول الزر إلى «عضو ✓»</td><td>دائماً</td></tr>
+          <tr><td>صالون أو عيادة</td><td><span class="btnname">احجز موعد</span></td><td>اليوم والوقت المتاح</td><td>الدائرة موثّقة ولها مواعيد</td></tr>
+          <tr><td>وظيفة</td><td><span class="btnname">قدّم</span></td><td>ملفك المهني وسؤالا الفرز</td><td>عندك ملف توظيف</td></tr>
+          <tr><td>بعد زيارة أو شراء</td><td><span class="btnname">قيّم</span></td><td>نجوم على اللحظة نفسها</td><td>لمن اشترى أو حضر فقط</td></tr>
+          <tr><td>لحظة شخصية</td><td>لا زر بيع</td><td>التفاعلات و«رد خاص» كما هي</td><td>دائماً</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-rules">
+    <div class="sec-head"><h2 id="h-rules">قواعد تحمي المستخدم والتاجر</h2></div>
+    <ul class="rules">
+      <li><b>تأكيد بالمبلغ دائماً</b><span>لا دفع بضغطة على اللحظة. الضغطة تفتح الورقة، والدفع بزر يكتب المبلغ كاملاً.</span></li>
+      <li><b>«اشترِ» للموثّق فقط</b><span>الدائرة غير الموثّقة يظهر عليها «زيارة» بدل «اشترِ»، كما في بوابة البيع الحالية.</span></li>
+      <li><b>السعر من الخادم</b><span>إن تغيّر السعر بين نشر اللحظة والطلب، تعرض الورقة السعر الجديد قبل التأكيد.</span></li>
+      <li><b>الفيديو يتوقف</b><span>يتوقف عند فتح الورقة ويكمل عند إغلاقها، ولا تنتقل اللحظة تلقائياً أثناء الطلب.</span></li>
+      <li><b>آيفون</b><span>بدل المحفظة: «ادفع عند الاستلام» أو «ادفع في المكان»، حسب قواعد أبل الحالية عندنا.</span></li>
+      <li><b>إقرار 18+ مرة واحدة</b><span>يظهر داخل الورقة نفسها عند أول دفع، لا في صفحة منفصلة.</span></li>
+      <li><b>التقييم الصادق</b><span>«قيّم» يظهر فقط لمن اشترى أو حضر، فلا تقييمات وهمية.</span></li>
+      <li><b>أرقام حقيقية فقط</b><span>«اشتراه 12 اليوم» يُعرض من الطلبات الفعلية، ولا نعرض أرقاماً مصطنعة.</span></li>
+    </ul>
+  </section>
+
+  <section class="build" aria-labelledby="h-build">
+    <h2 id="h-build">ماذا يحتاج برمجياً</h2>
+    <ul>
+      <li>ربط اللحظة عند النشر بشيء محدد: صنف من دائرتي، عرض، فعالية، إعلان في السوق، أو وظيفة. اسم الزر يتحدد تلقائياً من النوع.</li>
+      <li>أوراق سريعة في عارض اللحظات لكل نوع.</li>
+      <li>لا منطق مال جديد: الأوراق تستدعي مسارات الطلب الموجودة اليوم (طلبات الدوائر والسلة، طلبات السوق، التذاكر، العروض، الانضمام، التقديم)، فتبقى الحماية نفسها: التوثيق، حجز المال، النزاع، إقرار العمر.</li>
+      <li>إحصاء لصاحب اللحظة: كم شاهدها، وكم ضغط الزر، وكم أكمل الطلب.</li>
+    </ul>
+  </section>
+
+  <section class="qs" aria-labelledby="h-qs">
+    <h2 id="h-qs">للنقاش</h2>
+    <ol>
+      <li>تأكيد الدفع: زر «ادفع 45 ر.س» في الورقة، أم «اسحب للدفع» حتى لا يدفع أحد بالخطأ؟</li>
+      <li>هل يضع الأفراد «اشترِ» على لحظتهم المرتبطة بإعلانهم في السوق، أم للدوائر فقط؟</li>
+      <li>التقييم داخل اللحظة: لمن اشترى أو حضر فقط، كما أقترح؟</li>
+      <li>هل نعرض «اشتراه 12 اليوم» على اللحظة؟</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+(function () {
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function sar(n) { return String(n) + ' ر.س'; }
+  function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+
+  // رمز QR توضيحي ثابت (ليس رمزاً حقيقياً)
+  function qr(seed) {
+    var n = 21, s = '<svg class="qr" viewBox="0 0 ' + n + ' ' + n + '" shape-rendering="crispEdges"><rect width="21" height="21" fill="#fff"/>';
+    var x = seed;
+    function rnd() { x = (x * 1103515245 + 12345) & 0x7fffffff; return x / 0x7fffffff; }
+    function finder(cx, cy) { s += '<rect x="' + cx + '" y="' + cy + '" width="7" height="7" fill="#10201F"/><rect x="' + (cx + 1) + '" y="' + (cy + 1) + '" width="5" height="5" fill="#fff"/><rect x="' + (cx + 2) + '" y="' + (cy + 2) + '" width="3" height="3" fill="#10201F"/>'; }
+    for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) {
+      var inF = (r < 8 && c < 8) || (r < 8 && c > 12) || (r > 12 && c < 8);
+      if (!inF && rnd() > .52) s += '<rect x="' + c + '" y="' + r + '" width="1" height="1" fill="#10201F"/>';
+    }
+    finder(0, 0); finder(14, 0); finder(0, 14);
+    return s + '</svg>';
+  }
+
+  // تعريف كل نوع: المظهر، نص الزر، ومحتوى الورقة
+  var TYPES = [
+    { id: 'market', title: 'إعلان في السوق', btn: 'اشترِ', scene: 'bike', glyph: '🚲', chip: 'السوق', who: 'أبو فهد', ttl: 'دراجة هوائية شبه جديدة', meta: 'حي الروضة · 2 كم', price: 450, proof: 'شاهده 230 اليوم',
+      notes: ['الكمية، ثم توصيل أو استلام، ثم طريقة الدفع.', 'المجموع يتحدث مع كل اختيار، ويُكتب على زر الدفع.', 'بعد التأكيد يصل البائع إشعار والطلب في «طلباتي».'],
+      cond: 'يظهر حين يكون الإعلان نشطاً وفيه كمية. في آيفون يظهر «ادفع عند الاستلام» بدل المحفظة.' },
+    { id: 'item', title: 'صنف من دائرة', btn: 'اطلب', scene: 'coffee', glyph: '☕', chip: 'قهوة الميناء', who: 'قهوة الميناء', verified: true, ttl: 'لاتيه بالهيل', meta: 'من 18 ر.س · 600 م', price: 18, proof: 'طلبه 12 اليوم',
+      notes: ['الحجم والإضافات بفرق السعر، كما في السلة الحالية.', 'وقت الاستلام: الآن أو بعد 15 أو 30 دقيقة.', 'بعد التأكيد يظهر رمز الاستلام مباشرة.'],
+      cond: 'للدوائر الموثّقة فقط. الدائرة غير الموثّقة يظهر عليها «زيارة الدائرة».' },
+    { id: 'event', title: 'فعالية', btn: 'احجز تذكرة', scene: 'jazz', glyph: '🎷', chip: 'فعالية', who: 'دائرة البلد الثقافية', verified: true, ttl: 'ليلة جاز في البلد', meta: 'الخميس 9:00 م · 3.4 كم', price: 45, proof: 'متبقي 18 تذكرة',
+      notes: ['الفئة والعدد.', '«لمن التذاكر؟»: كل صاحب تصله تذكرته في «تذاكري» برمزه.', 'يرتبط بفكرة «اطلعوا سوا» التي ناقشناها.'],
+      cond: 'يظهر ما دامت في الفعالية تذاكر متاحة.' },
+    { id: 'offer', title: 'عرض دائرة', btn: 'استخدم العرض', scene: 'offer', glyph: '🍕', chip: 'عرض', who: 'بيتزا الحارة', verified: true, ttl: 'البيتزا الثانية مجاناً', meta: 'ينتهي 7:00 م · 1.1 كم', proof: 'استخدمه 40 اليوم',
+      notes: ['بلا دفع: القسيمة تظهر فوراً برمز وعدّاد حتى الانتهاء.', '«احفظ» تضعها في «محفوظاتي» لاستخدامها لاحقاً.'],
+      cond: 'يظهر ما دام العرض سارياً.' },
+    { id: 'club', title: 'دائرة أو مجتمع', btn: 'انضم', scene: 'club', glyph: '🏃', chip: 'مجتمع', who: 'جري الكورنيش', ttl: 'جري الصباح كل جمعة', meta: '6:00 ص · الكورنيش الشمالي', proof: '320 عضواً',
+      notes: ['بلا ورقة: ضغطة واحدة ويتحول الزر إلى «عضو ✓».', 'تحته مثال «قيّم»: نجوم تظهر لمن حضر فقط.'],
+      cond: '«انضم» دائماً، و«قيّم» لمن حضر أو اشترى فقط.' },
+    { id: 'salon', title: 'صالون أو عيادة', btn: 'احجز موعد', scene: 'salon', glyph: '💇', chip: 'صالون', who: 'صالون لمسة', verified: true, ttl: 'قص وتصفيف · 45 دقيقة', meta: '120 ر.س · 2.6 كم', price: 120, proof: 'أقرب موعد اليوم 5:30 م',
+      notes: ['اليوم، ثم الأوقات المتاحة فقط.', 'يدفع في المكان أو من المحفظة حسب ما فعّله صاحب الدائرة.'],
+      cond: 'للدوائر الموثّقة التي فعّلت المواعيد.' },
+    { id: 'job', title: 'وظيفة', btn: 'قدّم', scene: 'job', glyph: '🧑‍🍳', chip: 'وظيفة', who: 'كافيه السنبلة', verified: true, ttl: 'باريستا دوام جزئي', meta: 'مساءً · 1.8 كم', proof: 'يناسب ملفك',
+      notes: ['يُرسل ملفك المهني الموجود، مع سؤالي الفرز.', 'هويتك تبقى مخفية حتى تجيب، كما في التوظيف الحالي.'],
+      cond: 'لمن عنده ملف توظيف، وإلا يفتح إنشاء الملف أولاً.' }
+  ];
+
+  var cards = document.getElementById('cards');
+  TYPES.forEach(function (t, idx) {
+    var card = el('article', 'card');
+    var phone = el('div', 'phone');
+    var screen = el('div', 'screen');
+    screen.setAttribute('role', 'region');
+    screen.setAttribute('aria-label', 'نموذج ' + t.title);
+    screen.innerHTML = '<div class="notch"></div><div class="prog"><i></i></div>' +
+      '<div class="art s-' + t.scene + '"><div class="glyph" aria-hidden="true">' + t.glyph + '</div></div><div class="shade"></div>' +
+      '<div class="rail"><div class="rb"><span>😍</span>84</div><div class="rb"><span>💬</span>رد</div><div class="rb"><span>↗</span>شارك</div></div>' +
+      '<div class="info"><span class="tchip">' + t.chip + '</span><div class="who"><span class="av">' + t.who.charAt(0) + '</span>' + t.who + (t.verified ? ' <span class="v">موثّقة ✓</span>' : '') + '</div>' +
+      '<div class="ttl">' + t.ttl + '</div><div class="meta">' + t.meta + '</div><div class="proof">' + t.proof + '</div></div>';
+    var btn = el('button', 'act', t.btn + (t.price ? ' · ' + sar(t.price) : ''));
+    btn.type = 'button';
+    screen.appendChild(btn);
+    phone.appendChild(screen);
+    card.appendChild(phone);
+    card.appendChild(el('div', 'txt',
+      '<div class="titlerow"><span class="num">' + (idx + 1) + '</span><h3>' + t.title + '</h3><span class="btnname">' + t.btn + '</span></div>' +
+      '<ul>' + t.notes.map(function (n) { return '<li>' + n + '</li>'; }).join('') + '</ul>' +
+      '<p class="cond">' + t.cond + '</p><p class="try">جرّب: اضغط الزر الأصفر في الشاشة.</p>'));
+    cards.appendChild(card);
+
+    if (t.id === 'club') { setupClub(screen, btn); return; }
+    btn.addEventListener('click', function () { openSheet(screen, t); });
+  });
+
+  function pause(screen, on) {
+    screen.classList.toggle('paused', on);
+    var tag = screen.querySelector('.pausedtag');
+    if (on && !tag) screen.appendChild(el('div', 'pausedtag', '⏸ متوقف'));
+    if (!on && tag) tag.remove();
+  }
+
+  function closeSheet(screen) {
+    var s = screen.querySelector('.sheet'), b = screen.querySelector('.backdrop');
+    if (s) s.remove(); if (b) b.remove();
+    pause(screen, false);
+    var a = screen.querySelector('.act'); if (a) a.focus();
+  }
+
+  function head(t) {
+    return '<div class="grab"></div><div class="shead"><span class="thumb s-' + t.scene + '">' + t.glyph + '</span><div><b>' + t.ttl + '</b><small>' + t.who + '</small></div><button class="x" type="button" aria-label="إغلاق">✕</button></div>';
+  }
+
+  // مجموعة اختيار واحد
+  function pick(container, onChange) {
+    container.querySelectorAll('.chips[data-g]').forEach(function (g) {
+      g.addEventListener('click', function (e) {
+        var c = e.target.closest('.chip'); if (!c) return;
+        if (g.dataset.multi) { c.setAttribute('aria-pressed', c.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); }
+        else g.querySelectorAll('.chip').forEach(function (x) { x.setAttribute('aria-pressed', x === c ? 'true' : 'false'); });
+        onChange();
+      });
+    });
+  }
+  function val(sheet, g) { var c = sheet.querySelector('.chips[data-g="' + g + '"] .chip[aria-pressed="true"]'); return c ? c.dataset : {}; }
+  function multi(sheet, g) { return Array.prototype.map.call(sheet.querySelectorAll('.chips[data-g="' + g + '"] .chip[aria-pressed="true"]'), function (c) { return c.dataset; }); }
+  function stepper(sheet, min, max, onChange) {
+    var out = sheet.querySelector('.stepper output'), n = min;
+    sheet.querySelector('.stepper').addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      n = Math.max(min, Math.min(max, n + (b.dataset.d === '+' ? 1 : -1))); out.textContent = n; onChange();
+    });
+    return function () { return n; };
+  }
+
+  function openSheet(screen, t) {
+    pause(screen, true);
+    var back = el('div', 'backdrop'); screen.appendChild(back);
+    var sheet = el('div', 'sheet'); sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-label', t.btn);
+    screen.appendChild(sheet);
+    back.addEventListener('click', function () { closeSheet(screen); });
+    var body = BODIES[t.id](t);
+    sheet.innerHTML = head(t) + body.html;
+    sheet.querySelector('.x').addEventListener('click', function () { closeSheet(screen); });
+    var update = body.wire(sheet);
+    var pay = sheet.querySelector('.pay');
+    pay.addEventListener('click', function () {
+      sheet.innerHTML = '<div class="grab"></div>' + body.done(sheet) + '<button class="pay" type="button">رجوع للحظة</button>';
+      sheet.querySelector('.pay').addEventListener('click', function () { closeSheet(screen); });
+      sheet.querySelector('.pay').focus();
+    });
+    if (update) update();
+    pay.focus();
+  }
+
+  var BODIES = {
+    market: function (t) {
+      return {
+        html: '<div class="row grp"><span>الكمية</span><div class="stepper"><button type="button" data-d="-" aria-label="أقل">−</button><output>1</output><button type="button" data-d="+" aria-label="أكثر">+</button></div></div>' +
+          '<div class="grp"><span>الاستلام</span><div class="chips" data-g="del"><button class="chip" type="button" data-fee="15" aria-pressed="true">توصيل <small>15 ر.س · المنزل</small></button><button class="chip" type="button" data-fee="0" aria-pressed="false">استلام بنفسي</button></div></div>' +
+          '<div class="grp"><span>الدفع</span><div class="chips" data-g="payby"><button class="chip" type="button" data-w="محفظتي" aria-pressed="true">محفظتي <small>رصيد 820</small></button><button class="chip" type="button" data-w="عند الاستلام" aria-pressed="false">عند الاستلام</button></div></div>' +
+          '<div class="sum"><div class="row"><span>الدراجة</span><span class="s1"></span></div><div class="row"><span>التوصيل</span><span class="s2"></span></div><div class="row tot"><span>المجموع</span><span class="s3"></span></div></div>' +
+          '<button class="pay" type="button"></button><p class="fine">المال محجوز حتى تستلم، ولك «لدي مشكلة» خلال 3 أيام</p>',
+        wire: function (sheet) {
+          var q;
+          var upd = function () {
+            var n = q(), fee = +val(sheet, 'del').fee, by = val(sheet, 'payby').w, tot = n * t.price + fee;
+            sheet.querySelector('.s1').textContent = n + ' × ' + sar(t.price);
+            sheet.querySelector('.s2').textContent = fee ? sar(fee) : 'مجاناً';
+            sheet.querySelector('.s3').textContent = sar(tot);
+            sheet.querySelector('.pay').textContent = by === 'عند الاستلام' ? 'اطلب · ادفع ' + sar(tot) + ' عند الاستلام' : 'ادفع ' + sar(tot);
+          };
+          q = stepper(sheet, 1, 3, upd); pick(sheet, upd); return upd;
+        },
+        done: function () { return '<div class="done"><div class="tick">✓</div><b>تم الطلب</b><small>رقم الطلب NAS-4F2A · وصل أبو فهد إشعار</small><small>تابع الطلب من «طلباتي»</small></div>'; }
+      };
+    },
+    item: function (t) {
+      return {
+        html: '<div class="grp"><span>الحجم</span><div class="chips" data-g="size"><button class="chip" type="button" data-p="0" data-n="صغير" aria-pressed="false">صغير</button><button class="chip" type="button" data-p="4" data-n="وسط" aria-pressed="true">وسط <small>+4</small></button><button class="chip" type="button" data-p="7" data-n="كبير" aria-pressed="false">كبير <small>+7</small></button></div></div>' +
+          '<div class="grp"><span>إضافات</span><div class="chips" data-g="extra" data-multi="1"><button class="chip" type="button" data-p="3" aria-pressed="false">شوت إضافي <small>+3</small></button><button class="chip" type="button" data-p="2" aria-pressed="false">حليب شوفان <small>+2</small></button></div></div>' +
+          '<div class="grp"><span>الاستلام</span><div class="chips" data-g="when"><button class="chip" type="button" data-n="الآن" aria-pressed="true">الآن</button><button class="chip" type="button" data-n="بعد 15 د" aria-pressed="false">بعد 15 د</button><button class="chip" type="button" data-n="بعد 30 د" aria-pressed="false">بعد 30 د</button></div></div>' +
+          '<button class="pay" type="button"></button><p class="fine">السعر محسوب من الدائرة لحظة الطلب</p>',
+        wire: function (sheet) {
+          var upd = function () {
+            var tot = t.price + (+val(sheet, 'size').p || 0) + multi(sheet, 'extra').reduce(function (a, d) { return a + (+d.p); }, 0);
+            sheet.querySelector('.pay').textContent = 'اطلب · ادفع ' + sar(tot);
+          };
+          pick(sheet, upd); return upd;
+        },
+        done: function (sheet) { return '<div class="done"><div class="tick">✓</div><b>طلبك عند قهوة الميناء</b>' + qr(7) + '<small>أظهر الرمز عند الاستلام · ' + (val(sheet, 'when').n || 'الآن') + '</small></div>'; }
+      };
+    },
+    event: function (t) {
+      var people = [['ن', 'نورة', '#E46A8B'], ['س', 'سارة', '#6B8BE4'], ['خ', 'خالد', '#3FA36B'], ['ر', 'ريم', '#C08A2A']];
+      return {
+        html: '<div class="grp"><span>الفئة</span><div class="chips" data-g="tier"><button class="chip" type="button" data-p="45" aria-pressed="true">عادي <small>45</small></button><button class="chip" type="button" data-p="120" aria-pressed="false">VIP <small>120</small></button></div></div>' +
+          '<div class="grp"><span>لمن التذاكر؟ (أنت ومن تختار)</span><div class="avs" id="avs">' + people.map(function (p) { return '<button class="pav" type="button" aria-pressed="false"><span style="background:' + p[2] + '">' + p[0] + '</span>' + p[1] + '</button>'; }).join('') + '</div></div>' +
+          '<div class="sum"><div class="row"><span class="s1"></span><span class="s2"></span></div></div>' +
+          '<button class="pay" type="button"></button><p class="fine">كل صاحب تصله تذكرته برمزه الخاص</p>',
+        wire: function (sheet) {
+          var avs = sheet.querySelectorAll('.pav');
+          var upd = function () {
+            var n = 1 + Array.prototype.filter.call(avs, function (a) { return a.getAttribute('aria-pressed') === 'true'; }).length;
+            var p = +val(sheet, 'tier').p, tot = n * p;
+            sheet.querySelector('.s1').textContent = n + ' ' + (n === 1 ? 'تذكرة' : 'تذاكر') + ' × ' + p;
+            sheet.querySelector('.s2').textContent = sar(tot);
+            sheet.querySelector('.pay').textContent = 'احجز · ادفع ' + sar(tot);
+          };
+          avs.forEach(function (a) { a.addEventListener('click', function () { a.setAttribute('aria-pressed', a.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); upd(); }); });
+          pick(sheet, upd); return upd;
+        },
+        done: function (sheet) {
+          var names = Array.prototype.filter.call(sheet.querySelectorAll('.pav'), function (a) { return a.getAttribute('aria-pressed') === 'true'; }).map(function (a) { return a.textContent.slice(1); });
+          return '<div class="done"><div class="tick">✓</div><b>تذاكركم جاهزة</b>' + qr(19) + '<small>' + (names.length ? 'وصلت تذكرة لـ ' + names.join(' و') : 'تذكرتك في «تذاكري»') + '</small><small>ذكّرك قبل الفعالية بساعة</small></div>';
+        }
+      };
+    },
+    offer: function () {
+      return {
+        html: '<div class="coupon"><b>البيتزا الثانية مجاناً</b>' + qr(31) + '<span class="code">NAS-PZ-8K2Q</span><span class="timer" id="tm">ينتهي بعد 02:14:30</span></div>' +
+          '<button class="pay" type="button">احفظه في «محفوظاتي»</button><p class="fine">أظهر الرمز للكاشير، مرة واحدة لكل طلب</p>',
+        wire: function (sheet) {
+          var s = 2 * 3600 + 14 * 60 + 30, tm = sheet.querySelector('#tm');
+          if (!reduce) {
+            var iv = setInterval(function () {
+              if (!document.body.contains(tm)) { clearInterval(iv); return; }
+              s--; var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+              tm.textContent = 'ينتهي بعد ' + [h, m, x].map(function (v) { return String(v).padStart(2, '0'); }).join(':');
+            }, 1000);
+          }
+          return null;
+        },
+        done: function () { return '<div class="done"><div class="tick">✓</div><b>حُفظ العرض</b><small>تجده في «محفوظاتي» ونذكّرك قبل انتهائه بساعة</small></div>'; }
+      };
+    },
+    salon: function (t) {
+      return {
+        html: '<div class="grp"><span>اليوم</span><div class="chips" data-g="day"><button class="chip" type="button" data-n="اليوم" aria-pressed="true">اليوم</button><button class="chip" type="button" data-n="بكرة" aria-pressed="false">بكرة</button><button class="chip" type="button" data-n="الخميس" aria-pressed="false">الخميس</button></div></div>' +
+          '<div class="grp"><span>الوقت المتاح</span><div class="chips" data-g="slot"><button class="chip" type="button" data-n="5:30 م" aria-pressed="true">5:30 م</button><button class="chip" type="button" data-n="6:15 م" aria-pressed="false">6:15 م</button><button class="chip" type="button" data-n="8:00 م" aria-pressed="false">8:00 م</button></div></div>' +
+          '<div class="grp"><span>الدفع</span><div class="chips" data-g="payby"><button class="chip" type="button" data-w="venue" aria-pressed="true">في الصالون</button><button class="chip" type="button" data-w="wallet" aria-pressed="false">محفظتي</button></div></div>' +
+          '<button class="pay" type="button"></button>',
+        wire: function (sheet) {
+          var upd = function () { sheet.querySelector('.pay').textContent = val(sheet, 'payby').w === 'wallet' ? 'احجز · ادفع ' + sar(t.price) : 'احجز · ادفع في الصالون'; };
+          pick(sheet, upd); return upd;
+        },
+        done: function (sheet) { return '<div class="done"><div class="tick">✓</div><b>موعدك ' + val(sheet, 'day').n + ' ' + val(sheet, 'slot').n + '</b>' + qr(43) + '<small>صالون لمسة · نذكّرك قبل الموعد بساعة</small></div>'; }
+      };
+    },
+    job: function () {
+      return {
+        html: '<div class="grp"><span>ملفك المهني</span><div class="chips"><span class="chip" aria-pressed="true">باريستا · سنتان خبرة · جدة</span></div></div>' +
+          '<div class="grp"><span>هل تستطيع العمل مساءً؟</span><div class="chips" data-g="q1"><button class="chip" type="button" aria-pressed="true">نعم</button><button class="chip" type="button" aria-pressed="false">لا</button></div></div>' +
+          '<div class="grp"><span>متى تستطيع البدء؟</span><div class="chips" data-g="q2"><button class="chip" type="button" aria-pressed="false">فوراً</button><button class="chip" type="button" aria-pressed="true">خلال أسبوعين</button></div></div>' +
+          '<button class="pay" type="button">أرسل طلبي</button><p class="fine">اسمك يبقى مخفياً حتى تجيب، والدائرة لا تطلب أي رسوم</p>',
+        wire: function (sheet) { pick(sheet, function () {}); return null; },
+        done: function () { return '<div class="done"><div class="tick">✓</div><b>وصل طلبك</b><small>تتابعه من تبويب «الطلبات» في المحادثات</small></div>'; }
+      };
+    }
+  };
+
+  function setupClub(screen, btn) {
+    btn.addEventListener('click', function () {
+      var joined = btn.classList.toggle('joined');
+      btn.textContent = joined ? 'عضو ✓' : 'انضم';
+      var old = screen.querySelector('.toast'); if (old) old.remove();
+      if (joined) {
+        var t = el('div', 'toast', 'انضممت · تصلك أخبارها');
+        screen.appendChild(t);
+        setTimeout(function () { t.remove(); }, 2200);
+      }
+    });
+    // مثال «قيّم»: لمن حضر فقط
+    var rate = el('div', 'rate', '<small>حضرت جري الجمعة الماضية، كيف كان؟</small><div class="stars" role="group" aria-label="التقييم"></div>');
+    var stars = rate.querySelector('.stars');
+    for (var i = 1; i <= 5; i++) {
+      (function (k) {
+        var b = el('button', '', '★'); b.type = 'button'; b.setAttribute('aria-label', k + ' من 5');
+        b.addEventListener('click', function () {
+          Array.prototype.forEach.call(stars.children, function (s, j) { s.classList.toggle('on', j < k); });
+          rate.querySelector('small').textContent = 'شكراً، قيّمت ' + k + ' من 5';
+        });
+        stars.appendChild(b);
+      })(i);
+    }
+    screen.appendChild(rate);
+    screen.querySelector('.info').style.bottom = '128px';
+    screen.querySelector('.rail').style.bottom = '150px';
+  }
+})();
+</script>

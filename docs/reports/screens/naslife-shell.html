@@ -1,0 +1,307 @@
+<title>هيكل ناس لايف المقترح</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@600;800&family=Rubik:wght@400;500;700&display=swap">
+<style>
+  /* التخطيط: هاتف واحد تفاعلي بالهيكل المقترح (4 عناصر + زر النشر) وبجانبه شرح يتغير مع كل قسم. ألوان الشعار، والأبيض غالب. */
+  :root {
+    --bg: #F5F7FA; --surface: #FFFFFF; --fg: #25272A; --muted: #6A7079; --line: #E3E7EC; --blue: #0275FD; --blue-on: #FFFFFF; --blue-soft: #E6F1FF; --frame: #25272A;
+    /* داخل الهاتف: ألوان التطبيق المقترحة، ثابتة في الوضعين لأنها صورة للتطبيق */
+    --a-bg: #FFFFFF; --a-fg: #25272A; --a-muted: #7A808A; --a-line: #ECEFF3; --a-soft: #F4F6F9;
+    --a-blue: #0275FD; --a-blue-soft: #E6F1FF; --a-green: #29B25F; --a-green-soft: #E5F6EC; --a-yellow: #FEB304; --a-yellow-soft: #FFF4D6; --a-red: #EE3B2A; --a-red-soft: #FDE8E5;
+    --font-display: 'Baloo Bhaijaan 2', 'Rubik', system-ui, sans-serif; --font-body: 'Rubik', system-ui, -apple-system, 'Segoe UI', Tahoma, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #101317; --surface: #191D23; --fg: #E8EBEF; --muted: #9AA2AD; --line: #2A3038; --blue: #4C9BFF; --blue-on: #04162E; --blue-soft: #16293F; --frame: #3A414B; color-scheme: dark; } }
+  :root[data-theme="dark"] { --bg: #101317; --surface: #191D23; --fg: #E8EBEF; --muted: #9AA2AD; --line: #2A3038; --blue: #4C9BFF; --blue-on: #04162E; --blue-soft: #16293F; --frame: #3A414B; color-scheme: dark; }
+
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); direction: rtl; line-height: 1.65; font-size: 15px; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; display: grid; gap: 28px; }
+  h1, h2, h3 { font-family: var(--font-display); margin: 0; line-height: 1.25; text-wrap: balance; }
+  h1 { font-size: clamp(28px, 5vw, 40px); font-weight: 800; }
+  h2 { font-size: 24px; font-weight: 800; }
+  p { margin: 0; }
+  .lead { color: var(--muted); max-width: 62ch; font-size: 16px; }
+  .stage { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 720px) { .stage { grid-template-columns: minmax(0, 1fr); justify-items: center; } .explain { justify-self: stretch; } }
+  .explain { display: grid; gap: 14px; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; display: grid; gap: 8px; }
+  .panel ul { margin: 0; padding-inline-start: 20px; display: grid; gap: 4px; }
+  .try { color: var(--blue); font-weight: 500; font-size: 14px; }
+  .palette { display: flex; flex-wrap: wrap; gap: 10px; }
+  .sw { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .sw i { width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--line); }
+
+  .phone { width: 300px; height: 620px; max-width: 100%; padding: 9px; border-radius: 42px; background: var(--frame); box-shadow: 0 22px 44px -24px rgba(0,0,0,.5); }
+  .app { position: relative; height: 100%; border-radius: 34px; overflow: hidden; background: var(--a-bg); color: var(--a-fg); font-size: 12.5px; line-height: 1.5; display: flex; flex-direction: column; }
+  .notch { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 84px; height: 20px; border-radius: 12px; background: #000; z-index: 30; }
+  .view { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 36px; }
+  .view[hidden] { display: none; }
+  .vhead { padding: 4px 14px 8px; display: flex; align-items: center; justify-content: space-between; }
+  .vhead b { font-family: var(--font-display); font-size: 20px; font-weight: 800; }
+  .search { margin: 0 14px 8px; height: 34px; border-radius: 12px; background: var(--a-soft); color: var(--a-muted); display: flex; align-items: center; padding-inline: 12px; }
+  .chips { display: flex; gap: 6px; padding: 0 14px 8px; overflow-x: auto; scrollbar-width: none; flex: none; }
+  .chips::-webkit-scrollbar, .scroll::-webkit-scrollbar { display: none; }
+  .chip { flex: none; border: 1px solid var(--a-line); background: #fff; color: var(--a-fg); border-radius: 999px; padding: 5px 12px; font: 500 12px var(--font-body); cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--a-blue); border-color: var(--a-blue); color: #fff; }
+  .scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; padding: 0 14px 10px; display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; gap: 12px; align-content: start; }
+  button:focus-visible { outline: 3px solid var(--a-yellow); outline-offset: 2px; }
+
+  .card { border: 1px solid var(--a-line); border-radius: 18px; overflow: hidden; background: #fff; }
+  .media { height: 150px; position: relative; display: grid; place-items: center; font-size: 60px; }
+  .tag { position: absolute; top: 8px; right: 8px; padding: 2px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 700; background: #fff; }
+  .live { position: absolute; top: 8px; left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700; background: var(--a-red); color: #fff; }
+  .cbody { padding: 10px 12px 12px; display: grid; gap: 3px; }
+  .cwho { color: var(--a-muted); font-size: 11.5px; display: flex; gap: 5px; align-items: center; }
+  .ok { color: var(--a-green); font-weight: 700; }
+  .cttl { font-weight: 700; font-size: 14px; }
+  .crow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+  .cmeta { color: var(--a-muted); font-size: 11.5px; }
+  .cta { border: 0; border-radius: 11px; background: var(--a-blue); color: #fff; font: 700 12.5px var(--font-body); padding: 7px 14px; cursor: pointer; white-space: nowrap; }
+  .g1 { background: linear-gradient(160deg, #FFE7C2, #FFB36B); } .g2 { background: linear-gradient(160deg, #E8D8C8, #B98A62); } .g3 { background: linear-gradient(160deg, #D9E4FF, #7C9BFF); }
+  .g4 { background: linear-gradient(160deg, #DDF5E3, #7DCB95); } .g5 { background: linear-gradient(160deg, #EADFFF, #A98BE8); } .g6 { background: linear-gradient(160deg, #FFE0DB, #F08A7A); }
+  .empty { color: var(--a-muted); text-align: center; padding: 30px 10px; }
+
+  .map { flex: 1; min-height: 0; position: relative; margin: 0 14px 10px; border-radius: 18px; overflow: hidden; background: #EEF2F6; }
+  .map svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .pin { position: absolute; transform: translate(50%, -50%); width: 34px; height: 34px; border-radius: 50%; border: 3px solid #fff; display: grid; place-items: center; font-size: 16px; box-shadow: 0 3px 8px rgba(0,0,0,.25); }
+  .pin[hidden] { display: none; }
+  .me { position: absolute; right: 48%; top: 52%; width: 14px; height: 14px; border-radius: 50%; background: var(--a-blue); border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(2,117,253,.18); }
+  .mcard { position: absolute; inset-inline: 10px; bottom: 10px; background: #fff; border-radius: 14px; padding: 9px 11px; display: flex; align-items: center; gap: 9px; box-shadow: 0 6px 18px rgba(0,0,0,.15); }
+  .mcard .em { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; flex: none; }
+  .mcard div { flex: 1; min-width: 0; }
+
+  .chat { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--a-line); }
+  .chat:last-child { border-bottom: 0; }
+  .avt { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #fff; flex: none; }
+  .avt.sq { border-radius: 12px; }
+  .chat div { flex: 1; min-width: 0; }
+  .chat b { display: block; font-size: 13px; }
+  .chat small { color: var(--a-muted); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { background: var(--a-blue); color: #fff; border-radius: 999px; min-width: 18px; height: 18px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; padding: 0 5px; }
+  .pill { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+  .p-y { background: var(--a-yellow-soft); color: #7A5200; } .p-g { background: var(--a-green-soft); color: #14703A; } .p-r { background: var(--a-red-soft); color: #B02A1D; }
+
+  .seg { margin: 0 14px 10px; display: grid; grid-template-columns: 1fr 1fr; background: var(--a-soft); border-radius: 14px; padding: 4px; flex: none; }
+  .seg button { border: 0; background: none; border-radius: 11px; padding: 8px; font: 700 13px var(--font-body); color: var(--a-muted); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: #fff; color: var(--a-fg); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+  .me-head { display: flex; align-items: center; gap: 10px; }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .tile { border: 1px solid var(--a-line); border-radius: 14px; padding: 10px; display: grid; gap: 2px; }
+  .tile .n { font-family: var(--font-display); font-size: 20px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .tile small { color: var(--a-muted); }
+  .rowi { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--a-line); font-weight: 500; }
+  .rowi:last-child { border-bottom: 0; }
+  .rowi span { color: var(--a-muted); font-weight: 400; }
+  .note { background: var(--a-blue-soft); border-radius: 12px; padding: 9px 11px; color: #0B4FA8; font-size: 11.5px; }
+
+  .nav { flex: none; height: 62px; border-top: 1px solid var(--a-line); display: grid; grid-template-columns: 1fr 1fr 58px 1fr 1fr; align-items: center; background: #fff; padding-bottom: 4px; }
+  .nb { border: 0; background: none; display: grid; justify-items: center; gap: 2px; font: 500 10.5px var(--font-body); color: var(--a-muted); cursor: pointer; padding: 4px 0; }
+  .nb svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .nb[aria-current="page"] { color: var(--a-blue); font-weight: 700; }
+  .plus { justify-self: center; width: 46px; height: 46px; border-radius: 16px; border: 0; background: var(--a-blue); color: #fff; font-size: 26px; line-height: 1; cursor: pointer; box-shadow: 0 6px 14px -4px rgba(2,117,253,.6); }
+  .backdrop { position: absolute; inset: 0; background: rgba(37,39,42,.4); z-index: 20; }
+  .sheet { position: absolute; inset-inline: 0; bottom: 0; z-index: 21; background: #fff; border-radius: 22px 22px 0 0; padding: 12px 14px 16px; display: grid; gap: 8px; animation: up .25s cubic-bezier(.2,.8,.2,1); }
+  @keyframes up { from { transform: translateY(100%); } }
+  .sheet h4 { margin: 0 0 2px; font-family: var(--font-display); font-size: 17px; }
+  .opt { display: flex; align-items: center; gap: 10px; border: 1px solid var(--a-line); border-radius: 14px; padding: 9px 11px; background: #fff; text-align: right; font: inherit; color: inherit; cursor: pointer; }
+  .opt .em { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 18px; flex: none; }
+  .opt b { display: block; } .opt small { color: var(--a-muted); }
+  @media (prefers-reduced-motion: reduce) { .sheet { animation: none; } }
+</style>
+
+<div class="wrap" dir="rtl" lang="ar">
+  <header style="display:grid;gap:8px">
+    <h1>هيكل ناس لايف المقترح</h1>
+    <p class="lead">هاتف واحد يعمل. اضغط عناصر الشريط السفلي، وجرّب الفلاتر في «لك» والخريطة، وبدّل بين «بيتي» و«مكتبي». الشرح بجانب الهاتف يتغير مع كل قسم. المحتوى أمثلة للتوضيح.</p>
+  </header>
+
+  <div class="stage">
+    <div class="phone"><div class="app" id="app">
+      <div class="notch"></div>
+
+      <div class="view" data-view="foryou">
+        <div class="vhead"><b>لك</b><span class="cmeta">جدة · الروضة</span></div>
+        <div class="chips" data-filter="feed"></div>
+        <div class="scroll" id="feed"></div>
+      </div>
+
+      <div class="view" data-view="map" hidden>
+        <div class="vhead"><b>الخريطة</b><span class="cmeta">حولك الآن</span></div>
+        <div class="chips" data-filter="map"></div>
+        <div class="map" id="map">
+          <svg viewBox="0 0 100 140" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0H22C17 30 26 60 19 95C16 115 22 130 18 140H0Z" fill="#CFE4FB"/><g stroke="#fff" stroke-width="3" fill="none"><path d="M22 28H100M20 62H100M20 100H100M48 0V140M76 0V140"/></g></svg>
+          <span class="me"></span>
+          <div class="mcard" id="mcard"></div>
+        </div>
+      </div>
+
+      <div class="view" data-view="chats" hidden>
+        <div class="vhead"><b>المحادثات</b></div>
+        <div class="chips" data-filter="chat"></div>
+        <div class="scroll" id="chats" style="gap:0"></div>
+      </div>
+
+      <div class="view" data-view="me" hidden>
+        <div class="vhead"><div class="me-head"><span class="avt" style="background:#0275FD">ع</span><div><b style="font-size:16px">عمرو</b><div class="cmeta">@amr</div></div></div></div>
+        <div class="seg" role="group" aria-label="بيتي أو مكتبي"><button type="button" data-side="home" aria-pressed="true">بيتي</button><button type="button" data-side="office" aria-pressed="false">مكتبي</button></div>
+        <div class="scroll" id="me"></div>
+      </div>
+
+      <nav class="nav" aria-label="الشريط السفلي">
+        <button class="nb" type="button" data-go="foryou" aria-current="page"><svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.6L21 9.4l-4.6 4.3 1.2 6.3L12 17l-5.6 3 1.2-6.3L3 9.4l6.4-.8z"/></svg>لك</button>
+        <button class="nb" type="button" data-go="map"><svg viewBox="0 0 24 24"><path d="M12 21s6.5-5.6 6.5-11a6.5 6.5 0 1 0-13 0c0 5.400 6.500 11 6.500 11z"/><circle cx="12" cy="10" r="2.400"/></svg>الخريطة</button>
+        <button class="plus" type="button" id="plus" aria-label="انشر">＋</button>
+        <button class="nb" type="button" data-go="chats"><svg viewBox="0 0 24 24"><path d="M4 5.500h16v10.500H10l-5 4v-4H4z"/></svg>المحادثات</button>
+        <button class="nb" type="button" data-go="me"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg>بيتي</button>
+      </nav>
+    </div></div>
+
+    <div class="explain">
+      <div class="panel" id="explain"></div>
+      <div class="panel">
+        <h2 style="font-size:19px">الألوان</h2>
+        <div class="palette">
+          <span class="sw"><i style="background:#FFFFFF"></i>أبيض: الخلفية</span>
+          <span class="sw"><i style="background:#25272A"></i>فحمي: النص</span>
+          <span class="sw"><i style="background:#0275FD"></i>أزرق: كل ما يُضغط</span>
+          <span class="sw"><i style="background:#29B25F"></i>أخضر: موثّق وتم</span>
+          <span class="sw"><i style="background:#FEB304"></i>أصفر: عروض وتقييم</span>
+          <span class="sw"><i style="background:#EE3B2A"></i>أحمر: الآن وينتهي</span>
+        </div>
+        <p style="color:var(--muted);font-size:14px">لاحظ في الهاتف: الأزرق فقط على الأزرار والقسم النشط، وباقي الألوان نقاط صغيرة لها معنى.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  function el(t, c, h) { var e = document.createElement(t); if (c) e.className = c; if (h != null) e.innerHTML = h; return e; }
+  var app = document.getElementById('app');
+
+  var ITEMS = [
+    { k: 'moment', tag: 'لحظة', em: '🌅', g: 'g1', who: 'نورة · صديقتك', ttl: 'غروب على الكورنيش', meta: '1.2 كم · قبل 10 د', cta: 'شاهد', x: 30, y: 22, live: true },
+    { k: 'market', tag: 'السوق', em: '🚲', g: 'g4', who: 'أبو فهد', ttl: 'دراجة هوائية شبه جديدة', meta: '450 ر.س · 2 كم', cta: 'اشترِ', x: 74, y: 30 },
+    { k: 'offer', tag: 'عرض', em: '☕', g: 'g2', who: 'قهوة الميناء', ok: true, mine: true, ttl: 'القهوة الثانية مجاناً', meta: 'ينتهي 7:00 م · 600 م', cta: 'استخدم', x: 58, y: 58 },
+    { k: 'event', tag: 'فعالية', em: '🎷', g: 'g3', who: 'دائرة البلد الثقافية', ok: true, ttl: 'ليلة جاز في البلد', meta: 'الخميس 9 م · 45 ر.س', cta: 'احجز', x: 40, y: 78 },
+    { k: 'job', tag: 'فرصة', em: '🧑‍🍳', g: 'g5', who: 'كافيه السنبلة', ok: true, ttl: 'باريستا دوام جزئي', meta: 'مساءً · 1.8 كم', cta: 'قدّم', x: 80, y: 70 },
+    { k: 'market', tag: 'السوق', em: '🎧', g: 'g6', who: 'متجر صدى', ok: true, mine: true, ttl: 'سماعة لاسلكية · وصل حديثاً', meta: '299 ر.س · توصيل اليوم', cta: 'اشترِ', x: 62, y: 16 }
+  ];
+  var FILTERS = [['all', 'الكل'], ['moment', 'لحظات'], ['market', 'السوق'], ['offer', 'عروض'], ['event', 'فعاليات'], ['job', 'فرص'], ['mine', 'دوائري']];
+  var TAGC = { moment: '#0275FD', market: '#29B25F', offer: '#B87900', event: '#EE3B2A', job: '#7A4FD0' };
+  var PINC = { moment: '#0275FD', market: '#29B25F', offer: '#FEB304', event: '#EE3B2A', job: '#7A4FD0' };
+  function match(it, f) { return f === 'all' || (f === 'mine' ? !!it.mine : it.k === f); }
+
+  function chips(host, list, onPick) {
+    list.forEach(function (f, i) {
+      var b = el('button', 'chip', f[1]); b.type = 'button'; b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+      b.addEventListener('click', function () {
+        host.querySelectorAll('.chip').forEach(function (c) { c.setAttribute('aria-pressed', c === b ? 'true' : 'false'); });
+        onPick(f[0]);
+      });
+      host.appendChild(b);
+    });
+  }
+
+  // لك
+  var feed = document.getElementById('feed');
+  function renderFeed(f) {
+    feed.innerHTML = '';
+    var list = ITEMS.filter(function (it) { return match(it, f); });
+    if (!list.length) { feed.appendChild(el('div', 'empty', 'لا شيء هنا الآن')); return; }
+    list.forEach(function (it) {
+      feed.appendChild(el('div', 'card',
+        '<div class="media ' + it.g + '">' + it.em + '<span class="tag" style="color:' + TAGC[it.k] + '">' + it.tag + '</span>' + (it.live ? '<span class="live">الآن</span>' : '') + '</div>' +
+        '<div class="cbody"><div class="cwho">' + it.who + (it.ok ? ' <span class="ok">✓ موثّقة</span>' : '') + '</div><div class="cttl">' + it.ttl + '</div>' +
+        '<div class="crow"><span class="cmeta">' + it.meta + '</span><button class="cta" type="button">' + it.cta + '</button></div></div>'));
+    });
+    feed.scrollTop = 0;
+  }
+  chips(app.querySelector('[data-filter="feed"]'), FILTERS, renderFeed); renderFeed('all');
+
+  // الخريطة
+  var map = document.getElementById('map'), mcard = document.getElementById('mcard');
+  ITEMS.forEach(function (it, i) {
+    var p = el('span', 'pin', it.em); p.style.right = it.x + '%'; p.style.top = it.y + '%'; p.style.background = PINC[it.k]; p.dataset.i = i;
+    map.insertBefore(p, mcard);
+  });
+  function renderMap(f) {
+    var first = null;
+    map.querySelectorAll('.pin').forEach(function (p) { var it = ITEMS[+p.dataset.i], on = match(it, f); p.hidden = !on; if (on && !first) first = it; });
+    mcard.innerHTML = first ? '<span class="em ' + first.g + '">' + first.em + '</span><div><b>' + first.ttl + '</b><div class="cmeta">' + first.meta + '</div></div><button class="cta" type="button">' + first.cta + '</button>' : '<div class="cmeta">لا شيء قريب بهذا الفلتر</div>';
+  }
+  chips(app.querySelector('[data-filter="map"]'), FILTERS, renderMap); renderMap('all');
+
+  // المحادثات
+  var CHATS = [
+    { k: 'people', n: 'نورة', c: '#E46A8B', t: 'نتقابل بكرة 7 م؟', b: 2 },
+    { k: 'circles', n: 'قهوة الميناء', c: '#8A5A3A', sq: true, t: 'طلبك جاهز للاستلام', pill: ['p-g', 'جاهز'] },
+    { k: 'orders', n: 'أبو فهد · الدراجة', c: '#29B25F', t: 'تم قبول طلبك، التسليم اليوم', pill: ['p-y', 'طلب'] },
+    { k: 'people', n: 'خالد', c: '#6B8BE4', t: 'شفت لحظتك 😂' },
+    { k: 'circles', n: 'دائرة البلد الثقافية', c: '#3F51B5', sq: true, t: 'تذكرتك لليلة الجاز', pill: ['p-r', 'الخميس'] },
+    { k: 'orders', n: 'كافيه السنبلة · وظيفة', c: '#7A4FD0', sq: true, t: 'نود دعوتك لمقابلة', b: 1 }
+  ];
+  var chatsEl = document.getElementById('chats');
+  function renderChats(f) {
+    chatsEl.innerHTML = '';
+    CHATS.filter(function (c) { return f === 'all' || c.k === f; }).forEach(function (c) {
+      chatsEl.appendChild(el('div', 'chat', '<span class="avt' + (c.sq ? ' sq' : '') + '" style="background:' + c.c + '">' + c.n.charAt(0) + '</span><div><b>' + c.n + '</b><small>' + c.t + '</small></div>' +
+        (c.pill ? '<span class="pill ' + c.pill[0] + '">' + c.pill[1] + '</span>' : '') + (c.b ? '<span class="badge">' + c.b + '</span>' : '')));
+    });
+  }
+  chips(app.querySelector('[data-filter="chat"]'), [['all', 'الكل'], ['people', 'الناس'], ['circles', 'الدوائر'], ['orders', 'الطلبات']], renderChats); renderChats('all');
+
+  // بيتي / مكتبي
+  var meEl = document.getElementById('me'), navMe = app.querySelector('[data-go="me"]');
+  var SIDES = {
+    home: '<div class="tiles"><div class="tile"><span class="n">3</span><b>طلباتي</b><small>واحد في الطريق</small></div><div class="tile"><span class="n">2</span><b>تذاكري</b><small>الخميس 9 م</small></div><div class="tile"><span class="n">1</span><b>مواعيدي</b><small>بكرة 7 م مع نورة</small></div><div class="tile"><span class="n">14</span><b>محفوظاتي</b><small>عروض ولحظات</small></div></div>' +
+      '<div><div class="rowi">دوائري <span>8 دوائر</span></div><div class="rowi">أصحابي <span>46</span></div><div class="rowi">لحظاتي <span>23</span></div><div class="rowi">اهتماماتي والخصوصية <span>‹</span></div></div>',
+    office: '<div class="chat" style="border:0;padding:0"><span class="avt sq" style="background:#8A5A3A">ق</span><div><b>قهوة الميناء <span class="ok">✓ موثّقة</span></b><small>دائرتك التجارية</small></div></div>' +
+      '<div class="tiles"><div class="tile"><span class="n">12</span><b>طلبات اليوم</b><small>3 بانتظار التجهيز</small></div><div class="tile"><span class="n">5</span><b>رسائل العملاء</b><small>2 بلا رد</small></div><div class="tile"><span class="n">1,840</span><b>مبيعات اليوم</b><small>ريال</small></div><div class="tile"><span class="n">320</span><b>أعضاء الدائرة</b><small>+12 هذا الأسبوع</small></div></div>' +
+      '<div><div class="rowi">منتجاتي وعروضي <span>‹</span></div><div class="rowi">وظائفي والمتقدمون <span>4 جدد</span></div><div class="rowi">الإحصاءات <span>‹</span></div></div>' +
+      '<div class="note">من ليس له دائرة أو عمل حر يرى هنا زراً واحداً: «افتح دائرتك»، ولا يرى شيئاً من هذا.</div>'
+  };
+  function renderMe(side) {
+    meEl.innerHTML = SIDES[side];
+    app.querySelectorAll('.seg button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.side === side ? 'true' : 'false'); });
+    navMe.lastChild.textContent = side === 'home' ? 'بيتي' : 'مكتبي';
+    if (current === 'me') explain(side === 'home' ? 'home' : 'office');
+  }
+  app.querySelectorAll('.seg button').forEach(function (b) { b.addEventListener('click', function () { renderMe(b.dataset.side); }); });
+
+  // الشرح الجانبي
+  var EX = {
+    foryou: ['لك', 'كل شيء في مكان واحد: لحظات، سوق، عروض، فعاليات، فرص، وجديد دوائرك. كل بطاقة لها زر فعل واحد.', ['السوق والفعاليات والدوائر لم تُحذف: صارت فلاتر في الأعلى.', 'اضغط «السوق» فترى السوق فقط، كأنك فتحت قسم السوق القديم.', '«دوائري» يعرض جديد الشركات التي انضممت لها.'], 'جرّب: اضغط الفلاتر في أعلى الهاتف.'],
+    map: ['الخريطة', 'المحتوى نفسه، لكن في مكانه. الفلاتر نفسها بالضبط.', ['المستخدم يتعلم الفلاتر مرة واحدة، وتعمل في كل مكان.', 'لون الدبوس يدل على النوع.'], 'جرّب: اضغط «عروض» أو «فعاليات» وراقب الدبابيس.'],
+    chats: ['المحادثات', 'مثل واتساب، ومعها الدوائر والطلبات في القائمة نفسها.', ['محادثة الدائرة فيها طلبك وتذكرتك وموعدك.', 'لا صفحات منفصلة للطلبات: حالة الطلب تظهر على المحادثة.'], 'جرّب: اضغط «الدوائر» أو «الطلبات».'],
+    home: ['بيتي', 'حياتك الشخصية: ما اشتريته، تذاكرك، مواعيدك، محفوظاتك، دوائرك، أصحابك.', ['كل ما يخصك أنت كمستخدم في شاشة واحدة.', 'هذا ما يراه كل مستخدم.'], 'جرّب: بدّل إلى «مكتبي».'],
+    office: ['مكتبي', 'حياتك العملية: دائرتك أو عملك الحر. طلبات العملاء، رسائلهم، المبيعات، المنتجات، الوظائف.', ['يظهر فقط لمن عنده دائرة أو عمل حر.', 'صاحب المحل يفتح التطبيق على مكتبه مباشرة إن أراد.', 'هكذا يبقى التطبيق بسيطاً للمستخدم العادي، وكاملاً لصاحب العمل.'], 'جرّب: ارجع إلى «بيتي» ولاحظ الفرق.'],
+    plus: ['زر النشر', 'زر واحد في الوسط لكل ما تنشره.', ['بدل أزرار نشر متفرقة في كل قسم.', 'خيار «عرض للأعضاء» يظهر فقط لمن عنده دائرة.'], 'جرّب: اختر نوعاً أو اضغط خارج الورقة.']
+  };
+  var exEl = document.getElementById('explain');
+  function explain(k) { var e = EX[k]; exEl.innerHTML = '<h2>' + e[0] + '</h2><p>' + e[1] + '</p><ul>' + e[2].map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul><p class="try">' + e[3] + '</p>'; }
+
+  // التنقل
+  var current = 'foryou';
+  function go(v) {
+    current = v;
+    app.querySelectorAll('.view').forEach(function (s) { s.hidden = s.dataset.view !== v; });
+    app.querySelectorAll('.nb').forEach(function (b) { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    explain(v === 'me' ? (app.querySelector('.seg button[aria-pressed="true"]').dataset.side === 'home' ? 'home' : 'office') : v);
+  }
+  app.querySelectorAll('.nb').forEach(function (b) { b.addEventListener('click', function () { go(b.dataset.go); }); });
+
+  // النشر
+  document.getElementById('plus').addEventListener('click', function () {
+    var back = el('div', 'backdrop'), sheet = el('div', 'sheet',
+      '<h4>ماذا تنشر؟</h4>' +
+      [['📸', 'g1', 'لحظة', 'صورة أو فيديو أو نص، لأصحابك أو للجميع'], ['🏷️', 'g4', 'شيء للبيع', 'يظهر في السوق وعلى الخريطة'], ['🎟️', 'g3', 'فعالية أو فرصة', 'تذاكر، وظيفة، عمل حر'], ['⭐', 'g2', 'عرض للأعضاء', 'من دائرتك، لمن انضم لها']]
+        .map(function (o) { return '<button class="opt" type="button"><span class="em ' + o[1] + '">' + o[0] + '</span><span><b>' + o[2] + '</b><small>' + o[3] + '</small></span></button>'; }).join(''));
+    function close() { back.remove(); sheet.remove(); explain(current === 'me' ? 'home' : current); }
+    back.addEventListener('click', close);
+    sheet.querySelectorAll('.opt').forEach(function (o) { o.addEventListener('click', close); });
+    app.appendChild(back); app.appendChild(sheet); explain('plus');
+  });
+
+  renderMe('home'); go('foryou');
+})();
+</script>

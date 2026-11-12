@@ -1,0 +1,601 @@
+<title>التغذية العمودية في ناس لايف</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@600;800&family=Rubik:wght@400;500;700&display=swap">
+<style>
+  /* التخطيط: صفحة نقاش بالعربية، كل شكل = هاتف تفاعلي بجانب شرحه، ثم الترتيب والمقارنة والتوصية. ألوان «بحر جدة» من ثيم التطبيق. */
+  :root {
+    --bg: #F4F8F8;
+    --surface: #FFFFFF;
+    --fg: #10201F;
+    --muted: #5A6B6C;
+    --line: #D8E3E3;
+    --sea: #0A6E78;
+    --sea-on: #FFFFFF;
+    --sea-soft: #DDF1F2;
+    --coral: #BF3A1E;
+    --coral-soft: #FCE9E3;
+    --sun: #FFD66B;
+    --frame: #17221F;
+    /* داخل الهاتف: واجهة داكنة ثابتة في الوضعين لأنها صورة لشاشة التطبيق */
+    --ph-bg: #0A1315;
+    --ph-card: #122023;
+    --ph-fg: #FFFFFF;
+    --ph-muted: rgba(255, 255, 255, .74);
+    --ph-chip: rgba(255, 255, 255, .16);
+    --ph-action: #FFD66B;
+    --ph-action-on: #2B2000;
+    --ph-sea: #39B3BE;
+    --font-display: 'Baloo Bhaijaan 2', 'Rubik', system-ui, sans-serif;
+    --font-body: 'Rubik', system-ui, -apple-system, 'Segoe UI', Tahoma, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0B1213; --surface: #132022; --fg: #E6EFEF; --muted: #9AB0B1; --line: #233739;
+      --sea: #45BAC4; --sea-on: #032629; --sea-soft: #12343A; --coral: #F27C5E; --coral-soft: #3A1F18; --frame: #2B3A3C;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0B1213; --surface: #132022; --fg: #E6EFEF; --muted: #9AB0B1; --line: #233739;
+    --sea: #45BAC4; --sea-on: #032629; --sea-soft: #12343A; --coral: #F27C5E; --coral-soft: #3A1F18; --frame: #2B3A3C;
+    color-scheme: dark;
+  }
+
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); direction: rtl; line-height: 1.65; font-size: 15px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; display: grid; gap: 44px; }
+  h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.25; margin: 0; }
+  h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 800; color: var(--sea); }
+  h2 { font-size: clamp(22px, 3.2vw, 28px); font-weight: 800; }
+  h3 { font-size: 21px; font-weight: 800; }
+  p { margin: 0; }
+  .lead { color: var(--muted); max-width: 62ch; font-size: 16px; }
+  header.top { display: grid; gap: 10px; }
+  .howto { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; background: var(--sea-soft); color: var(--fg); font-size: 13px; }
+  .pill b { color: var(--sea); }
+  section { display: grid; gap: 18px; }
+  .sec-head { display: grid; gap: 6px; }
+  .sec-head p { color: var(--muted); max-width: 64ch; }
+
+  /* ===== الأشكال ===== */
+  .forms { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 540px), 1fr)); gap: 22px; }
+  .form { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 18px; display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (max-width: 600px) { .form { grid-template-columns: minmax(0, 1fr); justify-items: center; } .form .txt { justify-self: stretch; } }
+  .txt { display: grid; gap: 10px; min-width: 0; }
+  .titlerow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .num { font-family: var(--font-display); font-weight: 800; color: var(--sea); font-size: 15px; }
+  .examples { color: var(--muted); font-size: 13px; }
+  .own { display: inline-block; font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--coral-soft); color: var(--coral); font-weight: 500; }
+  .pros, .cons { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 14px; }
+  .pros li::before { content: "+"; color: var(--sea); font-weight: 700; margin-left: 8px; }
+  .cons li::before { content: "−"; color: var(--coral); font-weight: 700; margin-left: 8px; }
+  .fit { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--line); }
+  .meter { display: inline-flex; gap: 4px; }
+  .meter i { width: 18px; height: 6px; border-radius: 3px; background: var(--line); }
+  .meter i.on { background: var(--sea); }
+  .fit b { color: var(--fg); font-weight: 500; }
+
+  /* ===== الهاتف ===== */
+  .phone { width: 248px; height: 520px; max-width: 100%; padding: 8px; border-radius: 36px; background: var(--frame); box-shadow: 0 18px 40px -22px rgba(0,0,0,.45); flex: none; }
+  .screen { position: relative; height: 100%; border-radius: 29px; overflow: hidden; background: var(--ph-bg); color: var(--ph-fg); font-size: 12px; line-height: 1.5; isolation: isolate; }
+  .screen:focus-visible, .snap:focus-visible { outline: 3px solid var(--sun); outline-offset: -3px; }
+  .notch { position: absolute; top: 7px; left: 50%; transform: translateX(-50%); width: 74px; height: 18px; border-radius: 10px; background: #000; z-index: 30; }
+  .snap { height: 100%; overflow-y: auto; scroll-snap-type: y mandatory; overscroll-behavior: contain; scrollbar-width: none; }
+  .snap::-webkit-scrollbar, .free::-webkit-scrollbar { display: none; }
+  .slide { position: relative; height: 100%; scroll-snap-align: start; scroll-snap-stop: always; overflow: hidden; }
+  .art { position: absolute; inset: 0; }
+  .art .glyph { position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%); font-size: 86px; filter: drop-shadow(0 10px 18px rgba(0,0,0,.35)); }
+  .shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.28) 0%, transparent 22%, transparent 48%, rgba(0,0,0,.82) 100%); }
+  .s-sunset { background: linear-gradient(172deg, #3B1C5A 0%, #C2476A 44%, #F4A24C 63%, #134656 64%, #08202B 100%); }
+  .s-coffee { background: linear-gradient(160deg, #2E1C12 0%, #7A4A2B 55%, #D09A66 100%); }
+  .s-jazz { background: linear-gradient(160deg, #0B1640 0%, #2B3FA0 58%, #E0B84C 100%); }
+  .s-bike { background: linear-gradient(160deg, #0D3329 0%, #2E8A5E 60%, #BFE3A8 100%); }
+  .s-job { background: linear-gradient(160deg, #241A38 0%, #6B4FA0 60%, #F2C6A0 100%); }
+  .s-food { background: linear-gradient(160deg, #431210 0%, #C2412B 60%, #F7C25C 100%); }
+  .s-ball { background: linear-gradient(160deg, #0B2C1C 0%, #1F7A3E 60%, #A8E063 100%); }
+  .s-beach { background: linear-gradient(160deg, #0A3D62 0%, #1E90A8 55%, #F3E3B3 100%); }
+  .s-end { background: radial-gradient(120% 80% at 50% 30%, #0F4C55 0%, #0A1315 70%); }
+
+  .info { position: absolute; right: 12px; left: 60px; bottom: 16px; display: grid; gap: 4px; z-index: 2; }
+  .info .ttl { font-size: 15px; font-weight: 700; line-height: 1.35; }
+  .info .meta { color: var(--ph-muted); font-size: 11.5px; }
+  .who { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+  .av { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--ph-sea); color: #032629; flex: none; }
+  .tchip { justify-self: start; display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; background: var(--ph-chip); font-size: 10.5px; font-weight: 500; }
+  .tchip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--ph-sea)); }
+  .t-moment { --dot: #39B3BE; } .t-offer { --dot: #FF8A6B; } .t-event { --dot: #FFD66B; } .t-listing { --dot: #8FE3A1; } .t-job { --dot: #C4A8FF; }
+  .why { color: var(--ph-muted); font-size: 10.5px; display: flex; gap: 4px; align-items: center; }
+  .why b { color: var(--ph-fg); font-weight: 500; }
+  .act { margin-top: 6px; height: 36px; border: 0; border-radius: 12px; background: var(--ph-action); color: var(--ph-action-on); font: 700 13px var(--font-body); display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .rail { position: absolute; left: 9px; bottom: 22px; display: grid; gap: 12px; justify-items: center; z-index: 2; }
+  .rb { display: grid; justify-items: center; gap: 1px; font-size: 10px; color: var(--ph-muted); }
+  .rb span { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.14); display: grid; place-items: center; }
+  .rb svg { width: 19px; height: 19px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .rb .fill { fill: #fff; stroke: none; }
+  .hint { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); z-index: 3; font-size: 10.5px; padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,.45); white-space: nowrap; animation: bob 1.6s ease-in-out infinite; }
+  @keyframes bob { 50% { transform: translate(-50%, -6px); } }
+  .tabs { position: absolute; top: 32px; inset-inline: 0; display: flex; justify-content: center; gap: 16px; z-index: 5; font-size: 13px; color: var(--ph-muted); pointer-events: none; }
+  .tabs b { color: #fff; font-weight: 700; border-bottom: 2px solid #fff; padding-bottom: 2px; }
+  .bar { position: absolute; top: 30px; inset-inline: 12px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.25); z-index: 4; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 40%; background: #fff; }
+
+  /* القصص */
+  .stories { position: absolute; inset: 0; cursor: pointer; }
+  .stories .slide { position: absolute; inset: 0; height: auto; opacity: 0; transition: opacity .25s; }
+  .stories .slide.on { opacity: 1; }
+  .segs { position: absolute; top: 30px; inset-inline: 10px; display: flex; gap: 4px; z-index: 5; direction: rtl; }
+  .segs i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,.3); overflow: hidden; }
+  .segs i b { display: block; height: 100%; width: 0; background: #fff; }
+  .segs i.done b { width: 100%; }
+  .segs i.on b { animation: fill 4.5s linear forwards; }
+  @keyframes fill { to { width: 100%; } }
+  .shead { position: absolute; top: 40px; right: 12px; left: 12px; display: flex; align-items: center; gap: 7px; z-index: 5; }
+  .shead small { color: var(--ph-muted); }
+  .reply { position: absolute; bottom: 14px; inset-inline: 12px; height: 36px; border-radius: 18px; border: 1px solid rgba(255,255,255,.5); display: flex; align-items: center; padding-inline: 14px; color: var(--ph-muted); z-index: 5; }
+
+  /* البطاقات */
+  .free { height: 100%; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 36px 0 12px; }
+  .apphead { display: flex; justify-content: space-between; align-items: center; padding: 0 12px 8px; font-family: var(--font-display); font-weight: 800; font-size: 16px; }
+  .card { background: var(--ph-card); margin-bottom: 10px; }
+  .card .ch { display: flex; align-items: center; gap: 8px; padding: 8px 10px; }
+  .card .ch small { color: var(--ph-muted); margin-inline-start: auto; }
+  .card .media { position: relative; aspect-ratio: 1 / 1; max-width: 100%; }
+  .card .media .glyph { font-size: 64px; top: 50%; }
+  .card .acts { display: flex; gap: 14px; padding: 8px 10px 2px; }
+  .card .acts svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .card .cap { padding: 2px 10px 10px; color: var(--ph-muted); }
+  .card .cap b { color: #fff; }
+
+  /* الشبكة */
+  .gchips { display: flex; gap: 6px; padding: 0 10px 8px; overflow: hidden; }
+  .gchips span { padding: 3px 10px; border-radius: 999px; background: var(--ph-chip); white-space: nowrap; font-size: 11px; }
+  .gchips span.on { background: #fff; color: #0A1315; font-weight: 700; }
+  .grid { columns: 2; column-gap: 6px; padding: 0 6px; }
+  .tile { position: relative; display: block; width: 100%; margin-bottom: 6px; border: 0; border-radius: 12px; overflow: hidden; break-inside: avoid; cursor: pointer; color: #fff; font: inherit; padding: 0; }
+  .tile .glyph { font-size: 40px; top: 45%; }
+  .tile .lbl { position: absolute; bottom: 6px; right: 6px; left: 6px; text-align: right; font-size: 10.5px; font-weight: 500; text-shadow: 0 1px 4px rgba(0,0,0,.6); }
+  .tile:focus-visible { outline: 3px solid var(--sun); outline-offset: -3px; }
+  .full { position: absolute; inset: 0; z-index: 20; background: var(--ph-bg); }
+  .close { position: absolute; top: 34px; right: 10px; z-index: 25; width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; cursor: pointer; }
+  .close svg { width: 18px; height: 18px; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; fill: none; }
+
+  /* الخريطة المرافقة */
+  .mapwrap { position: absolute; top: 0; inset-inline: 0; height: 38%; z-index: 2; border-bottom: 1px solid rgba(255,255,255,.12); }
+  .mapwrap svg { width: 100%; height: 100%; display: block; }
+  .mapwrap .pin { transition: transform .45s cubic-bezier(.2,.8,.2,1); }
+  .dist { position: absolute; bottom: 8px; right: 10px; padding: 3px 10px; border-radius: 999px; background: rgba(0,0,0,.55); font-size: 11px; font-weight: 500; }
+  .mapfeed { position: absolute; top: 38%; bottom: 0; inset-inline: 0; }
+  .mapfeed .glyph { font-size: 58px; top: 32%; }
+  .mapfeed .info { left: 12px; }
+
+  /* الاهتمامات */
+  .interests { padding: 44px 14px 14px; height: 100%; display: flex; flex-direction: column; gap: 10px; }
+  .interests h4 { margin: 0; font-family: var(--font-display); font-size: 20px; font-weight: 800; }
+  .interests p { color: var(--ph-muted); font-size: 11.5px; }
+  .ichips { display: flex; flex-wrap: wrap; gap: 7px; }
+  .ichip { border: 1px solid rgba(255,255,255,.28); background: transparent; color: #fff; border-radius: 999px; padding: 6px 11px; font: 500 12px var(--font-body); cursor: pointer; }
+  .ichip[aria-pressed="true"] { background: var(--ph-sea); border-color: var(--ph-sea); color: #032629; }
+  .ichip:focus-visible, .act:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
+  .istart { margin-top: auto; }
+  .skip { text-align: center; color: var(--ph-muted); font-size: 11.5px; }
+
+  /* ===== الترتيب ===== */
+  .rank { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px; counter-reset: r; list-style: none; margin: 0; padding: 0; }
+  .rank li { counter-increment: r; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px 14px 12px; display: grid; gap: 4px; }
+  .rank li::before { content: counter(r); font-family: var(--font-display); font-weight: 800; font-size: 22px; color: var(--sea); line-height: 1; }
+  .rank b { font-size: 15px; }
+  .rank span { color: var(--muted); font-size: 13.5px; }
+  .rank li.guard { background: var(--sea-soft); border-color: transparent; }
+  .rank-note { color: var(--muted); font-size: 13px; }
+
+  .split { display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: 22px; align-items: start; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 18px; }
+  @media (max-width: 600px) { .split { grid-template-columns: minmax(0, 1fr); justify-items: center; } .split .txt { justify-self: stretch; } }
+
+  /* ===== المقارنة ===== */
+  .tablebox { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; min-width: 640px; font-size: 14px; }
+  th, td { text-align: right; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 500; color: var(--muted); font-size: 12.5px; background: var(--bg); }
+  tr:last-child td { border-bottom: 0; }
+  td.fitcell b { color: var(--sea); }
+
+  /* ===== التوصية ===== */
+  .reco { background: var(--sea); color: var(--sea-on); border-radius: 24px; padding: 24px; display: grid; gap: 14px; }
+  .reco h2 { color: var(--sea-on); }
+  .reco ol { margin: 0; padding-inline-start: 22px; display: grid; gap: 8px; }
+  .reco li b { font-weight: 700; }
+  .qs { display: grid; gap: 10px; }
+  .qs ol { margin: 0; padding-inline-start: 22px; display: grid; gap: 6px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hint, .segs i.on b { animation: none; }
+    .segs i.on b { width: 100%; }
+    .mapwrap .pin, .stories .slide { transition: none; }
+    .snap { scroll-behavior: auto; }
+  }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20.5s-7.4-4.5-9.4-9C1.2 8.1 3.3 5 6.6 5c2 0 3.5 1.1 4.4 2.6C12 6.1 13.5 5 15.4 5c3.3 0 5.4 3.1 4 6.5-2 4.5-7.4 9-7.4 9z"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5.5h16v10.5H10l-5 4v-4H4z"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M14 5l6 6-6 6M20 11h-9a6 6 0 0 0-6 6v2"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M6.5 3.5h11v17l-5.5-4-5.5 4z"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21.5s6.5-5.8 6.5-11.3a6.5 6.5 0 1 0-13 0c0 5.5 6.5 11.3 6.5 11.3z"/><circle cx="12" cy="10" r="2.4"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+</svg>
+
+<div class="wrap" dir="rtl" lang="ar">
+  <header class="top">
+    <h1>التغذية العمودية في ناس لايف</h1>
+    <p class="lead">ستة أشكال للتغذية العمودية، أربعة منها معروفة في التطبيقات الكبيرة، واثنان صممتهما لناس لايف تحديداً لأنهما يربطان ما تراه بالمكان. كل شاشة تعمل: اسحب داخلها كما تسحب في الجوال.</p>
+    <div class="howto">
+      <span class="pill"><b>اسحب للأعلى</b> داخل الشاشة للمشاركة التالية</span>
+      <span class="pill"><b>اضغط</b> في القصص والشبكة</span>
+      <span class="pill">المحتوى أمثلة للتوضيح فقط</span>
+    </div>
+  </header>
+
+  <section aria-labelledby="h-forms">
+    <div class="sec-head">
+      <h2 id="h-forms">الأشكال</h2>
+      <p>لكل شكل: كيف يعمل، ما يقوّيه وما يضعفه، ومدى ملاءمته لناس لايف حسب رأيي.</p>
+    </div>
+    <div class="forms">
+
+      <article class="form">
+        <div class="phone"><div class="screen" role="region" aria-label="نموذج ملء الشاشة"><div class="notch"></div>
+          <div class="bar"><i></i></div>
+          <div class="snap" data-snap="full" tabindex="0"></div>
+        </div></div>
+        <div class="txt">
+          <div class="titlerow"><span class="num">1</span><h3>ملء الشاشة</h3></div>
+          <p class="examples">مثل: تيك توك · ريلز · شورتس</p>
+          <p>مشاركة واحدة تملأ الشاشة، وتسحب للأعلى للتي بعدها. الأزرار على الجانب والوصف في الأسفل.</p>
+          <ul class="pros"><li>انغماس كامل وسهل جداً</li><li>ممتاز للفيديو</li></ul>
+          <ul class="cons"><li>مشاركة واحدة في كل مرة</li><li>يحتاج فيديوهات كثيرة حتى لا يملّ المستخدم، ومحتوانا اليوم قليل الفيديو</li></ul>
+          <div class="fit"><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span>الملاءمة: <b>متوسطة</b></span></div>
+        </div>
+      </article>
+
+      <article class="form">
+        <div class="phone"><div class="screen" role="region" aria-label="نموذج القصص"><div class="notch"></div>
+          <div class="segs" id="segs"></div>
+          <div class="stories" id="stories" tabindex="0" aria-label="اضغط يميناً للتالية ويساراً للسابقة"></div>
+        </div></div>
+        <div class="txt">
+          <div class="titlerow"><span class="num">2</span><h3>القصص</h3></div>
+          <p class="examples">مثل: سناب شات · ستوريز إنستغرام</p>
+          <p>لحظات كل شخص متتابعة. تضغط يميناً للتالية ويساراً للسابقة، وتختفي بعد مدة.</p>
+          <ul class="pros"><li>قريب من الأصدقاء وخفيف</li><li>موجود الآن في عارض اللحظات عندنا</li></ul>
+          <ul class="cons"><li>يدور حول الأشخاص لا حول المكان</li><li>ضعيف لاكتشاف الجديد</li></ul>
+          <div class="fit"><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span>الملاءمة: <b>عالية للأصدقاء</b></span></div>
+        </div>
+      </article>
+
+      <article class="form">
+        <div class="phone"><div class="screen" role="region" aria-label="نموذج البطاقات المتتالية"><div class="notch"></div>
+          <div class="free" id="cards" tabindex="0"></div>
+        </div></div>
+        <div class="txt">
+          <div class="titlerow"><span class="num">3</span><h3>البطاقات المتتالية</h3></div>
+          <p class="examples">مثل: إنستغرام · فيسبوك · إكس</p>
+          <p>بطاقات تحت بعضها، في كل بطاقة صورة ونص وأزرار وتعليقات. التمرير حر بلا توقف عند كل بطاقة.</p>
+          <ul class="pros"><li>معلومات أكثر في كل مشاركة</li><li>يناسب النص والنقاش</li></ul>
+          <ul class="cons"><li>أقل إثارة</li><li>يجعل ناس لايف يشبه أي تطبيق آخر</li></ul>
+          <div class="fit"><span class="meter"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>الملاءمة: <b>منخفضة</b></span></div>
+        </div>
+      </article>
+
+      <article class="form">
+        <div class="phone"><div class="screen" role="region" aria-label="نموذج الشبكة ثم ملء الشاشة"><div class="notch"></div>
+          <div class="free" tabindex="0">
+            <div class="apphead"><span>اللحظات</span></div>
+            <div class="gchips"><span class="on">عام</span><span>لحظات</span><span>عروض</span><span>فعاليات</span><span>السوق</span></div>
+            <div class="grid" id="grid"></div>
+          </div>
+          <div class="full" id="gridFull" hidden>
+            <button class="close" id="gridClose" aria-label="إغلاق"><svg><use href="#i-close"/></svg></button>
+            <div class="snap" id="gridSnap" tabindex="0"></div>
+          </div>
+        </div></div>
+        <div class="txt">
+          <div class="titlerow"><span class="num">4</span><h3>الشبكة ثم ملء الشاشة</h3></div>
+          <p class="examples">مثل: بنترست · استكشف في إنستغرام · صفحة «اللحظات» الحالية عندنا</p>
+          <p>ترى مشاركات كثيرة دفعة واحدة، وتضغط على ما يعجبك فيفتح بملء الشاشة وتكمل بالسحب.</p>
+          <ul class="pros"><li>تصفح سريع والمستخدم يختار بنفسه</li><li>موجود عندنا، يحتاج فقط أن يكمل بالسحب العمودي</li></ul>
+          <ul class="cons"><li>خطوتان بدل خطوة</li></ul>
+          <div class="fit"><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span>الملاءمة: <b>عالية للتصفح</b></span></div>
+        </div>
+      </article>
+
+      <article class="form">
+        <div class="phone"><div class="screen" role="region" aria-label="نموذج التغذية المختلطة بالأفعال"><div class="notch"></div>
+          <div class="tabs"><b>لك</b><span>قربي</span><span>أتابعهم</span></div>
+          <div class="snap" data-snap="mixed" tabindex="0"></div>
+        </div></div>
+        <div class="txt">
+          <div class="titlerow"><span class="num">5</span><h3>المختلطة بالأفعال</h3><span class="own">خاص بناس لايف</span></div>
+          <p>ملء الشاشة، لكن كل بطاقة لها نوع: لحظة، عرض، فعالية، السوق، وظيفة. ولكل نوع زر فعل واحد: شاهد، استخدم، تذكرة، اطلب، قدّم. وتحتها سطر «لماذا ترى هذا؟». وفي النهاية بطاقة «شفت الجديد كله» تدعوك تطلع بدل أن تكمل التمرير بلا نهاية.</p>
+          <ul class="pros"><li>كل سحبة قد تنتهي بفعل حقيقي</li><li>يستخدم المحتوى الموجود عندنا اليوم من «الصف»</li></ul>
+          <ul class="cons"><li>يحتاج توازناً حتى لا تغلب العروض على لحظات الناس</li></ul>
+          <div class="fit"><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span><span>الملاءمة: <b>عالية جداً</b></span></div>
+        </div>
+      </article>
+
+      <article class="form">
+        <div class="phone" id="mapPhone"><div class="screen" role="region" aria-label="نموذج الخريطة المرافقة"><div class="notch"></div>
+          <div class="mapwrap">
+            <svg viewBox="0 0 100 62" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <rect width="100" height="62" fill="#18262A"/>
+              <path d="M0 0H24C19 10 27 18 21 28C15 38 25 47 19 62H0Z" fill="#0F3B47"/>
+              <path d="M24 0C19 10 27 18 21 28C15 38 25 47 19 62" fill="none" stroke="#2A5A64" stroke-width=".6"/>
+              <g stroke="#2C3E43" stroke-width="1.4" fill="none">
+                <path d="M26 12H100M22 30H100M24 48H100M45 0V62M68 0V62M86 0V62"/>
+              </g>
+              <g fill="#5D7A80" id="mapDots"></g>
+              <circle cx="56" cy="40" r="3.2" fill="#3D8BFF" stroke="#fff" stroke-width="1"/>
+              <g class="pin" id="mapPin">
+                <path d="M0 0c0 0 -4.6-4.4-4.6-8.1a4.6 4.6 0 1 1 9.2 0C4.6-4.4 0 0 0 0z" fill="#FFD66B" stroke="#2B2000" stroke-width=".6"/>
+                <circle cx="0" cy="-8.2" r="1.7" fill="#2B2000"/>
+              </g>
+            </svg>
+            <span class="dist" id="mapDist">1.2 كم منك</span>
+          </div>
+          <div class="mapfeed"><div class="snap" data-snap="map" tabindex="0"></div></div>
+        </div></div>
+        <div class="txt">
+          <div class="titlerow"><span class="num">6</span><h3>الخريطة المرافقة</h3><span class="own">خاص بناس لايف</span></div>
+          <p>خريطة صغيرة أعلى الشاشة تتحرك مع كل سحبة، وتعرض مكان المشاركة والمسافة منك. النقطة الزرقاء أنت، والدبوس الأصفر المشاركة الحالية.</p>
+          <ul class="pros"><li>لا يملكه أي تطبيق آخر</li><li>يربط ما تراه بالمكان مباشرة، فيسهل قرار «أروح؟»</li></ul>
+          <ul class="cons"><li>مساحة أقل للصورة</li><li>جهده أكبر من بقية الأشكال</li></ul>
+          <div class="fit"><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span><span>الملاءمة: <b>عالية جداً، تميّزنا</b></span></div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section aria-labelledby="h-rank">
+    <div class="sec-head">
+      <h2 id="h-rank">ماذا يقرر ترتيب «لك»؟</h2>
+      <p>اقتراحي للإشارات بالترتيب من الأقوى. كل بطاقة تحمل سطراً يقول للمستخدم لماذا ظهرت، مثل «قريب منك» أو «لأنك تحب القهوة».</p>
+    </div>
+    <ol class="rank">
+      <li><b>القرب</b><span>ما حولك أولاً، ويتسع النطاق تلقائياً كلما قلّ المحتوى القريب.</span></li>
+      <li><b>الوقت</b><span>ما يحدث الآن وما ينتهي قريباً، مثل عرض ينتهي 7 مساءً أو فعالية الليلة.</span></li>
+      <li><b>الاهتمامات والهوايات</b><span>من اختياره عند التسجيل، ثم مما يشاهده ويتفاعل معه.</span></li>
+      <li><b>من تتابعهم</b><span>أصدقاؤك ومن تتابعهم والدوائر التي انضممت لها.</span></li>
+      <li><b>بحثك الأخير</b><span>بحثت عن دراجة، فيظهر لك عرض دراجة قريب.</span></li>
+      <li><b>تفاعل الناس</b><span>ما شاهده الناس حتى النهاية وتفاعلوا معه.</span></li>
+      <li><b>التنوع</b><span>لا تتكرر ثلاث بطاقات من النوع نفسه متتالية.</span></li>
+      <li class="guard"><b>الخصوصية دائماً</b><span>لا يظهر ما هو للأصدقاء فقط أو محظور، بالقاعدة الواحدة الموجودة عندنا.</span></li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="h-first">
+    <div class="split">
+      <div class="phone"><div class="screen" role="region" aria-label="نموذج اختيار الاهتمامات"><div class="notch"></div>
+        <div class="interests">
+          <h4>وش يعجبك؟</h4>
+          <p>اختر ثلاثة أو أكثر، ونرتب لك «لك» على ذوقك. تقدر تغيّرها متى شئت.</p>
+          <div class="ichips" id="ichips"></div>
+          <button class="act istart" id="istart" type="button">اختر 3 على الأقل</button>
+          <div class="skip">تخطَّ الآن</div>
+        </div>
+      </div></div>
+      <div class="txt">
+        <h2 id="h-first">أول مرة: اختيار الاهتمامات</h2>
+        <p>شاشة واحدة عند التسجيل أو عند أول فتح لـ«لك». ثلاث ضغطات تكفي ليصير الترتيب مفيداً من اليوم الأول بدل أن ينتظر النظام أسابيع ليتعلم.</p>
+        <ul class="pros"><li>بداية مفيدة من أول دقيقة</li><li>تُستخدم أيضاً في البحث والعروض والفعاليات</li></ul>
+        <ul class="cons"><li>خطوة إضافية في التسجيل، لذلك أقترح أن يكون التخطي متاحاً</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-compare">
+    <div class="sec-head"><h2 id="h-compare">المقارنة</h2><p>الجهد تقديري، بمقارنة الأشكال ببعضها.</p></div>
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>الشكل</th><th>الأفضل لـ</th><th>عندنا الآن</th><th>الجهد</th><th>الملاءمة</th></tr></thead>
+        <tbody>
+          <tr><td>1. ملء الشاشة</td><td>الفيديو والترفيه</td><td>عارض اللحظات بملء الشاشة</td><td>متوسط</td><td class="fitcell"><b>متوسطة</b></td></tr>
+          <tr><td>2. القصص</td><td>لحظات الأصدقاء اليومية</td><td>موجود في العارض</td><td>صغير</td><td class="fitcell"><b>عالية للأصدقاء</b></td></tr>
+          <tr><td>3. البطاقات المتتالية</td><td>النص والتعليقات</td><td>لا</td><td>صغير</td><td class="fitcell"><b>منخفضة</b></td></tr>
+          <tr><td>4. الشبكة ثم ملء الشاشة</td><td>التصفح والاختيار</td><td>صفحة «اللحظات»</td><td>صغير</td><td class="fitcell"><b>عالية للتصفح</b></td></tr>
+          <tr><td>5. المختلطة بالأفعال</td><td>التحويل إلى فعل حقيقي</td><td>محتوى «الصف» جاهز</td><td>متوسط</td><td class="fitcell"><b>عالية جداً</b></td></tr>
+          <tr><td>6. الخريطة المرافقة</td><td>القرب والقرار «أروح؟»</td><td>الخريطة والمسافات جاهزة</td><td>متوسط إلى كبير</td><td class="fitcell"><b>عالية جداً</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="reco" aria-labelledby="h-reco">
+    <h2 id="h-reco">توصيتي</h2>
+    <ol>
+      <li><b>«لك» بالشكل 5</b>: ملء الشاشة بأنواع مختلطة وزر فعل واحد، مع شريط خريطة صغير أعلاه يتمدد إلى الشكل 6 عند الضغط عليه.</li>
+      <li><b>ثلاثة تبويبات في الأعلى</b>: لك · قربي · أتابعهم.</li>
+      <li><b>«اللحظات» تبقى شبكة</b> (الشكل 4)، والضغط على أي بطاقة يكمل بالسحب العمودي.</li>
+      <li><b>القصص للأصدقاء</b> (الشكل 2) تبقى كما هي في العارض.</li>
+      <li><b>اختيار الاهتمامات عند التسجيل</b> مع إمكانية التخطي.</li>
+      <li><b>بطاقة «شفت الجديد كله»</b> في نهاية الجديد، تقترح طلعة بدل تمرير لا ينتهي.</li>
+    </ol>
+  </section>
+
+  <section class="qs" aria-labelledby="h-qs">
+    <h2 id="h-qs">للنقاش</h2>
+    <ol>
+      <li>أي شكل تميل له؟ وهل تتفق مع جمع الشكلين 5 و6؟</li>
+      <li>هل يكون «لك» الصفحة الأولى بدل الخريطة، أم زراً واضحاً فوق الخريطة؟</li>
+      <li>اختيار الاهتمامات عند التسجيل: إلزامي أم يمكن تخطيه؟</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+(function () {
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var ITEMS = [
+    { type: 'moment', label: 'لحظة', title: 'غروب على الكورنيش', who: 'نورة', meta: 'الكورنيش الشمالي · قبل 10 دقائق', km: '1.2 كم', why: 'قريب منك', action: 'شاهد', scene: 'sunset', glyph: '🌅', likes: '1.4k', x: 30, y: 22 },
+    { type: 'offer', label: 'عرض', title: 'قهوة اليوم: الثانية مجاناً', who: 'قهوة الميناء', meta: 'ينتهي 7:00 مساءً', km: '600 م', why: 'لأنك تحب القهوة', action: 'استخدم العرض', scene: 'coffee', glyph: '☕', likes: '312', x: 62, y: 34 },
+    { type: 'event', label: 'فعالية', title: 'ليلة جاز في البلد', who: 'دائرة البلد الثقافية', meta: 'الخميس 9:00 م · 45 ر.س', km: '3.4 كم', why: 'يبدأ الليلة', action: 'احجز تذكرة', scene: 'jazz', glyph: '🎷', likes: '890', x: 38, y: 52 },
+    { type: 'listing', label: 'السوق', title: 'دراجة هوائية شبه جديدة', who: 'أبو فهد', meta: '450 ر.س · استلام اليوم', km: '2 كم', why: 'بحثت عن دراجة', action: 'اطلب', scene: 'bike', glyph: '🚲', likes: '58', x: 78, y: 18 },
+    { type: 'job', label: 'وظيفة', title: 'باريستا دوام جزئي', who: 'كافيه السنبلة', meta: 'مساءً · 3 أيام في الأسبوع', km: '1.8 كم', why: 'يناسب ملفك', action: 'قدّم', scene: 'job', glyph: '🧑‍🍳', likes: '24', x: 72, y: 50 }
+  ];
+  var STORIES = [
+    { who: 'نورة', when: 'قبل 10 د', scene: 'sunset', glyph: '🌅' },
+    { who: 'سارة', when: 'قبل ساعة', scene: 'food', glyph: '🍜' },
+    { who: 'خالد', when: 'قبل ساعتين', scene: 'ball', glyph: '⚽' },
+    { who: 'ريم', when: 'قبل 3 ساعات', scene: 'beach', glyph: '🏖️' }
+  ];
+  var INTERESTS = ['قهوة', 'أكل', 'رياضة', 'فعاليات', 'تسوق', 'سيارات', 'تصوير وفن', 'ألعاب', 'بحر وطبيعة', 'عائلة وأطفال', 'تقنية', 'وظائف'];
+
+  function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+  function icon(id, fill) { return '<svg' + (fill ? ' class="fill"' : '') + '><use href="#' + id + '"/></svg>'; }
+  function art(scene, glyph) { return '<div class="art s-' + scene + '"><div class="glyph" aria-hidden="true">' + glyph + '</div></div><div class="shade"></div>'; }
+  function rail(it) {
+    return '<div class="rail">' +
+      '<div class="rb"><span>' + icon('i-heart', true) + '</span>' + it.likes + '</div>' +
+      '<div class="rb"><span>' + icon('i-chat') + '</span>رد</div>' +
+      '<div class="rb"><span>' + icon('i-share') + '</span>شارك</div>' +
+      '<div class="rb"><span>' + icon('i-save') + '</span>احفظ</div></div>';
+  }
+  function who(name) { return '<div class="who"><span class="av">' + name.charAt(0) + '</span>' + name + '</div>'; }
+
+  // 1) ملء الشاشة: لحظات أكثر، بلا زر فعل
+  var full = document.querySelector('[data-snap="full"]');
+  ITEMS.slice(0, 4).forEach(function (it, i) {
+    var s = el('div', 'slide');
+    s.innerHTML = art(it.scene, it.glyph) + rail(it) +
+      '<div class="info">' + who(it.who) + '<div class="ttl">' + it.title + '</div><div class="meta">' + it.meta + ' · ' + it.km + '</div></div>' +
+      (i === 0 ? '<div class="hint">اسحب للأعلى ↑</div>' : '');
+    full.appendChild(s);
+  });
+
+  // 5) المختلطة بالأفعال
+  function mixedSlide(it, withRail) {
+    var s = el('div', 'slide');
+    s.dataset.x = it.x; s.dataset.y = it.y; s.dataset.km = it.km;
+    s.innerHTML = art(it.scene, it.glyph) + (withRail ? rail(it) : '') +
+      '<div class="info"><span class="tchip t-' + it.type + '">' + it.label + '</span>' + who(it.who) +
+      '<div class="ttl">' + it.title + '</div><div class="meta">' + it.meta + ' · ' + it.km + '</div>' +
+      '<div class="why">لماذا ترى هذا؟ <b>' + it.why + '</b></div>' +
+      '<div class="act">' + it.action + '</div></div>';
+    return s;
+  }
+  var mixed = document.querySelector('[data-snap="mixed"]');
+  ITEMS.forEach(function (it, i) {
+    var s = mixedSlide(it, true);
+    if (i === 0) s.insertAdjacentHTML('beforeend', '<div class="hint">اسحب للأعلى ↑</div>');
+    mixed.appendChild(s);
+  });
+  var end = el('div', 'slide');
+  end.innerHTML = '<div class="art s-end"><div class="glyph" aria-hidden="true">🧭</div></div>' +
+    '<div class="info" style="left:12px"><div class="ttl">شفت الجديد كله حولك</div><div class="meta">وش رأيك تطلع؟ عندنا ثلاث أفكار لليلة قريبة منك.</div><div class="act">وش فيه الليلة؟</div></div>';
+  mixed.appendChild(end);
+
+  // 6) الخريطة المرافقة
+  var mapSnap = document.querySelector('[data-snap="map"]');
+  var dots = document.getElementById('mapDots');
+  ITEMS.forEach(function (it, i) {
+    var s = mixedSlide(it, false);
+    if (i === 0) s.insertAdjacentHTML('beforeend', '<div class="hint" style="top:12px">اسحب للأعلى ↑</div>');
+    mapSnap.appendChild(s);
+    var c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    c.setAttribute('cx', it.x); c.setAttribute('cy', it.y); c.setAttribute('r', '1.6');
+    dots.appendChild(c);
+  });
+  var pin = document.getElementById('mapPin'), dist = document.getElementById('mapDist');
+  function movePin(s) { pin.setAttribute('transform', 'translate(' + s.dataset.x + ' ' + s.dataset.y + ')'); dist.textContent = s.dataset.km + ' منك'; }
+  movePin(mapSnap.firstElementChild);
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) movePin(e.target); });
+    }, { root: mapSnap, threshold: 0.6 });
+    Array.prototype.forEach.call(mapSnap.children, function (s) { io.observe(s); });
+  }
+
+  // 2) القصص: يمين = التالية، يسار = السابقة
+  var stories = document.getElementById('stories'), segs = document.getElementById('segs'), si = 0, timer = null;
+  STORIES.forEach(function (st) {
+    var s = el('div', 'slide');
+    s.innerHTML = art(st.scene, st.glyph) + '<div class="shead"><span class="av">' + st.who.charAt(0) + '</span><b>' + st.who + '</b><small>' + st.when + '</small></div>';
+    stories.appendChild(s);
+    segs.appendChild(el('i', '', '<b></b>'));
+  });
+  stories.insertAdjacentHTML('beforeend', '<div class="reply">رد خاص على ' + STORIES[0].who + '…</div>');
+  var reply = stories.querySelector('.reply');
+  function showStory(i) {
+    si = (i + STORIES.length) % STORIES.length;
+    Array.prototype.forEach.call(stories.querySelectorAll('.slide'), function (s, k) { s.classList.toggle('on', k === si); });
+    Array.prototype.forEach.call(segs.children, function (g, k) {
+      g.className = k < si ? 'done' : '';
+      if (k === si) { void g.offsetWidth; g.className = 'on'; }
+    });
+    reply.textContent = 'رد خاص على ' + STORIES[si].who + '…';
+    clearTimeout(timer);
+    if (!reduce) timer = setTimeout(function () { showStory(si + 1); }, 4500);
+  }
+  stories.addEventListener('click', function (e) {
+    var r = stories.getBoundingClientRect();
+    showStory(e.clientX - r.left > r.width / 2 ? si + 1 : si - 1);
+  });
+  stories.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft') { showStory(si + 1); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { showStory(si - 1); e.preventDefault(); }
+  });
+  showStory(0);
+
+  // 3) البطاقات المتتالية
+  var cards = document.getElementById('cards');
+  cards.appendChild(el('div', 'apphead', '<span>ناس لايف</span>'));
+  ITEMS.concat(ITEMS.slice(0, 2)).forEach(function (it) {
+    var c = el('div', 'card');
+    c.innerHTML = '<div class="ch"><span class="av">' + it.who.charAt(0) + '</span><b>' + it.who + '</b><small>' + it.km + '</small></div>' +
+      '<div class="media">' + art(it.scene, it.glyph).replace('<div class="shade"></div>', '') + '</div>' +
+      '<div class="acts">' + '<svg><use href="#i-heart"/></svg><svg><use href="#i-chat"/></svg><svg><use href="#i-share"/></svg>' + '</div>' +
+      '<div class="cap"><b>' + it.who + '</b> ' + it.title + ' · ' + it.meta + '</div>';
+    cards.appendChild(c);
+  });
+
+  // 4) الشبكة ثم ملء الشاشة
+  var grid = document.getElementById('grid'), gFull = document.getElementById('gridFull'), gSnap = document.getElementById('gridSnap');
+  var H = [150, 112, 128, 160, 118, 140, 126, 150];
+  var G = ITEMS.concat(ITEMS.slice(0, 3));
+  G.forEach(function (it, i) {
+    var b = el('button', 'tile');
+    b.type = 'button'; b.style.height = H[i % H.length] + 'px';
+    b.setAttribute('aria-label', 'افتح ' + it.title);
+    b.innerHTML = '<div class="art s-' + it.scene + '"><div class="glyph" aria-hidden="true">' + it.glyph + '</div></div><span class="lbl">' + it.label + ' · ' + it.km + '</span>';
+    b.addEventListener('click', function () {
+      gFull.hidden = false;
+      gSnap.scrollTop = i * gSnap.clientHeight;
+      gSnap.focus({ preventScroll: true });
+    });
+    grid.appendChild(b);
+    gSnap.appendChild(mixedSlide(it, true));
+  });
+  document.getElementById('gridClose').addEventListener('click', function () { gFull.hidden = true; });
+
+  // الاهتمامات
+  var ich = document.getElementById('ichips'), start = document.getElementById('istart');
+  var picked = { 'قهوة': 1, 'فعاليات': 1 };
+  function refresh() {
+    var n = Object.keys(picked).length;
+    start.textContent = n >= 3 ? 'ابدأ «لك» (' + n + ')' : 'اختر ' + (3 - n) + ' بعد';
+  }
+  INTERESTS.forEach(function (name) {
+    var b = el('button', 'ichip', name);
+    b.type = 'button';
+    b.setAttribute('aria-pressed', picked[name] ? 'true' : 'false');
+    b.addEventListener('click', function () {
+      if (picked[name]) delete picked[name]; else picked[name] = 1;
+      b.setAttribute('aria-pressed', picked[name] ? 'true' : 'false');
+      refresh();
+    });
+    ich.appendChild(b);
+  });
+  refresh();
+})();
+</script>
