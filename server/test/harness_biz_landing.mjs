@@ -27,12 +27,21 @@ ok(h.includes('اجعل نشاطك') && h.includes('سجّل دائرتك'), 'he
 ok(h.includes('بعد التوثيق') && h.includes('من اليوم الأول'), 'says what opens only after verification');
 ok(h.includes('الدفع في المكان') && !h.includes('ادفع من المحفظة'), 'promises pay at the venue only');
 ok(/id="lp-start"/.test(h) && /href="#lp-start"/.test(h) && /id="lp-faq"/.test(h), 'in-page anchors resolve');
+ok(h.includes('href="/business/register"') && !h.includes('https://naslife.app/business'), 'sign-up buttons open the registration forms (same site, relative)');
+const g = await app.inject({ method: 'GET', url: '/business/register' });
+ok(g.statusCode === 200 && /text\/html/.test(g.headers['content-type']) && /noindex/.test(g.headers['x-robots-tag'] || ''), 'GET /business/register serves the forms, not indexed');
+ok((g.body.match(/<script/g) || []).length === 1 && g.body.includes('<script src="/business/register.js"></script>'), 'the forms page has one external script and no inline script');
+ok(g.body.includes('منشأة بسجل تجاري') && g.body.includes('عمل حر') && g.body.includes('سأوثّق لاحقاً'), 'two forms: commercial registration and freelance, with verify later');
+ok(!/<form[^>]*action=/.test(g.body) && g.body.includes('لا تُرسل أي بيانات'), 'the preview form posts nowhere and says so');
+const j = await app.inject({ method: 'GET', url: '/business/register.js' });
+ok(j.statusCode === 200 && /javascript/.test(j.headers['content-type']) && !/fetch\(|XMLHttpRequest|sendBeacon/.test(j.body), 'the script is served and makes no network calls');
+ok(j.body.includes("'car_rental'") && j.body.includes('\\d{10}') && j.body.includes('{8,20}'), 'the script uses the server rules for categories and document numbers');
 for (const u of ['/business/', '/BUSINESS', '/Business']) {
   const x = await app.inject({ method: 'GET', url: u });
   ok(x.statusCode === 302 && x.headers.location === '/business', `${u} redirects to /business`);
 }
 const st = (await app.inject({ method: 'GET', url: '/business/status' })).json();
-ok(st.ok === true && st.ready === true && st.bytes > 100000, 'status reports the page is ready');
+ok(st.ok === true && st.ready === true && st.register === true && st.bytes > 100000, 'status reports the page and the forms are ready');
 await app.close();
 
 const empty = Fastify();
