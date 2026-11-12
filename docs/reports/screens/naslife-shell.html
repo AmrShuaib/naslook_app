@@ -111,7 +111,7 @@
 <div class="wrap" dir="rtl" lang="ar">
   <header style="display:grid;gap:8px">
     <h1>هيكل ناس لايف المقترح</h1>
-    <p class="lead">هاتف واحد يعمل. اضغط عناصر الشريط السفلي، وجرّب الفلاتر في «لك» والخريطة، وبدّل بين «بيتي» و«مكتبي». الشرح بجانب الهاتف يتغير مع كل قسم. المحتوى أمثلة للتوضيح.</p>
+    <p class="lead">هاتف واحد يعمل. اضغط عناصر الشريط السفلي، وجرّب الفلاتر في «لك» والخريطة، وبدّل بين «مساحتي» و«مكتبي». الشرح بجانب الهاتف يتغير مع كل قسم. المحتوى أمثلة للتوضيح.</p>
   </header>
 
   <div class="stage">
@@ -142,7 +142,7 @@
 
       <div class="view" data-view="me" hidden>
         <div class="vhead"><div class="me-head"><span class="avt" style="background:#0275FD">ع</span><div><b style="font-size:16px">عمرو</b><div class="cmeta">@amr</div></div></div></div>
-        <div class="seg" role="group" aria-label="بيتي أو مكتبي"><button type="button" data-side="home" aria-pressed="true">بيتي</button><button type="button" data-side="office" aria-pressed="false">مكتبي</button></div>
+        <div class="seg" role="group" aria-label="مساحتي أو مكتبي"><button type="button" data-side="home" aria-pressed="true">مساحتي</button><button type="button" data-side="office" aria-pressed="false">مكتبي</button></div>
         <div class="scroll" id="me"></div>
       </div>
 
@@ -151,7 +151,7 @@
         <button class="nb" type="button" data-go="map"><svg viewBox="0 0 24 24"><path d="M12 21s6.5-5.6 6.5-11a6.5 6.5 0 1 0-13 0c0 5.400 6.500 11 6.500 11z"/><circle cx="12" cy="10" r="2.400"/></svg>الخريطة</button>
         <button class="plus" type="button" id="plus" aria-label="انشر">＋</button>
         <button class="nb" type="button" data-go="chats"><svg viewBox="0 0 24 24"><path d="M4 5.500h16v10.500H10l-5 4v-4H4z"/></svg>المحادثات</button>
-        <button class="nb" type="button" data-go="me"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg>بيتي</button>
+        <button class="nb" type="button" data-go="me"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg>مساحتي</button>
       </nav>
     </div></div>
 
@@ -250,7 +250,7 @@
   }
   chips(app.querySelector('[data-filter="chat"]'), [['all', 'الكل'], ['people', 'الناس'], ['circles', 'الدوائر'], ['orders', 'الطلبات']], renderChats); renderChats('all');
 
-  // بيتي / مكتبي
+  // مساحتي / مكتبي
   var meEl = document.getElementById('me'), navMe = app.querySelector('[data-go="me"]');
   var SIDES = {
     home: '<div class="tiles"><div class="tile"><span class="n">3</span><b>طلباتي</b><small>واحد في الطريق</small></div><div class="tile"><span class="n">2</span><b>تذاكري</b><small>الخميس 9 م</small></div><div class="tile"><span class="n">1</span><b>مواعيدي</b><small>بكرة 7 م مع نورة</small></div><div class="tile"><span class="n">14</span><b>محفوظاتي</b><small>عروض ولحظات</small></div></div>' +
@@ -263,7 +263,7 @@
   function renderMe(side) {
     meEl.innerHTML = SIDES[side];
     app.querySelectorAll('.seg button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.side === side ? 'true' : 'false'); });
-    navMe.lastChild.textContent = side === 'home' ? 'بيتي' : 'مكتبي';
+    navMe.lastChild.textContent = side === 'home' ? 'مساحتي' : 'مكتبي';
     if (current === 'me') explain(side === 'home' ? 'home' : 'office');
   }
   app.querySelectorAll('.seg button').forEach(function (b) { b.addEventListener('click', function () { renderMe(b.dataset.side); }); });
@@ -273,8 +273,8 @@
     foryou: ['لك', 'كل شيء في مكان واحد: لحظات، سوق، عروض، فعاليات، فرص، وجديد دوائرك. كل بطاقة لها زر فعل واحد.', ['السوق والفعاليات والدوائر لم تُحذف: صارت فلاتر في الأعلى.', 'اضغط «السوق» فترى السوق فقط، كأنك فتحت قسم السوق القديم.', '«دوائري» يعرض جديد الشركات التي انضممت لها.'], 'جرّب: اضغط الفلاتر في أعلى الهاتف.'],
     map: ['الخريطة', 'المحتوى نفسه، لكن في مكانه. الفلاتر نفسها بالضبط.', ['المستخدم يتعلم الفلاتر مرة واحدة، وتعمل في كل مكان.', 'لون الدبوس يدل على النوع.'], 'جرّب: اضغط «عروض» أو «فعاليات» وراقب الدبابيس.'],
     chats: ['المحادثات', 'مثل واتساب، ومعها الدوائر والطلبات في القائمة نفسها.', ['محادثة الدائرة فيها طلبك وتذكرتك وموعدك.', 'لا صفحات منفصلة للطلبات: حالة الطلب تظهر على المحادثة.'], 'جرّب: اضغط «الدوائر» أو «الطلبات».'],
-    home: ['بيتي', 'حياتك الشخصية: ما اشتريته، تذاكرك، مواعيدك، محفوظاتك، دوائرك، أصحابك.', ['كل ما يخصك أنت كمستخدم في شاشة واحدة.', 'هذا ما يراه كل مستخدم.'], 'جرّب: بدّل إلى «مكتبي».'],
-    office: ['مكتبي', 'حياتك العملية: دائرتك أو عملك الحر. طلبات العملاء، رسائلهم، المبيعات، المنتجات، الوظائف.', ['يظهر فقط لمن عنده دائرة أو عمل حر.', 'صاحب المحل يفتح التطبيق على مكتبه مباشرة إن أراد.', 'هكذا يبقى التطبيق بسيطاً للمستخدم العادي، وكاملاً لصاحب العمل.'], 'جرّب: ارجع إلى «بيتي» ولاحظ الفرق.'],
+    home: ['مساحتي', 'حياتك الشخصية: ما اشتريته، تذاكرك، مواعيدك، محفوظاتك، دوائرك، أصحابك.', ['كل ما يخصك أنت كمستخدم في شاشة واحدة.', 'هذا ما يراه كل مستخدم.'], 'جرّب: بدّل إلى «مكتبي».'],
+    office: ['مكتبي', 'حياتك العملية: دائرتك أو عملك الحر. طلبات العملاء، رسائلهم، المبيعات، المنتجات، الوظائف.', ['يظهر فقط لمن عنده دائرة أو عمل حر.', 'صاحب المحل يفتح التطبيق على مكتبه مباشرة إن أراد.', 'هكذا يبقى التطبيق بسيطاً للمستخدم العادي، وكاملاً لصاحب العمل.'], 'جرّب: ارجع إلى «مساحتي» ولاحظ الفرق.'],
     plus: ['زر النشر', 'زر واحد في الوسط لكل ما تنشره.', ['بدل أزرار نشر متفرقة في كل قسم.', 'خيار «عرض للأعضاء» يظهر فقط لمن عنده دائرة.'], 'جرّب: اختر نوعاً أو اضغط خارج الورقة.']
   };
   var exEl = document.getElementById('explain');

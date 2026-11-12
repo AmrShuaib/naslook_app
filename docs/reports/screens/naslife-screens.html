@@ -122,7 +122,7 @@
   function sar(n) { return n + ' ر.س'; }
   function logo(c, cls) { return c.logo ? '<img class="logo ' + (cls || '') + '" src="' + c.logo + '" alt="">' : '<span class="logo ' + (cls || '') + '" style="background:' + c.color + '">' + c.name.charAt(0) + '</span>'; }
   function nav(on) {
-    var it = [['★', 'لك'], ['⌖', 'الخريطة'], null, ['✉', 'المحادثات'], ['⌂', 'بيتي']];
+    var it = [['★', 'لك'], ['⌖', 'الخريطة'], null, ['✉', 'المحادثات'], ['⌂', 'مساحتي']];
     return '<div class="nav">' + it.map(function (x, i) { return x ? '<span' + (i === on ? ' class="on"' : '') + '><i>' + x[0] + '</i>' + x[1] + '</span>' : '<span class="plus">＋</span>'; }).join('') + '</div>';
   }
   function phone(row, title, sub, real, html) {

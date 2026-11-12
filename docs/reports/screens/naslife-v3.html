@@ -217,7 +217,7 @@
   };
   function ic(n, cls) { return '<svg class="i ' + (cls || '') + '" viewBox="0 0 24 24">' + IC[n] + '</svg>'; }
   function nav(on) {
-    var it = [['star', 'لك'], ['pin', 'الخريطة'], null, ['chat', 'المحادثات'], ['home', 'بيتي']];
+    var it = [['star', 'لك'], ['pin', 'الخريطة'], null, ['chat', 'المحادثات'], ['home', 'مساحتي']];
     return '<div class="nav">' + it.map(function (x, i) { return x ? '<span' + (i === on ? ' class="on"' : '') + '>' + ic(x[0]) + x[1] + '</span>' : '<span class="plus">' + ic('plus') + '</span>'; }).join('') + '</div>';
   }
   function phone(row, title, sub, html) {
