@@ -40,3 +40,4 @@ await app.register((await import("./chat_preview.js")).default, { pool, auth });
 await app.register((await import("./biz_inbox.js")).default, { pool, auth });
 await app.register((await import("./addresses.js")).default, { pool, auth });
 await app.register((await import("./screens.js")).default, { pool, auth });
+await app.register((await import("./biz_landing.js")).default, {});
