@@ -2,8 +2,8 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@700&family=Rubik:wght@400;500;700&display=swap">
 <style>
-  /* نماذج تسجيل الدائرة (معاينة قبل الاعتماد): نموذج للمنشأة بسجل تجاري ونموذج للعمل الحر، والحقول مطابقة لما يقبله الخادم.
-     السلوك في register.js (ملف مستقل لأن سياسة الأمان تمنع السكربتات المضمّنة). لا يُرسل شيء في المعاينة. */
+  /* نماذج تسجيل الدائرة: نموذج للمنشأة بسجل تجاري ونموذج للعمل الحر، والحقول مطابقة لما يقبله الخادم.
+     السلوك في register.js (ملف مستقل لأن سياسة الأمان تمنع السكربتات المضمّنة)، وهو يسجّل عبر مسارات الخادم نفسها التي يستخدمها التطبيق. */
   body { margin: 0; background: #F6F8FB; }
   body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 60; background: #FFFFFF; }
   .rg {
@@ -140,6 +140,11 @@
   .rg-next li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; padding: 14px 16px; border-radius: 16px; background: var(--soft); }
   .rg-next b { display: block; } .rg-next span { color: var(--muted); font-size: 14.5px; }
   .rg-done .rg-btn { margin-top: 22px; }
+  .rg-codef { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 18px; } .rg-codef .rg-in { width: 180px; text-align: center; font-size: 22px; letter-spacing: 4px; } .rg-codef .rg-btn { margin-top: 0; }
+  .rg-codem { min-height: 24px; color: var(--red-d); font-size: 14.5px; }
+  .rg-link { border: 0; background: none; padding: 6px 4px; color: var(--blue-d); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .rg-biglink { display: inline-block; margin-top: 4px; padding: 8px 16px; border-radius: 12px; background: var(--blue-50); color: var(--blue-d); font-weight: 700; overflow-wrap: anywhere; }
+  .rg-btn:disabled { opacity: .65; cursor: progress; }
   .rg-foot { padding: 0 0 34px; color: var(--muted); font-size: 13.5px; text-align: center; }
   .rg-foot a { text-decoration: underline; text-underline-offset: 3px; }
 </style>
@@ -171,7 +176,6 @@
     <div class="rg-top">
       <h1>سجّل دائرتك</h1>
       <p>دقائق قليلة وتظهر على الخريطة. اختر النموذج المناسب لنشاطك ثم أكمل البيانات.</p>
-      <span class="rg-demo"><svg class="i" aria-hidden="true"><use href="#r-eye"/></svg>معاينة قبل الاعتماد: لا تُرسل أي بيانات من هذه الصفحة.</span>
     </div>
 
     <form class="rg-form" id="rg-form" novalidate autocomplete="off">
@@ -207,10 +211,9 @@
               <label class="rg-optc"><input type="radio" name="presence" value="mobile"><b>أذهب إلى العميل</b><span>خدمة متنقلة ضمن نطاق.</span></label>
             </div>
             <div class="rg-grid">
-              <div class="rg-f full" data-f="location"><span class="rg-lab" id="rg-loc-lab">موقع النشاط <i>*</i></span>
+              <div class="rg-f full" data-f="location"><span class="rg-lab" id="rg-loc-lab">موقع النشاط </span>
                 <div class="rg-loc"><button type="button" class="rg-btn line" id="rg-locate"><svg class="i" aria-hidden="true"><use href="#r-pin"/></svg>أنا في المكان الآن</button><span class="rg-coord" id="rg-coord" hidden></span></div>
-                <span class="rg-hint" id="rg-loc-hint">في النسخة المعتمدة تختار الموقع من الخريطة أيضاً.</span>
-                <span class="rg-err">حدد موقع النشاط.</span></div>
+                <span class="rg-hint" id="rg-loc-hint">اضغطه وأنت في مكان النشاط. إن لم تفعل وضعنا الدائرة في وسط المدينة، وتعدّل موقعها لاحقاً من لوحتها.</span></div>
               <div class="rg-f" data-f="city"><label for="rg-city">المدينة <i>*</i></label><select class="rg-in" id="rg-city" name="city"><option value="">اختر المدينة</option><option>جدة</option><option>الدمام</option><option>الخبر</option><option>الظهران</option></select><span class="rg-err">اختر المدينة.</span></div>
               <div class="rg-f" data-f="district"><label for="rg-district" id="rg-dist-lab">الحي <span class="rg-opt">(اختياري)</span></label><input class="rg-in" id="rg-district" name="district" maxlength="80" placeholder="مثال: الروضة"></div>
               <div class="rg-f full rg-range" id="rg-radius-f" hidden><label for="rg-radius">نطاق الخدمة: <output id="rg-radius-o">15 كم</output></label><input type="range" id="rg-radius" name="radiusKm" min="2" max="50" value="15" step="1"><span class="rg-hint">من 2 إلى 50 كم حول موقعك. تظهر لمن هم داخل هذا النطاق.</span></div>
@@ -242,18 +245,22 @@
 
           <fieldset class="rg-card rg-sec">
             <legend><span class="rg-n">6</span>حسابك في ناس لايف</legend>
-            <p class="rg-hint">الدائرة تُدار من حسابك. لديك حساب؟ اكتب بريدك وكلمة السر أنفسهما.</p>
+            <p class="rg-hint">الدائرة تُدار من حسابك في ناس لايف.</p>
+            <div class="rg-opts">
+              <label class="rg-optc"><input type="radio" name="acc" value="new" checked><b>حساب جديد</b><span>يصلك رمز تأكيد على بريدك.</span></label>
+              <label class="rg-optc"><input type="radio" name="acc" value="login"><b>لدي حساب</b><span>أدخل ببريدي وكلمة سرّي.</span></label>
+            </div>
             <div class="rg-grid">
-              <div class="rg-f" data-f="nick"><label for="rg-nick">اسم المستخدم <i>*</i></label><input class="rg-in" id="rg-nick" name="nick" maxlength="24" placeholder="اسمك في ناس لايف"><span class="rg-err">اكتب اسم المستخدم.</span></div>
-              <div class="rg-f" data-f="email"><label for="rg-email">البريد الإلكتروني <i>*</i></label><input class="rg-in rg-ltr" id="rg-email" name="email" type="email" inputmode="email" maxlength="120" placeholder="name@example.com"><span class="rg-err">اكتب بريداً إلكترونياً صحيحاً. يصلك عليه رمز تأكيد.</span></div>
-              <div class="rg-f full" data-f="pass"><label for="rg-pass">كلمة السر <i>*</i></label><input class="rg-in rg-ltr" id="rg-pass" name="pass" type="password" maxlength="72" placeholder="8 أحرف على الأقل"><span class="rg-err">كلمة السر 8 أحرف على الأقل.</span></div>
+              <div class="rg-f" data-f="nick"><label for="rg-nick">اسم المستخدم <i>*</i></label><input class="rg-in rg-ltr" id="rg-nick" name="nick" maxlength="25" autocapitalize="none" placeholder="areeb_digital"><span class="rg-err">أحرف إنجليزية صغيرة وأرقام وشرطة سفلية، من 3 إلى 25.</span></div>
+              <div class="rg-f" data-f="email"><label for="rg-email" id="rg-email-lab">البريد الإلكتروني <i>*</i></label><input class="rg-in rg-ltr" id="rg-email" name="email" inputmode="email" autocapitalize="none" maxlength="120" placeholder="name@example.com"><span class="rg-err" id="rg-email-err">اكتب بريداً إلكترونياً صحيحاً. يصلك عليه رمز تأكيد.</span></div>
+              <div class="rg-f full" data-f="pass"><label for="rg-pass">كلمة السر <i>*</i></label><input class="rg-in rg-ltr" id="rg-pass" name="pass" type="password" maxlength="64" placeholder="8 أحرف على الأقل"><span class="rg-err" id="rg-pass-err">كلمة السر من 8 إلى 64 حرفاً.</span></div>
               <div class="rg-f full" data-f="agree"><label class="rg-check"><input type="checkbox" id="rg-agree" name="agree"><span>أوافق على <a href="https://naslife.app/terms" target="_blank" rel="noopener">شروط الاستخدام</a> و<a href="https://naslife.app/privacy" target="_blank" rel="noopener">سياسة الخصوصية</a>، وأقرّ بأن عمري 18 سنة فأكثر وبأنني مخوّل بتمثيل هذا النشاط.</span></label><span class="rg-err">الموافقة مطلوبة للمتابعة.</span></div>
             </div>
           </fieldset>
 
           <div class="rg-card rg-submit">
             <div class="rg-sum" id="rg-sum" role="alert"></div>
-            <button type="submit" class="rg-btn">أنشئ دائرتي <svg class="i" aria-hidden="true"><use href="#r-arrow"/></svg></button>
+            <button type="submit" class="rg-btn" id="rg-go"><span id="rg-go-t">أنشئ دائرتي</span> <svg class="i" aria-hidden="true"><use href="#r-arrow"/></svg></button>
             <p class="rg-hint" style="text-align:center">التسجيل مجاني. تظهر دائرتك على الخريطة فوراً، والبيع والحجز بعد التوثيق.</p>
           </div>
         </div>
@@ -277,16 +284,29 @@
       </div>
     </form>
 
+    <section class="rg-card rg-done" id="rg-code" hidden>
+      <div class="ok" style="background:var(--blue-50);color:var(--blue-d)"><svg class="i" aria-hidden="true"><use href="#r-shield"/></svg></div>
+      <h2>أكّد بريدك</h2>
+      <p>أرسلنا رمزاً إلى <b id="rg-code-mail" dir="ltr"></b>. اكتبه هنا لنكمل إنشاء دائرتك.</p>
+      <form id="rg-code-form" class="rg-codef" novalidate autocomplete="off">
+        <input class="rg-in rg-ltr" id="rg-code-in" inputmode="numeric" maxlength="8" placeholder="الرمز" aria-label="رمز التأكيد">
+        <button type="submit" class="rg-btn" id="rg-code-go">تأكيد ومتابعة</button>
+      </form>
+      <p class="rg-codem" id="rg-code-msg" role="status"></p>
+      <p><button type="button" class="rg-link" id="rg-code-resend">أرسل رمزاً جديداً</button> · <button type="button" class="rg-link" id="rg-code-back">عدّل البيانات</button></p>
+    </section>
+
     <section class="rg-card rg-done" id="rg-done" hidden tabindex="-1">
       <div class="ok"><svg class="i" aria-hidden="true"><use href="#r-check"/></svg></div>
-      <h2>النموذج مكتمل</h2>
-      <p id="rg-done-p">هذه معاينة، فلم تُرسل أي بيانات ولم تُنشأ دائرة. في النسخة المعتمدة يحدث التالي:</p>
+      <h2>دائرتك جاهزة</h2>
+      <p>«<b id="rg-done-name"></b>» الآن على خريطة ناس لايف.</p>
+      <p><a class="rg-biglink" id="rg-done-link" href="https://naslife.app/" dir="ltr"></a></p>
       <ul class="rg-next">
-        <li><span class="rg-n">1</span><div><b>تأكيد البريد</b><span>يصلك رمز على بريدك لتفعيل حسابك.</span></div></li>
-        <li><span class="rg-n">2</span><div><b>دائرتك على الخريطة فوراً</b><span>مع رابط ورمز QR تشاركهما مع عملائك.</span></div></li>
-        <li><span class="rg-n">3</span><div><b id="rg-done-ver">مراجعة التوثيق</b><span id="rg-done-ver-s">يراجع فريقنا الوثيقة، وبعد الاعتماد يُفتح البيع والحجز.</span></div></li>
+        <li><span class="rg-n">1</span><div><b id="rg-done-ver">طلب التوثيق أُرسل</b><span id="rg-done-ver-s"></span></div></li>
+        <li><span class="rg-n">2</span><div><b>أكمل دائرتك من التطبيق</b><span>ادخل بحسابك وأضف ساعات العمل ووصفاً وصوراً وأصنافك من لوحة الدائرة.</span></div></li>
+        <li><span class="rg-n">3</span><div><b>شارك رابطها</b><span>أرسله لعملائك ليجدوك وينضموا إلى دائرتك.</span></div></li>
       </ul>
-      <button type="button" class="rg-btn line" id="rg-again">عدّل البيانات</button>
+      <a class="rg-btn" href="https://naslife.app/">افتح ناس لايف <svg class="i" aria-hidden="true"><use href="#r-arrow"/></svg></a>
     </section>
     <p class="rg-foot">© 2026 ناس لايف · أريب الرقمية · <a href="https://naslife.app/support" target="_blank" rel="noopener">الدعم</a></p>
   </main>

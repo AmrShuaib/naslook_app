@@ -32,10 +32,13 @@ const g = await app.inject({ method: 'GET', url: '/business/register' });
 ok(g.statusCode === 200 && /text\/html/.test(g.headers['content-type']) && /noindex/.test(g.headers['x-robots-tag'] || ''), 'GET /business/register serves the forms, not indexed');
 ok((g.body.match(/<script/g) || []).length === 1 && g.body.includes('<script src="/business/register.js"></script>'), 'the forms page has one external script and no inline script');
 ok(g.body.includes('منشأة بسجل تجاري') && g.body.includes('عمل حر') && g.body.includes('سأوثّق لاحقاً'), 'two forms: commercial registration and freelance, with verify later');
-ok(!/<form[^>]*action=/.test(g.body) && g.body.includes('لا تُرسل أي بيانات'), 'the preview form posts nowhere and says so');
+ok(!/<form[^>]*action=/.test(g.body) && !g.body.includes('معاينة قبل الاعتماد'), 'the forms submit through the script, and the page no longer says preview');
 const j = await app.inject({ method: 'GET', url: '/business/register.js' });
-ok(j.statusCode === 200 && /javascript/.test(j.headers['content-type']) && !/fetch\(|XMLHttpRequest|sendBeacon/.test(j.body), 'the script is served and makes no network calls');
-ok(j.body.includes("'car_rental'") && j.body.includes('\\d{10}') && j.body.includes('{8,20}'), 'the script uses the server rules for categories and document numbers');
+ok(j.statusCode === 200 && /javascript/.test(j.headers['content-type']), 'the script is served');
+for (const u of ['/auth/register', '/auth/verify', '/auth/login', '/chat/upload', '/biz/register', '/verification']) ok(j.body.includes(u), 'the script calls ' + u);
+ok(!/https?:\/\//.test(j.body.replace(/\/\/[^\n]*/g, '')) && /credentials: 'omit'/.test(j.body), 'every call is same-origin and carries only the x-token header');
+ok(!/localStorage|sessionStorage|document\.cookie/.test(j.body), 'the session token is kept in memory only');
+ok(j.body.includes("'car_rental'") && j.body.includes('\\d{10}') && j.body.includes('{8,20}') && j.body.includes('[a-z0-9_]{3,25}'), 'the script uses the server rules for categories, document numbers and usernames');
 for (const u of ['/business/', '/BUSINESS', '/Business']) {
   const x = await app.inject({ method: 'GET', url: u });
   ok(x.statusCode === 302 && x.headers.location === '/business', `${u} redirects to /business`);

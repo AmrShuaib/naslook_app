@@ -17,6 +17,18 @@ app.get('/assets/fonts/:f', async (req, reply) => {
   return fs.existsSync(f) ? reply.type('font/ttf').send(fs.readFileSync(f)) : reply.code(404).send('');
 });
 app.get('/favicon.png', async (req, reply) => reply.type('image/png').send(fs.readFileSync(path.join(ROOT, 'web/favicon.png'))));
+// خادم وهمي للتسجيل بأشكال الردود الحقيقية؛ يسجّل كل نداء لنفحص التسلسل والحمولة
+const calls = []; let codeOk = false, ups = 0;
+app.addContentTypeParser(['image/png', 'image/jpeg', 'image/webp'], { parseAs: 'buffer' }, (req, body, done) => done(null, body));
+const rec = (req) => { const c = { url: req.url, body: Buffer.isBuffer(req.body) ? null : req.body, token: req.headers['x-token'] || null, type: String(req.headers['content-type'] || '').split(';')[0], bytes: Buffer.isBuffer(req.body) ? req.body.length : 0 }; calls.push(c); return c; };
+app.post('/auth/register', async (req, reply) => { rec(req); return reply.code(202).send({ email: req.body.email, verified: false, pending: true, codeSent: true }); });
+app.post('/auth/verify', async (req, reply) => { rec(req); return codeOk ? { ok: true, verified: true } : reply.code(400).send({ error: 'bad-code' }); });
+app.post('/auth/resend', async (req) => { rec(req); return { ok: true }; });
+app.post('/auth/login', async (req, reply) => { rec(req); return req.body.password === 'wrong' ? reply.code(401).send({ error: 'bad-credentials' }) : { token: 'TOK', user: { id: 'SA1234567' } }; });
+app.post('/me/adult-attest', async (req) => { rec(req); return { ok: true, adult: true }; });
+app.post('/chat/upload', async (req, reply) => { const c = rec(req); if (c.token !== 'TOK') return reply.code(401).send({ error: 'unauthorized' }); ups++; return { url: `/chat/media/up${ups}.png`, type: 'image/png', kind: 'image', size: c.bytes }; });
+app.post('/biz/register', async (req, reply) => { const c = rec(req); if (c.token !== 'TOK') return reply.code(401).send({ error: 'unauthorized' }); return { biz: { id: 'biz-test-1', nameAr: req.body.nameAr }, completeness: {} }; });
+app.post('/biz/:id/verification', async (req) => { rec(req); return { status: 'pending' }; });
 await app.listen({ port: 0, host: '127.0.0.1' });
 const base = `http://localhost:${app.server.address().port}`;
 const browser = await chromium.launch();
@@ -28,7 +40,7 @@ for (const [w, h] of [[390, 844], [1280, 900]]) {
   page.on('pageerror', (e) => errs.push('js: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 160)); });
   page.on('requestfailed', (r) => errs.push('failed: ' + r.url().slice(0, 100)));
-  let posts = 0; page.on('request', (q) => { if (q.method() !== 'GET') posts++; });
+
   await page.goto(base + '/business'); await page.evaluate(() => document.fonts.ready); await page.waitForTimeout(300);
   const n = await page.evaluate(() => ({
     over: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -47,36 +59,58 @@ for (const [w, h] of [[390, 844], [1280, 900]]) {
     await page.locator('.lp-faq summary').nth(1).click();
     ok(await page.evaluate(() => document.querySelectorAll('.lp-faq details')[1].open), 'a question opens without any script');
   }
-  // ---- نماذج التسجيل
+  // ---- نماذج التسجيل: تسلسل حقيقي على خادم وهمي بأشكال ردود الخادم (auth_alias, chat_tools, biz_onboard)
+  calls.length = 0; codeOk = false; ups = 0;
   await page.goto(base + '/business/register'); await page.evaluate(() => document.fonts.ready); await page.waitForTimeout(300);
   const r = await page.evaluate(() => ({ over: document.documentElement.scrollWidth > document.documentElement.clientWidth, cats: document.querySelectorAll('#rg-cats input').length, imgs: [...document.images].filter((i) => !i.complete || i.naturalWidth === 0).length }));
   ok(!r.over && r.cats === 15 && r.imgs === 0, `${w}px register: no horizontal scroll, ${r.cats} categories, logo loaded`);
-  await page.click('button[type=submit]');
-  ok(await page.evaluate(() => document.querySelectorAll('.rg-f.bad').length >= 9 && document.getElementById('rg-sum').classList.contains('on') && document.getElementById('rg-done').hidden), `${w}px register: an empty form is refused with field errors`);
-  // نموذج العمل الحر، خدمة متنقلة
+  await page.click('#rg-go');
+  ok(await page.evaluate(() => document.querySelectorAll('.rg-f.bad').length >= 8 && document.getElementById('rg-sum').classList.contains('on')) && calls.length === 0, `${w}px register: an empty form is refused before any request`);
+  // نموذج العمل الحر، خدمة متنقلة، حساب جديد
   await page.check('input[name=entity][value=freelance]', { force: true });
-  ok((await page.textContent('#rg-ver-title')) === 'توثيق وثيقة العمل الحر' && (await page.textContent('#rg-entno-lab')).includes('وثيقة العمل الحر'), `${w}px register: the freelance form asks for the freelance document`);
+  ok((await page.textContent('#rg-ver-title')) === 'توثيق وثيقة العمل الحر', `${w}px register: the freelance form asks for the freelance document`);
   await page.check('input[name=category][value=services]', { force: true });
-  await page.fill('#rg-nameAr', 'صيانة البيت'); await page.setInputFiles('#rg-logo', png); 
+  await page.fill('#rg-nameAr', 'صيانة البيت'); await page.setInputFiles('#rg-logo', png);
   await page.check('input[name=presence][value=mobile]', { force: true });
-  ok(await page.evaluate(() => !document.getElementById('rg-radius-f').hidden), `${w}px register: a mobile activity gets the service radius`);
-  await page.click('#rg-locate'); await page.waitForFunction(() => /حُدد الموقع/.test(document.getElementById('rg-coord').textContent), null, { timeout: 12000 });
+  await page.click('#rg-locate'); await page.waitForFunction(() => /حُدد موقعك/.test(document.getElementById('rg-coord').textContent), null, { timeout: 12000 });
   await page.selectOption('#rg-city', 'جدة'); await page.fill('#rg-phone', '0512345678');
-  await page.fill('#rg-entno', '123'); await page.setInputFiles('#rg-doc', png);
-  await page.fill('#rg-nick', 'سالم'); await page.fill('#rg-email', 'salem@example.com'); await page.fill('#rg-pass', 'secret-123'); await page.check('#rg-agree');
-  await page.click('button[type=submit]');
-  ok(await page.evaluate(() => document.querySelector('[data-f=entityNumber]').classList.contains('bad') && document.querySelectorAll('.rg-f.bad').length === 1), `${w}px register: a short document number is the only error left`);
-  await page.fill('#rg-entno', 'FL12345678'); await page.click('button[type=submit]');
-  ok(await page.evaluate(() => !document.getElementById('rg-done').hidden && document.getElementById('rg-form').hidden && /وثيقة العمل الحر/.test(document.getElementById('rg-done-ver-s').textContent)), `${w}px register: a complete freelance form reaches the final screen`);
-  ok((await page.textContent('#pv-name')) === 'صيانة البيت' && /متنقلة/.test(await page.textContent('#pv-pres')), `${w}px register: the side preview follows the form`);
-  // نموذج السجل التجاري: عشرة أرقام بالضبط، و«سأوثّق لاحقاً» يعفي من الوثيقة
-  await page.click('#rg-again'); await page.check('input[name=entity][value=cr]', { force: true });
-  await page.fill('#rg-entno', '10101234'); await page.click('button[type=submit]');
-  ok(await page.evaluate(() => document.querySelector('[data-f=entityNumber]').classList.contains('bad')), `${w}px register: a commercial registration number must be ten digits`);
-  await page.check('#rg-later'); await page.click('button[type=submit]');
-  ok(await page.evaluate(() => !document.getElementById('rg-done').hidden && /لاحقاً/.test(document.getElementById('rg-done-ver').textContent)), `${w}px register: "verify later" completes without a document`);
-  ok(posts === 0, `${w}px register: nothing was sent to the server`);
-  ok(errs.length === 0, `${w}px register: no CSP, JS or network errors` + (errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''));
+  await page.fill('#rg-entno', 'FL12345678'); await page.setInputFiles('#rg-doc', png);
+  await page.fill('#rg-nick', 'Bad Nick'); await page.fill('#rg-email', 'Salem@Example.com'); await page.fill('#rg-pass', 'secret-123'); await page.check('#rg-agree');
+  await page.click('#rg-go');
+  ok(await page.evaluate(() => document.querySelector('[data-f=nick]').classList.contains('bad')) && calls.length === 0, `${w}px register: a username the server would reject is caught first`);
+  await page.fill('#rg-nick', 'salem_fix'); await page.click('#rg-go');
+  await page.waitForFunction(() => !document.getElementById('rg-code').hidden, null, { timeout: 8000 });
+  ok(calls.length === 1 && calls[0].url === '/auth/register' && calls[0].body.email === 'salem@example.com' && calls[0].body.nickname === 'salem_fix' && calls[0].body.acceptTerms === true, `${w}px register: a new account is created first and the email code is asked for`);
+  await page.fill('#rg-code-in', '111111'); await page.click('#rg-code-go');
+  await page.waitForFunction(() => /غير صحيح/.test(document.getElementById('rg-code-msg').textContent), null, { timeout: 8000 });
+  ok(true, `${w}px register: a wrong code is refused with a message`);
+  codeOk = true; await page.fill('#rg-code-in', '246810'); await page.click('#rg-code-go');
+  await page.waitForFunction(() => !document.getElementById('rg-done').hidden, null, { timeout: 15000 });
+  const seq = calls.map((c) => c.url);
+  ok(JSON.stringify(seq.filter((u) => u !== '/me/adult-attest')) === JSON.stringify(['/auth/register', '/auth/verify', '/auth/verify', '/auth/login', '/chat/upload', '/biz/register', '/chat/upload', '/biz/biz-test-1/verification']), `${w}px register: verify, login, upload logo, register, upload document, verification` + ' [' + seq.join(' ') + ']');
+  const reg = calls.find((c) => c.url === '/biz/register'), ver = calls.find((c) => /verification/.test(c.url));
+  ok(reg.token === 'TOK' && reg.body.category === 'services' && reg.body.nameAr === 'صيانة البيت' && reg.body.presence === 'mobile' && reg.body.radiusKm === 15 && reg.body.phone === '+966512345678' && reg.body.role === 'owner' && reg.body.logoUrl === '/chat/media/up1.png' && Math.abs(reg.body.lat - 21.5) < 0.01, `${w}px register: the circle is sent with the server's field names and the device location`);
+  ok(ver.body.entityKind === 'freelance' && ver.body.entityNumber === 'FL12345678' && ver.body.docUrl === '/chat/media/up2.png', `${w}px register: the freelance document goes to verification`);
+  ok(calls.filter((c) => c.url === '/chat/upload').every((c) => c.type === 'image/png' && c.bytes > 100 && c.token === 'TOK'), `${w}px register: images are uploaded as raw bytes with the session`);
+  ok(/c\/biz-test-1$/.test(await page.getAttribute('#rg-done-link', 'href')) && (await page.textContent('#rg-done-name')) === 'صيانة البيت' && /أُرسل/.test(await page.textContent('#rg-done-ver')), `${w}px register: the final screen shows the circle link`);
+  // حساب قائم، سجل تجاري، «سأوثّق لاحقاً»، بلا إذن موقع: وسط المدينة
+  calls.length = 0;
+  await page.goto(base + '/business/register'); await page.waitForTimeout(200);
+  await page.check('input[name=category][value=company]', { force: true }); await page.fill('#rg-nameAr', 'أريب الرقمية'); await page.setInputFiles('#rg-logo', png);
+  await page.selectOption('#rg-city', 'الدمام'); await page.fill('#rg-phone', '512345678');
+  await page.fill('#rg-entno', '10101234'); await page.check('input[name=acc][value=login]', { force: true });
+  ok(await page.evaluate(() => document.querySelector('[data-f=nick]').hidden), `${w}px register: an existing account needs no username`);
+  await page.fill('#rg-email', 'owner@example.com'); await page.fill('#rg-pass', 'wrong'); await page.check('#rg-agree'); await page.click('#rg-go');
+  ok(await page.evaluate(() => document.querySelector('[data-f=entityNumber]').classList.contains('bad')) && calls.length === 0, `${w}px register: a commercial registration number must be ten digits`);
+  await page.check('#rg-later'); await page.click('#rg-go');
+  await page.waitForFunction(() => document.getElementById('rg-sum').classList.contains('on') && /غير صحيحة/.test(document.getElementById('rg-sum').textContent), null, { timeout: 8000 });
+  ok(calls.length === 1 && calls[0].url === '/auth/login' && calls[0].body.handle === 'owner@example.com', `${w}px register: a wrong password stops at login with a clear message`);
+  await page.fill('#rg-pass', 'right-pass'); await page.click('#rg-go');
+  await page.waitForFunction(() => !document.getElementById('rg-done').hidden, null, { timeout: 15000 });
+  const reg2 = calls.find((c) => c.url === '/biz/register');
+  ok(reg2.body.presence === 'fixed' && reg2.body.radiusKm === undefined && Math.abs(reg2.body.lat - 26.4207) < 0.001 && !calls.some((c) => /verification/.test(c.url)) && calls.filter((c) => c.url === '/chat/upload').length === 1, `${w}px register: verify later sends no document, and the city centre stands in for the location`);
+  ok(/لاحقاً/.test(await page.textContent('#rg-done-ver')), `${w}px register: the final screen says verification is still to do`);
+  ok(errs.filter((e) => !/401|400/.test(e)).length === 0, `${w}px register: no CSP or JS errors` + (errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''));
   if (process.env.SHOT && w === 390) await page.screenshot({ path: process.env.SHOT });
   await page.close();
 }
