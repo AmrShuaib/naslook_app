@@ -38,66 +38,94 @@ class BusinessDashboardPage extends ConsumerWidget {
   /// فهرس التبويب لمفتاح الخطوة التالية في الاكتمال (profile|catalog|posts|offers)؛ null لما ليس تبويباً (verify).
   static int? tabIndexFor(String tab) => switch (tab) { 'catalog' => 2, 'offers' => 3, 'posts' => 4, 'profile' => 7, _ => null };
 
+  /// التبويبات بترتيبها الثابت (فهارسها هي ما تحمله الروابط العميقة في initialTab): المعرّف والصلاحية التي تُظهره.
+  /// «نظرة عامة» لأي عضو له صلاحية غير التوظيف، ومثلها تبويبات القراءة (القائمة، التحديثات، التقييمات، الملف): الخادم يعيد محتواها
+  /// لهؤلاء في GET /biz/:id كما كان قبل المفاتيح، فتبقى ظاهرة للموظف وأزرارها وحدها خلف المفتاح. وما عداها لمن يحمل صلاحيته.
+  static const tabIds = ['overview', 'orders', 'catalog', 'offers', 'posts', 'reviews', 'team', 'profile', 'jobs', 'inbox'];
+  static const _tabPerm = {'orders': 'orders', 'catalog': 'catalog', 'offers': 'offers', 'posts': 'posts', 'reviews': 'reviews', 'team': 'team', 'profile': 'profile', 'jobs': 'hiring', 'inbox': 'inbox'};
+  static const _readTabs = {'overview', 'catalog', 'posts', 'reviews', 'profile'};
+  static List<String> visibleTabs(Biz biz) => [
+        for (final t in tabIds)
+          if (_readTabs.contains(t) ? biz.perms.any((p) => p != 'hiring') : biz.can(_tabPerm[t]!)) t,
+      ];
+  /// هل أحمل صلاحية الفعل في هذا التبويب (لا مجرد رؤيته).
+  static bool canActIn(Biz biz, String tab) => _tabPerm[tab] != null && biz.can(_tabPerm[tab]!);
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final detail = ref.watch(bizDetailProvider(id));
     final biz = detail.valueOrNull ?? initial;
-    final tabs = [
-      ('نظرة عامة', Icons.insights_outlined),
-      ('الطلبات', Icons.receipt_long_outlined),
-      (biz?.category.catalogTitle ?? 'الكتالوج', Icons.inventory_2_outlined),
-      ('العروض', Icons.local_offer_outlined),
-      ('التحديثات', Icons.campaign_outlined),
-      ('التقييمات', Icons.star_outline_rounded),
-      ('الفريق', Icons.groups_outlined),
-      ('الملف', Icons.badge_outlined),
-      ('التوظيف', Icons.work_outline_rounded),
-    ];
-    return DefaultTabController(
-      length: tabs.length + 1,
-      initialIndex: initialTab.clamp(0, tabs.length),
-      child: Scaffold(
-        backgroundColor: Joy.bg,
-        appBar: AppBar(
-          title: Row(children: [
-            if (biz != null) BizLogo(biz: biz, size: 32),
-            const SizedBox(width: 8),
-            Expanded(child: Text(biz?.title ?? 'لوحة التحكم', overflow: TextOverflow.ellipsis)),
-          ]),
-          actions: [
-            IconButton(tooltip: 'الصفحة العامة', icon: const Icon(Icons.open_in_new_rounded), onPressed: () => openBusiness(context, id)),
-          ],
-          bottom: TabBar(
-            isScrollable: true,
-            tabAlignment: TabAlignment.start,
-            labelColor: Joy.primary,
-            unselectedLabelColor: Joy.textMuted,
-            indicatorColor: Joy.primary,
-            labelStyle: const TextStyle(fontFamily: AppTheme.bodyFont, fontWeight: FontWeight.w700, fontSize: 13.5),
-            unselectedLabelStyle: const TextStyle(fontFamily: AppTheme.bodyFont, fontWeight: FontWeight.w500, fontSize: 13.5),
-            tabs: [
-              for (final (label, icon) in tabs) Tab(child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 17), const SizedBox(width: 5), Text(label)])),
-              // «الرسائل» بشارة غير المقروء (تعدّ 0 لمن ليس في فريق الرسائل)
-              Tab(key: const Key('dash-tab-inbox'), child: InboxTabLabel(bizId: id)),
+    Widget shell({PreferredSizeWidget? bottom, required Widget body}) => Scaffold(
+          backgroundColor: Joy.bg,
+          appBar: AppBar(
+            title: Row(children: [
+              if (biz != null) BizLogo(biz: biz, size: 32),
+              const SizedBox(width: 8),
+              Expanded(child: Text(biz?.title ?? 'لوحة التحكم', overflow: TextOverflow.ellipsis)),
+            ]),
+            actions: [
+              IconButton(tooltip: 'الصفحة العامة', icon: const Icon(Icons.open_in_new_rounded), onPressed: () => openBusiness(context, id)),
             ],
+            bottom: bottom,
           ),
+          body: body,
+        );
+    // قبل وصول الدائرة لا نعرف صلاحياتي، فلا تبويبات بعد (وإلا بدأ المتحكم على فهرس تبويب سيختفي)
+    if (biz == null) {
+      return shell(body: detail.when(data: (_) => const SizedBox(), loading: () => const Center(child: CircularProgressIndicator()), error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(bizDetailProvider(id)))));
+    }
+    final want = tabIds[initialTab.clamp(0, tabIds.length - 1)];
+    // رابط عميق (إشعار) إلى «التوظيف» أو «الرسائل» لمن لا يحمل صلاحيته: يبقى التبويب ظاهراً بقفله التوضيحي بدل أن يهبط في تبويب آخر بلا تفسير
+    final ids = [for (final t in tabIds) if (visibleTabs(biz).contains(t) || (t == want && (t == 'jobs' || t == 'inbox') && biz.canOperate)) t];
+    if (ids.isEmpty) return shell(body: const EmptyState(icon: Icons.lock_outline_rounded, title: 'ليست لديك صلاحية على هذه الدائرة'));
+    final labels = {
+      'overview': ('نظرة عامة', Icons.insights_outlined),
+      'orders': ('الطلبات', Icons.receipt_long_outlined),
+      'catalog': (biz.category.catalogTitle, Icons.inventory_2_outlined),
+      'offers': ('العروض', Icons.local_offer_outlined),
+      'posts': ('التحديثات', Icons.campaign_outlined),
+      'reviews': ('التقييمات', Icons.star_outline_rounded),
+      'team': ('الفريق', Icons.groups_outlined),
+      'profile': ('الملف', Icons.badge_outlined),
+      'jobs': ('التوظيف', Icons.work_outline_rounded),
+    };
+    // التبويبات التي تسأل canManage عن أزرارها تأخذ نسخة يتبع فيها صلاحيتها (Biz.scoped)، فيتبع الزر المفتاح لا الدور
+    Widget page(String t) => switch (t) {
+          'overview' => OverviewTab(biz: biz),
+          'orders' => OrdersTab(biz: biz.scoped('orders_cancel')),
+          'catalog' => CatalogTab(biz: biz.scoped('catalog')),
+          'offers' => OffersTab(biz: biz.scoped('offers')),
+          'posts' => PostsTab(biz: biz.scoped('posts')),
+          'reviews' => ReviewsTab(biz: biz),
+          'team' => TeamTab(biz: biz),
+          'profile' => ProfileTab(biz: biz),
+          'jobs' => JobsTab(biz: biz.scoped('profile')),
+          _ => InboxTab(biz: biz),
+        };
+    return DefaultTabController(
+      // تغيّر صلاحياتي يبدّل قائمة التبويبات، فيُبنى المتحكم من جديد
+      key: ValueKey(ids.join(',')),
+      length: ids.length,
+      initialIndex: ids.contains(want) ? ids.indexOf(want) : 0,
+      child: shell(
+        bottom: TabBar(
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          labelColor: Joy.primary,
+          unselectedLabelColor: Joy.textMuted,
+          indicatorColor: Joy.primary,
+          labelStyle: const TextStyle(fontFamily: AppTheme.bodyFont, fontWeight: FontWeight.w700, fontSize: 13.5),
+          unselectedLabelStyle: const TextStyle(fontFamily: AppTheme.bodyFont, fontWeight: FontWeight.w500, fontSize: 13.5),
+          tabs: [
+            for (final t in ids)
+              if (t == 'inbox')
+                // «الرسائل» بشارة غير المقروء
+                Tab(key: const Key('dash-tab-inbox'), child: InboxTabLabel(bizId: id))
+              else
+                Tab(key: Key('dash-tab-$t'), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(labels[t]!.$2, size: 17), const SizedBox(width: 5), Text(labels[t]!.$1)])),
+          ],
         ),
-        body: biz == null
-            ? detail.when(data: (_) => const SizedBox(), loading: () => const Center(child: CircularProgressIndicator()), error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(bizDetailProvider(id))))
-            : !biz.canOperate
-                ? const EmptyState(icon: Icons.lock_outline_rounded, title: 'ليست لديك صلاحية على هذه الدائرة')
-                : TabBarView(children: [
-                    OverviewTab(biz: biz),
-                    OrdersTab(biz: biz),
-                    CatalogTab(biz: biz),
-                    OffersTab(biz: biz),
-                    PostsTab(biz: biz),
-                    ReviewsTab(biz: biz),
-                    TeamTab(biz: biz),
-                    ProfileTab(biz: biz),
-                    JobsTab(biz: biz),
-                    InboxTab(biz: biz),
-                  ]),
+        body: TabBarView(children: [for (final t in ids) page(t)]),
       ),
     );
   }
@@ -113,7 +141,9 @@ class OverviewTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final stats = ref.watch(bizStatsProvider(biz.id));
+    // أرقام المبيعات لمن يحمل «المبيعات والإحصاءات» وحده: لا نطلبها أصلاً لغيره (الخادم يرفضها 403)
+    final showStats = biz.can('stats');
+    final stats = showStats ? ref.watch(bizStatsProvider(biz.id)) : null;
     return RefreshIndicator(
       onRefresh: () async => invalidateBizAll(ref, biz.id),
       child: ListView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 32), children: [
@@ -129,7 +159,7 @@ class OverviewTab extends ConsumerWidget {
               const Icon(Icons.location_on_rounded, color: Joy.primary),
               const SizedBox(width: 8),
               Expanded(child: Text('أنت هنا حتى ${clockLabel(biz.here!.until)}', style: const TextStyle(color: Joy.primary, fontWeight: FontWeight.w600, fontSize: 13))),
-              TextButton(key: const Key('here-end-inline'), onPressed: () => _endHere(context, ref), child: const Text('إنهاء')),
+              if (biz.can('orders') || biz.can('profile')) TextButton(key: const Key('here-end-inline'), onPressed: () => _endHere(context, ref), child: const Text('إنهاء')),
             ]),
           ),
         if (!biz.active)
@@ -141,10 +171,10 @@ class OverviewTab extends ConsumerWidget {
               const Icon(Icons.pause_circle_outline_rounded, color: Joy.accent),
               const SizedBox(width: 8),
               const Expanded(child: Text('الدائرة موقوفة: لا تظهر للعامة ولا تستقبل طلبات', style: TextStyle(color: Joy.accent, fontWeight: FontWeight.w600, fontSize: 13))),
-              TextButton(onPressed: () => _toggleActive(context, ref, true), child: const Text('نشر')),
+              if (biz.can('profile')) TextButton(onPressed: () => _toggleActive(context, ref, true), child: const Text('نشر')),
             ]),
           ),
-        stats.when(
+        if (stats != null) stats.when(
           data: (s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Expanded(child: _Stat(label: 'إيرادات 7 أيام', value: money(s.revenueLast7), icon: Icons.payments_outlined, color: Joy.primary)),
@@ -201,12 +231,12 @@ class OverviewTab extends ConsumerWidget {
         const SectionTitle('إجراءات سريعة'),
         Wrap(spacing: 8, runSpacing: 8, children: [
           // «أنا هنا اليوم» للدائرة المتنقلة فقط: الخادم يرفض الدبوس للثابتة (409 not-mobile)، فلا نعرض زراً ينتهي بخطأ
-          if (biz.isMobile) _Action(key: const Key('here-today'), icon: Icons.where_to_vote_outlined, label: biz.hereActive ? 'أنت هنا حتى ${clockLabel(biz.here!.until)}' : 'أنا هنا اليوم', onTap: () => showHereTodaySheet(context, biz)),
-          _Action(key: const Key('checkin-scan'), icon: Icons.qr_code_scanner_rounded, label: 'مسح رمز الاستلام', onTap: () => checkinByCode(context, ref, biz)),
-          if (biz.canManage) _Action(key: const Key('verify-entry'), icon: Icons.verified_user_outlined, label: biz.verified ? 'التوثيق ✓' : 'التوثيق', onTap: () => openVerifyCircle(context, biz.id, initial: biz)),
-          if (biz.canManage) _Action(icon: Icons.add_box_outlined, label: 'إضافة ${_itemNoun(biz.category)}', onTap: () => openItemEditor(context, biz)),
-          if (biz.canManage) _Action(icon: Icons.local_offer_outlined, label: 'عرض جديد', onTap: () => openOfferTemplates(context, biz, ref.read(manageOffersProvider(biz.id)).valueOrNull?.templates ?? const [])),
-          if (biz.canManage) _Action(icon: Icons.edit_outlined, label: 'تعديل الملف', onTap: () => openBusinessEditor(context, biz: biz)),
+          if (biz.isMobile && (biz.can('orders') || biz.can('profile'))) _Action(key: const Key('here-today'), icon: Icons.where_to_vote_outlined, label: biz.hereActive ? 'أنت هنا حتى ${clockLabel(biz.here!.until)}' : 'أنا هنا اليوم', onTap: () => showHereTodaySheet(context, biz)),
+          if (biz.can('orders')) _Action(key: const Key('checkin-scan'), icon: Icons.qr_code_scanner_rounded, label: 'مسح رمز الاستلام', onTap: () => checkinByCode(context, ref, biz)),
+          if (biz.can('profile')) _Action(key: const Key('verify-entry'), icon: Icons.verified_user_outlined, label: biz.verified ? 'التوثيق ✓' : 'التوثيق', onTap: () => openVerifyCircle(context, biz.id, initial: biz)),
+          if (biz.can('catalog')) _Action(key: const Key('quick-add-item'), icon: Icons.add_box_outlined, label: 'إضافة ${_itemNoun(biz.category)}', onTap: () => openItemEditor(context, biz)),
+          if (biz.can('offers')) _Action(key: const Key('quick-new-offer'), icon: Icons.local_offer_outlined, label: 'عرض جديد', onTap: () => openOfferTemplates(context, biz, ref.read(manageOffersProvider(biz.id)).valueOrNull?.templates ?? const [])),
+          if (biz.can('profile')) _Action(key: const Key('quick-edit-profile'), icon: Icons.edit_outlined, label: 'تعديل الملف', onTap: () => openBusinessEditor(context, biz: biz)),
           _Action(icon: Icons.open_in_new_rounded, label: 'الصفحة العامة', onTap: () => openBusiness(context, biz.id)),
         ]),
       ]),
@@ -287,7 +317,7 @@ class _CompletenessCard extends ConsumerWidget {
                   if (next.hint.isNotEmpty) Text(next.hint, style: const TextStyle(color: Joy.text, fontSize: 12, height: 1.4)),
                 ])),
                 const SizedBox(width: 8),
-                FilledButton(key: const Key('completeness-go'), style: FilledButton.styleFrom(minimumSize: const Size(0, 36), padding: const EdgeInsets.symmetric(horizontal: 14), visualDensity: VisualDensity.compact), onPressed: () => _go(context, next.tab), child: const Text('ابدأ')),
+                if (_reachable(next.tab)) FilledButton(key: const Key('completeness-go'), style: FilledButton.styleFrom(minimumSize: const Size(0, 36), padding: const EdgeInsets.symmetric(horizontal: 14), visualDensity: VisualDensity.compact), onPressed: () => _go(context, next.tab), child: const Text('ابدأ')),
               ]),
             ),
           const SizedBox(height: 10),
@@ -307,10 +337,19 @@ class _CompletenessCard extends ConsumerWidget {
     ]);
   }
 
+  /// هل أحمل صلاحية الخطوة التالية (لا يكفي أن يظهر تبويبها للقراءة، والتوثيق لمن يحمل «بيانات الدائرة والتوثيق»)
+  bool _reachable(String tab) {
+    if (tab == 'verify') return biz.can('profile');
+    final i = BusinessDashboardPage.tabIndexFor(tab);
+    return i != null && BusinessDashboardPage.canActIn(biz, BusinessDashboardPage.tabIds[i]);
+  }
+
   void _go(BuildContext context, String tab) {
     if (tab == 'verify') { openVerifyCircle(context, biz.id, initial: biz); return; }
+    // الفهرس الثابت يُترجم إلى موضع التبويب بين الظاهر لي؛ تبويب لا أحمل صلاحيته لا يُفتح
     final i = BusinessDashboardPage.tabIndexFor(tab);
-    if (i != null) DefaultTabController.maybeOf(context)?.animateTo(i);
+    final at = i == null ? -1 : BusinessDashboardPage.visibleTabs(biz).indexOf(BusinessDashboardPage.tabIds[i]);
+    if (at >= 0) DefaultTabController.maybeOf(context)?.animateTo(at);
   }
 }
 
@@ -586,9 +625,9 @@ class ProfileTab extends ConsumerWidget {
           _kv('المعرّف', biz.id),
         ])),
         const SizedBox(height: 12),
-        if (biz.canManage) FilledButton.icon(onPressed: () => openBusinessEditor(context, biz: biz), icon: const Icon(Icons.edit_outlined), label: const Text('تعديل الملف والصور والموقع')),
+        if (biz.can('profile')) FilledButton.icon(onPressed: () => openBusinessEditor(context, biz: biz), icon: const Icon(Icons.edit_outlined), label: const Text('تعديل الملف والصور والموقع')),
         const SizedBox(height: 8),
-        if (biz.canManage)
+        if (biz.can('profile'))
           OutlinedButton.icon(
             onPressed: () async {
               try {
@@ -604,7 +643,7 @@ class ProfileTab extends ConsumerWidget {
           ),
         const SizedBox(height: 8),
         OutlinedButton.icon(onPressed: () => openBusiness(context, biz.id), icon: const Icon(Icons.open_in_new_rounded), label: const Text('عرض الصفحة العامة')),
-        if (biz.canManage) ...[
+        if (biz.can('profile')) ...[
           const SizedBox(height: 8),
           OutlinedButton.icon(key: const Key('profile-verify'), onPressed: () => openVerifyCircle(context, biz.id, initial: biz), icon: Icon(biz.verified ? Icons.verified_rounded : Icons.verified_user_outlined, color: biz.verified ? Joy.success : null), label: Text(biz.verified ? 'الدائرة موثّقة · التفاصيل' : 'وثّق دائرتك لتبدأ البيع')),
         ],

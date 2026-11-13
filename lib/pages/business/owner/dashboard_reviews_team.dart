@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../api/biz_api.dart';
 import '../../../api/biz_models.dart';
+import '../../../api/client.dart' show ApiException;
 import '../../../api/naslife_api.dart';
 import '../../../core/app_theme.dart';
 import '../../../state/app_state.dart';
@@ -10,7 +11,9 @@ import '../../../state/biz_providers.dart';
 import '../../../ui/profile_avatar.dart';
 import '../../../ui/widgets.dart';
 import '../business_page.dart' show Stars;
+import 'biz_activity_page.dart';
 import 'business_editor.dart';
+import 'team_member_page.dart';
 
 /// التقييمات مع إمكانية الرد باسم الدائرة.
 class ReviewsTab extends ConsumerWidget {
@@ -74,7 +77,7 @@ class _ReviewCard extends ConsumerWidget {
                 Text(r.reply!, style: const TextStyle(fontSize: 13.5, height: 1.5)),
               ]),
             ),
-          if (biz.canManage)
+          if (biz.can('reviews'))
             Align(
               alignment: AlignmentDirectional.centerEnd,
               child: TextButton.icon(
@@ -94,10 +97,26 @@ class _ReviewCard extends ConsumerWidget {
       );
 }
 
-/// أدوار الفريق القابلة للإسناد: موظف (تشغيل)، مدير (إدارة)، توظيف (العروض الوظيفية والمرشحون).
+/// أدوار الفريق القابلة للإسناد، وكل دور قالب صلاحيات يعدّل المالك مفاتيحه لكل عضو.
 const teamRoles = [('staff', 'موظف'), ('manager', 'مدير'), ('hr', 'توظيف')];
 
-/// الفريق: المالك والمديرون والموظفون ومسؤولو التوظيف، الإضافة بالنك نيم أو المعرّف، ونقل الملكية.
+/// نص خطأ إدارة الفريق: حدود الخادم (docs/circle-permissions.md) بعبارة قصيرة.
+String teamErrText(Object e) {
+  final body = e is ApiException ? e.body : null;
+  switch (body?['error']?.toString()) {
+    case 'self': return 'لا يمكنك تعديل صلاحياتك بنفسك';
+    case 'team-holder': return 'هذا العضو يدير الفريق. يعدّله المالك فقط';
+    case 'outranked': return 'يحمل هذا العضو صلاحيات لا تحملها. يعدّله المالك';
+    case 'owner-only': return '«إدارة الفريق» ودور المدير يمنحهما المالك فقط';
+    case 'not-held': return 'لا تمنح صلاحية لا تحملها: ${bizPermLabel(body?['perm']?.toString() ?? '')}';
+    case 'too-many': return 'وصل الفريق إلى الحد الأقصى';
+    case 'not-member': return 'لم يعد هذا العضو في الفريق';
+  }
+  return ownerErrText(e);
+}
+
+/// الفريق: المالك ثم الأعضاء بقوالب أدوارهم، والضغط على عضو يفتح مفاتيحه. المالك ومن يحمل «إدارة الفريق» يضيفون الأعضاء،
+/// ومن هنا سجل النشاط ونقل الملكية (للمالك وحده).
 class TeamTab extends ConsumerWidget {
   final Biz biz;
   const TeamTab({super.key, required this.biz});
@@ -105,52 +124,61 @@ class TeamTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final team = ref.watch(bizTeamProvider(biz.id));
     return team.when(
-      data: (t) => ListView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 32), children: [
-        JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('الصلاحيات', style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 6),
-          const Text('المالك: كل شيء بما فيه الفريق ونقل الملكية.\nالمدير: الملف والكتالوج والمنشورات والطلبات والردود.\nالموظف: عرض الطلبات وتأكيد الاستلام فقط.\nالتوظيف: العروض الوظيفية والمرشحون فقط.', style: TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.6)),
-        ])),
-        const SectionTitle('المالك'),
-        if (t.owner != null)
-          JoyCard(child: Row(children: [ProfileAvatar(person: t.owner!, size: 44), const SizedBox(width: 10), Expanded(child: Text(t.owner!.nickname, style: const TextStyle(fontWeight: FontWeight.w700))), const Text('مالك', style: TextStyle(color: Joy.primary, fontWeight: FontWeight.w600, fontSize: 12.5))]))
-        else
-          const JoyCard(child: Text('لا مالك بعد (دائرة تعريفية من Naslife)', style: TextStyle(color: Joy.textMuted))),
-        SectionTitle('الفريق · ${t.staff.length}', action: biz.isOwner ? 'إضافة' : null, onAction: biz.isOwner ? () => _add(context, ref) : null),
-        if (t.staff.isEmpty) const EmptyState(icon: Icons.group_add_outlined, title: 'لا أعضاء بعد', subtitle: 'أضف مديراً يساعدك في الإدارة أو موظفاً يؤكد الاستلام عند الباب.'),
-        for (final s in t.staff)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: JoyCard(child: Row(children: [
-              ProfileAvatar(person: s.user, size: 44),
-              const SizedBox(width: 10),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(s.user.nickname, style: const TextStyle(fontWeight: FontWeight.w700)), Text('${s.roleLabel} · منذ ${timeAgo(s.since)}', style: const TextStyle(color: Joy.textMuted, fontSize: 12))])),
-              if (biz.isOwner)
-                PopupMenuButton<String>(
-                  onSelected: (v) async {
-                    try {
-                      final api = ref.read(apiClientProvider);
-                      if (v == 'remove') {
-                        await api.removeBizStaff(biz.id, s.user.id);
-                      } else {
-                        await api.addBizStaff(biz.id, s.user.id, role: v);
-                      }
-                      ref.invalidate(bizTeamProvider(biz.id));
-                    } catch (e) { if (context.mounted) toast(context, ownerErrText(e), error: true); }
-                  },
-                  itemBuilder: (_) => [
-                    for (final (k, l) in teamRoles)
-                      if (k != s.role) PopupMenuItem(value: k, child: Text(k == 'manager' ? 'ترقية إلى مدير' : 'تحويل إلى $l')),
-                    const PopupMenuItem(value: 'remove', child: Text('إزالة من الفريق', style: TextStyle(color: Joy.danger))),
-                  ],
-                ),
-            ])),
-          ),
-        if (biz.myRole == 'owner') ...[
-          const SizedBox(height: 12),
-          OutlinedButton.icon(onPressed: () => _transfer(context, ref), icon: const Icon(Icons.swap_horiz_rounded, size: 18), label: const Text('نقل ملكية الدائرة')),
-        ],
-      ]),
+      data: (t0) {
+        // خادم أقدم لا يرسل «me»: المالك وحده يدير الفريق كما كان
+        final t = t0.myRole == null ? BizTeam(owner: t0.owner, staff: t0.staff, myRole: biz.myRole, myPerms: biz.perms, boss: biz.isOwner, limit: t0.limit) : t0;
+        final canEdit = t.boss || (t.myPerms ?? const []).contains('team');
+        return ListView(padding: const EdgeInsets.fromLTRB(20, 12, 20, 32), children: [
+          JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: const [
+            Text('الأدوار والصلاحيات', style: TextStyle(fontWeight: FontWeight.w700)),
+            SizedBox(height: 6),
+            Text(
+              'الدور قالب جاهز، وتحته مفتاح لكل صلاحية تشغّله أو تطفئه لكل عضو.\n'
+              'المالك: كل شيء، ومنه نقل الملكية.\n'
+              'المدير: كل الصلاحيات، ويضيف الأعضاء.\n'
+              'الموظف: الطلبات والاستلام، رسائل العملاء، والإحصاءات.\n'
+              'التوظيف: الوظائف والمرشحون فقط.\n'
+              'اضغط على العضو لتعديل مفاتيحه.',
+              key: Key('team-roles-help'),
+              style: TextStyle(color: Joy.textMuted, fontSize: 12.5, height: 1.6),
+            ),
+          ])),
+          const SectionTitle('المالك'),
+          if (t.owner != null)
+            JoyCard(child: Row(children: [ProfileAvatar(person: t.owner!, size: 44), const SizedBox(width: 10), Expanded(child: Text(t.owner!.nickname, style: const TextStyle(fontWeight: FontWeight.w700))), const Text('مالك', style: TextStyle(color: Joy.primary, fontWeight: FontWeight.w600, fontSize: 12.5))]))
+          else
+            const JoyCard(child: Text('لا مالك بعد (دائرة تعريفية من Naslife)', style: TextStyle(color: Joy.textMuted))),
+          SectionTitle('الفريق · ${t.staff.length}', action: canEdit ? 'إضافة' : null, onAction: canEdit ? () => _add(context, ref, t) : null),
+          if (t.staff.isEmpty) const EmptyState(icon: Icons.group_add_outlined, title: 'لا أعضاء بعد', subtitle: 'أضف مديراً يساعدك في الإدارة أو موظفاً يؤكد الاستلام عند الباب.'),
+          for (final s in t.staff)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: InkWell(
+                key: Key('team-member-${s.user.id}'),
+                borderRadius: BorderRadius.circular(18),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => TeamMemberPage(biz: biz, member: s, team: t))),
+                child: JoyCard(child: Row(children: [
+                  ProfileAvatar(person: s.user, size: 44),
+                  const SizedBox(width: 10),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(s.user.nickname, style: const TextStyle(fontWeight: FontWeight.w700)),
+                    Text('${s.roleLabel} · منذ ${timeAgo(s.since)}', style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+                    Text('${s.perms.length} من ${bizPerms.length} صلاحية${s.custom ? ' · معدّلة عن القالب' : ''}', key: Key('team-member-perms-${s.user.id}'), style: TextStyle(color: s.custom ? Joy.accent : Joy.textMuted, fontSize: 11.5)),
+                  ])),
+                  Icon(s.lock == null && canEdit ? Icons.tune_rounded : Icons.lock_outline_rounded, size: 18, color: Joy.textMuted),
+                ])),
+              ),
+            ),
+          const SizedBox(height: 4),
+          if (canEdit) FilledButton.icon(key: const Key('team-add'), onPressed: () => _add(context, ref, t), icon: const Icon(Icons.person_add_alt_1_rounded, size: 18), label: const Text('إضافة عضو')),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(key: const Key('team-activity'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BizActivityPage(bizId: biz.id))), icon: const Icon(Icons.history_rounded, size: 18), label: const Text('سجل النشاط')),
+          if (biz.myRole == 'owner') ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(onPressed: () => _transfer(context, ref), icon: const Icon(Icons.swap_horiz_rounded, size: 18), label: const Text('نقل ملكية الدائرة')),
+          ],
+        ]);
+      },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(bizTeamProvider(biz.id))),
     );
@@ -168,23 +196,38 @@ class TeamTab extends ConsumerWidget {
     }
   }
 
-  Future<void> _add(BuildContext context, WidgetRef ref) async {
+  /// إضافة عضو: الاسم ثم الدور. دور المدير لغير المالك معطّل، وما في قالب الدور من صلاحية لا أحملها يُرسل مطفأً
+  /// (مدير أُطفئت له «الإحصاءات» يضيف موظفاً بلا الإحصاءات بدل أن تُرفض الإضافة).
+  Future<void> _add(BuildContext context, WidgetRef ref, BizTeam t) async {
     final handle = TextEditingController();
-    var role = 'staff';
+    var role = teamRoles.map((r) => r.$1).firstWhere(t.canGrantRole, orElse: () => 'staff');
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
           title: const Text('إضافة عضو'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(controller: handle, autofocus: true, decoration: const InputDecoration(labelText: 'النك نيم أو المعرّف (SA…)')),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            TextField(key: const Key('team-add-handle'), controller: handle, autofocus: true, decoration: const InputDecoration(labelText: 'النك نيم أو المعرّف (SA…)')),
             const SizedBox(height: 10),
-            Row(children: [
+            Wrap(spacing: 8, runSpacing: 6, children: [
               for (final (k, l) in teamRoles)
-                Padding(padding: const EdgeInsets.only(left: 8), child: ChoiceChip(label: Text(l, style: TextStyle(color: role == k ? Joy.primaryOn : Joy.text)), selected: role == k, showCheckmark: false, selectedColor: Joy.primary, onSelected: (_) => setS(() => role = k))),
+                ChoiceChip(
+                  key: Key('team-add-role-$k'),
+                  label: Text(l, style: TextStyle(color: role == k ? Joy.primaryOn : (t.canGrantRole(k) ? Joy.text : Joy.textMuted))),
+                  selected: role == k, showCheckmark: false, selectedColor: Joy.primary,
+                  onSelected: t.canGrantRole(k) ? (_) => setS(() => role = k) : null,
+                ),
             ]),
+            const SizedBox(height: 8),
+            Text('يبدأ بصلاحيات: ${t.startPerms(role).map(bizPermLabel).join('، ')}', key: const Key('team-add-start'), style: const TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.5)),
+            if (t.startPerms(role).length < bizRolePreset(role).length)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('بلا: ${bizRolePreset(role).where((p) => !t.startPerms(role).contains(p)).map(bizPermLabel).join('، ')}. لا تحملها أنت، ويشغّلها المالك.', key: const Key('team-add-dropped'), style: const TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.5)),
+              ),
+            if (!t.boss) const Padding(padding: EdgeInsets.only(top: 6), child: Text('دور المدير يمنحه المالك فقط، ولا تمنح صلاحية لا تحملها.', key: Key('team-add-limit'), style: TextStyle(color: Joy.textMuted, fontSize: 12, height: 1.5))),
           ]),
-          actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('إضافة'))],
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')), FilledButton(key: const Key('team-add-ok'), onPressed: () => Navigator.pop(ctx, true), child: const Text('إضافة'))],
         ),
       ),
     );
@@ -192,11 +235,13 @@ class TeamTab extends ConsumerWidget {
     final id = await _resolveUser(context, ref, handle.text);
     if (id == null) return;
     try {
-      await ref.read(apiClientProvider).addBizStaff(biz.id, id, role: role);
+      final start = t.startPerms(role);
+      final off = {for (final p in bizRolePreset(role)) if (!start.contains(p)) p: false};
+      await ref.read(apiClientProvider).addBizStaff(biz.id, id, role: role, perms: off.isEmpty ? null : off);
       ref.invalidate(bizTeamProvider(biz.id));
-      if (context.mounted) toast(context, 'أُضيف إلى الفريق');
+      if (context.mounted) toast(context, 'أُضيف إلى الفريق. اضغط عليه لتعديل مفاتيحه');
     } catch (e) {
-      if (context.mounted) toast(context, ownerErrText(e), error: true);
+      if (context.mounted) toast(context, teamErrText(e), error: true);
     }
   }
 

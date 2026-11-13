@@ -52,7 +52,7 @@
     var o = t12(val('hopen')), c = t12(val('hclose')); if (!o || !c) return '';
     return (mode === 'range' ? DAYS[Number(val('hfrom'))] + ' إلى ' + DAYS[Number(val('hto'))] : 'يومياً') + ' ' + o + ' – ' + c;
   }
-  // ---- الأصناف: صفوف تُضاف وتُحذف؛ السعر بالريال، والصنف بلا اسم يُتجاهل
+  // ---- الأصناف: صفوف تُضاف وتُحذف؛ السعر يُكتب بالريال، والصنف بلا اسم يُتجاهل
   var itemSeq = 0;
   function addItem() {
     if (state.items.length >= 20) return;
@@ -60,7 +60,7 @@
     el.className = 'rg-item'; el.dataset.id = id;
     el.innerHTML = '<label class="rg-drop" title="صورة الصنف"><input type="file" accept="image/png,image/jpeg,image/webp" aria-label="صورة الصنف"><span class="th doc"><svg class="i" aria-hidden="true"><use href="#r-img"/></svg></span></label>' +
       '<input class="rg-in t" maxlength="100" placeholder="اسم الصنف أو الخدمة" aria-label="اسم الصنف">' +
-      '<input class="rg-in rg-ltr price" inputmode="numeric" maxlength="6" placeholder="السعر ر.س" aria-label="السعر بالريال">' +
+      '<input class="rg-in rg-ltr price" inputmode="decimal" maxlength="8" placeholder="السعر ر.س" aria-label="السعر بالريال">' +
       '<button type="button" class="x" aria-label="احذف الصنف">×</button>' +
       '<input class="rg-in wide d" maxlength="500" placeholder="وصف قصير (اختياري)" aria-label="وصف الصنف">' +
       '<input class="rg-in rg-ltr wide times" maxlength="60" placeholder="10:00, 16:00, 19:00" aria-label="أوقات المواعيد اليومية">' +
@@ -72,14 +72,19 @@
       it.file = f; it.url = null; var th = el.querySelector('.th'); th.style.backgroundImage = 'url("' + URL.createObjectURL(f) + '")'; th.innerHTML = ''; sync();
     });
     sync();
+    return it;
   }
   var itemData = function (it) {
     var q = function (c) { return String(it.el.querySelector(c).value || '').trim(); };
     var times = latin(q('.times')).split(/[,،\s]+/).map(function (t) { var m = /^(\d{1,2}):(\d{2})$/.exec(t); return m ? ('0' + m[1]).slice(-2) + ':' + m[2] : null; }).filter(function (t) { return t && /^([01]\d|2[0-3]):[0-5]\d$/.test(t); });
-    return { title: q('.t'), price: Math.max(0, Math.round(Number(latin(q('.price')).replace(/[^\d.]/g, '')) || 0)), description: q('.d'), times: times, venue: it.el.querySelector('.venue').checked };
+    // السعر يُكتب بالريال ويُرسل بالهللات (وحدة biz_items.price في الخادم والتطبيق)
+    return { title: q('.t'), price: Math.max(0, Math.round((Number(latin(q('.price')).replace(/٫/g, '.').replace(/[^\d.]/g, '')) || 0) * 100)), description: q('.d'), times: times, venue: it.el.querySelector('.venue').checked };
   };
   var liveItems = function () { return state.items.filter(function (it) { return itemData(it).title; }); };
-  var itemsOk = function () { return liveItems().every(function (it) { var d = itemData(it); return d.title.length >= 2 && (!slotted() || d.times.length > 0); }); };
+  // صف قرأناه من المنيو وسعره فارغ (لم يُقرأ ولم يكتبه المالك) لا يُرسل: كان سيُحفظ صنفاً مجانياً يُطلب. المجاني يُكتب 0 صراحة.
+  var priceMissing = function (it) { return it.el.classList.contains('scanned') && kindOf() !== 'info' && !/\d/.test(latin(it.el.querySelector('.price').value)); };
+  var rowOk = function (it) { var d = itemData(it); return d.title.length >= 2 && (!slotted() || d.times.length > 0) && !priceMissing(it); };
+  var itemsOk = function () { return liveItems().every(rowOk); };
   var groups = { category: ['category'], identity: ['nameAr', 'logo'], place: ['city'], contact: ['phone'], verify: ['entityNumber', 'doc'], details: ['description', 'website'], account: ['nick', 'email', 'pass', 'agree'] };
   var field = function (k) { return form.querySelector('[data-f="' + k + '"]'); };
 
@@ -111,7 +116,7 @@
     $('rg-item-add').textContent = '+ أضف ' + (k === 'product' ? 'صنفاً' : k === 'room' ? 'غرفة' : k === 'car' ? 'سيارة' : 'خدمة');
     state.items.forEach(function (it) {
       it.el.querySelector('.times').hidden = !sl; it.el.querySelector('.price').hidden = k === 'info'; it.el.querySelector('.pv').hidden = k === 'info';
-      var d = itemData(it); it.el.classList.toggle('bad', it.el.classList.contains('bad') && !!d.title && !(d.title.length >= 2 && (!sl || d.times.length > 0)));
+      var d = itemData(it); it.el.classList.toggle('bad', it.el.classList.contains('bad') && !!d.title && !rowOk(it));
     });
     // المعاينة الجانبية
     var cat = CATS.filter(function (c) { return c[0] === val('category'); })[0];
@@ -162,6 +167,9 @@
     'unsupported-type': 'نوع الصورة غير مدعوم. استخدم PNG أو JPG.', 'media-storage-unavailable': 'رفع الصور متوقف مؤقتاً. حاول بعد قليل.', 'logo-required': 'الشعار إلزامي.',
     'bad-category': 'اختر نوع النشاط.', 'bad-name': 'اسم الدائرة غير صالح.', 'bad-location': 'الموقع خارج النطاق المدعوم.', 'bad-phone': 'رقم الجوال غير صحيح.', 'bad-radius': 'نطاق الخدمة من 2 إلى 50 كم.',
     'banned-words': 'في الاسم كلمة غير مسموحة.', 'suspended': 'هذا الحساب موقوف. راسل الدعم.', 'too-many': 'بلغ حسابك الحد الأعلى من الدوائر (20).',
+    'ai-unavailable': 'قراءة المنيو غير مفعّلة الآن. أضف الأصناف يدوياً.', 'busy': 'الخدمة مشغولة اليوم. أضف الأصناف يدوياً أو أعد المحاولة غداً.', 'ai-failed': 'تعذّرت قراءة الصور. أعد المحاولة بعد قليل.', 'scan-failed': 'تعذّرت قراءة الصور. أعد المحاولة بعد قليل.',
+    'ai-timeout': 'أخذت القراءة وقتاً طويلاً. أعد المحاولة بصورة أوضح أو بصور أقل.', 'rate-limited': 'قراءات كثيرة. انتظر عشر دقائق ثم أعد المحاولة.', 'scan-in-progress': 'قراءة سابقة ما زالت جارية. انتظر قليلاً.',
+    'image-too-large': 'الصورة كبيرة جداً. اختر صورة أصغر.', 'too-many-images': 'أربع صور على الأكثر في القراءة الواحدة.', 'not-image': 'اختر صوراً بصيغة PNG أو JPG.', 'bad-image': 'تعذّر استخدام الصورة. اخترها من جديد.', 'image-not-found': 'تعذّر استخدام الصورة. اخترها من جديد.', 'image-expired': 'تعذّر استخدام الصورة. اخترها من جديد.',
     'bad-number': 'رقم الوثيقة غير صحيح.', 'doc-required': 'أرفق صورة الوثيقة.', 'network': 'تعذّر الاتصال. تحقق من الإنترنت ثم أعد المحاولة.'
   };
   function fail(code, status) { var e = new Error(code || 'error'); e.code = code || 'error'; e.status = status || 0; return e; }
@@ -179,7 +187,7 @@
   }
   var tokenOf = function (d) { return d && (d.token || (d.session && d.session.token) || (d.user && d.user.token)) || null; };
   var say = function (t) { $('rg-go-t').textContent = t; };
-  var text = function (e) { return MSG[e.code] || (e.status >= 500 ? 'حدث خطأ في الخادم. أعد المحاولة بعد قليل.' : 'تعذّر إكمال الخطوة (' + e.code + '). أعد المحاولة.'); };
+  var text = function (e) { return (e.code === 'rate-limited' && e.body && e.body.scope === 'day' && 'بلغت حد اليوم من قراءات المنيو. أضف الأصناف يدوياً أو أعد المحاولة غداً.') || MSG[e.code] || (e.status >= 500 ? 'حدث خطأ في الخادم. أعد المحاولة بعد قليل.' : 'تعذّر إكمال الخطوة (' + e.code + '). أعد المحاولة.'); };
 
   function login() {
     return call('POST', '/auth/login', { handle: hasAcc() ? val('email') : email(), password: form.elements.pass.value }).then(function (d) {
@@ -247,9 +255,10 @@
   }
 
   function run() {
-    if (state.busy) return; state.busy = true;
+    if (state.busy || state.scanning) return; state.busy = true;
     var btn = $('rg-go'), sum = $('rg-sum'); btn.disabled = true; sum.classList.remove('on');
     var done = function () { state.busy = false; btn.disabled = false; say('أنشئ دائرتي'); };
+    state.after = 'run';
     account().then(function (ok) {
       if (!ok) { done(); return; }
       // الإقرار بالعمر مكتوب في خانة الموافقة؛ يُحفظ للحساب حتى لا يُسأل ثانية عند أول بيع. فشله لا يوقف التسجيل
@@ -266,6 +275,81 @@
     });
   }
 
+  // ---- «صوّر المنيو» (docs/menu-scan.md): القراءة تحتاج جلسة، والجلسة في هذا النموذج تُنشأ عند الإرسال. فالزر يجهّز الحساب أولاً
+  // (دخول أو حساب جديد برمز البريد) بالحقول نفسها في الخطوة 7، ثم يرفع الصور ويقرأها ويملأ صفوف الأصناف ليراجعها المالك قبل «أنشئ دائرتي».
+  // لا يُنشأ صنف هنا: الصفوف تُرسل مع النموذج كأي صفوف كتبها بيده.
+  var ACC = ['nick', 'email', 'pass', 'agree'];
+  function scanSay(t, bad) { var m = $('rg-scan-msg'); m.hidden = !t; m.textContent = t || ''; m.classList.toggle('bad', !!bad); }
+  function scanBusy(on) { state.scanning = on; $('rg-scan-lab').classList.toggle('off', on); $('rg-scan-in').disabled = on; $('rg-scan-go').disabled = on; $('rg-scan-t').textContent = on ? 'جارٍ قراءة المنيو…' : 'صوّر المنيو'; }
+  // تصغير في المتصفح قبل الرفع (صور الجوال كبيرة)؛ إن تعذّر يُرفع الأصل والخادم يصغّره
+  function shrink(file) {
+    if (!window.createImageBitmap || file.size < 1500000) return Promise.resolve(file);
+    return createImageBitmap(file).then(function (bmp) {
+      var k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height)), c = document.createElement('canvas');
+      c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      return new Promise(function (res) { c.toBlob(function (b) { res(b && b.size < file.size ? b : file); }, 'image/jpeg', 0.85); });
+    }).catch(function () { return file; });
+  }
+  function fillRows(items) {
+    // الصفوف الفارغة تُحذف أولاً حتى لا تأكل من حد الصفوف
+    state.items.slice().forEach(function (it) { if (!itemData(it).title && !it.file) { state.items = state.items.filter(function (x) { return x !== it; }); it.el.remove(); } });
+    var n = 0;
+    items.forEach(function (x) {
+      if (state.items.length >= 20) return;
+      var it = addItem(); if (!it) return;
+      it.el.querySelector('.t').value = x.title;
+      it.el.querySelector('.price').value = x.priceKnown === false || !x.price ? '' : String(x.price % 100 ? (x.price / 100).toFixed(2) : x.price / 100);
+      it.el.querySelector('.d').value = x.description || '';
+      it.el.classList.add('scanned'); n++;
+    });
+    sync(); return n;
+  }
+  function scan() {
+    var files = state.scanFiles || [];
+    if (state.scanning || state.busy || !files.length) return;
+    $('rg-scan-go').hidden = true;
+    if (!state.token) {
+      var bad = ACC.filter(function (k) { return !checks[k](); });
+      if (bad.length) {
+        ACC.forEach(function (k) { var f = field(k); if (f) f.classList.toggle('bad', bad.indexOf(k) >= 0); });
+        scanSay('قراءة المنيو تحتاج حسابك. أكمل بيانات الحساب في الخطوة 7 ثم اضغط «اقرأ المنيو الآن».', true);
+        $('rg-scan-go').hidden = false; field(bad[0]).scrollIntoView({ block: 'center' }); return;
+      }
+    }
+    scanBusy(true); scanSay('جارٍ تجهيز حسابك…');
+    var end = function () { scanBusy(false); say('أنشئ دائرتي'); };
+    state.after = 'scan';
+    account().then(function (ok) {
+      if (!ok) { end(); scanSay('أكّد بريدك أولاً، ثم نقرأ المنيو.'); return; } // بطاقة الرمز ظاهرة؛ بعد التأكيد يعود إلى القراءة
+      state.after = null; scanSay('جارٍ رفع الصور…');
+      var urls = [], p = Promise.resolve();
+      files.forEach(function (f) { p = p.then(function () { return shrink(f); }).then(function (b) { return call('POST', '/chat/upload', undefined, b); }).then(function (d) { if (!d.url) throw fail('upload-failed'); urls.push(d.url); }); });
+      return p.then(function () { scanSay('جارٍ قراءة المنيو. قد تأخذ دقيقة…'); return call('POST', '/menu/scan', { images: urls }); }).then(function (d) {
+        end(); state.scanFiles = [];
+        var items = d.items || [], n = fillRows(items), warns = (d.warnings || []).map(function (w) { return w.message; }).filter(Boolean);
+        if (!items.length) { scanSay(warns[0] || 'لم نجد أصنافاً في الصور. صوّر المنيو أقرب وبإضاءة أوضح.', true); return; }
+        var t = n < items.length ? 'وجدنا ' + items.length + ' صنفاً وأضفنا ' + n + ' (الحد 20 صفاً هنا). أضف الباقي من لوحة الدائرة بعد التسجيل.' : 'أضفنا ' + n + ' من المنيو. راجعها وعدّلها قبل الإرسال.';
+        if (slotted()) t += ' اكتب لكل خدمة أوقاتها اليومية.';
+        scanSay([t].concat(warns).join(' '));
+        var first = document.querySelector('.rg-item.scanned'); if (first) first.scrollIntoView({ block: 'center' });
+      });
+    }).catch(function (e) {
+      end(); state.after = null; scanSay(text(e), true); $('rg-scan-go').hidden = false;
+      var map = { 'nickname-taken': 'nick', 'invalid-nickname': 'nick', 'email-taken': 'email', 'bad-email': 'email', 'weak-password': 'pass', 'bad-credentials': 'pass', 'invalid-credentials': 'pass' };
+      var f = map[e.code] && field(map[e.code]); if (f) { f.classList.add('bad'); f.scrollIntoView({ block: 'center' }); }
+    });
+  }
+  $('rg-scan-in').addEventListener('change', function (e) {
+    var all = Array.prototype.slice.call(e.target.files || []), ok = all.filter(function (f) { return /^image\/(png|jpeg|webp)$/.test(f.type) && f.size <= 20 * 1024 * 1024; });
+    e.target.value = '';
+    if (!all.length) return;
+    if (!ok.length) { scanSay('اختر صوراً بصيغة PNG أو JPG حتى 20 م.ب.', true); return; }
+    state.scanFiles = ok.slice(0, 4);
+    scan();
+  });
+  $('rg-scan-go').addEventListener('click', scan);
+
   // ---- رمز تأكيد البريد
   function showCode(mail) {
     $('rg-code-mail').textContent = mail; $('rg-code-msg').textContent = ''; $('rg-code-in').value = '';
@@ -277,14 +361,15 @@
     if (code.length < 4) { msg.textContent = 'اكتب الرمز الذي وصلك على بريدك.'; return; }
     b.disabled = true; msg.textContent = 'جارٍ التحقق…';
     call('POST', '/auth/verify', { email: state.pendingEmail, code: code }).then(function () { return login(); }).then(function () {
-      b.disabled = false; $('rg-code').hidden = true; form.hidden = false; run();
+      b.disabled = false; $('rg-code').hidden = true; form.hidden = false;
+      var next = state.after; state.after = null; if (next === 'scan') { $('rg-scan-lab').scrollIntoView({ block: 'center' }); scan(); } else run();
     }, function (err) { b.disabled = false; msg.textContent = text(err); });
   });
   $('rg-code-resend').addEventListener('click', function () {
     var msg = $('rg-code-msg');
     call('POST', '/auth/resend', { email: state.pendingEmail }).then(function () { msg.textContent = 'أرسلنا رمزاً جديداً.'; }, function (e) { msg.textContent = e.status === 429 ? 'انتظر دقيقة قبل طلب رمز جديد.' : text(e); });
   });
-  $('rg-code-back').addEventListener('click', function () { $('rg-code').hidden = true; form.hidden = false; });
+  $('rg-code-back').addEventListener('click', function () { $('rg-code').hidden = true; form.hidden = false; state.after = null; });
 
   function finish(verr) {
     var b = state.biz, link = location.origin + '/c/' + b.id;
@@ -306,9 +391,9 @@
     e.preventDefault();
     var bad = Object.keys(checks).filter(function (k) { return !checks[k](); });
     Object.keys(checks).forEach(function (k) { var f = field(k); if (f) f.classList.toggle('bad', bad.indexOf(k) >= 0); });
-    var badItems = liveItems().filter(function (it) { var d = itemData(it); return !(d.title.length >= 2 && (!slotted() || d.times.length > 0)); });
+    var badItems = liveItems().filter(function (it) { return !rowOk(it); });
     state.items.forEach(function (it) { it.el.classList.toggle('bad', badItems.indexOf(it) >= 0); });
-    if (!bad.length && badItems.length) { var sm = $('rg-sum'); sm.textContent = slotted() ? 'اكتب لكل خدمة وقتاً يومياً واحداً على الأقل، مثل 10:00.' : 'اسم الصنف حرفان على الأقل.'; sm.classList.add('on'); badItems[0].el.scrollIntoView({ block: 'center' }); return; }
+    if (!bad.length && badItems.length) { var sm = $('rg-sum'); sm.textContent = priceMissing(badItems[0]) ? 'اكتب سعر كل صنف قرأناه من المنيو، أو 0 إن كان مجاناً.' : slotted() ? 'اكتب لكل خدمة وقتاً يومياً واحداً على الأقل، مثل 10:00.' : 'اسم الصنف حرفان على الأقل.'; sm.classList.add('on'); badItems[0].el.scrollIntoView({ block: 'center' }); return; }
     var sum = $('rg-sum');
     if (bad.length) {
       sum.textContent = bad.length === 1 ? 'بقي حقل واحد يحتاج تصحيحاً.' : 'بقيت ' + bad.length + ' حقول تحتاج تصحيحاً.'; sum.classList.add('on');

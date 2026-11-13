@@ -20,6 +20,33 @@ export const ITEM_KIND_OF = { cinema: "showtime", hotel: "room", car_rental: "ca
 const KINDS = new Set(["product", "showtime", "room", "car", "clinic", "info"]);
 const POST_KINDS = new Set(["news", "offer"]);
 const STAFF_ROLES = new Set(["manager", "staff", "hr"]);
+// ---- صلاحيات الدائرة (قرار المالك، 13 نوفمبر 2026): الدور قالب، وتحته مفاتيح لكل عضو يشغّلها المالك أو يطفئها.
+// القوالب تطابق سلوك الأدوار قبل المفاتيح حرفياً، فلا يتغير شيء لأحد حتى يعدّل المالك مفتاحاً. مدير النظام يبقى خارج رسائل العملاء.
+export const PERMS = ["orders", "orders_cancel", "catalog", "offers", "posts", "inbox", "reviews", "hiring", "stats", "profile", "team"];
+export const PERM_AR = { orders: "الطلبات والاستلام", orders_cancel: "إلغاء الطلبات", catalog: "القائمة والأسعار", offers: "العروض والولاء", posts: "الأخبار ومجتمع الدائرة", inbox: "رسائل العملاء",
+  reviews: "الرد على التقييمات", hiring: "التوظيف", stats: "المبيعات والإحصاءات", profile: "بيانات الدائرة والتوثيق", team: "إدارة الفريق" };
+export const PRESETS = { owner: PERMS, manager: PERMS, staff: ["orders", "inbox", "stats"], hr: ["hiring"], admin: PERMS.filter((p) => p !== "inbox") };
+const ROLE_AR = { owner: "مالك", manager: "مدير", staff: "موظف", hr: "توظيف", admin: "مدير النظام" };
+const TEAM_LIMIT = 50;
+const ACTIVITY_DAYS = 180;          // سجل النشاط يُحتفظ به ستة أشهر ثم يُكنس
+/// الصلاحيات الفعلية: قالب الدور ثم مفاتيح العضو (overrides: {مفتاح: true|false}؛ فارغ = القالب كما هو). المالك ومدير النظام بلا مفاتيح.
+export function permSet(role, overrides) {
+  const s = new Set(PRESETS[role] ?? []);
+  if (STAFF_ROLES.has(role) && overrides && typeof overrides === "object") for (const k of PERMS) { if (overrides[k] === true) s.add(k); else if (overrides[k] === false) s.delete(k); }
+  return s;
+}
+/// ما يُخزَّن: الفرق عن القالب فقط (null حين يطابقه)، فيبقى العضو على قالبه إن تغيّر القالب لاحقاً
+const overridesOf = (role, set) => {
+  const base = new Set(PRESETS[role] ?? []), o = {};
+  for (const k of PERMS) if (set.has(k) !== base.has(k)) o[k] = set.has(k);
+  return Object.keys(o).length ? o : null;
+};
+/// شرط SQL: صف biz_staff (بالاسم المستعار) يحمل الصلاحية، بالمفتاح إن وُجد وإلا بقالب دوره
+export const permSql = (alias, perm) => {
+  if (!PERMS.includes(perm)) throw new Error("bad perm");
+  const roles = [...STAFF_ROLES].filter((r) => PRESETS[r].includes(perm)).map((r) => `'${r}'`).join(",") || "''";
+  return `(CASE WHEN jsonb_typeof(${alias}.perms->'${perm}')='boolean' THEN (${alias}.perms->>'${perm}')::bool ELSE ${alias}.role IN (${roles}) END)`;
+};
 const DAY = 86400000;
 const NO_SHOW_LIMIT = 3;            // بعد ثلاث مرات «لم يحضر» في الدائرة نفسها لا يُقبل منه حجز بالدفع في المكان
 const DISPUTE_DAYS = 7;             // مهلة فتح النزاع بعد الاستخدام أو تحرير المبلغ
@@ -202,6 +229,13 @@ export default async function business(app, opts) {
       image_url TEXT, starts_at TIMESTAMPTZ, ends_at TIMESTAMPTZ, active BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS biz_posts_biz ON biz_posts(biz_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS biz_staff (biz_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'staff', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (biz_id, user_id));
+    -- مفاتيح العضو فوق قالب دوره {مفتاح: true|false}؛ NULL = القالب كما هو، فالصفوف القديمة لا تُمس
+    ALTER TABLE biz_staff ADD COLUMN IF NOT EXISTS perms JSONB;
+    -- سجل النشاط: صف واحد لكل فعل مهم في الدائرة (من فعل ماذا ومتى)، بلا نصوص رسائل ولا بيانات عملاء
+    CREATE TABLE IF NOT EXISTS biz_activity (
+      id BIGSERIAL PRIMARY KEY, biz_id TEXT NOT NULL, actor_id TEXT, action TEXT NOT NULL, target TEXT, summary TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE INDEX IF NOT EXISTS biz_activity_biz ON biz_activity(biz_id, id DESC);
+    CREATE INDEX IF NOT EXISTS biz_activity_at ON biz_activity(created_at);
     -- إخفاء الإشراف (safety.js): عمود مستقل عن active حتى لا يعيد المالك إظهار ما أخفته البلاغات أو الإدارة
     ALTER TABLE biz ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE biz_reviews ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
@@ -359,14 +393,34 @@ export default async function business(app, opts) {
     return p.length === 4 && p.every(Number.isFinite) ? { minLng: p[0], minLat: p[1], maxLng: p[2], maxLat: p[3] } : null;
   };
 
-  // ---- الصلاحيات: مالك / مدير / موظف / مدير النظام
-  async function roleFor(uid, b) {
-    if (!uid || !b) return null;
-    if (b.owner_id === uid) return "owner";
-    const s = (await pool.query("SELECT role FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0];
-    if (s) return s.role;
-    return (await isAdmin(uid)) ? "admin" : null;
+  // ---- الصلاحيات: مالك / مدير / موظف / توظيف / مدير النظام. كل مسار يطلب صلاحية بالاسم (PERMS) لا مستوى دور.
+  const NOBODY = { role: null, perms: new Set(), overrides: null };
+  /// عضوية المستخدم في الدائرة: دوره وصلاحياته الفعلية. adminCheck يُمرَّر من إضافة لها تعريفها لمدير النظام.
+  async function memberOf(uid, b, { adminCheck = isAdmin } = {}) {
+    if (!uid || !b) return NOBODY;
+    if (b.owner_id === uid) return { role: "owner", perms: permSet("owner"), overrides: null };
+    const s = (await pool.query("SELECT role, perms FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0];
+    if (s) return { role: s.role, perms: permSet(s.role, s.perms), overrides: s.perms ?? null };
+    return (await adminCheck(uid)) ? { role: "admin", perms: permSet("admin"), overrides: null } : NOBODY;
   }
+  const roleFor = async (uid, b) => (await memberOf(uid, b)).role;
+  /// من يحمل أياً من الصلاحيات في الدائرة: المالك ثم الأعضاء (لتوجيه الإشعارات والقوائم؛ مدير النظام ليس منهم)
+  async function holdersOf(b, ...perms) {
+    if (!b?.id) return [];
+    const rows = (await pool.query("SELECT user_id, role, perms FROM biz_staff WHERE biz_id=$1 ORDER BY created_at", [b.id])).rows;
+    const out = b.owner_id ? [{ id: b.owner_id, role: "owner" }] : [];
+    for (const r of rows) { if (r.user_id === b.owner_id) continue; const set = permSet(r.role, r.perms); if (perms.some((p) => set.has(p))) out.push({ id: r.user_id, role: r.role }); }
+    return out;
+  }
+  const holders = async (b, ...perms) => (await holdersOf(b, ...perms)).map((x) => x.id);
+  /// سجل النشاط: لا يُفشل الفعل نفسه أبداً. target معرّف ما وقع عليه الفعل، وsummary جملة عربية قصيرة.
+  async function logActivity(bizId, actorId, action, target, summary) {
+    try { await pool.query("INSERT INTO biz_activity(biz_id,actor_id,action,target,summary) VALUES($1,$2,$3,$4,$5)", [bizId, actorId ?? null, str(action, 40), target == null ? null : str(target, 80), str(summary, 300)]); }
+    catch (e) { try { app.log.warn({ err: e?.message }, "business: activity log failed"); } catch { /* ignore */ } }
+  }
+  const sweepActivity = async (days = ACTIVITY_DAYS) => (await pool.query("DELETE FROM biz_activity WHERE created_at < now() - make_interval(days => $1::int)", [days])).rowCount;
+  // أي صلاحية غير التوظيف تفتح عرض الطاقم (الأصناف المخفية والمنشورات المجدولة والدائرة الموقوفة) كما كان للمالك والمدير والموظف
+  const staffViewOf = (perms) => [...perms].some((p) => p !== "hiring");
   const canManage = (r) => r === "owner" || r === "manager" || r === "admin";
   globalThis.naslifeBizRole = async (uid, b) => roleFor(uid, typeof b === "string" ? await loadBiz(b, { includeInactive: true }) : b);
   const canOperate = (r) => canManage(r) || r === "staff";
@@ -377,14 +431,15 @@ export default async function business(app, opts) {
     return r.rows[0] ?? null;
   }
   /// يحمّل الدائرة ويتحقق من الصلاحية؛ يرد بالخطأ المناسب ويعيد null عند الفشل.
-  async function guard(req, reply, level) {
+  /// need: اسم صلاحية، أو قائمة يكفي أحدها، أو "owner" لما لا يملكه إلا المالك (ومدير النظام).
+  async function guard(req, reply, need) {
     const uid = await auth(req); if (!uid) { unauthorized(reply); return null; }
     const b = await loadBiz(req.params.id, { includeInactive: true });
     if (!b) { bad(reply, 404, "not-found"); return null; }
-    const role = await roleFor(uid, b);
-    const ok = level === "own" ? canOwn(role) : level === "manage" ? canManage(role) : canOperate(role);
-    if (!ok) { bad(reply, 403, "forbidden"); return null; }
-    return { uid, b, role };
+    const m = await memberOf(uid, b);
+    const ok = need === "owner" ? canOwn(m.role) : [].concat(need).some((p) => m.perms.has(p));
+    if (!ok) { bad(reply, 403, "forbidden", need === "owner" ? {} : { need: [].concat(need)[0] }); return null; }
+    return { uid, b, role: m.role, perms: m.perms, boss: canOwn(m.role) };
   }
 
   // ---- دفتر المحفظة (نفس جداول commerce.js وقواعده: قفل الصف، رصيد لا يقل عن صفر إلا لتسويات صاحب النشاط)
@@ -412,8 +467,9 @@ export default async function business(app, opts) {
   const sar = (h) => { const v = Number(h) / 100; return (Number.isInteger(v) ? String(v) : v.toFixed(2)) + " ر.س"; };
   const nickOf = async (id) => (await person(id)).nickname || id;
   const bizName = (b) => b?.name_ar || b?.name || b?.id || "";
-  const bizTeam = async (b) => [b.owner_id, ...(await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1", [b.id])).rows.map((r) => r.user_id)].filter(Boolean);
-  const bizManagers = async (b) => [b.owner_id, ...(await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1 AND role='manager'", [b.id])).rows.map((r) => r.user_id)].filter(Boolean);
+  // إشعارات الطلبات (جديد، إلغاء، نزاع) لمن يحمل «الطلبات» وحده: فيها اسم العميل ورمز الاستلام، فلا تصل عضو التوظيف مثلاً
+  const bizTeam = (b) => holders(b, "orders");
+  const bizManagers = (b) => holders(b, "reviews");
   const orderNoun = (kind) => (kind === "product" ? "طلب" : "حجز");
 
   // ---- مواعيد السينما: تُولَّد من أوقات العرض اليومية للأيام القادمة (بتوقيت السعودية)
@@ -479,15 +535,18 @@ export default async function business(app, opts) {
   // للعامة بعد اعتماد التوثيق، والوثيقة لا تخرج هنا أبداً
   const bizOut = (b, extra = {}) => {
     const here = hereOf(b), vs = verStatus(b), role = extra.myRole ?? b.my_role ?? null;
+    const mine = role ? permSet(role, b.my_perms) : null;
     return {
       id: b.id, name: b.name, nameAr: b.name_ar, category: b.category, sector: b.sector, description: b.description, lat: here ? here.lat : b.lat, lng: here ? here.lng : b.lng, address: b.address,
       hours: b.hours, phone: b.phone, website: b.website, color: b.color, highlights: b.highlights ?? [], verified: b.verified, official: b.official, active: b.active !== false,
       logoUrl: b.logo_url ?? null, coverUrl: b.cover_url ?? null, ownerId: b.owner_id ?? null, views: Number(b.views ?? 0),
       followers: Number(b.followers ?? 0), rating: b.rating == null ? null : Number(b.rating), ratingCount: Number(b.rating_count ?? 0), minPrice: b.min_price == null ? null : Number(b.min_price),
       itemsCount: Number(b.items_count ?? 0), following: b.following === true, myRole: b.my_role ?? null, createdAt: b.created_at,
+      // صلاحياتي الفعلية في الدائرة (null لغير الفريق) حتى لا يحتاج التطبيق طلباً آخر؛ myRole يبقى للنسخ الأقدم
+      myPerms: mine ? PERMS.filter((p) => mine.has(p)) : null,
       openNow: isOpenNow(b.hours), distanceKm: roundKm(b.distance_km),
       presence: b.presence === "mobile" ? "mobile" : "fixed", serviceArea: serviceAreaOf(b), here, verificationStatus: vs, canSell: vs === "approved", tier: tierOf(b),
-      entityKind: canManage(role) ? (b.entity_kind ?? null) : null, phoneVerified: b.phone_verified === true,
+      entityKind: mine?.has("profile") ? (b.entity_kind ?? null) : null, phoneVerified: b.phone_verified === true,
       // إفصاح نظامي (نظام التجارة الإلكترونية): نوع الكيان ورقمه للعامة بعد اعتماد التوثيق فقط؛ الوثيقة وسبب الرفض لا يخرجان أبداً
       entity: vs === "approved" && b.entity_kind && b.entity_number ? { kind: b.entity_kind, number: b.entity_number } : null, ...extra,
     };
@@ -527,6 +586,16 @@ export default async function business(app, opts) {
     // طلب السلة: أسطره بخياراتها وأسعارها كما حُسبت عند الطلب، ووقت الاستلام (null = في أقرب وقت)
     cart: Array.isArray(o.lines), lines: Array.isArray(o.lines) ? o.lines.map(lineOut) : null, pickupAt: o.pickup_at ?? null, ...extra,
   });
+  // عضو بلا «المبيعات والإحصاءات» يرى مبلغ الطلب الذي ينتظر فعله وحده (مؤكد، أو لم يُدفع في المكان بعد، أو عليه نزاع مفتوح).
+  // سجل الطلبات المنتهية يصله بلا مبالغ، فلا يُجمع منه دخل الدائرة الذي يحجبه /stats عنه.
+  const amountDue = (o) => o.status === "confirmed" || (o.status === "used" && o.payment === "at_venue" && o.paid_at == null) || o.d_status === "open";
+  const teamOrderOut = (o, perms, extra = {}) => {
+    const out = orderOut(o, extra);
+    if (perms.has("stats") || amountDue(o)) return out;
+    const meta = { ...out.meta }; delete meta.offer;
+    return { ...out, total: null, amountHidden: true, offer: null, meta,
+      lines: out.lines ? out.lines.map((l) => ({ ...l, unit: null, total: null, offer: null, options: l.options.map((x) => ({ ...x, delta: null })) })) : null };
+  };
   const lineOut = (l) => ({
     itemId: l.itemId, title: l.title, qty: Number(l.qty) || 0, unit: Number(l.unit) || 0, total: Number(l.total) || 0,
     options: (Array.isArray(l.options) ? l.options : []).map((x) => ({ groupId: x.groupId, group: x.group, choiceId: x.choiceId, choice: x.choice, delta: Number(x.delta) || 0 })),
@@ -564,7 +633,8 @@ export default async function business(app, opts) {
       (SELECT min(price) FROM biz_items i WHERE i.biz_id=b.id AND i.active) AS min_price,
       (SELECT count(*) FROM biz_items i WHERE i.biz_id=b.id AND i.active) AS items_count,
       ($1::text IS NOT NULL AND EXISTS (SELECT 1 FROM biz_follows f WHERE f.biz_id=b.id AND f.user_id=$1)) AS following,
-      CASE WHEN $1::text IS NOT NULL AND b.owner_id=$1 THEN 'owner' ELSE (SELECT role FROM biz_staff s WHERE s.biz_id=b.id AND s.user_id=$1) END AS my_role
+      CASE WHEN $1::text IS NOT NULL AND b.owner_id=$1 THEN 'owner' ELSE (SELECT role FROM biz_staff s WHERE s.biz_id=b.id AND s.user_id=$1) END AS my_role,
+      (SELECT s.perms FROM biz_staff s WHERE s.biz_id=b.id AND s.user_id=$1) AS my_perms
     FROM biz b WHERE true`;
   // جدول العروض ملك offers.js المسجّلة بعدنا؛ إن غاب (تجهيز اختبار جزئي) فلا عرض حديث ولا يسقط الاستعلام
   let offersTable = false;
@@ -583,6 +653,11 @@ export default async function business(app, opts) {
     WHERE o.user_id=$1 AND (o.status='confirmed' OR o.updated_at > now() - interval '14 days') AND (b.owner_id=$2 OR EXISTS (SELECT 1 FROM biz_staff s WHERE s.biz_id=o.biz_id AND s.user_id=$2)) LIMIT 1`, [customer, member])).rowCount > 0;
   (globalThis.naslifeMessageAllow ??= new Map()).set("biz-orders", async (a, b) => !!a && !!b && a !== b && ((await orderPair(a, b)) || (await orderPair(b, a))));
   globalThis.naslifeBizHelpers = { verStatus, verOf, hereOf, tierOf, isComplete, hoursOk, serviceAreaOf, canManage, canOperate, canOwn, roleFor, isAdmin, isSuspended, CATEGORY_AR };
+  // المساعد المشترك للصلاحيات: كل إضافة تفحص دور الدائرة (offers، biz_inbox، jobs، biz_onboard، biz_community) تمر من هنا
+  globalThis.naslifeBizPerms = {
+    PERMS, PERM_AR, PRESETS, permSet, permSql, memberOf, holders, holdersOf, log: logActivity, sweepActivity,
+    can: async (uid, b, perm, o) => (await memberOf(uid, typeof b === "string" ? await loadBiz(b, { includeInactive: true }) : b, o)).perms.has(perm),
+  };
 
   // ---- القائمة (عامة) مع تصفية بالفئة والحدود الجغرافية والبحث
   app.get("/biz", async (req) => {
@@ -692,20 +767,27 @@ export default async function business(app, opts) {
     return bizOut(await loadFull(id, uid));
   });
 
-  // ---- تعديل ملف الدائرة (مالك/مدير)
+  // ---- تعديل ملف الدائرة (صلاحية «بيانات الدائرة والتوثيق»)
+  const BIZ_FIELD_AR = { name: "الاسم", name_ar: "الاسم", category: "الفئة", sector: "القطاع", description: "الوصف", lat: "الموقع", lng: "الموقع", address: "العنوان", hours: "ساعات العمل", phone: "الهاتف",
+    website: "الموقع الإلكتروني", color: "اللون", highlights: "المميزات", logo_url: "الشعار", cover_url: "الغلاف" };
   app.patch("/biz/:id", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "profile"); if (!g) return;
     const f = bizFieldsFrom(req.body ?? {}, { partial: true });
     if ("name" in f && !f.name) delete f.name;
     if (rejectBanned(reply, f.name, f.name_ar, f.sector, f.description, f.address, f.hours, f.highlights ? JSON.parse(f.highlights) : [])) return;
     // دائرة أخفاها الإشراف لا يعيد إظهارها إلا مدير النظام (عبر طابور الإشراف)
     if (g.b.hidden && f.active === true && g.role !== "admin") return bad(reply, 403, "moderated");
     if (("lat" in f || "lng" in f) && (!Number.isFinite(f.lat ?? g.b.lat) || !Number.isFinite(f.lng ?? g.b.lng))) return bad(reply, 400, "bad-location");
-    if ("active" in f && !canOwn(g.role) && g.role !== "manager") delete f.active;
     const keys = Object.keys(f);
     if (keys.length) {
       const sets = keys.map((k, i) => `${k}=$${i + 2}`).join(", ");
       await pool.query(`UPDATE biz SET ${sets}, updated_at=now() WHERE id=$1`, [g.b.id, ...keys.map((k) => f[k])]);
+      // السجل: الإيقاف وإعادة النشر فعل مستقل، وبقية الحقول صف واحد بأسمائها (لا قيمها)
+      const same = (k) => (k === "highlights" ? JSON.stringify(g.b.highlights ?? []) === f[k] : (g.b[k] ?? null) === (f[k] ?? null) || String(g.b[k] ?? "") === String(f[k] ?? ""));
+      const changed = keys.filter((k) => !same(k));
+      if (changed.includes("active")) await logActivity(g.b.id, g.uid, f.active ? "profile.resume" : "profile.pause", g.b.id, f.active ? "أعاد نشر الدائرة" : "أوقف الدائرة مؤقتاً");
+      const labels = [...new Set(changed.filter((k) => k !== "active").map((k) => BIZ_FIELD_AR[k] ?? k))];
+      if (labels.length) await logActivity(g.b.id, g.uid, "profile.edit", g.b.id, `عدّل بيانات الدائرة: ${labels.join("، ")}`);
     }
     const r = await pool.query(`${await listSql()} AND b.id=$2`, [g.uid, g.b.id]);
     return bizOut(r.rows[0]);
@@ -765,8 +847,8 @@ export default async function business(app, opts) {
     if (!r.rowCount) return bad(reply, 404, "not-found");
     const b = r.rows[0];
     const role = uid ? (b.my_role ?? (await roleFor(uid, b))) : null;
-    if (!b.active && !canOperate(role)) return bad(reply, 404, "not-found");
-    const staffView = canOperate(role);
+    const staffView = role ? staffViewOf(permSet(role, b.my_perms)) : false;
+    if (!b.active && !staffView) return bad(reply, 404, "not-found");
     if (!staffView) pool.query("UPDATE biz SET views=views+1 WHERE id=$1", [b.id]).catch(() => {});
     const items = await Promise.all((await pool.query(`SELECT * FROM biz_items WHERE biz_id=$1${staffView ? "" : " AND active"} ORDER BY sort, title`, [b.id])).rows.map((it) => itemOut(it)));
     // عدد نقاشات كل منتج في مساحة المجتمع (مشاركات وردود تقتبسه) إن كانت الإضافة مسجّلة
@@ -819,12 +901,13 @@ export default async function business(app, opts) {
   });
   // رد صاحب النشاط على تقييم
   app.post("/biz/:id/reviews/:userId/reply", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "reviews"); if (!g) return;
     if (!ID_RE.test(req.params.userId)) return bad(reply, 400, "bad-id");
     const text = str(req.body?.text, 500);
     if (rejectBanned(reply, text)) return;
     const r = await pool.query("UPDATE biz_reviews SET reply=$3, reply_at=CASE WHEN $3='' THEN NULL ELSE now() END WHERE biz_id=$1 AND user_id=$2 RETURNING 1", [g.b.id, req.params.userId, text || ""]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
+    await logActivity(g.b.id, g.uid, "review.reply", req.params.userId, text ? "ردّ على تقييم" : "حذف الرد على تقييم");
     if (text) await notify(req.params.userId, { kind: "review_reply", title: "ردّ على تقييمك", body: `${bizName(g.b)}: ${text.slice(0, 120)}`, data: { bizId: g.b.id }, exclude: g.uid });
     return { ok: true };
   });
@@ -879,7 +962,7 @@ export default async function business(app, opts) {
   };
   const optionTexts = (f) => { try { return (JSON.parse(f.meta ?? "{}").options ?? []).flatMap((g) => [g.name, ...g.choices.map((c) => c.name)]); } catch { return []; } };
   app.post("/biz/:id/items", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "catalog"); if (!g) return;
     const f = itemFieldsFrom(req.body ?? {}, { category: g.b.category });
     if (!f.title) return bad(reply, 400, "bad-title");
     const optErr = optionsMetaError(f.kind, f); if (optErr) return bad(reply, 400, optErr);
@@ -892,10 +975,11 @@ export default async function business(app, opts) {
     await pool.query("INSERT INTO biz_items(id,biz_id,kind,title,description,price,unit,stock,meta,image_url,sort,active,pay_at_venue) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
       [id, g.b.id, f.kind, f.title, f.description, f.price, unitOf(f.kind), f.stock, f.meta, f.image_url ?? null, f.sort ?? count, f.active ?? true, f.pay_at_venue === true]);
     await pool.query("UPDATE biz SET updated_at=now() WHERE id=$1", [g.b.id]);
+    await logActivity(g.b.id, g.uid, "item.create", id, `أضاف «${f.title}» بسعر ${sar(f.price)}`);
     return itemOut((await pool.query("SELECT * FROM biz_items WHERE id=$1", [id])).rows[0]);
   });
   app.patch("/biz/:id/items/:itemId", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "catalog"); if (!g) return;
     if (!SLUG_RE.test(req.params.itemId)) return bad(reply, 400, "bad-id");
     const it = (await pool.query("SELECT * FROM biz_items WHERE id=$1 AND biz_id=$2", [req.params.itemId, g.b.id])).rows[0];
     if (!it) return bad(reply, 404, "not-found");
@@ -909,15 +993,20 @@ export default async function business(app, opts) {
       const sets = keys.map((k, i) => `${k}=$${i + 2}`).join(", ");
       await pool.query(`UPDATE biz_items SET ${sets} WHERE id=$1`, [it.id, ...keys.map((k) => f[k])]);
       await pool.query("UPDATE biz SET updated_at=now() WHERE id=$1", [g.b.id]);
+      // تغيير السعر يُسجَّل بالقديم والجديد؛ وما عداه صف «عدّل» واحد
+      const title = f.title ?? it.title;
+      if ("price" in f && Number(f.price) !== Number(it.price)) await logActivity(g.b.id, g.uid, "item.price", it.id, `غيّر سعر «${title}» من ${sar(it.price)} إلى ${sar(f.price)}`);
+      else await logActivity(g.b.id, g.uid, "item.update", it.id, "active" in f && f.active !== it.active ? `${f.active ? "أظهر" : "أخفى"} «${title}»` : `عدّل «${title}»`);
     }
     return itemOut((await pool.query("SELECT * FROM biz_items WHERE id=$1", [it.id])).rows[0]);
   });
   app.delete("/biz/:id/items/:itemId", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "catalog"); if (!g) return;
     if (!SLUG_RE.test(req.params.itemId)) return bad(reply, 400, "bad-id");
     // إخفاء لا حذف: الطلبات السابقة تشير إليه
-    const r = await pool.query("UPDATE biz_items SET active=false WHERE id=$1 AND biz_id=$2 RETURNING 1", [req.params.itemId, g.b.id]);
+    const r = await pool.query("UPDATE biz_items SET active=false WHERE id=$1 AND biz_id=$2 RETURNING title", [req.params.itemId, g.b.id]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
+    await logActivity(g.b.id, g.uid, "item.delete", req.params.itemId, `حذف «${r.rows[0].title}» من القائمة`);
     return { ok: true };
   });
 
@@ -936,7 +1025,7 @@ export default async function business(app, opts) {
     return out;
   }
   app.post("/biz/:id/posts", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "posts"); if (!g) return;
     const f = postFieldsFrom(req.body ?? {});
     if (!f.title) return bad(reply, 400, "bad-title");
     const bannedW = globalThis.naslifeCheckText?.(f.title, f.body);
@@ -946,11 +1035,12 @@ export default async function business(app, opts) {
       [id, g.b.id, f.kind, f.title, f.body, f.image_url ?? null, f.starts_at ?? null, f.ends_at ?? null, f.active ?? true]);
     await pool.query("UPDATE biz SET updated_at=now() WHERE id=$1", [g.b.id]);
     const created = (await pool.query("SELECT * FROM biz_posts WHERE id=$1", [id])).rows[0];
+    await logActivity(g.b.id, g.uid, "post.create", id, `نشر «${f.title}»`);
     if (created.active !== false && (!created.starts_at || new Date(created.starts_at) <= new Date())) { try { await globalThis.naslifeOffersOnPost?.(g.b, created); } catch { /* ignore */ } }
     return postOut(created);
   });
   app.patch("/biz/:id/posts/:postId", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "posts"); if (!g) return;
     if (!UUID_RE.test(req.params.postId)) return bad(reply, 400, "bad-id");
     const f = postFieldsFrom(req.body ?? {}, { partial: true });
     if ("title" in f && !f.title) delete f.title;
@@ -967,39 +1057,122 @@ export default async function business(app, opts) {
     return postOut(r.rows[0]);
   });
   app.delete("/biz/:id/posts/:postId", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "posts"); if (!g) return;
     if (!UUID_RE.test(req.params.postId)) return bad(reply, 400, "bad-id");
-    const r = await pool.query("DELETE FROM biz_posts WHERE id=$1 AND biz_id=$2 RETURNING 1", [req.params.postId, g.b.id]);
+    const r = await pool.query("DELETE FROM biz_posts WHERE id=$1 AND biz_id=$2 RETURNING title", [req.params.postId, g.b.id]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
+    await logActivity(g.b.id, g.uid, "post.delete", req.params.postId, `حذف منشور «${r.rows[0].title}»`);
     return { ok: true };
   });
 
-  // ---- الفريق (مالك)
+  // ---- الفريق: المالك ومن يحمل «إدارة الفريق» يضيفون الأعضاء ويعدّلون مفاتيحهم، بحدود يفرضها الخادم:
+  // لا يمنح «إدارة الفريق» أو يسحبها إلا المالك، ولا يمس غيرُه عضواً يحملها، ولا يمنح أحد صلاحية لا يحملها هو، ولا يعدّل أحد مفاتيحه.
+  const outranks = (set, g) => [...set].some((p) => !g.perms.has(p));
+  const memberOut = (s, user, g) => {
+    const set = permSet(s.role, s.perms);
+    // غير المالك لا يمس عضواً يحمل صلاحية ليست عنده: وإلا جرّد أقلُّ الفريق صلاحيةً مديرَ الدائرة أو أزاله
+    const lock = s.user_id === g.uid ? "self" : g.boss ? null : set.has("team") ? "team-holder" : outranks(set, g) ? "outranked" : null;
+    return { user, role: s.role, since: s.created_at, perms: PERMS.filter((p) => set.has(p)), custom: s.perms != null && Object.keys(s.perms).length > 0, editable: !lock, lock };
+  };
   app.get("/biz/:id/team", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "team"); if (!g) return;
     const rows = (await pool.query("SELECT * FROM biz_staff WHERE biz_id=$1 ORDER BY created_at", [g.b.id])).rows;
-    return { owner: g.b.owner_id ? await person(g.b.owner_id) : null, staff: await Promise.all(rows.map(async (s) => ({ user: await person(s.user_id), role: s.role, since: s.created_at }))) };
+    return {
+      owner: g.b.owner_id ? await person(g.b.owner_id) : null,
+      staff: await Promise.all(rows.map(async (s) => memberOut(s, await person(s.user_id), g))),
+      // ما يحتاجه التطبيق لرسم المفاتيح بحدودها: القائمة، القوالب، صلاحياتي، وهل أمنح «إدارة الفريق»
+      perms: PERMS, presets: { manager: PRESETS.manager, staff: PRESETS.staff, hr: PRESETS.hr },
+      me: { id: g.uid, role: g.role, perms: PERMS.filter((p) => g.perms.has(p)), boss: g.boss }, limit: TEAM_LIMIT,
+    };
   });
+  /// إضافة عضو أو تعديل دوره ومفاتيحه. cur = صفه الحالي (null للجديد). يعيد { error, code } أو { member }.
+  async function writeMember(g, userId, body, cur) {
+    if (userId === g.uid) return { code: 403, error: "self" };
+    if (body?.role !== undefined && !STAFF_ROLES.has(body.role)) return { code: 400, error: "bad-role" };
+    const role = body?.role ?? cur?.role ?? "staff";
+    const sw = body?.perms;
+    if (sw !== undefined && (sw === null || typeof sw !== "object" || Array.isArray(sw) || Object.entries(sw).some(([k, v]) => !PERMS.includes(k) || typeof v !== "boolean"))) return { code: 400, error: "bad-perms" };
+    const old = cur ? permSet(cur.role, cur.perms) : new Set();
+    // تغيير الدور يعيد العضو إلى قالب الدور الجديد؛ ثم تُطبَّق المفاتيح المرسلة فوقه
+    const next = permSet(role, cur && cur.role === role ? cur.perms : null);
+    for (const [k, v] of Object.entries(sw ?? {})) { if (v) next.add(k); else next.delete(k); }
+    if (!g.boss) {
+      if (cur && old.has("team")) return { code: 403, error: "team-holder" };
+      if (cur && outranks(old, g)) return { code: 403, error: "outranked" };
+      if (next.has("team")) return { code: 403, error: "owner-only", perm: "team" };
+      const missing = PERMS.find((p) => next.has(p) && !old.has(p) && !g.perms.has(p));
+      if (missing) return { code: 403, error: "not-held", perm: missing };
+    }
+    // حد الأعضاء للإضافة وحدها: تعديل عضو موجود لا يزيد العدد فلا يُرفض عند الحد
+    if (!cur && (await pool.query("SELECT count(*)::int AS n FROM biz_staff WHERE biz_id=$1", [g.b.id])).rows[0].n >= TEAM_LIMIT) return { code: 409, error: "too-many" };
+    const ov = overridesOf(role, next);
+    const row = (await pool.query("INSERT INTO biz_staff(biz_id,user_id,role,perms) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT (biz_id,user_id) DO UPDATE SET role=EXCLUDED.role, perms=EXCLUDED.perms RETURNING *",
+      [g.b.id, userId, role, ov ? JSON.stringify(ov) : null])).rows[0];
+    const nick = await nickOf(userId);
+    const added = PERMS.filter((p) => next.has(p) && !old.has(p)), removed = PERMS.filter((p) => old.has(p) && !next.has(p));
+    if (!cur) await logActivity(g.b.id, g.uid, "team.add", userId, `أضاف ${nick} بدور ${ROLE_AR[role]}${ov ? " بصلاحيات معدّلة" : ""}`);
+    else if (cur.role !== role) await logActivity(g.b.id, g.uid, "team.role", userId, `غيّر دور ${nick} من ${ROLE_AR[cur.role] ?? cur.role} إلى ${ROLE_AR[role]}`);
+    else if (added.length || removed.length) await logActivity(g.b.id, g.uid, "team.perms", userId,
+      `عدّل صلاحيات ${nick}:${added.length ? " شغّل " + added.map((p) => PERM_AR[p]).join("، ") : ""}${added.length && removed.length ? " ·" : ""}${removed.length ? " أطفأ " + removed.map((p) => PERM_AR[p]).join("، ") : ""}`);
+    return { member: memberOut(row, await person(userId), g) };
+  }
+  const memberRow = async (bizId, userId) => (await pool.query("SELECT * FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [bizId, userId])).rows[0] ?? null;
   app.post("/biz/:id/team", async (req, reply) => {
-    const g = await guard(req, reply, "own"); if (!g) return;
-    const userId = str(req.body?.userId, 12).toUpperCase(); const role = STAFF_ROLES.has(req.body?.role) ? req.body.role : "staff";
+    const g = await guard(req, reply, "team"); if (!g) return;
+    const userId = str(req.body?.userId, 12).toUpperCase();
     if (!ID_RE.test(userId)) return bad(reply, 400, "bad-id");
     if (userId === g.b.owner_id) return bad(reply, 400, "is-owner");
     if (!(await userRow(userId))) return bad(reply, 404, "user-not-found");
-    const n = (await pool.query("SELECT count(*)::int AS n FROM biz_staff WHERE biz_id=$1", [g.b.id])).rows[0].n;
-    if (n >= 50) return bad(reply, 409, "too-many");
-    await pool.query("INSERT INTO biz_staff(biz_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT (biz_id,user_id) DO UPDATE SET role=EXCLUDED.role", [g.b.id, userId, role]);
-    return { ok: true };
+    // النسخ الأقدم ترسل الدور دائماً؛ دور غير معروف يصير «موظف» كما كان
+    const body = { ...(req.body ?? {}) }; if (body.role !== undefined && !STAFF_ROLES.has(body.role)) body.role = "staff";
+    const out = await writeMember(g, userId, body, await memberRow(g.b.id, userId));
+    if (out.error) return bad(reply, out.code, out.error, out.perm ? { perm: out.perm } : {});
+    return { ok: true, member: out.member };
+  });
+  app.patch("/biz/:id/team/:userId", async (req, reply) => {
+    const g = await guard(req, reply, "team"); if (!g) return;
+    if (!ID_RE.test(req.params.userId)) return bad(reply, 400, "bad-id");
+    const cur = await memberRow(g.b.id, req.params.userId);
+    if (!cur) return bad(reply, 404, "not-member");
+    const out = await writeMember(g, req.params.userId, req.body ?? {}, cur);
+    if (out.error) return bad(reply, out.code, out.error, out.perm ? { perm: out.perm } : {});
+    return { ok: true, member: out.member };
   });
   app.delete("/biz/:id/team/:userId", async (req, reply) => {
-    const g = await guard(req, reply, "own"); if (!g) return;
+    const g = await guard(req, reply, "team"); if (!g) return;
     if (!ID_RE.test(req.params.userId)) return bad(reply, 400, "bad-id");
+    if (req.params.userId === g.uid) return bad(reply, 403, "self");
+    const cur = await memberRow(g.b.id, req.params.userId);
+    const held = cur ? permSet(cur.role, cur.perms) : new Set();
+    if (!g.boss && held.has("team")) return bad(reply, 403, "team-holder");
+    if (!g.boss && outranks(held, g)) return bad(reply, 403, "outranked");
     await pool.query("DELETE FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [g.b.id, req.params.userId]);
+    if (cur) await logActivity(g.b.id, g.uid, "team.remove", req.params.userId, `أزال ${await nickOf(req.params.userId)} من الفريق`);
     return { ok: true };
   });
+  // ---- سجل النشاط (المالك ومن يحمل «إدارة الفريق»): الأحدث أولاً، صفحات بالمؤشر before
+  app.get("/biz/:id/activity", async (req, reply) => {
+    const g = await guard(req, reply, "team"); if (!g) return;
+    const limit = Math.min(100, Math.max(1, Math.round(Number(req.query?.limit)) || 30));
+    const before = /^\d{1,18}$/.test(String(req.query?.before ?? "")) ? String(req.query.before) : null;
+    const rows = (await pool.query(`SELECT a.*, u.nickname, u.avatar_url FROM biz_activity a LEFT JOIN users u ON u.id=a.actor_id
+      WHERE a.biz_id=$1 AND ($2::bigint IS NULL OR a.id < $2::bigint) ORDER BY a.id DESC LIMIT $3`, [g.b.id, before, limit + 1])).rows;
+    const page = rows.slice(0, limit);
+    return {
+      items: page.map((a) => ({ id: String(a.id), action: a.action, target: a.target, summary: a.summary, at: a.created_at,
+        actor: a.actor_id ? { id: a.actor_id, nickname: a.nickname ?? "", avatarUrl: a.avatar_url ?? null } : null })),
+      next: rows.length > limit ? String(page[page.length - 1].id) : null, keepDays: ACTIVITY_DAYS,
+    };
+  });
+  if (process.env.NODE_ENV !== "test") {
+    const sweepTimer = setInterval(() => { sweepActivity().catch(() => {}); }, DAY);
+    sweepTimer.unref?.();
+    setTimeout(() => { sweepActivity().catch(() => {}); }, 60000).unref?.();
+    app.addHook("onClose", async () => clearInterval(sweepTimer));
+  }
   // نقل الملكية (مالك)
   app.post("/biz/:id/transfer", async (req, reply) => {
-    const g = await guard(req, reply, "own"); if (!g) return;
+    const g = await guard(req, reply, "owner"); if (!g) return;
     const userId = str(req.body?.userId, 12).toUpperCase();
     if (!ID_RE.test(userId) || !(await userRow(userId))) return bad(reply, 404, "user-not-found");
     await tx(async (c) => {
@@ -1007,6 +1180,7 @@ export default async function business(app, opts) {
       await c.query("DELETE FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [g.b.id, userId]);
       if (g.b.owner_id && g.b.owner_id !== userId) await c.query("INSERT INTO biz_staff(biz_id,user_id,role) VALUES($1,$2,'manager') ON CONFLICT DO NOTHING", [g.b.id, g.b.owner_id]);
     });
+    if (g.b.owner_id !== userId) await logActivity(g.b.id, g.uid, "owner.transfer", userId, `نقل ملكية الدائرة إلى ${await nickOf(userId)}`);
     await notify(userId, { kind: "biz_owner", title: "أصبحت مالك دائرة", body: `نُقلت إليك ملكية ${bizName(g.b)}؛ افتح لوحة النشاط لإدارتها`, data: { bizId: g.b.id }, exclude: g.uid });
     return { ok: true };
   });
@@ -1320,7 +1494,7 @@ export default async function business(app, opts) {
 
   // ---- طلبات الدائرة لصاحبها وطاقمه، مع بيانات العميل وتصفية بالحالة والبحث بالرمز
   app.get("/biz/:id/orders", async (req, reply) => {
-    const g = await guard(req, reply, "operate"); if (!g) return;
+    const g = await guard(req, reply, "orders"); if (!g) return;
     const status = ["confirmed", "used", "cancelled", "no_show", "upcoming", "today", "disputed"].includes(req.query?.status) ? req.query.status : null;
     const q = str(req.query?.q, 40).toUpperCase();
     const extra = status === "upcoming" ? "AND o.status='confirmed' AND (o.start_at IS NULL OR o.start_at >= now() - interval '6 hours')"
@@ -1330,12 +1504,12 @@ export default async function business(app, opts) {
     const exact = status && !["upcoming", "today", "disputed"].includes(status) ? status : null;
     const r = await pool.query(`${ORDER_JOIN} WHERE o.biz_id=$1 AND ($2::text IS NULL OR o.status=$2) ${extra} AND ($3::text = '' OR o.code ILIKE '%' || $3 || '%') ORDER BY o.created_at DESC LIMIT 300`,
       [g.b.id, exact, q]);
-    return Promise.all(r.rows.map(async (o) => orderOut(o, { customer: await person(o.user_id) })));
+    return Promise.all(r.rows.map(async (o) => teamOrderOut(o, g.perms, { customer: await person(o.user_id) })));
   });
   // تأكيد الاستلام/الاستخدام برمز الحجز (المالك والمدير والموظف): يحرّر المبلغ المحجوز لصاحب الدائرة (إلا أثناء نزاع مفتوح)،
   // ومع paid:true يسجّل «تم الدفع» لطلب الدفع في المكان في الخطوة نفسها
   app.post("/biz/:id/checkin", async (req, reply) => {
-    const g = await guard(req, reply, "operate"); if (!g) return;
+    const g = await guard(req, reply, "orders"); if (!g) return;
     const code = str(req.body?.code, 40).toUpperCase();
     const orderId = UUID_RE.test(req.body?.orderId ?? "") ? req.body.orderId : null;
     if (!code && !orderId) return bad(reply, 400, "bad-code");
@@ -1355,12 +1529,13 @@ export default async function business(app, opts) {
     } catch (err) { if (String(err.code ?? "").startsWith("already-")) return bad(reply, 409, err.code); throw err; }
     const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [found.id])).rows[0];
     try { await globalThis.naslifeOffersOnRedeem?.(g.b, o.user_id); } catch { /* المكافأة لا تُفشل الاستلام */ }
+    await logActivity(g.b.id, g.uid, "order.checkin", o.id, `أكّد استلام «${o.item_title}» (${o.code})${markPaid && o.payment === "at_venue" ? " مع تسجيل الدفع" : ""}`);
     await notify(o.user_id, { kind: "order_status", title: o.kind === "product" ? "تم استلام طلبك" : "تم تأكيد حجزك", body: `${o.biz_name_ar || o.biz_name}: ${o.item_title} (${o.code})`, data: { bizId: o.biz_id, orderId: o.id, status: "used" }, exclude: g.uid });
-    return orderOut(o, { customer: await person(o.user_id) });
+    return teamOrderOut(o, g.perms, { customer: await person(o.user_id) });
   });
   // «تم الدفع» لطلب الدفع في المكان: الدفع يعني الحضور، فالطلب المؤكد يصير مستخدماً في الخطوة نفسها
   app.post("/biz/:id/orders/:orderId/paid", async (req, reply) => {
-    const g = await guard(req, reply, "operate"); if (!g) return;
+    const g = await guard(req, reply, "orders"); if (!g) return;
     if (!UUID_RE.test(req.params.orderId)) return bad(reply, 400, "bad-id");
     const r = await pool.query(`UPDATE biz_orders SET paid_at=now(), status=CASE WHEN status='confirmed' THEN 'used' ELSE status END, used_at=CASE WHEN status='confirmed' THEN now() ELSE used_at END, updated_at=now()
       WHERE id=$1 AND biz_id=$2 AND payment='at_venue' AND paid_at IS NULL AND status IN ('confirmed','used') RETURNING id, status`, [req.params.orderId, g.b.id]);
@@ -1371,12 +1546,13 @@ export default async function business(app, opts) {
     }
     const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [req.params.orderId])).rows[0];
     try { await globalThis.naslifeOffersOnRedeem?.(g.b, o.user_id); } catch { /* ignore */ }
+    await logActivity(g.b.id, g.uid, "order.paid", o.id, `سجّل دفع «${o.item_title}» (${o.code}) في المكان`);
     await notify(o.user_id, { kind: "order_status", title: "تم تأكيد الدفع", body: `${o.biz_name_ar || o.biz_name}: ${o.item_title} (${o.code}) · ${sar(o.total)} دُفعت في المكان`, data: { bizId: o.biz_id, orderId: o.id, status: o.status }, exclude: g.uid });
-    return orderOut(o, { customer: await person(o.user_id) });
+    return teamOrderOut(o, g.perms, { customer: await person(o.user_id) });
   });
   // «لم يحضر» لطلب الدفع في المكان بعد حلول موعده: يتحرر المقعد أو المخزون، ويُحسب على العميل في هذه الدائرة
   app.post("/biz/:id/orders/:orderId/no-show", async (req, reply) => {
-    const g = await guard(req, reply, "operate"); if (!g) return;
+    const g = await guard(req, reply, "orders"); if (!g) return;
     if (!UUID_RE.test(req.params.orderId)) return bad(reply, 400, "bad-id");
     let o, count;
     try {
@@ -1398,14 +1574,15 @@ export default async function business(app, opts) {
       throw err;
     }
     const left = Math.max(0, NO_SHOW_LIMIT - count);
+    await logActivity(g.b.id, g.uid, "order.no_show", o.id, `سجّل «لم يحضر» على «${o.item_title}» (${o.code})`);
     await notify(o.user_id, { kind: "order_status", title: `سُجّل عدم حضورك · ${bizName(o)}`,
       body: `${o.item_title} (${o.code})${left > 0 ? ` · بعد ${left === 1 ? "مرة واحدة أخرى" : left === 2 ? "مرتين أخريين" : `${left} مرات أخرى`} لن يتاح لك الدفع في المكان في هذه الدائرة` : " · لم يعد الدفع في المكان متاحاً لك في هذه الدائرة"}`,
       data: { bizId: o.biz_id, orderId: o.id, status: "no_show" }, exclude: g.uid });
     const fresh = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [o.id])).rows[0];
-    return orderOut(fresh, { customer: await person(fresh.user_id), noShows: count });
+    return teamOrderOut(fresh, g.perms, { customer: await person(fresh.user_id), noShows: count });
   });
   app.post("/biz/:id/orders/:orderId/cancel", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "orders_cancel"); if (!g) return;
     if (!UUID_RE.test(req.params.orderId)) return bad(reply, 400, "bad-id");
     const o = (await pool.query("SELECT biz_id FROM biz_orders WHERE id=$1", [req.params.orderId])).rows[0];
     if (!o || o.biz_id !== g.b.id) return bad(reply, 404, "not-found");
@@ -1416,6 +1593,7 @@ export default async function business(app, opts) {
       if (err.code === "not-found") return bad(reply, 404, "not-found");
       throw err;
     }
+    await logActivity(g.b.id, g.uid, "order.cancel", o2.id, `ألغى «${o2.item_title}» (${o2.code})${o2.refunded ? " مع استرداد المبلغ" : ""}`);
     await notify(o2.user_id, { kind: "order_status", title: `أُلغي ${orderNoun(o2.kind)}ك`, body: `${bizName(o2)}: ${o2.item_title} (${o2.code})${o2.refunded ? " · استُرد " + sar(o2.total) + " إلى محفظتك" : ""}`,
       data: { bizId: o2.biz_id, orderId: o2.id, status: "cancelled" }, exclude: g.uid });
     return { ok: true, refunded: o2.refunded ? Number(o2.total) : 0 };
@@ -1450,19 +1628,20 @@ export default async function business(app, opts) {
   }
 
   // ---- طلب واحد بمعرّفه: للعميل صاحبه ولفريق الدائرة وللإدارة (تفتحه الإشعارات)
-  async function orderViewer(uid, o) {
-    if (o.user_id === uid) return "customer";
-    const role = await roleFor(uid, { id: o.biz_id, owner_id: o.owner_id });
-    return role === "admin" ? "admin" : canOperate(role) ? "team" : null;
+  async function orderViewer(uid, o, withPerms = false) {
+    if (o.user_id === uid) return withPerms ? { viewer: "customer", perms: new Set() } : "customer";
+    const m = await memberOf(uid, { id: o.biz_id, owner_id: o.owner_id });
+    const viewer = m.role === "admin" ? "admin" : m.perms.has("orders") ? "team" : null;
+    return withPerms ? { viewer, perms: m.perms } : viewer;
   }
   app.get("/biz/orders/:id", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
     if (!UUID_RE.test(req.params.id)) return bad(reply, 400, "bad-id");
     const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [req.params.id])).rows[0];
-    const viewer = o ? await orderViewer(uid, o) : null;
+    const { viewer, perms } = o ? await orderViewer(uid, o, true) : {};
     if (!viewer) return bad(reply, 404, "not-found");
     if (viewer === "customer") return orderOut(o, { viewer });
-    return orderOut(o, { viewer, customer: await person(o.user_id), noShows: await noShowsOf(pool, o.biz_id, o.user_id) });
+    return teamOrderOut(o, perms, { viewer, customer: await person(o.user_id), noShows: await noShowsOf(pool, o.biz_id, o.user_id) });
   });
 
   // ---- النزاع على طلب دُفع من المحفظة: «لدي مشكلة» من العميل يجمّد تحرير المبلغ، ويرد الطرفان، وتحسمه الإدارة
@@ -1506,7 +1685,7 @@ export default async function business(app, opts) {
     if (text.length < 2) return bad(reply, 400, "bad-text");
     if (rejectBanned(reply, text)) return;
     const o = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [req.params.id])).rows[0];
-    const viewer = o ? await orderViewer(uid, o) : null;
+    const { viewer, perms } = o ? await orderViewer(uid, o, true) : {};
     if (!viewer) return bad(reply, 404, "not-found");
     if (o.d_status !== "open") return bad(reply, 409, "no-open-dispute");
     const msg = { by: viewer, userId: uid, text, at: new Date().toISOString() };
@@ -1518,7 +1697,7 @@ export default async function business(app, opts) {
     if (viewer !== "customer") await notify(o.user_id, { kind: "biz_dispute", title, body: `${who}: ${clip(text)}`, data: { ...data, side: "customer" }, exclude: uid });
     if (viewer !== "team") await notify(await bizTeam({ id: o.biz_id, owner_id: o.owner_id }), { kind: "biz_dispute", title, body: `${who}: ${clip(text)}`, data: { ...data, side: "team" }, exclude: uid });
     const fresh = (await pool.query(`${ORDER_JOIN} WHERE o.id=$1`, [o.id])).rows[0];
-    return viewer === "customer" ? orderOut(fresh, { viewer }) : orderOut(fresh, { viewer, customer: await person(fresh.user_id) });
+    return viewer === "customer" ? orderOut(fresh, { viewer }) : teamOrderOut(fresh, perms, { viewer, customer: await person(fresh.user_id) });
   });
 
   // ---- نزاعات الدوائر في لوحة الإدارة بجانب نزاعات السوق: القائمة والحسم (استرداد / تحرير / تقسيم)
@@ -1580,9 +1759,9 @@ export default async function business(app, opts) {
     return { ok: true, resolution, order: orderOut(fresh, { viewer: "admin", customer: await person(fresh.user_id) }) };
   });
 
-  // ---- الإحصاءات (المالك وطاقمه)
+  // ---- الإحصاءات (صلاحية «المبيعات والإحصاءات»): أرقام الإيراد لا تخرج لمن لا يحملها من أي مسار
   app.get("/biz/:id/stats", async (req, reply) => {
-    const g = await guard(req, reply, "operate"); if (!g) return;
+    const g = await guard(req, reply, "stats"); if (!g) return;
     const id = g.b.id;
     const totals = (await pool.query(`SELECT
         count(*)::int AS total, count(*) FILTER (WHERE status='confirmed')::int AS confirmed, count(*) FILTER (WHERE status='used')::int AS used, count(*) FILTER (WHERE status='cancelled')::int AS cancelled,

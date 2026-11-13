@@ -156,7 +156,7 @@ class OwnerOrderCard extends ConsumerWidget {
             ),
         ])),
         const SizedBox(width: 8),
-        Text(money(o.total), style: TextStyle(fontWeight: FontWeight.w800, color: active ? Joy.primary : Joy.textMuted, fontSize: 13.5)),
+        Text(o.amountHidden ? '—' : money(o.total), style: TextStyle(fontWeight: FontWeight.w800, color: active ? Joy.primary : Joy.textMuted, fontSize: 13.5)),
       ]),
     );
   }
@@ -198,7 +198,7 @@ void showOwnerOrderSheet(BuildContext context, WidgetRef ref, Biz biz, BizOrder 
         if (o.meta['guests'] != null) kv('النزلاء', '${o.meta['guests']}'),
         if (o.meta['hall'] != null) kv('الصالة', '${o.meta['hall']}'),
         if (o.note.isNotEmpty) kv('ملاحظة العميل', o.note),
-        kv('المبلغ', money(o.total)),
+        kv('المبلغ', o.amountHidden ? 'محجوب' : money(o.total)),
         if (o.payment != 'free') KeyedSubtree(key: const Key('owner-money-line'), child: kv('الدفع', o.ownerMoneyLabel)),
         kv('وقت الطلب', '${dayLabel(o.createdAt ?? DateTime.now())} · ${clockOf(o.createdAt)}'),
         // الدفع في المكان: «لم يُدفع بعد» مع «تم الدفع» و«لم يحضر» بعد حلول الموعد
@@ -292,7 +292,7 @@ Future<void> checkinByCode(BuildContext context, WidgetRef ref, Biz biz) async {
           ('العنصر', o.title),
           if (o.summary.isNotEmpty) ('التفاصيل', o.summary),
           if (o.startAt != null) (isSlotKind(o.kind) ? 'الموعد' : 'من', isSlotKind(o.kind) ? '${dayLabel(o.startAt!)} · ${clockOf(o.startAt)}' : '${dayLabel(o.startAt!)} · ${shortDate(o.startAt!)}'),
-          ('المبلغ', money(o.total)),
+          ('المبلغ', o.amountHidden ? 'محجوب' : money(o.total)),
           if (o.payment != 'free') ('الدفع', o.ownerMoneyLabel),
         ],
       ],

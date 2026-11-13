@@ -68,14 +68,20 @@ export default async function offers(app, opts = {}) {
   const loadBiz = async (id) => (SLUG_RE.test(id ?? "") ? (await pool.query("SELECT * FROM biz WHERE id=$1", [id])).rows[0] ?? null : null);
   const isMember = async (bizId, uid) => !!uid && (await pool.query("SELECT 1 FROM biz_follows WHERE biz_id=$1 AND user_id=$2", [bizId, uid])).rowCount > 0;
   const members = async (bizId) => (await pool.query("SELECT f.user_id, COALESCE(p.notify,'all') AS notify, p.last_notified_at FROM biz_follows f LEFT JOIN biz_member_prefs p ON p.biz_id=f.biz_id AND p.user_id=f.user_id WHERE f.biz_id=$1", [bizId])).rows;
-  /// صلاحية الإدارة على الدائرة عبر business.js (المالك، المدير، مدير النظام)
+  /// صلاحية «العروض والولاء» على الدائرة عبر المساعد المشترك في business.js (القالب: المالك والمدير ومدير النظام)
   async function manageGuard(req, reply) {
     const uid = await auth(req); if (!uid) { bad(reply, 401, "auth"); return null; }
     const b = await loadBiz(req.params.id); if (!b) { bad(reply, 404, "not-found"); return null; }
-    const role = await globalThis.naslifeBizRole?.(uid, b);
-    if (!["owner", "manager", "admin"].includes(role ?? "")) { bad(reply, 403, "forbidden"); return null; }
-    return { uid, b, role };
+    const P = globalThis.naslifeBizPerms;
+    let m;
+    if (P) m = await P.memberOf(uid, b);
+    else { const role = await globalThis.naslifeBizRole?.(uid, b); m = { role, perms: new Set(["owner", "manager", "admin"].includes(role ?? "") ? ["offers", "stats"] : []) }; }
+    if (!m.perms.has("offers")) { bad(reply, 403, "forbidden", { need: "offers" }); return null; }
+    return { uid, b, role: m.role, stats: m.perms.has("stats") };
   }
+  const logAct = async (g, action, target, summary) => { try { await globalThis.naslifeBizPerms?.log(g.b.id, g.uid, action, target, summary); } catch { /* السجل لا يُفشل الفعل */ } };
+  // من لا يحمل «المبيعات والإحصاءات» يدير العروض بلا رقم الإيراد
+  const statsOut = async (g, o) => { const s = await statsFor(o); return g.stats ? s : { ...s, revenue: null, discount: null, hidden: true }; };
 
   const state = (o, now = Date.now()) => !o.active ? "off" : new Date(o.starts_at).getTime() > now ? "upcoming" : o.ends_at && new Date(o.ends_at).getTime() <= now ? "ended" : "active";
   const live = (o, now = Date.now()) => state(o, now) === "active";
@@ -465,7 +471,7 @@ export default async function offers(app, opts = {}) {
     const g = await manageGuard(req, reply); if (!g) return;
     const rows = (await pool.query("SELECT * FROM biz_offers WHERE biz_id=$1 ORDER BY (CASE WHEN active AND (ends_at IS NULL OR ends_at > now()) THEN 0 ELSE 1 END), ends_at NULLS LAST, created_at DESC LIMIT 200", [g.b.id])).rows;
     const out = [];
-    for (const o of rows) out.push({ ...(await offerOut(o)), stats: await statsFor(o) });
+    for (const o of rows) out.push({ ...(await offerOut(o)), stats: await statsOut(g, o) });
     const memberCount = (await pool.query("SELECT count(*)::int AS n FROM biz_follows WHERE biz_id=$1", [g.b.id])).rows[0].n;
     return { offers: out, templates: TEMPLATES, members: memberCount };
   });
@@ -478,28 +484,31 @@ export default async function offers(app, opts = {}) {
     const o = (await pool.query("SELECT * FROM biz_offers WHERE id=$1", [id])).rows[0];
     let notified = 0;
     if (state(o) === "active" && f.kind !== "loyalty") notified = await notifyMembers(g.b, { kind: "biz_offer", title: `عرض من ${bizName(g.b)}`, body: f.title, data: { bizId: g.b.id, offerId: id, section: "offers" } });
-    return { ...(await offerOut(o)), stats: await statsFor(o), notified };
+    await logAct(g, "offer.create", id, `أنشأ عرض «${f.title}»`);
+    return { ...(await offerOut(o)), stats: await statsOut(g, o), notified };
   });
   app.patch("/biz/:id/manage/offers/:offerId", async (req, reply) => {
     const g = await manageGuard(req, reply); if (!g) return;
     if (!UUID_RE.test(req.params.offerId)) return bad(reply, 404, "not-found");
     const cur = (await pool.query("SELECT * FROM biz_offers WHERE id=$1 AND biz_id=$2", [req.params.offerId, g.b.id])).rows[0]; if (!cur) return bad(reply, 404, "not-found");
     const b = req.body ?? {};
-    if (b.endNow === true) { await pool.query("UPDATE biz_offers SET ends_at=now(), updated_at=now() WHERE id=$1", [cur.id]); const o = (await pool.query("SELECT * FROM biz_offers WHERE id=$1", [cur.id])).rows[0]; return { ...(await offerOut(o)), stats: await statsFor(o) }; }
-    if (b.active !== undefined && Object.keys(b).length === 1) { await pool.query("UPDATE biz_offers SET active=$2, updated_at=now() WHERE id=$1", [cur.id, b.active === true]); const o = (await pool.query("SELECT * FROM biz_offers WHERE id=$1", [cur.id])).rows[0]; return { ...(await offerOut(o)), stats: await statsFor(o) }; }
+    if (b.endNow === true) { await pool.query("UPDATE biz_offers SET ends_at=now(), updated_at=now() WHERE id=$1", [cur.id]); const o = (await pool.query("SELECT * FROM biz_offers WHERE id=$1", [cur.id])).rows[0]; await logAct(g, "offer.update", cur.id, `أنهى عرض «${cur.title}»`); return { ...(await offerOut(o)), stats: await statsOut(g, o) }; }
+    if (b.active !== undefined && Object.keys(b).length === 1) { await pool.query("UPDATE biz_offers SET active=$2, updated_at=now() WHERE id=$1", [cur.id, b.active === true]); const o = (await pool.query("SELECT * FROM biz_offers WHERE id=$1", [cur.id])).rows[0]; await logAct(g, "offer.update", cur.id, `${b.active === true ? "فعّل" : "أوقف"} عرض «${cur.title}»`); return { ...(await offerOut(o)), stats: await statsOut(g, o) }; }
     const f = await readOffer(req, reply, g.b, cur); if (!f) return;
     await pool.query("UPDATE biz_offers SET kind=$2, title=$3, description=$4, value=$5, item_id=$6, conditions=$7, members_only=$8, transferable=$9, starts_at=$10, ends_at=$11, template=$12, active=$13, updated_at=now() WHERE id=$1",
       [cur.id, f.kind, f.title, f.description, JSON.stringify(f.value), f.itemId, JSON.stringify(f.conditions), f.membersOnly, f.transferable, f.startsAt.toISOString(), f.endsAt ? f.endsAt.toISOString() : null, f.template, b.active !== undefined ? b.active === true : cur.active]);
     const o = (await pool.query("SELECT * FROM biz_offers WHERE id=$1", [cur.id])).rows[0];
-    return { ...(await offerOut(o)), stats: await statsFor(o) };
+    await logAct(g, "offer.update", cur.id, `عدّل عرض «${f.title}»`);
+    return { ...(await offerOut(o)), stats: await statsOut(g, o) };
   });
   app.delete("/biz/:id/manage/offers/:offerId", async (req, reply) => {
     const g = await manageGuard(req, reply); if (!g) return;
     if (!UUID_RE.test(req.params.offerId)) return bad(reply, 404, "not-found");
     const used = (await pool.query("SELECT count(*)::int AS n FROM biz_offer_uses WHERE offer_id=$1", [req.params.offerId])).rows[0].n;
-    if (used) { const r = await pool.query("UPDATE biz_offers SET active=false, ends_at=LEAST(COALESCE(ends_at, now()), now()), updated_at=now() WHERE id=$1 AND biz_id=$2 RETURNING id", [req.params.offerId, g.b.id]); return r.rowCount ? { ok: true, archived: true } : bad(reply, 404, "not-found"); }
-    const r = await pool.query("DELETE FROM biz_offers WHERE id=$1 AND biz_id=$2 RETURNING id", [req.params.offerId, g.b.id]);
+    if (used) { const r = await pool.query("UPDATE biz_offers SET active=false, ends_at=LEAST(COALESCE(ends_at, now()), now()), updated_at=now() WHERE id=$1 AND biz_id=$2 RETURNING id, title", [req.params.offerId, g.b.id]); if (!r.rowCount) return bad(reply, 404, "not-found"); await logAct(g, "offer.delete", req.params.offerId, `أرشف عرض «${r.rows[0].title}»`); return { ok: true, archived: true }; }
+    const r = await pool.query("DELETE FROM biz_offers WHERE id=$1 AND biz_id=$2 RETURNING id, title", [req.params.offerId, g.b.id]);
     if (!r.rowCount) return bad(reply, 404, "not-found");
+    await logAct(g, "offer.delete", req.params.offerId, `حذف عرض «${r.rows[0].title}»`);
     await pool.query("DELETE FROM biz_offer_views WHERE offer_id=$1", [req.params.offerId]);
     return { ok: true, archived: false };
   });
@@ -519,6 +528,7 @@ export default async function offers(app, opts = {}) {
     const o = (await pool.query("SELECT * FROM biz_offers WHERE id=$1", [id])).rows[0];
     let notified = 0;
     if (state(o) === "active" && o.kind !== "loyalty") notified = await notifyMembers(g.b, { kind: "biz_offer", title: `عرض من ${bizName(g.b)}`, body: o.title, data: { bizId: g.b.id, offerId: id, section: "offers" } });
-    return { ...(await offerOut(o)), stats: await statsFor(o), notified };
+    await logAct(g, "offer.create", id, `كرّر عرض «${o.title}»`);
+    return { ...(await offerOut(o)), stats: await statsOut(g, o), notified };
   });
 }

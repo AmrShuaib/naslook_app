@@ -104,6 +104,23 @@ class HerePin {
   String get label => 'هنا اليوم حتى ${clockLabel(until)}';
 }
 
+/// مفاتيح صلاحيات الدائرة بتسمياتها (server/business.js: PERMS). الدور قالب، وتحته مفتاح لكل عضو.
+const bizPerms = [
+  ('orders', 'الطلبات والاستلام'), ('orders_cancel', 'إلغاء الطلبات'), ('catalog', 'القائمة والأسعار'), ('offers', 'العروض والولاء'), ('posts', 'الأخبار ومجتمع الدائرة'), ('inbox', 'رسائل العملاء'),
+  ('reviews', 'الرد على التقييمات'), ('hiring', 'التوظيف'), ('stats', 'المبيعات والإحصاءات'), ('profile', 'بيانات الدائرة والتوثيق'), ('team', 'إدارة الفريق'),
+];
+String bizPermLabel(String key) { for (final (k, l) in bizPerms) { if (k == key) return l; } return key; }
+final _allPerms = [for (final (k, _) in bizPerms) k];
+/// قوالب الأدوار كما في الخادم؛ تُستخدم حين لا يرسل الخادم myPerms (خادم أقدم) وفي معاينة تغيير الدور.
+List<String> bizRolePreset(String? role) => switch (role) {
+      'owner' || 'manager' => _allPerms,
+      'admin' => [for (final k in _allPerms) if (k != 'inbox') k],
+      'staff' => const ['orders', 'inbox', 'stats'],
+      'hr' => const ['hiring'],
+      _ => const [],
+    };
+String bizRoleLabel(String? role) => switch (role) { 'owner' => 'مالك', 'admin' => 'مدير النظام', 'manager' => 'مدير', 'staff' => 'موظف', 'hr' => 'توظيف', _ => '' };
+
 /// دائرة تجارية (براند/سينما/فندق/تأجير سيارات/مستشفى/مطار).
 class Biz {
   final String id, name, nameAr, sector, description, address, hours;
@@ -120,6 +137,10 @@ class Biz {
   final List<BizOrder> myOrders;
   final List<BizPost> posts;
   final String? logoUrl, coverUrl, ownerId, myRole;
+  /// صلاحياتي الفعلية في الدائرة كما يرسلها الخادم (null من خادم أقدم أو لغير الفريق: يُستخدم قالب الدور).
+  final List<String>? myPerms;
+  /// يثبّت canManage على صلاحية بعينها (انظر [scoped]).
+  final bool? manageAs;
   final bool active;
   final int views;
   final DateTime? createdAt;
@@ -150,7 +171,7 @@ class Biz {
     this.following = false, this.followers = 0, this.rating, this.ratingCount = 0, this.minPrice, this.itemsCount = 0, this.items = const [], this.reviews = const [], this.myOrders = const [],
     this.posts = const [], this.logoUrl, this.coverUrl, this.ownerId, this.myRole, this.active = true, this.views = 0, this.createdAt, this.openNow, this.distanceKm, this.matchedItem, this.offers = 0, this.offerEndsAt,
     this.presence = 'fixed', this.serviceArea, this.here, this.verificationStatus = 'none', this.tier = 'published', this.canSell = false, this.phoneVerified = false, this.entityKind,
-    this.entity, this.pickupTimes,
+    this.entity, this.pickupTimes, this.myPerms, this.manageAs,
   });
 
   factory Biz.fromJson(Map m) => Biz(
@@ -166,7 +187,7 @@ class Biz {
         presence: m['presence'] == 'mobile' ? 'mobile' : 'fixed', serviceArea: m['serviceArea'] is Map ? ServiceArea.fromJson(_m(m['serviceArea'])) : null, here: m['here'] is Map ? HerePin.fromJson(_m(m['here'])) : null,
         verificationStatus: m['verificationStatus']?.toString() ?? (m['verified'] == true ? 'approved' : 'none'), tier: m['tier']?.toString() ?? 'published',
         canSell: m['canSell'] is bool ? m['canSell'] as bool : m['verified'] == true, phoneVerified: m['phoneVerified'] == true, entityKind: m['entityKind']?.toString(),
-        entity: BizEntity.tryParse(m['entity']),
+        entity: BizEntity.tryParse(m['entity']), myPerms: m['myPerms'] is List ? _strings(m['myPerms']) : null,
         pickupTimes: m['pickupTimes'] is List ? [for (final t in m['pickupTimes'] as List) if (_t(t) != null) _t(t)!] : null,
       );
 
@@ -184,11 +205,25 @@ class Biz {
   }
 
   bool get isOwner => myRole == 'owner' || myRole == 'admin';
-  bool get canManage => isOwner || myRole == 'manager';
-  bool get canOperate => canManage || myRole == 'staff' || myRole == 'hr';
-  /// التوظيف: المالك والمدير ودور «توظيف» (hr) يديرون العروض والمرشحين
-  bool get canHire => canManage || myRole == 'hr';
-  String get roleLabel => switch (myRole) { 'owner' => 'مالك', 'admin' => 'مدير النظام', 'manager' => 'مدير', 'staff' => 'موظف', 'hr' => 'توظيف', _ => '' };
+  bool get canManage => manageAs ?? (isOwner || myRole == 'manager');
+  bool get canOperate => isOwner || myRole == 'manager' || myRole == 'staff' || myRole == 'hr';
+  /// صلاحياتي الفعلية: ما أرسله الخادم، وإلا قالب دوري.
+  List<String> get perms => myPerms ?? bizRolePreset(myRole);
+  /// هل أحمل هذه الصلاحية في الدائرة (الخادم هو المرجع، والواجهة تتبعه).
+  bool can(String perm) => perms.contains(perm);
+  /// التوظيف: من يحمل صلاحية «التوظيف» (القالب: المالك والمدير ودور hr)
+  bool get canHire => can('hiring');
+  String get roleLabel => bizRoleLabel(myRole);
+  /// نسخة يتبع فيها canManage صلاحية واحدة، لتبويبات اللوحة التي تسأل canManage عن أزرارها:
+  /// تبويب القائمة يأخذ scoped('catalog') فيظهر زر الإضافة لمن يحمل «القائمة والأسعار» أياً كان دوره.
+  Biz scoped(String perm) => Biz(
+        id: id, name: name, nameAr: nameAr, category: category, sector: sector, description: description, lat: lat, lng: lng, address: address, hours: hours, phone: phone, website: website,
+        colorHex: colorHex, highlights: highlights, verified: verified, official: official, following: following, followers: followers, rating: rating, ratingCount: ratingCount, minPrice: minPrice,
+        itemsCount: itemsCount, items: items, reviews: reviews, myOrders: myOrders, posts: posts, logoUrl: logoUrl, coverUrl: coverUrl, ownerId: ownerId, myRole: myRole, active: active, views: views,
+        createdAt: createdAt, openNow: openNow, distanceKm: distanceKm, matchedItem: matchedItem, offers: offers, offerEndsAt: offerEndsAt, presence: presence, serviceArea: serviceArea, here: here,
+        verificationStatus: verificationStatus, tier: tier, canSell: canSell, phoneVerified: phoneVerified, entityKind: entityKind, entity: entity, pickupTimes: pickupTimes, myPerms: myPerms,
+        manageAs: can(perm),
+      );
 
   /// الاسم المعروض: العربي إن وُجد.
   String get title => nameAr.isNotEmpty ? nameAr : name;
@@ -368,16 +403,65 @@ class BizStaff {
   final Person user;
   final String role;
   final DateTime? since;
-  const BizStaff({required this.user, required this.role, this.since});
-  factory BizStaff.fromJson(Map m) => BizStaff(user: Person.fromJson(_m(m['user'])), role: m['role']?.toString() ?? 'staff', since: _t(m['since']));
+  /// صلاحياته الفعلية (قالب دوره ثم مفاتيحه)، وهل عُدّلت عن القالب، وسبب قفل تعديله عليّ (self | team-holder | null).
+  final List<String> perms;
+  final bool custom;
+  final String? lock;
+  const BizStaff({required this.user, required this.role, this.since, this.perms = const [], this.custom = false, this.lock});
+  factory BizStaff.fromJson(Map m) {
+    final role = m['role']?.toString() ?? 'staff';
+    return BizStaff(user: Person.fromJson(_m(m['user'])), role: role, since: _t(m['since']), perms: m['perms'] is List ? _strings(m['perms']) : bizRolePreset(role), custom: m['custom'] == true, lock: m['lock']?.toString());
+  }
   String get roleLabel => switch (role) { 'manager' => 'مدير', 'hr' => 'توظيف', _ => 'موظف' };
+  bool can(String perm) => perms.contains(perm);
 }
 
 class BizTeam {
   final Person? owner;
   final List<BizStaff> staff;
-  const BizTeam({this.owner, this.staff = const []});
-  factory BizTeam.fromJson(Map m) => BizTeam(owner: m['owner'] is Map ? Person.fromJson(_m(m['owner'])) : null, staff: asList(m['staff']).map(BizStaff.fromJson).toList());
+  /// أنا في هذا الفريق: دوري وصلاحياتي وهل أنا المالك (أو مدير النظام)؛ null من خادم أقدم.
+  final String? myRole;
+  final List<String>? myPerms;
+  final bool boss;
+  final int limit;
+  const BizTeam({this.owner, this.staff = const [], this.myRole, this.myPerms, this.boss = false, this.limit = 50});
+  factory BizTeam.fromJson(Map m) {
+    final me = m['me'] is Map ? _m(m['me']) : null;
+    return BizTeam(owner: m['owner'] is Map ? Person.fromJson(_m(m['owner'])) : null, staff: asList(m['staff']).map(BizStaff.fromJson).toList(),
+        myRole: me?['role']?.toString(), myPerms: me?['perms'] is List ? _strings(me!['perms']) : null, boss: me?['boss'] == true, limit: m['limit'] == null ? 50 : _i(m['limit']));
+  }
+  /// سبب منعي من تشغيل مفتاح لعضو (null = مسموح): «إدارة الفريق» يمنحها المالك وحده، ولا أمنح ما لا أحمله.
+  String? grantBlock(String perm) {
+    if (boss) return null;
+    if (perm == 'team') return 'يمنحها المالك فقط';
+    if (!(myPerms ?? const []).contains(perm)) return 'لا تحملها أنت';
+    return null;
+  }
+  /// ما يبدأ به عضو أُسند إليه هذا الدور: قالبه إلا ما لا أستطيع منحه (يُرسل مطفأً، فلا يرفض الخادم الإضافة كلها).
+  List<String> startPerms(String role) => [for (final p in bizRolePreset(role)) if (grantBlock(p) == null) p];
+  /// هل أستطيع إسناد هذا الدور: يكفي أن يبقى من قالبه مفتاح أمنحه. دور المدير للمالك وحده.
+  bool canGrantRole(String role) => boss || (role != 'manager' && startPerms(role).isNotEmpty);
+}
+
+/// صف في سجل نشاط الدائرة: من فعل ماذا ومتى.
+class BizActivity {
+  final String id, action, summary;
+  final String? target;
+  final Person? actor;
+  final DateTime? at;
+  const BizActivity({required this.id, required this.action, this.summary = '', this.target, this.actor, this.at});
+  factory BizActivity.fromJson(Map m) => BizActivity(id: m['id'].toString(), action: m['action']?.toString() ?? '', summary: m['summary']?.toString() ?? '', target: m['target']?.toString(),
+      actor: m['actor'] is Map ? Person.fromJson(_m(m['actor'])) : null, at: _t(m['at']));
+  /// مجموعة الفعل (team | item | offer | order | profile | post | review | owner | verification).
+  String get group => action.split('.').first;
+}
+
+class BizActivityLog {
+  final List<BizActivity> items;
+  final String? next;
+  final int keepDays;
+  const BizActivityLog({this.items = const [], this.next, this.keepDays = 180});
+  factory BizActivityLog.fromJson(Map m) => BizActivityLog(items: asList(m['items']).map(BizActivity.fromJson).toList(), next: m['next']?.toString(), keepDays: m['keepDays'] == null ? 180 : _i(m['keepDays']));
 }
 
 class BizClaim {
@@ -444,7 +528,9 @@ class BizOrder {
   /// طلب السلة: أسطره بخياراتها (فارغة لطلب الصنف الواحد)، ووقت الاستلام اليوم (null = في أقرب وقت).
   final List<BizOrderLine> lines;
   final DateTime? pickupAt;
-  const BizOrder({this.offer, this.lines = const [], this.pickupAt,
+  /// الخادم حجب مبلغ هذا الطلب المنتهي عن عضو بلا «المبيعات والإحصاءات» ([total] صفر حينها وليس مجانياً).
+  final bool amountHidden;
+  const BizOrder({this.offer, this.lines = const [], this.pickupAt, this.amountHidden = false,
     required this.id, required this.bizId, required this.itemId, required this.kind, required this.status, required this.code, this.note = '', this.title = '', this.bizName = '',
     this.category = BizCategory.brand, this.qty = 1, this.units = 1, required this.total, this.startAt, this.endAt, this.createdAt, this.meta = const {}, this.cancellable = false, this.customer,
     this.payment = 'wallet', this.paid = true, this.funds, this.paidAt, this.releaseAt, this.releasedAt, this.usedAt, this.dispute, this.disputable = false, this.viewer, this.noShows, this.owner,
@@ -457,7 +543,7 @@ class BizOrder {
         payment: m['payment']?.toString() ?? (_i(m['total']) > 0 ? 'wallet' : 'free'), paid: m['paid'] != false, funds: m['funds']?.toString(), paidAt: _t(m['paidAt']), releaseAt: _t(m['releaseAt']),
         releasedAt: _t(m['releasedAt']), usedAt: _t(m['usedAt']), dispute: m['dispute'] is Map ? BizDispute.fromJson(_m(m['dispute'])) : null, disputable: m['disputable'] == true,
         viewer: m['viewer']?.toString(), noShows: m['noShows'] == null ? null : _i(m['noShows']), owner: m['owner'] is Map ? Person.fromJson(_m(m['owner'])) : null,
-        lines: asList(m['lines']).map(BizOrderLine.fromJson).toList(), pickupAt: _t(m['pickupAt']),
+        lines: asList(m['lines']).map(BizOrderLine.fromJson).toList(), pickupAt: _t(m['pickupAt']), amountHidden: m['amountHidden'] == true,
       );
   bool get isCart => lines.isNotEmpty;
   /// «في أقرب وقت»، أو «اليوم 19:30» لطلب اليوم، و«أمس 19:30» أو «5/11 19:30» لطلب أقدم (الاستلام دائماً في يوم الطلب).

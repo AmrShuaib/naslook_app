@@ -79,19 +79,24 @@ export default async function bizInbox(app, opts) {
     try { return (await pool.query("SELECT * FROM biz WHERE id=$1", [id])).rows[0] ?? null; } catch { return null; }
   };
   const bizRef = (b) => ({ id: b.id, name: bizName(b), logoUrl: b.logo_url ?? null, category: b.category ?? null, verified: b.verified === true, ownerId: b.owner_id ?? null });
-  /// دور المستخدم في صندوق الدائرة: owner|manager|staff أو null (hr ومدير النظام خارج الصندوق)
+  /// دور المستخدم في صندوق الدائرة أو null: من يحمل صلاحية «رسائل العملاء» (القالب: المالك والمدير والموظف؛ hr خارجه
+  /// حتى يشغّلها له المالك). مدير النظام خارج الصندوق دائماً: لا يُفحص هنا أصلاً (adminCheck يعيد false).
   async function teamRole(uid, b) {
     if (!uid || !b) return null;
     if (b.owner_id === uid) return "owner";
     try {
+      const P = globalThis.naslifeBizPerms;
+      if (P) { const m = await P.memberOf(uid, b, { adminCheck: async () => false }); return m.perms.has("inbox") ? m.role : null; }
       const r = (await pool.query("SELECT role FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0];
       return r && INBOX_ROLES.has(r.role) ? r.role : null;
     } catch { return null; }
   }
   // أي عضو في فريق الدائرة (ومنه hr) لا يراسل دائرته كعميل
   const onStaff = async (uid, b) => { try { return (await pool.query("SELECT 1 FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rowCount > 0; } catch { return false; } };
-  /// فريق الصندوق: المالك ثم المديرون والموظفون (بلا hr)
+  /// فريق الصندوق: المالك ثم من يحمل «رسائل العملاء» (القالب: المديرون والموظفون بلا hr)
   async function inboxTeam(b) {
+    const P = globalThis.naslifeBizPerms;
+    if (P) { try { return await P.holdersOf(b, "inbox"); } catch { return b.owner_id ? [{ id: b.owner_id, role: "owner" }] : []; } }
     let rows = [];
     try { rows = (await pool.query("SELECT user_id, role FROM biz_staff WHERE biz_id=$1 AND role IN ('manager','staff') ORDER BY created_at", [b.id])).rows; } catch { rows = []; }
     const out = b.owner_id ? [{ id: b.owner_id, role: "owner" }] : [];

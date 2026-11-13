@@ -11,6 +11,7 @@ import '../../../state/app_state.dart';
 import '../../../state/biz_providers.dart';
 import '../../../ui/widgets.dart';
 import 'business_editor.dart';
+import 'menu_scan_page.dart';
 import '../../../api/client.dart';
 
 /// كتالوج الدائرة لصاحبها: تفعيل/إيقاف، تعديل، إضافة، حسب التخصص.
@@ -23,7 +24,14 @@ class CatalogTab extends ConsumerWidget {
     final items = biz.items;
     return Scaffold(
       backgroundColor: Joy.bg,
-      floatingActionButton: biz.canManage ? FloatingActionButton.extended(onPressed: () => openItemEditor(context, biz), backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: Text(_addLabel(biz.category))) : null,
+      floatingActionButton: biz.canManage
+          ? Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+              // «صوّر المنيو»: قراءة الأصناف من صورة ثم مراجعتها قبل الإضافة (docs/menu-scan.md)
+              FloatingActionButton.extended(key: const Key('menu-scan-open'), heroTag: 'menu-scan-fab', onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => MenuScanPage(biz: biz))), backgroundColor: Joy.surface, foregroundColor: Joy.primary, icon: const Icon(Icons.document_scanner_outlined), label: const Text('صوّر المنيو')),
+              const SizedBox(height: 10),
+              FloatingActionButton.extended(onPressed: () => openItemEditor(context, biz), backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_rounded), label: Text(_addLabel(biz.category))),
+            ])
+          : null,
       body: items.isEmpty
           ? EmptyState(icon: Icons.inventory_2_outlined, title: 'الكتالوج فارغ', subtitle: 'أضف ${_addLabel(biz.category).replaceFirst('إضافة ', '')} ليظهر في صفحتك ويستطيع العملاء طلبه.')
           : RefreshIndicator(

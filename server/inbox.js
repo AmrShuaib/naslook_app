@@ -213,11 +213,12 @@ export default async function inbox(app, opts = {}) {
   }
   // ---- المساعد الذكي: ملخص المحادثة أو مسودة رد عبر Claude (مفتاح Anthropic في الإعدادات)
   const AI_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"];
-  async function askClaude({ system, user, maxTokens = 2048, effort = "low" }) {
+  // signal اختياري: من يضع مهلة لندائه (menu_scan.js) يلغيه بها فلا يبقى النداء المدفوع جارياً بعدها
+  async function askClaude({ system, user, maxTokens = 2048, effort = "low", signal }) {
     const key = str(settings.aiKey, 300); if (!key) throw Object.assign(new Error("ai-not-configured"), { code: 400 });
     const model = AI_MODELS.includes(settings.aiModel) ? settings.aiModel : AI_MODELS[0];
     const r = await fetchFn()("https://api.anthropic.com/v1/messages", {
-      method: "POST",
+      method: "POST", ...(signal ? { signal } : {}),
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-beta": "server-side-fallback-2026-07-01" },
       body: JSON.stringify({ model, max_tokens: maxTokens, fallbacks: "default", output_config: { effort: ["low", "medium", "high"].includes(effort) ? effort : "low" }, system, messages: [{ role: "user", content: user }] }),
     });

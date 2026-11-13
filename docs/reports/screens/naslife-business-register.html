@@ -150,6 +150,10 @@
   .rg-hr { display: inline-flex; align-items: center; gap: 8px; } .rg-hr .rg-in { width: auto; min-width: 118px; } .rg-hr em { font-style: normal; color: var(--muted); font-size: 14px; }
   .rg-items-h { display: grid; gap: 2px; margin-top: 20px; }
   #rg-items { display: grid; gap: 10px; margin: 12px 0; }
+  .rg-scan { display: grid; gap: 6px; justify-items: start; margin-top: 12px; }
+  .rg-scan .rg-btn { cursor: pointer; } .rg-scan .rg-btn.off { opacity: .55; pointer-events: none; }
+  .rg-scan-msg { padding: 10px 12px; border-radius: 12px; background: var(--soft); font-size: 14px; font-weight: 500; }
+  .rg-scan-msg.bad { color: var(--red-d); }
   .rg-item { display: grid; grid-template-columns: 62px minmax(0, 1.4fr) minmax(0, .7fr) 44px; gap: 10px; align-items: start; padding: 12px; border-radius: 16px; background: var(--soft); }
   .rg-item .rg-drop { padding: 0; border: 0; background: none; } .rg-item .rg-drop .th { width: 62px; height: 62px; border-radius: 14px; }
   .rg-item .wide { grid-column: 2 / -1; } .rg-item .rg-in { min-height: 46px; }
@@ -276,6 +280,13 @@
                 <label class="rg-drop"><input type="file" id="rg-cover" accept="image/png,image/jpeg,image/webp"><span class="th doc" id="rg-cover-th"><svg class="i" aria-hidden="true"><use href="#r-img"/></svg></span><span><b id="rg-cover-t">اختر صورة الغلاف</b><small>صورة عريضة لمكانك أو منتجاتك.</small></span></label></div>
             </div>
             <div class="rg-items-h"><span class="rg-lab" id="rg-items-lab">الأصناف والخدمات</span><span class="rg-hint">الاسم والسعر يكفيان. الصنف بلا اسم يُتجاهل.</span></div>
+            <div class="rg-scan">
+              <label class="rg-btn line" id="rg-scan-lab"><input type="file" id="rg-scan-in" accept="image/png,image/jpeg,image/webp" multiple hidden><svg class="i" aria-hidden="true"><use href="#r-img"/></svg><span id="rg-scan-t">صوّر المنيو</span></label>
+              <button type="button" class="rg-btn line" id="rg-scan-go" hidden>اقرأ المنيو الآن</button>
+              <span class="rg-hint">صوّر قائمة أسعارك أو اخترها، حتى 4 صور. نقرأ الأصناف ونملأ الصفوف لتراجعها. القراءة تحتاج حسابك في الخطوة 7.</span>
+              <span class="rg-hint" id="rg-scan-note">تُرسل صور المنيو إلى Anthropic (مزوّد Claude) لقراءتها. لا تصوّر ما فيه بيانات شخصية.</span>
+              <span class="rg-scan-msg" id="rg-scan-msg" role="status" hidden></span>
+            </div>
             <div id="rg-items"></div>
             <button type="button" class="rg-btn line" id="rg-item-add">+ أضف صنفاً</button>
           </fieldset>

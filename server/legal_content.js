@@ -6,8 +6,10 @@ export const LEGAL_VERSION = "2026-09-25";
 // 6 نوفمبر 2026: تحديث إيضاحي بلا رفع LEGAL_VERSION (فلا تُطلب موافقة جديدة): لا جمع جديداً ولا استخداماً أوسع للبيانات، بل
 // تضييق (المحادثات الخاصة لا تصل أي ذكاء اصطناعي بعد إيقاف الردود الذكية) وإفصاح أدق عن معالجتين قائمتين يطلبهما صاحبهما
 // صراحة (مساعد صندوق الدعم لفريقنا، وصياغة نص الوظيفة لفريق الدائرة)، وبيانات المنشأة، ونص إقرار العمر الموجود أصلاً (13 و18).
-export const LEGAL_UPDATED_AR = "6 نوفمبر 2026";
-export const LEGAL_UPDATED_EN = "6 November 2026";
+// 13 نوفمبر 2026: أُضيفت حالة ثالثة لـ Anthropic («صوّر المنيو»: صور قائمة يختارها صاحب النشاط بنفسه). التاريخ والنسخة لم يُرفعا هنا:
+// harness_age_gate يثبّت التاريخ، ورفع LEGAL_VERSION (موافقة جديدة من الجميع) قرار المالك.
+export const LEGAL_UPDATED_AR = "13 نوفمبر 2026";
+export const LEGAL_UPDATED_EN = "13 November 2026";
 export const COMPANY_AR = "شركة أريب الرقمية";
 // الاسم القانوني كما في السجل التجاري؛ «Areeb Digital» اسم تجاري فقط
 export const COMPANY_EN = "Areeb Alraqmiah Company (Areeb Digital)";
@@ -70,16 +72,17 @@ export function privacyBody({ supportEmail, company }) {
 <li><b>ميسر</b> (بوابة دفع مرخّصة): لإتمام الدفع بالبطاقة على صفحتها المستضافة.</li>
 <li><b>مزوّد البريد الإلكتروني</b>: لإرسال رموز التأكيد والاستعادة ورسائل الخدمة.</li>
 <li><b>مزوّد الاستضافة</b>: خوادم تشغيل المنصة وقاعدة بياناتها.</li>
-<li><b>Anthropic</b> (مزوّد نموذج الذكاء الاصطناعي Claude): في حالتين فقط موضّحتين في قسم <a href="#ai">الذكاء الاصطناعي</a>.</li>
+<li><b>Anthropic</b> (مزوّد نموذج الذكاء الاصطناعي Claude): في ثلاث حالات فقط موضّحة في قسم <a href="#ai">الذكاء الاصطناعي</a>.</li>
 <li><b>الجهات الرسمية</b>: عند طلب نظامي ملزم.</li>
 </ul>
 
 <h2 id="ai">الذكاء الاصطناعي</h2>
 <p><b>محادثاتك الخاصة لا تُرسل إلى أي ذكاء اصطناعي.</b> الردود المقترحة فوق حقل الكتابة تأتي من قواعد ثابتة تعمل على خوادمنا، ولا يقرأ رسائلك أي نموذج.</p>
-<p>نستخدم نموذج Claude من شركة Anthropic في حالتين فقط، ولا تعمل أي منهما إلا حين يطلبها موظف الدعم أو فريق الدائرة بنفسه. تعالج Anthropic النص المرسل على خوادم خارج المملكة:</p>
+<p>نستخدم نموذج Claude من شركة Anthropic في ثلاث حالات فقط، ولا تعمل أي منها إلا حين يطلبها موظف الدعم أو فريق الدائرة أو صاحب النشاط بنفسه. تعالج Anthropic ما يُرسل إليها على خوادم خارج المملكة:</p>
 <ul>
 <li><b>صندوق الدعم</b> (رسائل البريد الإلكتروني التي ترسلها إلى عناويننا، ومنها بريد الدعم): حين يكون المساعد الذكي مفعّلاً ويطلب موظف من فريقنا ملخصاً لمراسلة أو مسودة رد عليها، تُرسل نصوص رسائل تلك المراسلة ووقت كل رسالة واسم مرسلها (أو بريده إن لم يذكر اسماً)، ولا تُرسل الملاحظات الداخلية للفريق. الملخص للفريق وحده، والمسودة لا تصلك إلا بعد أن يراجعها الموظف ويعدّلها إن لزم ثم يرسلها بنفسه.</li>
 <li><b>صياغة عرض وظيفي</b>: حين يكون المساعد الذكي مفعّلاً ويضغط فريق دائرة «اكتب لي العرض» تُرسل بيانات العرض التي كتبها فقط: اسم الدائرة وفئتها، المسمّى الوظيفي، القسم، نوع الدوام، المدينة، النقاط التي كتبها، ونطاق الراتب إن حدّده. لا تُحفظ المسودة حتى يراجعها الفريق ويحفظها بنفسه. لا تُرسل أي بيانات عن المرشحين ولا ملفات التوظيف.</li>
+<li><b>صوّر المنيو</b>: حين يكون المساعد الذكي مفعّلاً ويضغط صاحب نشاط «صوّر المنيو» تُرسل صور القائمة التي اختارها فقط لقراءة أسماء الأصناف وأسعارها. لا يُرسل معها اسمك ولا حسابك ولا موقعك. تعود الأصناف إليه ليراجعها، ولا يُحفظ منها شيء حتى يؤكدها بنفسه. الصورة نفسها تبقى محفوظة على خوادمنا برابط لا يُخمَّن مثل أي صورة تُرفع إلى المنصة. فلا تصوّر ما فيه بيانات شخصية.</li>
 </ul>
 <p>إن أضفنا مستقبلاً اقتراحات ذكية في المحادثات فلن تعمل إلا بعد موافقتك الصريحة، ونحدّث هذه السياسة قبلها.</p>
 
@@ -125,7 +128,7 @@ ${aboutAr(company)}
 <li><b>Transactions:</b> in-app wallet balance, orders, bookings, tickets and top-ups. Card payments happen on the hosted page of Moyasar, a licensed payment gateway; we never receive card data.</li>
 <li><b>Usage and technical data:</b> views, clicks and likes shown as statistics to content owners; IP address and device type in server logs for security.</li>
 <li><b>Processors:</b> Moyasar (payments), our email provider and our hosting provider.</li>
-<li><b>AI:</b> your private chats are never sent to any AI; suggested replies in chat come from fixed rules on our servers. We use Anthropic's Claude, processed outside Saudi Arabia, in two cases only, each run only when a support agent or a circle's team asks for it: (1) in the support inbox (emails you send to our addresses, including support), when the assistant is enabled and an agent asks for a summary or a draft reply, the messages of that thread are sent with their times and the sender's name (or email address when no name is given), never the team's internal notes, and an agent reviews (and edits where needed) every draft and sends it personally; (2) when the assistant is enabled and a circle's team taps "Write the job offer for me", only the job details they typed are sent (circle name and category, title, department, job type, city, their bullet points and salary range); no candidate data is sent. Any future AI feature in chat will require your explicit opt-in first.</li>
+<li><b>AI:</b> your private chats are never sent to any AI; suggested replies in chat come from fixed rules on our servers. We use Anthropic's Claude, processed outside Saudi Arabia, in three cases only, each run only when a support agent, a circle's team or a business owner asks for it: (1) in the support inbox (emails you send to our addresses, including support), when the assistant is enabled and an agent asks for a summary or a draft reply, the messages of that thread are sent with their times and the sender's name (or email address when no name is given), never the team's internal notes, and an agent reviews (and edits where needed) every draft and sends it personally; (2) when the assistant is enabled and a circle's team taps "Write the job offer for me", only the job details they typed are sent (circle name and category, title, department, job type, city, their bullet points and salary range); no candidate data is sent; (3) when the assistant is enabled and a business owner taps "Photograph the menu", only the menu photos they chose are sent to read item names and prices, without their name, account or location, and nothing is saved until they review and confirm the items; the photo itself stays stored on our servers at an unguessable link, like any image uploaded to the platform. Any future AI feature in chat will require your explicit opt-in first.</li>
 <li><b>Retention:</b> while your account exists. On deletion we remove your email, profile, photo and push subscriptions immediately and hide your content, which is erased within 30 days. Financial records are kept as required by law under an anonymous identifier. Messages already delivered stay with their recipients and show "Deleted user".</li>
 <li><b>Delete your account</b> in the app: My Space → Account → Delete account. If you cannot sign in, email us from your account address.</li>
 <li><b>Ages:</b> 13 and over, declared at sign-up; wallet top-ups, buying and selling for money are for users 18 and over, declared once before the first financial action.</li>

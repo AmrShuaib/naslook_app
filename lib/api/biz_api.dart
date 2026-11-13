@@ -93,7 +93,13 @@ extension BizApi on ApiClient {
   Future<void> deleteBizPost(String id, String postId) => delete('/biz/$id/posts/$postId', body: const {});
   Future<void> replyBizReview(String id, String userId, String text) => post('/biz/$id/reviews/$userId/reply', {'text': text});
   Future<BizTeam> bizTeam(String id) async => BizTeam.fromJson(await get('/biz/$id/team'));
-  Future<void> addBizStaff(String id, String userId, {String role = 'staff'}) => post('/biz/$id/team', {'userId': userId, 'role': role});
+  /// إضافة عضو بدور (قالب) ومفاتيح اختيارية فوقه {مفتاح: true|false}.
+  Future<void> addBizStaff(String id, String userId, {String role = 'staff', Map<String, bool>? perms}) => post('/biz/$id/team', {'userId': userId, 'role': role, if (perms != null) 'perms': perms});
+  /// تعديل دور عضو أو مفاتيحه (المالك ومن يحمل «إدارة الفريق»، بحدود يفرضها الخادم).
+  Future<void> updateBizStaff(String id, String userId, {String? role, Map<String, bool>? perms}) => patch_('/biz/$id/team/$userId', {if (role != null) 'role': role, if (perms != null) 'perms': perms});
+  /// سجل نشاط الدائرة، الأحدث أولاً؛ [before] مؤشر الصفحة التالية.
+  Future<BizActivityLog> bizActivity(String id, {String? before, int limit = 30}) async =>
+      BizActivityLog.fromJson(await get('/biz/$id/activity', query: {'limit': '$limit', if (before != null) 'before': before}));
   Future<void> removeBizStaff(String id, String userId) => delete('/biz/$id/team/$userId', body: const {});
   Future<void> transferBiz(String id, String userId) => post('/biz/$id/transfer', {'userId': userId});
 

@@ -595,7 +595,12 @@ export default async function posts(app, opts) {
     if (!allowed) {
       try {
         const b = (await pool.query("SELECT owner_id FROM biz WHERE id=$1", [slug])).rows[0];
-        allowed = !!b && (b.owner_id === uid || (await pool.query("SELECT 1 FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [slug, uid])).rowCount > 0);
+        // صلاحيات الدائرة لكل عضو (business.js): الإحصاءات بمفتاحها؛ وإن غابت الإضافة فالمالك وحده
+        const P = globalThis.naslifeBizPerms;
+        if (!b) allowed = false;
+        else if (b.owner_id === uid) allowed = true;
+        else if (P?.memberOf) { const m = await P.memberOf(uid, { id: slug, owner_id: b.owner_id }); allowed = !!m && m.perms?.has?.("stats") === true; }
+        else allowed = false;
       } catch { allowed = false; }
     }
     if (!allowed) return bad(reply, 403, "forbidden");

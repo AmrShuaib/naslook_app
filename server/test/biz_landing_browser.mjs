@@ -5,10 +5,11 @@ import Fastify from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 const CSP = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://server.arcgisonline.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'";
-const app = Fastify();
+const app = Fastify({ bodyLimit: 30 * 1024 * 1024 }); // كحد /chat/upload الحقيقي
 app.addHook('onSend', async (req, reply) => { reply.header('content-security-policy', CSP); });
 app.register((await import('../biz_landing.js')).default, {});
 // خطوط التطبيق كما يخدمها الموقع الحي من /assets/fonts
@@ -30,6 +31,15 @@ app.post('/chat/upload', async (req, reply) => { const c = rec(req); if (c.token
 app.post('/biz/register', async (req, reply) => { const c = rec(req); if (c.token !== 'TOK') return reply.code(401).send({ error: 'unauthorized' }); return { biz: { id: 'biz-test-1', nameAr: req.body.nameAr }, completeness: {} }; });
 app.post('/biz/:id/verification', async (req) => { rec(req); return { status: 'pending' }; });
 app.patch('/biz/:id', async (req) => { rec(req); return { id: req.params.id }; });
+// «صوّر المنيو»: رد الخادم بأشكاله (menu_scan.js): غير مفعّل، ثلاثة أصناف بأقسام وسعر غير مقروء، أو قائمة طويلة
+let scanMode = 'ok';
+const SCAN3 = { items: [{ title: 'لاتيه', price: 1800, priceKnown: true, description: 'حليب طازج', section: 'ساخن' }, { title: 'موكا', price: 2150, priceKnown: true, description: '', section: 'ساخن' }, { title: 'كيكة اليوم', price: 0, priceKnown: false, description: '', section: 'حلويات' }], warnings: [{ code: 'no-price', message: '1 من الأصناف بلا سعر مقروء. اكتب سعرها قبل الإضافة.' }] };
+app.post('/menu/scan', async (req, reply) => {
+  const c = rec(req); if (c.token !== 'TOK') return reply.code(401).send({ error: 'unauthorized' });
+  if (scanMode === 'off') return reply.code(503).send({ error: 'ai-unavailable' });
+  if (scanMode === 'long') return { items: Array.from({ length: 25 }, (_, i) => ({ title: `صنف ${i + 1}`, price: (i + 1) * 100, priceKnown: true, description: '', section: '' })), warnings: [] };
+  return SCAN3;
+});
 app.post('/biz/:id/items', async (req, reply) => { rec(req); return req.body.title === 'ممنوع' ? reply.code(400).send({ error: 'banned-words' }) : { id: 'it-' + calls.length }; });
 await app.listen({ port: 0, host: '127.0.0.1' });
 const base = `http://localhost:${app.server.address().port}`;
@@ -94,7 +104,7 @@ for (const [w, h] of [[390, 844], [1280, 900]]) {
   const seq = calls.map((c) => c.url);
   ok(JSON.stringify(seq.filter((u) => u !== '/me/adult-attest')) === JSON.stringify(['/auth/register', '/auth/verify', '/auth/verify', '/auth/login', '/chat/upload', '/biz/register', '/chat/upload', '/biz/biz-test-1/verification', '/biz/biz-test-1/items']), `${w}px register: verify, login, upload logo, register, upload document, verification` + ' [' + seq.join(' ') + ']');
   const reg = calls.find((c) => c.url === '/biz/register'), ver = calls.find((c) => /verification/.test(c.url)), svc = calls.find((c) => /items$/.test(c.url));
-  ok(svc.body.title === 'صيانة مكيف' && svc.body.price === 150 && JSON.stringify(svc.body.meta.times) === '["09:00","16:30"]', `${w}px register: the service is added with its price and normalised times`);
+  ok(svc.body.title === 'صيانة مكيف' && svc.body.price === 15000 && JSON.stringify(svc.body.meta.times) === '["09:00","16:30"]', `${w}px register: the service is added with its price in halalas and normalised times`);
   ok(reg.token === 'TOK' && reg.body.category === 'salon' && reg.body.nameAr === 'صيانة البيت' && reg.body.presence === 'mobile' && reg.body.radiusKm === 15 && reg.body.phone === '+966512345678' && reg.body.role === 'owner' && reg.body.logoUrl === '/chat/media/up1.png' && Math.abs(reg.body.lat - 21.5) < 0.01, `${w}px register: the circle is sent with the server's field names and the device location`);
   ok(ver.body.entityKind === 'freelance' && ver.body.entityNumber === 'FL12345678' && ver.body.docUrl === '/chat/media/up2.png', `${w}px register: the freelance document goes to verification`);
   ok(calls.filter((c) => c.url === '/chat/upload').every((c) => c.type === 'image/png' && c.bytes > 100 && c.token === 'TOK'), `${w}px register: images are uploaded as raw bytes with the session`);
@@ -128,7 +138,66 @@ for (const [w, h] of [[390, 844], [1280, 900]]) {
   ok(/لم يُحفظ/.test(await page.textContent('#rg-done-warn')) && /ممنوع/.test(await page.textContent('#rg-done-warn')) && /2 من الأصناف/.test(await page.textContent('#rg-done-data-s')), `${w}px register: a refused item is reported without losing the circle or the other items`);
   ok(reg2.body.presence === 'fixed' && reg2.body.radiusKm === undefined && Math.abs(reg2.body.lat - 26.4207) < 0.001 && !calls.some((c) => /verification/.test(c.url)) && calls.filter((c) => c.url === '/chat/upload').length === 2, `${w}px register: verify later sends no document, and the city centre stands in for the location`);
   ok(/لاحقاً/.test(await page.textContent('#rg-done-ver')), `${w}px register: the final screen says verification is still to do`);
-  ok(errs.filter((e) => !/401|400/.test(e)).length === 0, `${w}px register: no CSP or JS errors` + (errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''));
+  // ---- «صوّر المنيو» بحساب قائم: يطلب الحساب أولاً، ثم دخول ورفع وقراءة تملأ الصفوف للمراجعة، ولا يُنشأ شيء قبل الإرسال
+  calls.length = 0; ups = 0; scanMode = 'off';
+  await page.goto(base + '/business/register'); await page.waitForTimeout(200);
+  const rowsNow = () => page.evaluate(() => [...document.querySelectorAll('.rg-item')].map((r) => [r.querySelector('.t').value, r.querySelector('.price').value, r.querySelector('.d').value]));
+  const scanMsg = () => page.textContent('#rg-scan-msg');
+  ok(/Anthropic/.test(await page.textContent('#rg-scan-note')) && await page.isVisible('#rg-scan-lab'), `${w}px scan: the control and the privacy notice are shown before any scan`);
+  await page.check('input[name=category][value=cafe]', { force: true });
+  await page.click('#rg-item-add'); // صف فارغ يزول حين تملأ القراءة الصفوف
+  await page.setInputFiles('#rg-scan-in', [png, { ...png, name: 'menu2.png' }]);
+  await page.waitForFunction(() => !document.getElementById('rg-scan-msg').hidden, null, { timeout: 8000 });
+  ok(/تحتاج حسابك/.test(await scanMsg()) && calls.length === 0 && await page.isVisible('#rg-scan-go') && await page.evaluate(() => document.querySelector('[data-f=email]').classList.contains('bad')), `${w}px scan: without account details nothing is sent and the owner is told why`);
+  await page.check('input[name=acc][value=login]', { force: true });
+  await page.fill('#rg-email', 'owner@example.com'); await page.fill('#rg-pass', 'right-pass'); await page.check('#rg-agree');
+  await page.click('#rg-scan-go');
+  await page.waitForFunction(() => /غير مفعّلة/.test(document.getElementById('rg-scan-msg').textContent), null, { timeout: 10000 });
+  ok(JSON.stringify(calls.map((c) => c.url)) === JSON.stringify(['/auth/login', '/chat/upload', '/chat/upload', '/menu/scan']) && (await rowsNow()).length === 1 && await page.isVisible('#rg-scan-go'), `${w}px scan: an unavailable reader is reported and the rows are untouched` + ' [' + calls.map((c) => c.url).join(' ') + ']');
+  scanMode = 'ok'; calls.length = 0;
+  await page.click('#rg-scan-go');
+  await page.waitForFunction(() => document.querySelectorAll('.rg-item.scanned').length === 3, null, { timeout: 10000 });
+  const sc = calls.find((c) => c.url === '/menu/scan');
+  ok(JSON.stringify(calls.map((c) => c.url)) === JSON.stringify(['/chat/upload', '/chat/upload', '/menu/scan']) && sc.token === 'TOK' && sc.body.images.length === 2 && sc.body.images.every((u) => /^\/chat\/media\/up\d\.png$/.test(u)), `${w}px scan: the session is reused, both photos are uploaded and their URLs are scanned`);
+  ok(JSON.stringify(await rowsNow()) === JSON.stringify([['لاتيه', '18', 'حليب طازج'], ['موكا', '21.50', ''], ['كيكة اليوم', '', '']]), `${w}px scan: the rows are filled for review and the empty row is gone ` + JSON.stringify(await rowsNow()));
+  ok(/أضفنا 3/.test(await scanMsg()) && /بلا سعر مقروء/.test(await scanMsg()) && !calls.some((c) => /items$|biz\/register/.test(c.url)) && await page.isHidden('#rg-done'), `${w}px scan: the owner is told to review, and nothing is created yet`);
+  await page.locator('.rg-item .t').nth(0).fill('لاتيه ساخن');
+  scanMode = 'long'; calls.length = 0;
+  await page.setInputFiles('#rg-scan-in', png);
+  await page.waitForFunction(() => /وجدنا 25/.test(document.getElementById('rg-scan-msg').textContent), null, { timeout: 10000 });
+  ok((await rowsNow()).length === 20 && /أضفنا 17/.test(await scanMsg()) && (await rowsNow())[0][0] === 'لاتيه ساخن', `${w}px scan: a long menu stops at 20 rows, says so, and keeps the reviewed rows`);
+  for (let i = 0; i < 17; i++) await page.locator('.rg-item .x').last().click();
+  calls.length = 0;
+  await page.fill('#rg-nameAr', 'قهوة المرسى'); await page.setInputFiles('#rg-logo', png); await page.selectOption('#rg-city', 'جدة'); await page.fill('#rg-phone', '512345678'); await page.check('#rg-later');
+  // السعر الذي لم يُقرأ ولم يُكتب يمنع الإرسال: لا يُنشأ صنف مجاني من قراءة ناقصة
+  await page.click('#rg-go');
+  await page.waitForFunction(() => document.getElementById('rg-sum').classList.contains('on'), null, { timeout: 8000 });
+  ok(/سعر/.test(await page.textContent('#rg-sum')) && calls.length === 0 && await page.isHidden('#rg-done') && await page.evaluate(() => { const r = document.querySelectorAll('.rg-item'); return r[2].classList.contains('bad') && !r[0].classList.contains('bad') && !r[1].classList.contains('bad'); }), `${w}px scan: a scanned row whose price was not read blocks the submit until a price is typed [` + (await page.textContent('#rg-sum')) + ']');
+  await page.locator('.rg-item .price').nth(2).fill('١٤');
+  ok(await page.evaluate(() => !document.querySelectorAll('.rg-item')[2].classList.contains('bad')), `${w}px scan: the row clears once its price is typed`);
+  await page.click('#rg-go');
+  await page.waitForFunction(() => !document.getElementById('rg-done').hidden, null, { timeout: 15000 });
+  const sent = calls.filter((c) => /items$/.test(c.url)).map((c) => [c.body.title, c.body.price, c.body.description]);
+  ok(JSON.stringify(sent) === JSON.stringify([['لاتيه ساخن', 1800, 'حليب طازج'], ['موكا', 2150, ''], ['كيكة اليوم', 1400, '']]) && !calls.some((c) => c.url === '/auth/login'), `${w}px scan: the reviewed rows are created on submit, in halalas, with the same session ` + JSON.stringify(sent));
+  // حساب جديد: الزر ينشئ الحساب ويطلب رمز البريد، وبعد التأكيد يعود إلى القراءة لا إلى إنشاء الدائرة
+  calls.length = 0; ups = 0; scanMode = 'ok'; codeOk = true;
+  await page.goto(base + '/business/register'); await page.waitForTimeout(200);
+  await page.check('input[name=category][value=salon]', { force: true });
+  await page.fill('#rg-nick', 'new_owner'); await page.fill('#rg-email', 'new@example.com'); await page.fill('#rg-pass', 'secret-123'); await page.check('#rg-agree');
+  // صورة جوال كبيرة (ضجيج لا ينضغط): تُصغَّر في المتصفح قبل الرفع، تحت سياسة الأمان نفسها
+  let bigJpg = null;
+  try { bigJpg = execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'nullsrc=size=3000x2400:rate=1', '-vf', 'geq=random(1)*255:128:128', '-frames:v', '1', '-q:v', '2', '-f', 'image2pipe', '-c:v', 'mjpeg', 'pipe:1'], { maxBuffer: 64 * 1024 * 1024 }); } catch { bigJpg = null; }
+  await page.setInputFiles('#rg-scan-in', bigJpg ? { name: 'menu.jpg', mimeType: 'image/jpeg', buffer: bigJpg } : png);
+  await page.waitForFunction(() => !document.getElementById('rg-code').hidden, null, { timeout: 8000 });
+  ok(calls.length === 1 && calls[0].url === '/auth/register', `${w}px scan: a new account is created first and the email code is asked for`);
+  await page.fill('#rg-code-in', '246810'); await page.click('#rg-code-go');
+  await page.waitForFunction(() => document.querySelectorAll('.rg-item.scanned').length === 3, null, { timeout: 10000 });
+  ok(JSON.stringify(calls.map((c) => c.url)) === JSON.stringify(['/auth/register', '/auth/verify', '/auth/login', '/chat/upload', '/menu/scan']) && await page.isVisible('#rg-form') && await page.isHidden('#rg-done'), `${w}px scan: after the code the form comes back with the rows filled, and no circle is created` + ' [' + calls.map((c) => c.url).join(' ') + ']');
+  const upBig = calls.find((c) => c.url === '/chat/upload');
+  if (bigJpg) ok(bigJpg.length > 1500000 && upBig.type === 'image/jpeg' && upBig.bytes > 1000 && upBig.bytes < bigJpg.length, `${w}px scan: a large phone photo is shrunk in the browser before upload (${bigJpg.length} -> ${upBig.bytes})`);
+  else console.log('skip ' + `${w}px scan: no ffmpeg to build a large photo`);
+  ok(/أوقاتها اليومية/.test(await scanMsg()) && await page.evaluate(() => !document.querySelector('.rg-item .times').hidden), `${w}px scan: a salon is reminded to write each service's daily times`);
+  ok(errs.filter((e) => !/401|400|503/.test(e)).length === 0, `${w}px register: no CSP or JS errors` + (errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''));
   if (process.env.SHOT && w === 390) await page.screenshot({ path: process.env.SHOT });
   await page.close();
 }

@@ -157,15 +157,31 @@ export default async function jobs(app, opts = {}) {
   const rejectBanned = (reply, ...texts) => { let w = null; try { w = globalThis.naslifeCheckText?.(...texts.flat().filter((t) => typeof t === "string")) ?? null; } catch { w = null; } if (w) { reply.code(400).send({ error: "banned-words", word: w }); return true; } return false; };
   const event = async (jobId, matchId, actorId, kind, data = {}) => { try { await pool.query("INSERT INTO job_events(id,job_id,match_id,actor_id,kind,data) VALUES($1,$2,$3,$4,$5,$6)", [crypto.randomUUID(), jobId, matchId, actorId, kind, JSON.stringify(data)]); } catch { /* ignore */ } };
 
-  /// صلاحية التوظيف في دائرة: المالك والمدير والإدارة ودور hr
+  /// عضوية المستخدم بصلاحياتها عبر المساعد المشترك في business.js (وبتعريفنا لمدير النظام)؛ بدونه قالب الأدوار القديم
+  const memberOf = async (uid, b) => {
+    const P = globalThis.naslifeBizPerms;
+    if (P) return P.memberOf(uid, b, { adminCheck: isAdmin });
+    const role = await roleFor(uid, b);
+    return { role, perms: new Set(HIRING_ROLES.has(role) ? ["hiring"] : []) };
+  };
+  const canHire = async (uid, b) => (await memberOf(uid, b)).perms.has("hiring");
+  /// صلاحية «التوظيف» في دائرة (القالب: المالك والمدير والإدارة ودور hr)
   async function hiringGuard(req, reply) {
     const uid = await auth(req); if (!uid) { unauthorized(reply); return null; }
     const b = await bizRow(req.params.id); if (!b) { bad(reply, 404, "not-found"); return null; }
-    const role = await roleFor(uid, b);
-    if (!HIRING_ROLES.has(role)) { bad(reply, 403, "forbidden"); return null; }
-    return { uid, b, role };
+    const m = await memberOf(uid, b);
+    if (!m.perms.has("hiring")) { bad(reply, 403, "forbidden", { need: "hiring" }); return null; }
+    return { uid, b, role: m.role };
   }
-  const hiringTeam = async (b) => [b.owner_id, ...(await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1 AND role IN ('manager','hr')", [b.id])).rows.map((r) => r.user_id)].filter(Boolean);
+  const hiringTeam = async (b) => {
+    const P = globalThis.naslifeBizPerms;
+    if (P) return P.holders(b, "hiring");
+    return [b.owner_id, ...(await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1 AND role IN ('manager','hr')", [b.id])).rows.map((r) => r.user_id)].filter(Boolean);
+  };
+  // شرط SQL لعضو يحمل «التوظيف» (بمفتاحه أو بقالب دوره)
+  const hiringSql = (alias) => globalThis.naslifeBizPerms?.permSql(alias, "hiring") ?? `${alias}.role IN ('manager','hr')`;
+  // من يتواصل معه المرشح: مسؤول العرض ما دام يحمل «التوظيف»، وإلا المالك. من سُحبت صلاحيته أو أُزيل من الفريق لا يُوجَّه إليه مرشح.
+  const contactId = async (job, b) => (job?.assignee_id && b && (await hiringTeam(b)).includes(job.assignee_id) ? job.assignee_id : b?.owner_id ?? null);
   const recipientsFor = async (job, b) => { const t = await hiringTeam(b); return job.assignee_id && t.includes(job.assignee_id) ? [job.assignee_id, b.owner_id].filter(Boolean) : t; };
 
   // ---- الباقة: free (حد للعروض النشطة) أو pro (بلا حد + تصدير)
@@ -283,7 +299,9 @@ export default async function jobs(app, opts = {}) {
       for (const i of soon) {
         const when = new Date(i.at).toISOString().slice(0, 16).replace("T", " ");
         await notify(i.user_id, { kind: "job_interview", title: `تذكير: مقابلة غداً · ${i.title}`, body: `${when} · ${i.mode === "onsite" ? i.place || "في المقر" : i.mode === "video" ? "اتصال مرئي" : "اتصال هاتفي"}`, data: { jobId: i.job_id, matchId: i.match_id, interviewId: i.id, bizId: i.biz_id } });
-        if (i.assignee_id) await notify(i.assignee_id, { kind: "job_interview", title: `تذكير: مقابلة غداً · ${i.title}`, body: when, data: { jobId: i.job_id, matchId: i.match_id, bizId: i.biz_id, manage: true } });
+        // التذكير لمسؤول العرض إن بقي في فريق التوظيف، وإلا للمالك
+        const remindTo = await contactId(i, await bizRow(i.biz_id));
+        if (remindTo) await notify(remindTo, { kind: "job_interview", title: `تذكير: مقابلة غداً · ${i.title}`, body: when, data: { jobId: i.job_id, matchId: i.match_id, bizId: i.biz_id, manage: true } });
         await pool.query("UPDATE job_interviews SET reminded_at=now() WHERE id=$1", [i.id]);
         st.reminded++;
       }
@@ -293,8 +311,9 @@ export default async function jobs(app, opts = {}) {
   globalThis.naslifeJobsSweep = sweep;
   // «من يراسلني» (profile_ext.js): المرشح الذي أجاب على أسئلة الفرز (كُشفت هويته وأُعيد له chatWith) وفريق توظيف الوظيفة
   // (المسؤول والمالك والمدير وhr) يتراسلون أياً كانت سياسة أي منهما؛ الانسحاب أو الرفض قبل الإجابة لا يفتح شيئاً
+  // مسؤول العرض لا يُستثنى باسمه: يلزمه أن يحمل «التوظيف» الآن كبقية الفريق، فسحب الصلاحية أو الإزالة يغلق المراسلة
   const hiringPair = async (cand, staff) => (await pool.query(`SELECT 1 FROM job_matches m JOIN jobs j ON j.id=m.job_id LEFT JOIN biz b ON b.id=m.biz_id
-    WHERE m.user_id=$1 AND m.status='answered' AND (j.assignee_id=$2 OR b.owner_id=$2 OR EXISTS (SELECT 1 FROM biz_staff s WHERE s.biz_id=m.biz_id AND s.user_id=$2 AND s.role IN ('manager','hr'))) LIMIT 1`, [cand, staff])).rowCount > 0;
+    WHERE m.user_id=$1 AND m.status='answered' AND (b.owner_id=$2 OR EXISTS (SELECT 1 FROM biz_staff s WHERE s.biz_id=m.biz_id AND s.user_id=$2 AND ${hiringSql("s")})) LIMIT 1`, [cand, staff])).rowCount > 0;
   (globalThis.naslifeMessageAllow ??= new Map()).set("jobs", async (a, b) => !!a && !!b && a !== b && ((await hiringPair(a, b)) || (await hiringPair(b, a))));
   const SWEEP_MS = opts.sweepMs ?? (Number(process.env.JOBS_SWEEP_MS) || 30 * 60 * 1000);
   let timer = null;
@@ -363,7 +382,7 @@ export default async function jobs(app, opts = {}) {
     return {
       id: m.id, jobId: m.job_id, bizId: m.biz_id, status: m.status, stage: m.stage, stageLabel: STAGE_AR[m.stage] ?? m.stage, source: m.source, score: Number(m.score), reasons: parseJson(m.reasons, []),
       sentAt: m.sent_at, viewedAt: m.viewed_at, acceptedAt: m.accepted_at, answeredAt: m.answered_at, declinedAt: m.declined_at, answers: parseJson(m.answers, null),
-      job: j ? publicJobOut(j, b) : null, questions: j ? parseJson(j.questions, []) : [], assignee: j?.assignee_id ? await person(j.assignee_id) : (b?.owner_id ? await person(b.owner_id) : null),
+      job: j ? publicJobOut(j, b) : null, questions: j ? parseJson(j.questions, []) : [], assignee: await (async () => { const c = j ? await contactId(j, b) : b?.owner_id; return c ? person(c) : null; })(),
       interview: iv ? { id: iv.id, at: iv.at, mode: iv.mode, place: iv.place, note: iv.note, status: iv.status } : null,
     };
   }));
@@ -405,7 +424,7 @@ export default async function jobs(app, opts = {}) {
     const to = await recipientsFor(x.j, x.b);
     if (answeredNow) { const u = await person(uid); await notify(to, { kind: "job_answers", title: `مرشح جديد: ${x.j.title}`, body: `${u.nickname || "مرشح"} قبل العرض وهو جاهز للتواصل`, data: { jobId: x.j.id, matchId: x.m.id, bizId: x.j.biz_id, manage: true } }); }
     else await notify(to, { kind: "job_accept", title: `قبول عرض: ${x.j.title}`, body: `مرشح #${x.m.seq} قبل العرض ويجيب الآن على أسئلة الفرز`, data: { jobId: x.j.id, matchId: x.m.id, bizId: x.j.biz_id, manage: true } });
-    return { ok: true, status: answeredNow ? "answered" : "accepted", questions: qs, chatWith: answeredNow ? (x.j.assignee_id ? await person(x.j.assignee_id) : await person(x.b?.owner_id)) : null };
+    return { ok: true, status: answeredNow ? "answered" : "accepted", questions: qs, chatWith: answeredNow ? await person(await contactId(x.j, x.b)) : null };
   });
   app.post("/jobs/offers/:matchId/decline", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -447,7 +466,7 @@ export default async function jobs(app, opts = {}) {
     await event(x.j.id, x.m.id, uid, "match.answered");
     const u = await person(uid);
     await notify(await recipientsFor(x.j, x.b), { kind: "job_answers", title: `إجابات مرشح: ${x.j.title}`, body: `${u.nickname || "مرشح"} أجاب على أسئلة الفرز؛ افتح لوحة التوظيف`, data: { jobId: x.j.id, matchId: x.m.id, bizId: x.j.biz_id, manage: true } });
-    return { ok: true, chatWith: x.j.assignee_id ? await person(x.j.assignee_id) : await person(x.b?.owner_id) };
+    return { ok: true, chatWith: await person(await contactId(x.j, x.b)) };
   });
   app.post("/jobs/offers/:matchId/withdraw", async (req, reply) => {
     const uid = await auth(req); if (!uid) return unauthorized(reply);
@@ -490,8 +509,8 @@ export default async function jobs(app, opts = {}) {
     const j = (await pool.query("SELECT * FROM jobs WHERE id=$1", [id])).rows[0]; if (!j) return bad(reply, 404, "not-found");
     const uid = await auth(req).catch(() => null);
     const b = await bizRow(j.biz_id);
-    const role = uid ? await roleFor(uid, b) : null;
-    const hiring = HIRING_ROLES.has(role);
+    const mem = uid ? await memberOf(uid, b) : { role: null, perms: new Set() };
+    const role = mem.role, hiring = mem.perms.has("hiring");
     const visible = j.status === "open" && j.public && !bizOff(b);
     // غير الظاهر: لفريق التوظيف، ولمشرف البلاغات للقراءة فقط (زر «فتح الوظيفة» في طابور الإشراف) بلا عدّ مشاهدة
     const moderator = !visible && !hiring && uid ? await canModerate(uid) : false;
@@ -511,7 +530,7 @@ export default async function jobs(app, opts = {}) {
     const id = String(req.params.id ?? ""); if (!UUID_RE.test(id)) return bad(reply, 400, "bad-id");
     const j = (await pool.query("SELECT * FROM jobs WHERE id=$1 AND status='open' AND public=true", [id])).rows[0]; if (!j) return bad(reply, 404, "not-found");
     const b = await bizRow(j.biz_id); if (bizOff(b)) return bad(reply, 404, "not-found");
-    if (HIRING_ROLES.has(await roleFor(uid, b)) || (await pool.query("SELECT 1 FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [j.biz_id, uid])).rowCount) return bad(reply, 400, "own-circle");
+    if ((await canHire(uid, b)) || (await pool.query("SELECT 1 FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [j.biz_id, uid])).rowCount) return bad(reply, 400, "own-circle");
     const p = (await pool.query("SELECT * FROM job_profiles WHERE user_id=$1", [uid])).rows[0]; if (!p) return bad(reply, 409, "profile-required");
     const exists = (await pool.query("SELECT * FROM job_matches WHERE job_id=$1 AND user_id=$2", [id, uid])).rows[0];
     const qs = parseJson(j.questions, []); const answeredNow = qs.length === 0;
@@ -528,7 +547,7 @@ export default async function jobs(app, opts = {}) {
     await event(id, mid, uid, "match.applied", { score });
     const u = await person(uid);
     await notify(await recipientsFor(j, b), { kind: answeredNow ? "job_answers" : "job_apply", title: `متقدم جديد: ${j.title}`, body: answeredNow ? `${u.nickname || "مرشح"} تقدّم للوظيفة وهو جاهز للتواصل` : `مرشح تقدّم للوظيفة ويجيب الآن على أسئلة الفرز`, data: { jobId: id, matchId: mid, bizId: j.biz_id, manage: true } });
-    return { ok: true, matchId: mid, status: answeredNow ? "answered" : "accepted", questions: qs, chatWith: answeredNow ? (j.assignee_id ? await person(j.assignee_id) : await person(b?.owner_id)) : null };
+    return { ok: true, matchId: mid, status: answeredNow ? "answered" : "accepted", questions: qs, chatWith: answeredNow ? await person(await contactId(j, b)) : null };
   });
 
   // ================================================================ الإدارة داخل الدائرة

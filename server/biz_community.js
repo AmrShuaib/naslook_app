@@ -126,11 +126,19 @@ export default async function bizCommunity(app, opts) {
   async function roleFor(uid, b) {
     if (!uid || !b) return null;
     if (b.owner_id === uid) return "owner";
+    // عبر المساعد المشترك في business.js: "mod" لمن يحمل صلاحية الإشراف، و"member" لعضو لا يحملها (ليس مشرفاً ولا غريباً)
+    const P = globalThis.naslifeBizPerms;
+    if (P) { try { const m = await P.memberOf(uid, b, { adminCheck: isAdmin }); return m.role == null ? null : MOD_PERMS.some((k) => m.perms.has(k)) ? "mod" : "member"; } catch { /* ignore */ } }
     try { const s = (await pool.query("SELECT role FROM biz_staff WHERE biz_id=$1 AND user_id=$2", [b.id, uid])).rows[0]; if (s) return s.role; } catch { /* ignore */ }
     return (await isAdmin(uid)) ? "admin" : null;
   }
-  const canModerate = (r) => r === "owner" || r === "manager" || r === "staff" || r === "admin";
+  // الإشراف على مجتمع الدائرة لمن يحمل «الأخبار ومجتمع الدائرة» أو «رسائل العملاء» (كلاهما تعامل مع ما يكتبه العملاء)،
+  // فيبقى للمالك والمدير والموظف ومدير النظام كما كان قبل المفاتيح، ويخرج منه عضو التوظيف
+  const MOD_PERMS = ["posts", "inbox"];
+  const canModerate = (r) => r === "mod" || r === "owner" || r === "manager" || r === "staff" || r === "admin";
   async function staffIds(b) {
+    const P = globalThis.naslifeBizPerms;
+    if (P) { try { return await P.holders(b, ...MOD_PERMS); } catch { /* ignore */ } }
     const ids = new Set(); if (b.owner_id) ids.add(b.owner_id);
     try { for (const r of (await pool.query("SELECT user_id FROM biz_staff WHERE biz_id=$1 AND role IN ('manager','staff')", [b.id])).rows) ids.add(r.user_id); } catch { /* ignore */ }
     return [...ids];

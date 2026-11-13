@@ -39,7 +39,7 @@ export default async function bizOnboard(app, opts = {}) {
   const auth = opts.auth ?? globalThis.naslifeAuth ?? null;
   if (!pool || !auth) throw new Error("biz_onboard: pool and auth are required");
   const H = () => globalThis.naslifeBizHelpers;
-  if (!H() || typeof globalThis.naslifeBizCreate !== "function") throw new Error("biz_onboard: business.js must be registered first");
+  if (!H() || !globalThis.naslifeBizPerms || typeof globalThis.naslifeBizCreate !== "function") throw new Error("biz_onboard: business.js must be registered first");
 
   const unauthorized = (reply) => reply.code(401).send({ error: "auth" });
   const bad = (reply, code, error, extra = {}) => reply.code(code).send({ error, ...extra });
@@ -55,15 +55,18 @@ export default async function bizOnboard(app, opts = {}) {
   const out = (b, extra) => globalThis.naslifeBizOut(b, extra);
   let trgm = null;
   const hasTrgm = async () => { if (trgm == null) { try { trgm = (await pool.query("SELECT 1 FROM pg_extension WHERE extname='pg_trgm'")).rowCount > 0; } catch { trgm = false; } } return trgm; };
-  /// يحمّل الدائرة (بأعمدتها المحسوبة) ويتحقق من الصلاحية: manage = مالك/مدير/مدير النظام، operate = + موظف
-  async function guard(req, reply, level) {
+  /// يحمّل الدائرة (بأعمدتها المحسوبة) ويتحقق من الصلاحية بالاسم عبر المساعد المشترك في business.js.
+  /// need: صلاحية أو قائمة يكفي أحدها، أو "member" لأي عضو له صلاحية غير التوظيف (المالك والمدير والموظف في القوالب).
+  const P = () => globalThis.naslifeBizPerms;
+  async function guard(req, reply, need) {
     const uid = await auth(req); if (!uid) { unauthorized(reply); return null; }
     if (!SLUG_RE.test(req.params.id ?? "")) { bad(reply, 404, "not-found"); return null; }
     const b = await load(req.params.id, uid);
     if (!b) { bad(reply, 404, "not-found"); return null; }
-    const role = await H().roleFor(uid, b);
-    if (!(level === "manage" ? H().canManage(role) : H().canOperate(role))) { bad(reply, 403, "forbidden"); return null; }
-    return { uid, b, role };
+    const m = await P().memberOf(uid, b);
+    const ok = need === "member" ? [...m.perms].some((p) => p !== "hiring") : [].concat(need).some((p) => m.perms.has(p));
+    if (!ok) { bad(reply, 403, "forbidden"); return null; }
+    return { uid, b, role: m.role, perms: m.perms };
   }
 
   // ---- الاكتمال: قائمة موزونة ومستوى تراكمي وخطوة تالية واحدة بتبويبها في لوحة الدائرة
@@ -151,20 +154,20 @@ export default async function bizOnboard(app, opts = {}) {
 
   // ---- الاكتمال (المالك والمدير والموظف ومدير النظام)
   app.get("/biz/:id/completeness", async (req, reply) => {
-    const g = await guard(req, reply, "operate"); if (!g) return;
+    const g = await guard(req, reply, "member"); if (!g) return;
     return completeness(g.b);
   });
 
   // ---- التوثيق: ما أرسله الطاقم (رقم الكيان ووثيقته لا يظهران إلا هنا ولمدير النظام)
   app.get("/biz/:id/verification", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "profile"); if (!g) return;
     const v = H().verOf(g.b);
     return { ...verView(g.b), entityNumber: g.b.entity_number ?? null, docUrl: v.docUrl ?? null, canSell: H().verStatus(g.b) === "approved", lookupUrl: lookupUrl(g.b.entity_kind) };
   });
   // إرسال الوثيقة (مالك/مدير): سجل تجاري برقم من 10 أرقام أو وثيقة عمل حر برقم من 8–20 حرفاً/رقماً، والوثيقة المرفوعة إلزامية؛
   // يجوز الإرسال من جديد بعد الرفض أو أثناء الانتظار (يستبدل الطلب)، ولا يجوز بعد الاعتماد
   app.post("/biz/:id/verification", async (req, reply) => {
-    const g = await guard(req, reply, "manage"); if (!g) return;
+    const g = await guard(req, reply, "profile"); if (!g) return;
     const body = req.body ?? {};
     const entityKind = str(body.entityKind, 10); if (!ENTITY_KINDS.has(entityKind)) return bad(reply, 400, "bad-entity");
     const entityNumber = latinDigits(str(body.entityNumber, 40)).replace(/[\s\-]/g, "");
@@ -173,6 +176,7 @@ export default async function bizOnboard(app, opts = {}) {
     if (H().verStatus(g.b) === "approved") return bad(reply, 409, "already-approved");
     const verification = { status: "pending", docUrl, submittedAt: new Date().toISOString(), submittedBy: g.uid };
     await pool.query("UPDATE biz SET entity_kind=$2, entity_number=$3, verification=$4::jsonb, verified=false, verified_at=NULL, updated_at=now() WHERE id=$1", [g.b.id, entityKind, entityNumber, JSON.stringify(verification)]);
+    try { await P().log(g.b.id, g.uid, "verification.submit", g.b.id, `أرسل طلب التوثيق (${ENTITY_AR[entityKind]})`); } catch { /* السجل لا يُفشل الطلب */ }
     await notifyAdmins({ kind: "biz_verification", title: "طلب توثيق دائرة", body: `${bizName(g.b)} · ${ENTITY_AR[entityKind]} ${entityNumber}`, data: { bizId: g.b.id } });
     return { status: "pending", verification: { ...verView({ ...g.b, verification, entity_kind: entityKind }), entityNumber, docUrl } };
   });
@@ -218,7 +222,7 @@ export default async function bizOnboard(app, opts = {}) {
 
   // ---- دبوس «هنا اليوم» للدائرة المتنقلة (المالك والمدير والموظف): موقع مؤقت لساعات يظهر على الخريطة وفي الصف ثم يزول وحده
   app.post("/biz/:id/here", async (req, reply) => {
-    const g = await guard(req, reply, "operate"); if (!g) return;
+    const g = await guard(req, reply, ["orders", "profile"]); if (!g) return;
     if (g.b.presence !== "mobile") return bad(reply, 409, "not-mobile");
     const lat = num(req.body?.lat), lng = num(req.body?.lng); if (!geoOk(lat, lng)) return bad(reply, 400, "bad-location");
     const hours = req.body?.hours == null || req.body.hours === "" ? DEFAULT_HERE_HOURS : num(req.body.hours);
@@ -229,7 +233,7 @@ export default async function bizOnboard(app, opts = {}) {
     return { here: { lat, lng, until: here.until } };
   });
   app.delete("/biz/:id/here", async (req, reply) => {
-    const g = await guard(req, reply, "operate"); if (!g) return;
+    const g = await guard(req, reply, ["orders", "profile"]); if (!g) return;
     await pool.query("UPDATE biz SET here=NULL, updated_at=now() WHERE id=$1", [g.b.id]);
     return { ok: true };
   });
