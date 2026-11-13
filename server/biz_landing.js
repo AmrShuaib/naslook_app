@@ -23,6 +23,8 @@ export default async function bizLanding(app, opts = {}) {
   const head = (reply) => reply.header("cache-control", "no-store").header("x-robots-tag", "noindex, nofollow");
   app.get("/business/register", async (req, reply) => reg ? head(reply).type("text/html; charset=utf-8").send(reg) : head(reply).code(404).type("text/plain; charset=utf-8").send("not found"));
   app.get("/business/register.js", async (req, reply) => regJs ? head(reply).type("application/javascript; charset=utf-8").send(regJs) : head(reply).code(404).type("text/plain; charset=utf-8").send("not found"));
+  // إدارة الدائرة من الويب: لوحة الدائرة نفسها في التطبيق. التطبيق يقرأ #/manage فيطلب الدخول ثم يفتح اللوحة
+  app.get("/business/manage", async (req, reply) => reply.header("cache-control", "no-store").redirect("/#/manage"));
   // من يكتب العنوان بأحرف كبيرة أو بشرطة أخيرة يصل إلى الصفحة نفسها
   app.get("/business/", async (req, reply) => reply.redirect("/business"));
   app.get("/BUSINESS", async (req, reply) => reply.redirect("/business"));

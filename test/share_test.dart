@@ -101,6 +101,10 @@ void main() {
     expect(parsePendingLink(Uri.parse('https://naslife.app/u/amr'))?.toString(), 'user:amr');
     expect(parsePendingLink(Uri.parse('https://naslife.app/u/%D8%B3%D8%A7%D8%B1%D8%A9'))?.value, 'سارة');
     expect(parsePendingLink(Uri.parse('https://naslife.app/#/c/biz-kaia'))?.toString(), 'circle:biz-kaia');
+    // رابط إدارة الدائرة من صفحة الأعمال: بالمسار أو بالجزء بعد تحويل الخادم
+    expect(parsePendingLink(Uri.parse('https://naslife.app/#/manage'))?.isManage, true);
+    expect(parsePendingLink(Uri.parse('https://naslife.app/business/manage'))?.isManage, true);
+    expect(parsePendingLink(Uri.parse('https://naslife.app/business'))?.isManage ?? false, false);
     expect(parsePendingLink(Uri.parse('https://naslife.app/c/BAD ID')), isNull);
     expect(parsePendingLink(Uri.parse('https://naslife.app/')), isNull);
     expect(parsePendingLink(Uri.parse('https://naslife.app/#/n/aaaaaaaa-0000-4000-8000-000000000000')), isNull);

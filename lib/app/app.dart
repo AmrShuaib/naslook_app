@@ -21,6 +21,7 @@ import '../pages/events/events_page.dart';
 import '../pages/market/market_page.dart';
 import '../ui/widgets.dart';
 import '../pages/business/business_page.dart';
+import '../pages/business/owner/manage_link_page.dart';
 import '../pages/profile/public_profile_page.dart';
 import '../api/client.dart';
 import '../core/push/push_service.dart';
@@ -90,7 +91,8 @@ class AuthGate extends ConsumerWidget {
         // رابط عام (دائرة أو حساب) بلا جلسة: نعرض الوجهة كزائر مع شريط للدخول؛ ووضع التصفّح بلا حساب يعرض تبويبات الزائر،
         // إلا إن طلب الزائر الدخول
         if (!ref.watch(guestWantsLoginProvider)) {
-          if (pendingLink != null) return GuestShell(link: pendingLink!);
+          // رابط إدارة الدائرة ليس وجهة للزائر: شاشة الدخول أولاً ثم اللوحة
+          if (pendingLink != null && !pendingLink!.isManage) return GuestShell(link: pendingLink!);
           if (ref.watch(guestBrowseProvider)) return const GuestShell();
         }
         return const LoginPage();
@@ -369,6 +371,7 @@ Widget pendingLinkPage(PendingLink l) => switch (l.kind) {
       'moment' => MomentLinkPage(id: l.value),
       'circle' => BusinessPage(id: l.value),
       'listing' => ListingPage(l.value),
+      'manage' => const ManageLinkPage(),
       _ => PublicProfilePage(handle: l.value),
     };
 

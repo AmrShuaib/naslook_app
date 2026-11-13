@@ -9,14 +9,15 @@ import '../app_theme.dart';
 import 'share_stub.dart' if (dart.library.js_interop) 'share_web.dart' if (dart.library.io) 'share_io.dart' as impl;
 
 /// رابط عام وصل عند الإقلاع: دائرة (`/c/<id>`) أو حساب (`/u/<نك نيم>`) أو لحظة (`/m/<uuid>`) أو عرض في السوق (`/l/<uuid>`)،
-/// بالمسار أو بالجزء (`#/c/…`).
+/// بالمسار أو بالجزء (`#/c/…`)، أو لوحة إدارة الدائرة (`/business/manage` يحوّله الخادم إلى `#/manage`) وهذه تحتاج دخولاً.
 class PendingLink {
-  final String kind; // circle | user | moment | listing
+  final String kind; // circle | user | moment | listing | manage
   final String value;
   const PendingLink(this.kind, this.value);
   bool get isCircle => kind == 'circle';
   bool get isMoment => kind == 'moment';
   bool get isListing => kind == 'listing';
+  bool get isManage => kind == 'manage';
   @override
   String toString() => '$kind:$value';
 }
@@ -31,8 +32,11 @@ final _momentRe = RegExp(r'^/?m/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0
 // رابط عرض السوق: صفحة /l/<id> في الخادم تحوّل إلى /#/l/<id> (وكان التطبيق يفتح الرئيسية لأنه لا يعرف /l/)
 final _listingRe = RegExp(r'^/?l/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/?$');
 
+final _manageRe = RegExp(r'^/?(?:business/)?manage/?$');
+
 PendingLink? parsePendingLink(Uri uri) {
   for (final s in [uri.path, uri.fragment]) {
+    if (_manageRe.hasMatch(s)) return const PendingLink('manage', '');
     final m = _circleRe.firstMatch(s);
     if (m != null) return PendingLink('circle', m.group(1)!);
     final u = _userRe.firstMatch(s);

@@ -11,6 +11,7 @@ import 'package:naslook/api/client.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/owner/business_dashboard_page.dart';
+import 'package:naslook/pages/business/owner/manage_link_page.dart';
 import 'package:naslook/pages/business/owner/my_businesses_page.dart';
 import 'package:naslook/state/app_state.dart';
 import 'package:naslook/state/providers.dart';
@@ -87,6 +88,15 @@ void main() {
     expect(s.revenueLast7, 6000);
     expect(s.daily.single.revenue, 100);
     expect(s.rating, 4.5);
+  });
+
+  testWidgets('the web manage link opens the single circle dashboard directly', (tester) async {
+    final srv = _Srv();
+    await _pump(tester, srv, const ManageLinkPage());
+    expect(find.byKey(const Key('manage-dashboard')), findsOneWidget);
+    expect(srv.calls, contains('GET /biz/mine'));
+    expect(srv.calls, contains('GET /biz/biz-cafe/stats'));
+    expect(find.byType(MyBusinessesPage), findsNothing);
   });
 
   testWidgets('my businesses lists owned circles and pending claims', (tester) async {

@@ -39,6 +39,8 @@ for (const u of ['/auth/register', '/auth/verify', '/auth/login', '/chat/upload'
 ok(!/https?:\/\//.test(j.body.replace(/\/\/[^\n]*/g, '')) && /credentials: 'omit'/.test(j.body), 'every call is same-origin and carries only the x-token header');
 ok(!/localStorage|sessionStorage|document\.cookie/.test(j.body), 'the session token is kept in memory only');
 ok(j.body.includes("'car_rental'") && j.body.includes('\\d{10}') && j.body.includes('{8,20}') && j.body.includes('[a-z0-9_]{3,25}'), 'the script uses the server rules for categories, document numbers and usernames');
+const mg = await app.inject({ method: 'GET', url: '/business/manage' });
+ok(mg.statusCode === 302 && mg.headers.location === '/#/manage', '/business/manage opens the app at the circle dashboard');
 for (const u of ['/business/', '/BUSINESS', '/Business']) {
   const x = await app.inject({ method: 'GET', url: u });
   ok(x.statusCode === 302 && x.headers.location === '/business', `${u} redirects to /business`);
