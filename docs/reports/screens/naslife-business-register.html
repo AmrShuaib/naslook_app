@@ -145,6 +145,19 @@
   .rg-link { border: 0; background: none; padding: 6px 4px; color: var(--blue-d); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
   .rg-biglink { display: inline-block; margin-top: 4px; padding: 8px 16px; border-radius: 12px; background: var(--blue-50); color: var(--blue-d); font-weight: 700; overflow-wrap: anywhere; }
   .rg-btn:disabled { opacity: .65; cursor: progress; }
+  textarea.rg-in { min-height: 96px; resize: vertical; line-height: 1.7; }
+  .rg-hours { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; } .rg-hours > .rg-in { width: auto; min-width: 150px; }
+  .rg-hr { display: inline-flex; align-items: center; gap: 8px; } .rg-hr .rg-in { width: auto; min-width: 118px; } .rg-hr em { font-style: normal; color: var(--muted); font-size: 14px; }
+  .rg-items-h { display: grid; gap: 2px; margin-top: 20px; }
+  #rg-items { display: grid; gap: 10px; margin: 12px 0; }
+  .rg-item { display: grid; grid-template-columns: 62px minmax(0, 1.4fr) minmax(0, .7fr) 44px; gap: 10px; align-items: start; padding: 12px; border-radius: 16px; background: var(--soft); }
+  .rg-item .rg-drop { padding: 0; border: 0; background: none; } .rg-item .rg-drop .th { width: 62px; height: 62px; border-radius: 14px; }
+  .rg-item .wide { grid-column: 2 / -1; } .rg-item .rg-in { min-height: 46px; }
+  .rg-item .x { width: 44px; height: 46px; border: 0; border-radius: 13px; background: #fff; box-shadow: inset 0 0 0 1.5px var(--line); color: var(--red-d); font-size: 20px; cursor: pointer; }
+  .rg-item .pv { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); } .rg-item .pv input { width: 18px; height: 18px; accent-color: var(--blue); }
+  .rg-item.bad { box-shadow: inset 0 0 0 1.5px var(--red); }
+  @media (max-width: 560px) { .rg-item { grid-template-columns: 62px minmax(0, 1fr) 44px; } .rg-item .price { grid-column: 2 / 3; grid-row: 2; } .rg-item .wide { grid-column: 1 / -1; } }
+  .rg-warn { margin: 14px auto 0; max-width: 520px; padding: 12px 14px; border-radius: 14px; background: var(--yellow-50); color: var(--yellow-d); font-size: 14.5px; text-align: start; }
   .rg-foot { padding: 0 0 34px; color: var(--muted); font-size: 13.5px; text-align: center; }
   .rg-foot a { text-decoration: underline; text-underline-offset: 3px; }
 </style>
@@ -244,7 +257,30 @@
           </fieldset>
 
           <fieldset class="rg-card rg-sec">
-            <legend><span class="rg-n">6</span>حسابك في ناس لايف</legend>
+            <legend><span class="rg-n">6</span>بيانات الدائرة <span class="rg-opt">(اختيارية، وتكمل الدائرة)</span></legend>
+            <p class="rg-hint">أضفها الآن أو لاحقاً. الدائرة المكتملة فيها ساعات ووصف وثلاث صور وثلاثة أصناف.</p>
+            <div class="rg-grid">
+              <div class="rg-f full" data-f="description"><label for="rg-desc">وصف النشاط</label><textarea class="rg-in" id="rg-desc" name="description" rows="3" maxlength="2000" placeholder="ماذا تقدّم؟ وما الذي يميّزك؟ (20 حرفاً على الأقل)"></textarea><span class="rg-err">الوصف 20 حرفاً على الأقل، أو اتركه فارغاً.</span></div>
+              <div class="rg-f"><label for="rg-sector">التخصص</label><input class="rg-in" id="rg-sector" name="sector" maxlength="60" placeholder="مثال: محمصة وقهوة مختصة"></div>
+              <div class="rg-f" data-f="website"><label for="rg-web">الموقع الإلكتروني</label><input class="rg-in rg-ltr" id="rg-web" name="website" maxlength="200" inputmode="url" autocapitalize="none" placeholder="https://example.com"><span class="rg-err">اكتب الرابط كاملاً ويبدأ بـ https://</span></div>
+              <div class="rg-f full"><label for="rg-address">العنوان التفصيلي</label><input class="rg-in" id="rg-address" name="address" maxlength="120" placeholder="الشارع، المبنى، أقرب معلم"></div>
+              <div class="rg-f full"><span class="rg-lab">ساعات العمل</span>
+                <div class="rg-hours">
+                  <select class="rg-in" id="rg-hmode" name="hmode" aria-label="أيام العمل"><option value="">لم تُحدد</option><option value="daily">يومياً</option><option value="range">أيام محددة</option><option value="always">24 ساعة</option></select>
+                  <span class="rg-hr" id="rg-hdays" hidden><select class="rg-in" id="rg-hfrom" name="hfrom" aria-label="من يوم"><option value="6">السبت</option><option value="0">الأحد</option><option value="1">الاثنين</option><option value="2">الثلاثاء</option><option value="3">الأربعاء</option><option value="4">الخميس</option><option value="5">الجمعة</option></select><em>إلى</em><select class="rg-in" id="rg-hto" name="hto" aria-label="إلى يوم"><option value="6">السبت</option><option value="0">الأحد</option><option value="1">الاثنين</option><option value="2">الثلاثاء</option><option value="3">الأربعاء</option><option value="4" selected>الخميس</option><option value="5">الجمعة</option></select></span>
+                  <span class="rg-hr" id="rg-htimes" hidden><input class="rg-in" type="time" id="rg-hopen" name="hopen" value="09:00" aria-label="وقت الفتح"><em>إلى</em><input class="rg-in" type="time" id="rg-hclose" name="hclose" value="23:00" aria-label="وقت الإغلاق"></span>
+                </div>
+                <span class="rg-hint" id="rg-hprev"></span></div>
+              <div class="rg-f full"><span class="rg-lab">صورة الغلاف</span>
+                <label class="rg-drop"><input type="file" id="rg-cover" accept="image/png,image/jpeg,image/webp"><span class="th doc" id="rg-cover-th"><svg class="i" aria-hidden="true"><use href="#r-img"/></svg></span><span><b id="rg-cover-t">اختر صورة الغلاف</b><small>صورة عريضة لمكانك أو منتجاتك.</small></span></label></div>
+            </div>
+            <div class="rg-items-h"><span class="rg-lab" id="rg-items-lab">الأصناف والخدمات</span><span class="rg-hint">الاسم والسعر يكفيان. الصنف بلا اسم يُتجاهل.</span></div>
+            <div id="rg-items"></div>
+            <button type="button" class="rg-btn line" id="rg-item-add">+ أضف صنفاً</button>
+          </fieldset>
+
+          <fieldset class="rg-card rg-sec">
+            <legend><span class="rg-n">7</span>حسابك في ناس لايف</legend>
             <p class="rg-hint">الدائرة تُدار من حسابك في ناس لايف.</p>
             <div class="rg-opts">
               <label class="rg-optc"><input type="radio" name="acc" value="new" checked><b>حساب جديد</b><span>يصلك رمز تأكيد على بريدك.</span></label>
@@ -277,7 +313,7 @@
           <div class="rg-card">
             <h2>ما اكتمل</h2>
             <ul class="rg-steps" id="rg-steps">
-              <li data-s="category">نوع النشاط</li><li data-s="identity">الاسم والشعار</li><li data-s="place">الموقع</li><li data-s="contact">الجوال</li><li data-s="verify">التوثيق</li><li data-s="account">الحساب</li>
+              <li data-s="category">نوع النشاط</li><li data-s="identity">الاسم والشعار</li><li data-s="place">الموقع</li><li data-s="contact">الجوال</li><li data-s="verify">التوثيق</li><li data-s="details">بيانات الدائرة</li><li data-s="account">الحساب</li>
             </ul>
           </div>
         </aside>
@@ -303,9 +339,10 @@
       <p><a class="rg-biglink" id="rg-done-link" href="https://naslife.app/" dir="ltr"></a></p>
       <ul class="rg-next">
         <li><span class="rg-n">1</span><div><b id="rg-done-ver">طلب التوثيق أُرسل</b><span id="rg-done-ver-s"></span></div></li>
-        <li><span class="rg-n">2</span><div><b>أكمل دائرتك من التطبيق</b><span>ادخل بحسابك وأضف ساعات العمل ووصفاً وصوراً وأصنافك من لوحة الدائرة.</span></div></li>
+        <li><span class="rg-n">2</span><div><b id="rg-done-data">بيانات الدائرة</b><span id="rg-done-data-s"></span></div></li>
         <li><span class="rg-n">3</span><div><b>شارك رابطها</b><span>أرسله لعملائك ليجدوك وينضموا إلى دائرتك.</span></div></li>
       </ul>
+      <p class="rg-warn" id="rg-done-warn" hidden></p>
       <a class="rg-btn" href="https://naslife.app/">افتح ناس لايف <svg class="i" aria-hidden="true"><use href="#r-arrow"/></svg></a>
     </section>
     <p class="rg-foot">© 2026 ناس لايف · أريب الرقمية · <a href="https://naslife.app/support" target="_blank" rel="noopener">الدعم</a></p>
