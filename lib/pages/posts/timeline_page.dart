@@ -638,12 +638,8 @@ class _Typographic extends StatelessWidget {
   }
 
   static Color _baseColor(String kind, String postKind) => switch (kind) {
-        'offer' => const Color(0xFFFFD66B),
-        'event' => const Color(0xFF6A1B9A),
-        'job' => const Color(0xFF1565C0),
-        'listing' => const Color(0xFF00897B),
-        'circle' => Joy.primary,
-        _ => postKind == 'audio' ? const Color(0xFF0A6E78) : Joy.accent,
+        'offer' || 'event' || 'job' || 'listing' || 'circle' => Joy.kindColor(kind),
+        _ => postKind == 'audio' ? const Color(0xFF0260D6) : Joy.primary,
       };
 }
 

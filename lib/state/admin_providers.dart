@@ -101,7 +101,7 @@ class InboxUnreadNotifier extends StateNotifier<int> {
       if (_primed && n > state && ref.read(messageSoundProvider)) MessageSound.play();
       _primed = true;
       state = n;
-      SystemChrome.setApplicationSwitcherDescription(ApplicationSwitcherDescription(label: n > 0 ? '($n) إدارة ناس لايف' : 'إدارة ناس لايف', primaryColor: 0xFF0A6E78));
+      SystemChrome.setApplicationSwitcherDescription(ApplicationSwitcherDescription(label: n > 0 ? '($n) إدارة ناس لايف' : 'إدارة ناس لايف', primaryColor: 0xFF0275FD));
     } catch (_) {
       // بلا شبكة أو بلا صلاحية: نُبقي القيمة الحالية
     }

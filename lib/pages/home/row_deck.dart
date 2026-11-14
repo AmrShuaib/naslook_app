@@ -256,16 +256,9 @@ class _Skeleton extends StatelessWidget {
   }
 }
 
-/// لون النوع على البطاقة ودبّوسه (الفعالية بنفسجية والوظيفة زرقاء كتصنيفات المنشورات، والدائرة «هنا اليوم» بلون
-/// دبّوس الدوائر). نوع غير معروف يأخذ لون اللحظة فلا تسقط البطاقة.
-Color rowKindColor(String kind) => switch (kind) {
-      'offer' => Joy.sunText,
-      'event' => const Color(0xFF6A1B9A),
-      'job' => const Color(0xFF1565C0),
-      'listing' => const Color(0xFF00897B),
-      'circle' => Joy.primary,
-      _ => Joy.accent,
-    };
+/// لون النوع على البطاقة ودبّوسه: الألوان الثابتة في [Joy.kindColor]، إلا العرض فيأخذ هنا درجة النص الداكنة من
+/// الأصفر لأن اللون يُكتب به على أبيض. نوع غير معروف يأخذ لون اللحظة فلا تسقط البطاقة.
+Color rowKindColor(String kind) => kind == 'offer' ? Joy.sunText : Joy.kindColor(kind);
 
 IconData rowKindIcon(String kind) => switch (kind) {
       'offer' => Icons.local_offer_rounded,

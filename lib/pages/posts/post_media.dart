@@ -330,7 +330,7 @@ class _AudioCardState extends State<_AudioCard> {
     final p = _player;
     final total = widget.durationSec != null ? Duration(seconds: widget.durationSec!) : null;
     return Container(
-      decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF0A6E78), Color(0xFF0B2F33)])),
+      decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF0275FD), Color(0xFF0A2E66)])),
       child: Builder(
         builder: (_) {
           final s = p?.state ?? const VoiceState();
@@ -362,7 +362,7 @@ class _AudioCardState extends State<_AudioCard> {
                     width: 64, height: 64,
                     child: s.loading && !s.playing && !failed
                         ? const Padding(padding: EdgeInsets.all(18), child: CircularProgressIndicator(strokeWidth: 2))
-                        : Icon(failed ? Icons.error_outline_rounded : s.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: const Color(0xFF0A6E78), size: 38),
+                        : Icon(failed ? Icons.error_outline_rounded : s.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: const Color(0xFF0275FD), size: 38),
                   ),
                 ),
               ),

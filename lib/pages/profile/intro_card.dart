@@ -147,7 +147,7 @@ class _ProfileIntroCardState extends State<ProfileIntroCard> {
                       key: const Key('intro-play'),
                       onTap: () => setState(() => _playVideo = true),
                       child: Container(
-                        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF0A6E78), Color(0xFF0B2F33)])),
+                        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF0275FD), Color(0xFF0A2E66)])),
                         child: Stack(alignment: Alignment.center, children: [
                           const Icon(Icons.play_circle_fill_rounded, size: 56, color: Colors.white),
                           Positioned(bottom: 8, right: 10, child: Text(i.durationText, textDirection: TextDirection.ltr, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12))),

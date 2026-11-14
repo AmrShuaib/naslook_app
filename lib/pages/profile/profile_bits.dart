@@ -79,7 +79,7 @@ class CoverBox extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         height: height,
         width: double.infinity,
-        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [Color(0xFF0A6E78), Color(0xFF12A0AE)])),
+        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [Color(0xFF0275FD), Color(0xFF4C9BFF)])),
         clipBehavior: Clip.antiAlias,
         child: Stack(fit: StackFit.expand, children: [
           if (url != null && url!.isNotEmpty) Image.network(mediaUrl(url!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox()),

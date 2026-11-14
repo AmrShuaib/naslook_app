@@ -1,36 +1,54 @@
 import 'package:flutter/material.dart';
 
-/// نظام «أبيض ونظيف»: خلفية بيضاء وصفوف مسطّحة بخطوط فاصلة رفيعة (على طريقة واتساب وسناب شات)،
-/// والفيروزي لون العلامة للأفعال والعناصر النشطة، والمرجاني للأحداث والشارات.
+/// «التصميم الثالث» (قرار المالك، 14 نوفمبر 2026): أبيض ونظيف، أزرق الشعار وحده للأفعال والعناصر النشطة،
+/// ولكل نوع محتوى لون ثابت من ألوان الشعار الأربعة ([Joy.kindColor])، وشريط الألوان الأربعة تحت كل شريط علوي.
 class Joy {
   static const bg = Color(0xFFFFFFFF);
   static const surface = Color(0xFFFFFFFF);
   /// خلفيات خفيفة: الفقاعات الواردة، حبوب التاريخ، حقول البحث، الرقائق
-  static const surface2 = Color(0xFFF2F2F7);
-  static const text = Color(0xFF111111);
-  static const textMuted = Color(0xFF6B7280);
-  static const line = Color(0xFFE5E5EA);
+  static const surface2 = Color(0xFFF4F6F9);
+  static const text = Color(0xFF25272A);
+  static const textMuted = Color(0xFF6A7079);
+  static const line = Color(0xFFE3E7EC);
   static const control = Color(0xFFC7C7CC);
-  static const primary = Color(0xFF0A6E78);
+  static const primary = Color(0xFF0275FD);
   static const primaryOn = Color(0xFFFFFFFF);
-  static const primarySoft = Color(0xFFE0F3F4);
-  static const accent = Color(0xFFBF3A1E);
+  static const primarySoft = Color(0xFFE6F1FF);
+  static const accent = Color(0xFFEE3B2A);
   static const accentOn = Color(0xFFFFFFFF);
-  static const accentSoft = Color(0xFFFDEBE6);
-  static const sun = Color(0xFFFFD66B);
+  static const accentSoft = Color(0xFFFDE8E5);
+  static const sun = Color(0xFFFEB304);
   static const sunSoft = Color(0xFFFFF4D6);
   static const sunText = Color(0xFF5A4200);
-  static const success = Color(0xFF1FA35A);
+  static const success = Color(0xFF29B25F);
   static const warning = Color(0xFF875C0A);
   static const danger = Color(0xFFD23B3B);
   /// الفقاعة الصادرة: صبغة فاتحة من لون العلامة (كما الأخضر الفاتح في واتساب)
-  static const bubbleOut = Color(0xFFDCF3EF);
-  static const bubbleOutText = Color(0xFF0F2D30);
-  /// فقاعات المحادثة (docs/chat.md): الواردة بيضاء بإطار رفيع، والصادرة تدرّج رأسي من لون العلامة إلى فيروزي أغمق
+  static const bubbleOut = Color(0xFFE6F1FF);
+  static const bubbleOutText = Color(0xFF0B2545);
+  /// فقاعات المحادثة (docs/chat.md): الواردة بيضاء بإطار رفيع، والصادرة تدرّج رأسي من أزرق العلامة إلى أزرق أغمق
   static const bubbleIn = Color(0xFFFFFFFF);
   static const bubbleInBorder = Color(0xFFE2E6EA);
-  static const bubbleOutGradientStart = Color(0xFF0A6E78);
-  static const bubbleOutGradientEnd = Color(0xFF07545C);
+  static const bubbleOutGradientStart = Color(0xFF0275FD);
+  static const bubbleOutGradientEnd = Color(0xFF0260D6);
+  /// ألوان الشعار الأربعة بترتيبها فيه (أصفر، أزرق، أخضر، أحمر): للشريط الرباعي وزر «+»
+  static const brand = [Color(0xFFFEB304), Color(0xFF0275FD), Color(0xFF29B25F), Color(0xFFEE3B2A)];
+  static const green = Color(0xFF29B25F);
+  static const greenSoft = Color(0xFFE5F6EC);
+  /// الوظائف خارج الألوان الأربعة فتأخذ بنفسجياً يميّزها عن لحظات الناس الزرقاء
+  static const job = Color(0xFF6D4AE0);
+
+  /// لون ثابت لكل نوع محتوى في كل مكان (البطاقات والدبابيس والرقائق): لحظات الناس أزرق، السوق أخضر، العروض أصفر،
+  /// الفعاليات أحمر، الوظائف بنفسجي، والدائرة بلون الحبر. نوع غير معروف يأخذ لون اللحظة.
+  static Color kindColor(String kind) => switch (kind) {
+        'listing' || 'market' => green,
+        'offer' => sun,
+        'event' => accent,
+        'job' => job,
+        'circle' || 'business' => text,
+        _ => primary,
+      };
+
   static const avatars = [
     Color(0xFFFFB09F), Color(0xFF9EE0CC), Color(0xFFA9D3FF),
     Color(0xFFD4BDFF), Color(0xFFFFDF7A), Color(0xFFFFB9D6),
@@ -89,7 +107,7 @@ class AppTheme {
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: false,
-        shape: const Border(bottom: BorderSide(color: Joy.line)),
+        shape: const BrandStripBorder(),
         titleTextStyle: display.copyWith(fontSize: 21),
       ),
       cardTheme: CardThemeData(
@@ -161,4 +179,30 @@ class AppTheme {
       popupMenuTheme: PopupMenuThemeData(color: Joy.surface, surfaceTintColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
     );
   }
+}
+
+/// الحد السفلي للشريط العلوي: شريط رفيع بألوان الشعار الأربعة بدل الخط الرمادي، فيظهر توقيع العلامة في كل صفحة.
+class BrandStripBorder extends ShapeBorder {
+  final double thickness;
+  const BrandStripBorder({this.thickness = 2.5});
+
+  @override
+  EdgeInsetsGeometry get dimensions => EdgeInsets.only(bottom: thickness);
+  @override
+  Path getInnerPath(Rect rect, {TextDirection? textDirection}) => Path()..addRect(Rect.fromLTRB(rect.left, rect.top, rect.right, rect.bottom - thickness));
+  @override
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) => Path()..addRect(rect);
+  @override
+  void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {
+    final w = rect.width / Joy.brand.length;
+    final rtl = textDirection == TextDirection.rtl;
+    for (var i = 0; i < Joy.brand.length; i++) {
+      // الترتيب يبدأ من جهة بداية السطر كما في الشعار
+      final x = rtl ? rect.right - (i + 1) * w : rect.left + i * w;
+      canvas.drawRect(Rect.fromLTWH(x, rect.bottom - thickness, w, thickness), Paint()..color = Joy.brand[i]);
+    }
+  }
+
+  @override
+  ShapeBorder scale(double t) => BrandStripBorder(thickness: thickness * t);
 }

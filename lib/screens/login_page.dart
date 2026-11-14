@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
+import '../core/app_theme.dart';
 import '../core/require_account.dart';
 import '../core/share/legal_links.dart';
 import '../state/app_state.dart';
@@ -34,7 +35,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Timer? _nickTimer;
   int _nickSeq = 0;
 
-  static const _primary = Color(0xFF1565C0);
+  static const _primary = Joy.primary;
 
   @override
   void initState() {

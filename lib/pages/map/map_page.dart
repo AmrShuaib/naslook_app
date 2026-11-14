@@ -1034,12 +1034,12 @@ Color _kindColor(MapItemKind k) => switch (k) {
       MapItemKind.person => Joy.primary,
       MapItemKind.story => Joy.sun,
       MapItemKind.pin => Joy.accent,
-      MapItemKind.business => Joy.primary,
-      MapItemKind.post => Joy.accent,
-      MapItemKind.listing => const Color(0xFF00897B),
+      MapItemKind.business => Joy.kindColor('circle'),
+      MapItemKind.post => Joy.primary,
+      MapItemKind.listing => Joy.kindColor('listing'),
       MapItemKind.offer => Joy.sun,
-      MapItemKind.event => const Color(0xFF6A1B9A),
-      MapItemKind.job => const Color(0xFF1565C0),
+      MapItemKind.event => Joy.kindColor('event'),
+      MapItemKind.job => Joy.kindColor('job'),
     };
 
 Color _kindOn(MapItemKind k) => switch (k) {
@@ -1083,12 +1083,12 @@ Color _itemColor(MapItem item) {
   if (item.data is RowItem) return rowKindColor((item.data as RowItem).kind);
   if (item.kind == MapItemKind.post) {
     return switch ((item.data as MapPost).tag) {
-      'offer' => Joy.accent,
+      'offer' => Joy.sun,
       'ad' => const Color(0xFFF9A825),
       'invest' => const Color(0xFF2E7D32),
-      'event' => const Color(0xFF6A1B9A),
-      'job' => const Color(0xFF1565C0),
-      _ => Joy.sun,
+      'event' => Joy.kindColor('event'),
+      'job' => Joy.kindColor('job'),
+      _ => Joy.primary,
     };
   }
   if (item.kind == MapItemKind.pin && (item.data as Pin).type == 'review') return const Color(0xFFF9A825);

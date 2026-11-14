@@ -76,7 +76,7 @@ class _Thumb extends StatelessWidget {
     final bg = colorFromHex(p.bg, Joy.accent);
     final dark = bg.computeLuminance() < .45;
     Widget board() => Container(
-          color: p.kind == 'audio' ? const Color(0xFF0A6E78) : bg,
+          color: p.kind == 'audio' ? const Color(0xFF0275FD) : bg,
           padding: const EdgeInsets.all(8),
           alignment: Alignment.center,
           child: p.kind == 'audio'

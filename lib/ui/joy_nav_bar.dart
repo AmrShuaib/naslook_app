@@ -152,16 +152,24 @@ class _ComposeButton extends StatelessWidget {
           alignment: Alignment.topCenter,
           child: Transform.translate(
             offset: const Offset(0, -20),
+            // زر «+» بألوان الشعار الأربعة دائرةً واحدة (التصميم الثالث)
             child: Material(
-              color: Joy.primary,
+              color: Colors.transparent,
               shape: const CircleBorder(),
               elevation: 6,
-              shadowColor: Joy.primary.withValues(alpha: .5),
-              child: InkWell(
-                key: const Key('nav-compose'),
-                customBorder: const CircleBorder(),
-                onTap: onTap,
-                child: const SizedBox(width: 56, height: 56, child: Icon(Icons.photo_camera_rounded, color: Colors.white, size: 26)),
+              shadowColor: Joy.text.withValues(alpha: .5),
+              clipBehavior: Clip.antiAlias,
+              child: Ink(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: SweepGradient(transform: const GradientRotation(math.pi / 4), colors: [Joy.brand[1], Joy.brand[2], Joy.brand[0], Joy.brand[3], Joy.brand[1]]),
+                ),
+                child: InkWell(
+                  key: const Key('nav-compose'),
+                  customBorder: const CircleBorder(),
+                  onTap: onTap,
+                  child: const SizedBox(width: 56, height: 56, child: Icon(Icons.add_rounded, color: Colors.white, size: 32, semanticLabel: 'لحظة جديدة')),
+                ),
               ),
             ),
           ),
