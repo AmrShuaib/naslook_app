@@ -9,6 +9,7 @@ import '../core/app_theme.dart';
 import '../core/require_account.dart';
 import '../core/share/legal_links.dart';
 import '../state/app_state.dart';
+import '../ui/launch_splash.dart';
 
 enum _Mode { login, register, forgot, reset }
 
@@ -294,7 +295,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: const Color(0xFFEEF2F7),
+        backgroundColor: Joy.bg,
         body: Center(
           child: SingleChildScrollView(
             child: Padding(
@@ -304,11 +305,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text('NASLIFE', style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: _primary, letterSpacing: 2)),
-                    const SizedBox(height: 40),
+                    // الشعار نفسه الذي في مقدمة التطبيق، على أبيض بلا بطاقة مظللة (التصميم الثالث)
+                    Image.asset(LaunchSplash.asset, key: const Key('login-logo'), width: 132, height: 132, gaplessPlayback: true, semanticLabel: 'ناس لايف'),
+                    const SizedBox(height: 12),
                     Container(
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 12, offset: Offset(0, 6))]),
-                      padding: const EdgeInsets.all(24),
+                      color: Joy.bg,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Form(
                         key: _formKey,
                         child: AutofillGroup(
