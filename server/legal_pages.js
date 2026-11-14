@@ -26,8 +26,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 // نفس ألوان المدونة والتطبيق، مع وضع داكن؛ الخطوط من أصول التطبيق نفسه
 const CSS = `
-:root{--bg:#FFFFFF;--surface:#F2F2F7;--line:#E5E5EA;--text:#111111;--muted:#6B7280;--accent:#0A6E78;--accent-soft:#E0F3F4;--accent-on:#FFFFFF;--warn:#BF3A1E;--warn-soft:#FDEBE6}
-@media (prefers-color-scheme:dark){:root{--bg:#121417;--surface:#1C2024;--line:#2A3036;--text:#F2F2F2;--muted:#9AA3AD;--accent:#4FB3BC;--accent-soft:#163338;--accent-on:#0B1416;--warn:#FF8A6B;--warn-soft:#3A1F17}}
+:root{--bg:#FFFFFF;--surface:#F2F2F7;--line:#E5E5EA;--text:#111111;--muted:#6B7280;--accent:#0275FD;--accent-soft:#E6F1FF;--accent-on:#FFFFFF;--warn:#EE3B2A;--warn-soft:#FDE8E5}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--surface:#1C2024;--line:#2A3036;--text:#F2F2F2;--muted:#9AA3AD;--accent:#4C9BFF;--accent-soft:#10294D;--accent-on:#0B1416;--warn:#FF8A6B;--warn-soft:#3A1F17}}
 @font-face{font-family:'Rubik';font-weight:500;src:url('/assets/fonts/Rubik-Medium.ttf') format('truetype');font-display:swap}
 @font-face{font-family:'Rubik';font-weight:700;src:url('/assets/fonts/Rubik-Bold.ttf') format('truetype');font-display:swap}
 @font-face{font-family:'Baloo';font-weight:700;src:url('/assets/fonts/BalooBhaijaan2-Bold.ttf') format('truetype');font-display:swap}

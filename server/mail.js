@@ -233,11 +233,11 @@ export function template({ title, preheader = "", greeting = "", lines = [], cod
   const p = (t, extra = "") => `<p style="margin:0 0 12px;font-size:15.5px;line-height:1.9;color:#1B2A2E;${extra}">${esc(t)}</p>`;
   const codeHtml = code ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 6px"><tr><td align="center">
 ${codeLabel ? `<div style="font-size:12.5px;font-weight:bold;color:#55666B;margin-bottom:8px">${esc(codeLabel)}</div>` : ""}
-<div style="display:inline-block;direction:ltr;font-family:'Courier New',Consolas,monospace;font-size:34px;font-weight:bold;letter-spacing:10px;color:#0A6E78;background:#E0F3F4;border:1px solid #BBDFE1;border-radius:14px;padding:12px 16px 12px 26px">${esc(code)}</div>
+<div style="display:inline-block;direction:ltr;font-family:'Courier New',Consolas,monospace;font-size:34px;font-weight:bold;letter-spacing:10px;color:#0275FD;background:#E6F1FF;border:1px solid #B9D6FF;border-radius:14px;padding:12px 16px 12px 26px">${esc(code)}</div>
 ${codeHint ? `<div style="font-size:12.5px;color:#55666B;margin-top:8px;line-height:1.7">${esc(codeHint)}</div>` : ""}
 </td></tr></table>` : "";
   const sectionHtml = (s) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 0;border:1px solid #E3EAEA;border-radius:14px;border-collapse:separate">
-${s.heading ? `<tr><td style="background:#F4F8F8;padding:10px 16px;font-size:13px;font-weight:bold;color:#0A6E78;text-align:right;border-radius:14px 14px 0 0">${esc(s.heading)}</td></tr>` : ""}
+${s.heading ? `<tr><td style="background:#F4F7FB;padding:10px 16px;font-size:13px;font-weight:bold;color:#0275FD;text-align:right;border-radius:14px 14px 0 0">${esc(s.heading)}</td></tr>` : ""}
 ${(s.rows || []).map(([k, v]) => `<tr><td style="padding:10px 16px;border-top:1px solid #EEF2F3;text-align:right"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="font-size:13px;color:#55666B;width:36%;text-align:right;vertical-align:middle">${esc(k)}</td><td style="font-size:15px;font-weight:bold;color:#1B2A2E;text-align:right;vertical-align:middle;direction:${ltr(v) ? "ltr" : "rtl"}">${esc(v)}</td></tr></table></td></tr>`).join("")}
 ${s.text ? `<tr><td style="padding:12px 16px;border-top:1px solid #EEF2F3;font-size:14px;line-height:1.8;color:#1B2A2E;text-align:right">${esc(s.text)}</td></tr>` : ""}
 </table>`;
@@ -248,30 +248,30 @@ ${phrase.hint ? `<div style="font-size:12.5px;color:#7A5A00;margin-top:8px;line-
 </td></tr></table>` : "";
   const stepsHtml = steps.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 0">
 ${stepsTitle ? `<tr><td style="font-size:15px;font-weight:bold;color:#14201F;padding-bottom:4px;text-align:right">${esc(stepsTitle)}</td></tr>` : ""}
-${steps.map((st, i) => `<tr><td style="padding:5px 0;text-align:right"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="width:26px;height:26px;border-radius:13px;background:#0A6E78;color:#ffffff;font-size:13px;font-weight:bold;text-align:center;vertical-align:middle">${i + 1}</td><td style="padding-right:10px;font-size:14.5px;line-height:1.7;color:#1B2A2E;text-align:right">${esc(st)}</td></tr></table></td></tr>`).join("")}
+${steps.map((st, i) => `<tr><td style="padding:5px 0;text-align:right"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="width:26px;height:26px;border-radius:13px;background:#0275FD;color:#ffffff;font-size:13px;font-weight:bold;text-align:center;vertical-align:middle">${i + 1}</td><td style="padding-right:10px;font-size:14.5px;line-height:1.7;color:#1B2A2E;text-align:right">${esc(st)}</td></tr></table></td></tr>`).join("")}
 </table>` : "";
-  const ctaHtml = cta ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px auto 6px"><tr><td align="center" style="background:#0A6E78;border-radius:12px"><a href="${esc(cta.url)}" style="display:inline-block;padding:13px 30px;font-size:15.5px;font-weight:bold;color:#ffffff;text-decoration:none;font-family:${F}">${esc(cta.label)}</a></td></tr></table>` : "";
+  const ctaHtml = cta ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px auto 6px"><tr><td align="center" style="background:#0275FD;border-radius:12px"><a href="${esc(cta.url)}" style="display:inline-block;padding:13px 30px;font-size:15.5px;font-weight:bold;color:#ffffff;text-decoration:none;font-family:${F}">${esc(cta.label)}</a></td></tr></table>` : "";
   const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="color-scheme" content="light"><title>${esc(title)}</title></head>
 <body style="margin:0;padding:0;background:#EEF3F3;font-family:${F};color:#1B2A2E;-webkit-text-size-adjust:100%">
 ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px">${esc(preheader)}</div>` : ""}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#EEF3F3"><tr><td align="center" style="padding:28px 12px">
 <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border-radius:18px;border-collapse:separate;overflow:hidden;box-shadow:0 6px 24px rgba(10,40,44,.08)">
-<tr><td style="background:#0A6E78;padding:18px 24px;border-radius:18px 18px 0 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<tr><td style="background:#0275FD;padding:18px 24px;border-radius:18px 18px 0 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
 <td style="text-align:right;vertical-align:middle"><img src="${APP_URL}/icons/Icon-192.png" width="40" height="40" alt="" style="display:inline-block;vertical-align:middle;border-radius:11px;margin-left:10px;border:0"><span style="display:inline-block;vertical-align:middle;font-size:21px;font-weight:bold;color:#ffffff">ناس لايف</span></td>
-<td style="text-align:left;vertical-align:middle;font-size:12.5px;color:#CFEAEC;white-space:nowrap">مدينتك · الآن</td>
+<td style="text-align:left;vertical-align:middle;font-size:12.5px;color:#CFE2FF;white-space:nowrap">مدينتك · الآن</td>
 </tr></table></td></tr>
-<tr><td style="height:4px;background:#BF3A1E;font-size:0;line-height:0">&nbsp;</td></tr>
+<tr><td style="height:4px;background:#EE3B2A;font-size:0;line-height:0">&nbsp;</td></tr>
 <tr><td style="padding:26px 24px 10px;text-align:right">
 <div style="font-size:22px;font-weight:bold;line-height:1.4;color:#14201F;margin:0 0 8px">${esc(title)}</div>
 ${greeting ? p(greeting, "color:#55666B;") : ""}
 ${lines.map((l) => p(l)).join("")}
 ${codeHtml}${sections.map(sectionHtml).join("")}${phraseHtml}${stepsHtml}${ctaHtml}
-${note ? `<div style="margin:18px 0 6px;padding:12px 14px;background:#F4F8F8;border-radius:12px;font-size:13px;line-height:1.8;color:#55666B">${esc(note)}</div>` : ""}
+${note ? `<div style="margin:18px 0 6px;padding:12px 14px;background:#F4F7FB;border-radius:12px;font-size:13px;line-height:1.8;color:#55666B">${esc(note)}</div>` : ""}
 </td></tr>
 <tr><td style="padding:16px 24px 22px;border-top:1px solid #EEF2F3;text-align:right;border-radius:0 0 18px 18px">
 ${reason ? `<div style="font-size:12.5px;color:#6B7A7D;line-height:1.7">${esc(reason)}</div>` : ""}
 <div style="font-size:12.5px;color:#6B7A7D;line-height:1.7;margin-top:${reason ? 6 : 0}px">${esc(footer)}</div>
-<div style="font-size:12px;color:#8A979A;margin-top:10px"><a href="${APP_URL}" style="color:#0A6E78;text-decoration:none">naslife.app</a> · <a href="${APP_URL}/blog" style="color:#0A6E78;text-decoration:none">المدونة</a> · © ${new Date().getFullYear()} ناس لايف</div>
+<div style="font-size:12px;color:#8A979A;margin-top:10px"><a href="${APP_URL}" style="color:#0275FD;text-decoration:none">naslife.app</a> · <a href="${APP_URL}/blog" style="color:#0275FD;text-decoration:none">المدونة</a> · © ${new Date().getFullYear()} ناس لايف</div>
 </td></tr>
 </table>
 </td></tr></table></body></html>`;
