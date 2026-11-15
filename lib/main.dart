@@ -10,6 +10,7 @@ import 'core/media/video_view.dart';
 import 'core/media/voice_player.dart';
 import 'core/push/push_service.dart';
 import 'core/share/share_links.dart';
+import 'core/swr.dart';
 import 'state/admin_providers.dart';
 import 'state/notify_providers.dart';
 
@@ -31,5 +32,7 @@ void main() {
   // حين تُفتح بلمسة، ولو فُتح العارض بعد انتظار شبكة (المحفوظات، بطاقة #post في المحادثة): pointerup اللمسة يسبق الانتظار
   VideoView.prepareSound();
   VoicePlayer.prepareSound();
+  // تجهيز تخزين «اعرض المحفوظ ثم حدّث» بلا انتظار: يسبق أول قائمة لأن استعادة الجلسة تأخذ أطول منه
+  unawaited(Swr.prime());
   runApp(const ProviderScope(child: MainApp()));
 }

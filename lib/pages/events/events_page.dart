@@ -1,3 +1,4 @@
+import '../../core/swr.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,7 +24,7 @@ import '../wallet/wallet_page.dart';
 import 'event_create_page.dart';
 import 'ticket_share_page.dart';
 
-final eventsProvider = FutureProvider<List<Event>>((ref) => ref.watch(apiClientProvider).events());
+final eventsProvider = FutureProvider<List<Event>>((ref) => swr(ref, 'events', ref.watch(apiClientProvider).events));
 final myEventsProvider = FutureProvider<List<Event>>((ref) => ref.watch(apiClientProvider).events(mine: true));
 final eventProvider = FutureProvider.family<Event, String>((ref, id) => ref.watch(apiClientProvider).event(id));
 final ticketsProvider = FutureProvider<List<Ticket>>((ref) => ref.watch(apiClientProvider).tickets());

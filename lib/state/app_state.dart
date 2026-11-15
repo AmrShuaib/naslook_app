@@ -1,3 +1,4 @@
+import '../core/swr.dart';
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -370,6 +371,8 @@ class AppStateNotifier extends StateNotifier<AppState> {
       }
     }
     await _runSignOutHooks(serverStopped);
+    // ما حُفظ للعرض السريع (محادثات، صف، دوائر) لا يبقى على الجهاز بعد الخروج
+    await Swr.clear();
     try {
       await _api.logout();
       await _store.clear();

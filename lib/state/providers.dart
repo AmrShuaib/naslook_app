@@ -1,3 +1,4 @@
+import '../core/swr.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/jobs_api.dart';
@@ -23,9 +24,9 @@ final socketProvider = Provider<NaslifeSocket?>((ref) {
 final signedInProvider = Provider<bool>((ref) => ref.watch(appStateProvider.select((s) => s.isSignedIn)));
 
 final profileProvider = FutureProvider<Profile>((ref) => ref.watch(apiClientProvider).myProfile());
-final contactsProvider = FutureProvider<List<Person>>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).contacts() : const <Person>[]);
+final contactsProvider = FutureProvider<List<Person>>((ref) async => ref.watch(signedInProvider) ? swr(ref, 'contacts', ref.watch(apiClientProvider).contacts) : const <Person>[]);
 final requestsProvider = FutureProvider<List<FriendRequest>>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).requests() : const <FriendRequest>[]);
-final chatsProvider = FutureProvider<List<Chat>>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).chats() : const <Chat>[]);
+final chatsProvider = FutureProvider<List<Chat>>((ref) async => ref.watch(signedInProvider) ? swr(ref, 'chats', ref.watch(apiClientProvider).chats) : const <Chat>[]);
 final myVesselsProvider = FutureProvider<List<Vessel>>((ref) async => ref.watch(signedInProvider) ? ref.watch(apiClientProvider).myVessels() : const <Vessel>[]);
 final discoverVesselsProvider = FutureProvider.family<List<Vessel>, String>((ref, q) => ref.watch(apiClientProvider).vessels(q: q));
 /// المنشورات المخفية بقرار مشرفي الدوائر أو البلاغات؛ تُصفّى من البث وصفحات الدوائر.

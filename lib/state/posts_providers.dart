@@ -1,3 +1,4 @@
+import '../core/swr.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -9,7 +10,12 @@ import 'providers.dart';
 import 'row_providers.dart';
 
 /// منشورات الخريطة ضمن الحدود المرئية.
-final mapPostsProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClientProvider).posts(bbox: ref.watch(bboxProvider)));
+final mapPostsProvider = FutureProvider<List<MapPost>>((ref) {
+  final api = ref.watch(apiClientProvider);
+  final bbox = ref.watch(bboxProvider);
+  // أول فتح: لحظات آخر مرة تظهر على الخريطة فوراً ثم تُستبدل بلحظات الحدود الحالية
+  return swr(ref, 'mapposts', () => api.posts(bbox: bbox));
+});
 /// أحدث المنشورات للشريط في الرئيسية.
 final recentPostsProvider = FutureProvider<List<MapPost>>((ref) => ref.watch(apiClientProvider).posts(limit: 30));
 /// منشوراتي: للزائر قائمة فارغة بلا طلب.

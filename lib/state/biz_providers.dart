@@ -1,3 +1,4 @@
+import '../core/swr.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/biz_api.dart';
@@ -9,8 +10,12 @@ import 'providers.dart';
 /// مفتاح قائمة الدوائر: الفئة، مفتوح الآن، الترتيب، وموقع المستخدم للترتيب بالقرب.
 typedef BizQuery = ({String cat, bool open, String sort, double? lat, double? lng});
 const BizQuery bizQueryAll = (cat: '', open: false, sort: '', lat: null, lng: null);
-final bizListProvider = FutureProvider.family<List<Biz>, BizQuery>((ref, k) =>
-    ref.watch(apiClientProvider).businessCircles(category: k.cat.isEmpty ? null : BizCategory.of(k.cat), openNow: k.open, sort: k.sort, lat: k.lat, lng: k.lng));
+final bizListProvider = FutureProvider.family<List<Biz>, BizQuery>((ref, k) {
+  final api = ref.watch(apiClientProvider);
+  Future<List<Biz>> fetch() => api.businessCircles(category: k.cat.isEmpty ? null : BizCategory.of(k.cat), openNow: k.open, sort: k.sort, lat: k.lat, lng: k.lng);
+  // القائمة الكاملة وحدها تُعرض من المحفوظ (استكشف وتبويب الدوائر)؛ القوائم المفلترة تتغير مفاتيحها مع الموقع فتُجلب مباشرة
+  return k == bizQueryAll ? swr(ref, 'biz-all', fetch) : fetch();
+});
 final bizDetailProvider = FutureProvider.family<Biz, String>((ref, id) => ref.watch(apiClientProvider).businessCircle(id));
 final myBizOrdersProvider = FutureProvider<List<BizOrder>>((ref) => ref.watch(apiClientProvider).myBizOrders());
 

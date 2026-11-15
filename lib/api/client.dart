@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 import '../core/platform.dart' as platform;
+import '../core/swr.dart';
 import 'session.dart';
 
 /// خطأ قادم من الخادم أو من الشبكة.
@@ -233,8 +234,18 @@ class ApiClient {
   // طلبات عامة
   // ---------------------------------------------------------------------------
 
-  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) =>
-      _send(() => _http.get(_uri(path, query), headers: _headers(json: false)), prompt: false);
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) async {
+    // داخل swr (lib/core/swr.dart): أول عرض يأخذ آخر رد محفوظ، والجلب الفعلي يحفظ رده للمرة القادمة
+    final key = Swr.nextKey(token);
+    if (key != null && Swr.cacheMode) {
+      final hit = await Swr.read(key);
+      if (hit == null) throw const SwrMiss();
+      return hit;
+    }
+    final data = await _send(() => _http.get(_uri(path, query), headers: _headers(json: false)), prompt: false);
+    if (key != null) unawaited(Swr.write(key, data));
+    return data;
+  }
 
   /// GET «انتظار طويل» يحجزه الخادم حتى يصل حدث (القناة الحية /live/wait): مهلة أطول من الطلبات العادية.
   Future<Map<String, dynamic>> getWait(String path, {Map<String, String>? query, Duration timeout = const Duration(seconds: 45)}) =>
