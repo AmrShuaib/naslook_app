@@ -8,6 +8,7 @@ import '../../core/require_adult.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../api/event_attendees_api.dart';
+import '../../api/ticket_share_api.dart';
 import '../../core/app_theme.dart';
 import '../../core/chat/codes.dart';
 import '../../state/app_state.dart';
@@ -20,6 +21,7 @@ import '../../ui/widgets.dart';
 import '../../ui/wish_button.dart';
 import '../wallet/wallet_page.dart';
 import 'event_create_page.dart';
+import 'ticket_share_page.dart';
 
 final eventsProvider = FutureProvider<List<Event>>((ref) => ref.watch(apiClientProvider).events());
 final myEventsProvider = FutureProvider<List<Event>>((ref) => ref.watch(apiClientProvider).events(mine: true));
@@ -391,7 +393,10 @@ class _TierState extends ConsumerState<_Tier> {
       ref.invalidate(eventProvider(widget.e.id)); ref.invalidate(ticketsProvider); ref.invalidate(walletProvider); ref.invalidate(eventsProvider);
       if (mounted) {
         toast(context, 'تم الحجز · ${tickets.length} تذكرة');
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyTicketsPage()));
+        // أكثر من تذكرة: واحدة للمشتري والبقية لأصحابه، فنعرض التوزيع الآن ما دام في باله
+        final share = tickets.length > 1 && await _offerShare(tickets.length);
+        if (!mounted) return;
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => share ? TicketSharePage(eventId: widget.e.id, title: widget.e.title) : const MyTicketsPage()));
       }
     } catch (e) {
       final s = e.toString();
@@ -400,37 +405,143 @@ class _TierState extends ConsumerState<_Tier> {
       if (mounted) setState(() => busy = false);
     }
   }
+
+  Future<bool> _offerShare(int n) async =>
+      await showModalBottomSheet<bool>(
+        context: context,
+        showDragHandle: true,
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text(n == 2 ? 'معك تذكرتان' : 'معك $n تذاكر', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+              const SizedBox(height: 4),
+              const Text('واحدة لك، والبقية أرسلها لمن يحضر معك: إلى حسابه في ناس لايف أو برابط عبر أي تطبيق.', style: TextStyle(color: Joy.textMuted, height: 1.6)),
+              const SizedBox(height: 14),
+              FilledButton.icon(key: const Key('buy-share-now'), onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.group_add_outlined), label: const Text('وزّع التذاكر على أصحابك')),
+              TextButton(key: const Key('buy-share-later'), onPressed: () => Navigator.pop(ctx, false), child: const Text('لاحقاً')),
+            ]),
+          ),
+        ),
+      ) ??
+      false;
 }
 
 class MyTicketsPage extends ConsumerWidget {
   const MyTicketsPage({super.key});
+
+  void _refresh(WidgetRef ref) {
+    ref.invalidate(ticketsProvider);
+    ref.invalidate(ticketSharesProvider);
+  }
+
+  /// قبول تذكرة وصلتني أو رفضها؛ بعدها تُحدَّث القائمتان (المقبولة تظهر في تذاكري برمز جديد).
+  Future<void> _answer(BuildContext context, WidgetRef ref, TicketShareIn s, {required bool accept}) async {
+    final api = ref.read(apiClientProvider);
+    try {
+      if (accept) {
+        await api.acceptTicket(s.transferId);
+      } else {
+        await api.declineTicket(s.transferId);
+      }
+      if (context.mounted) toast(context, accept ? 'التذكرة صارت لك · تجدها في القادمة' : 'رُفضت التذكرة وعادت لصاحبها');
+    } catch (e) {
+      if (context.mounted) toast(context, ticketShareErrText(e), error: true);
+    } finally {
+      _refresh(ref);
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tk = ref.watch(ticketsProvider);
+    // التوزيع إضافة فوق التذاكر: تعذر جلبه (خادم أقدم) لا يحجب التذاكر، فقط يخفي أفعال الإرسال
+    final shares = ref.watch(ticketSharesProvider).valueOrNull;
     return Scaffold(
       backgroundColor: Joy.bg,
       appBar: AppBar(title: const Text('تذاكري')),
       body: tk.when(
         data: (list) {
           final up = list.where((t) => t.upcoming).toList(), past = list.where((t) => !t.upcoming).toList();
-          if (list.isEmpty) return const EmptyState(icon: Icons.confirmation_number_outlined, title: 'لا تذاكر بعد', subtitle: 'احجز تذكرة فعالية وستظهر هنا برمزها.');
-          return ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
-            if (up.isNotEmpty) const SectionTitle('القادمة'),
-            for (final t in up) Padding(padding: const EdgeInsets.only(bottom: 10), child: _TicketCard(t)),
-            if (past.isNotEmpty) const SectionTitle('السابقة'),
-            for (final t in past) Padding(padding: const EdgeInsets.only(bottom: 10), child: Opacity(opacity: .6, child: _TicketCard(t))),
-          ]);
+          final incoming = shares?.incoming ?? const <TicketShareIn>[];
+          if (list.isEmpty && incoming.isEmpty) return const EmptyState(icon: Icons.confirmation_number_outlined, title: 'لا تذاكر بعد', subtitle: 'احجز تذكرة فعالية وستظهر هنا برمزها.');
+          return RefreshIndicator(
+            onRefresh: () async => _refresh(ref),
+            child: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
+              if (incoming.isNotEmpty) const SectionTitle('تذاكر وصلتك'),
+              for (final s in incoming) Padding(padding: const EdgeInsets.only(bottom: 10), child: _IncomingCard(s, onAccept: () => _answer(context, ref, s, accept: true), onDecline: () => _answer(context, ref, s, accept: false))),
+              if (up.isNotEmpty) const SectionTitle('القادمة'),
+              for (final t in up)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _TicketCard(t, pending: shares?.pendingOf(t.id), onSend: shares == null ? null : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => TicketSharePage(eventId: t.eventId, title: t.title)))),
+                ),
+              if (past.isNotEmpty) const SectionTitle('السابقة'),
+              for (final t in past) Padding(padding: const EdgeInsets.only(bottom: 10), child: Opacity(opacity: .6, child: _TicketCard(t))),
+            ]),
+          );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(ticketsProvider)),
+        error: (e, _) => ErrorState(e, onRetry: () => _refresh(ref)),
       ),
+    );
+  }
+}
+
+/// تذكرة أرسلها لي مستخدم: من أرسلها وأي فعالية، ثم «اقبل» أو «ارفض».
+class _IncomingCard extends StatefulWidget {
+  final TicketShareIn s;
+  final Future<void> Function() onAccept, onDecline;
+  const _IncomingCard(this.s, {required this.onAccept, required this.onDecline});
+  @override
+  State<_IncomingCard> createState() => _IncomingCardState();
+}
+
+class _IncomingCardState extends State<_IncomingCard> {
+  bool busy = false;
+  Future<void> _do(Future<void> Function() f) async {
+    setState(() => busy = true);
+    try {
+      await f();
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.s;
+    return JoyCard(
+      key: Key('ticket-incoming-${s.transferId}'),
+      color: Joy.primarySoft,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          ProfileAvatar(person: s.from, size: 40),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${s.from.nickname.isEmpty ? 'مستخدم' : s.from.nickname} أرسل لك تذكرة', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text(s.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text([s.tier, when(s.startsAt), s.placeName ?? ''].where((x) => x.isNotEmpty).join(' · '), style: const TextStyle(color: Joy.textMuted, fontSize: 12), maxLines: 2),
+          ])),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: FilledButton(key: Key('ticket-accept-${s.transferId}'), style: FilledButton.styleFrom(minimumSize: const Size(44, 40)), onPressed: busy ? null : () => _do(widget.onAccept), child: const Text('اقبل'))),
+          const SizedBox(width: 8),
+          Expanded(child: OutlinedButton(key: Key('ticket-decline-${s.transferId}'), style: OutlinedButton.styleFrom(minimumSize: const Size(44, 40)), onPressed: busy ? null : () => _do(widget.onDecline), child: const Text('ارفض'))),
+        ]),
+      ]),
     );
   }
 }
 
 class _TicketCard extends StatelessWidget {
   final Ticket t;
-  const _TicketCard(this.t);
+  /// إرسال معلّق لهذه التذكرة (ما زالت لي حتى تُقبل)
+  final TicketShareOut? pending;
+  /// يفتح «وزّع التذاكر» لفعاليتها؛ null للتذاكر السابقة وحين لا يتوفر التوزيع
+  final VoidCallback? onSend;
+  const _TicketCard(this.t, {this.pending, this.onSend});
   @override
   Widget build(BuildContext context) => JoyCard(
         onTap: () => showModalBottomSheet(context: context, builder: (_) => Padding(padding: const EdgeInsets.fromLTRB(20, 20, 20, 28), child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -448,8 +559,21 @@ class _TicketCard extends StatelessWidget {
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(t.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5), maxLines: 1, overflow: TextOverflow.ellipsis),
             Text('${t.tier} · ${when(t.startsAt)}${t.placeName != null ? ' · ${t.placeName}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12), maxLines: 2),
+            if (pending != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Container(
+                  key: Key('ticket-pending-${t.id}'),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(color: Joy.sunSoft, borderRadius: BorderRadius.circular(999)),
+                  child: Text(pending!.isLink ? 'رابط مُرسل' : 'بانتظار القبول', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Joy.sunText)),
+                ),
+              ),
           ])),
-          const Icon(Icons.qr_code_2_rounded, color: Joy.text),
+          if (onSend != null)
+            TextButton(key: Key('my-ticket-send-${t.id}'), style: TextButton.styleFrom(minimumSize: const Size(44, 40), padding: const EdgeInsets.symmetric(horizontal: 8)), onPressed: onSend, child: Text(pending != null ? 'إدارة' : 'أرسل'))
+          else
+            const Icon(Icons.qr_code_2_rounded, color: Joy.text),
         ]),
       );
 }

@@ -1,4 +1,4 @@
-// التصفّح بلا حساب: زر «تصفّح بدون حساب» في شاشة الدخول يفتح تبويبات الزائر (الخريطة، الأماكن، السوق، الفعاليات، حسابي)،
+// التصفّح بلا حساب: زر «تصفّح بدون حساب» في شاشة الدخول يفتح تبويبات الزائر (الخريطة، الأماكن، السوق، استكشف، حسابي)،
 // وفي iOS الأصلي يبدأ التطبيق زائراً. مسارات النواة الخاصة بالحسابات (القصص، الحضور، الدبابيس، المحادثات…) لا تُطلب أبداً
 // بلا جلسة (قائمة سماح بالمسارات العامة)، وتسجيل المشاهدة والنقرة لا يفتح دعوة الدخول، أما الطلب والمراسلة والتقييم
 // والتذاكر والملف الشخصي فتدعو للدخول قبل أي طلب أو نموذج.
@@ -24,7 +24,7 @@ import 'package:naslook/pages/business/business_list.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/owner/dashboard_posts.dart';
 import 'package:naslook/pages/chat/chat_thread_page.dart';
-import 'package:naslook/pages/events/events_page.dart';
+import 'package:naslook/pages/explore/explore_page.dart';
 import 'package:naslook/pages/map/map_page.dart';
 import 'package:naslook/pages/market/market_page.dart';
 import 'package:naslook/pages/posts/post_viewer.dart';
@@ -173,7 +173,9 @@ void main() {
     expect(find.byType(MarketPage), findsOneWidget);
     expect(find.byType(ListingCard), findsWidgets);
     await _tab(tester, 'guest-tab-events');
-    expect(find.byType(EventsPage), findsOneWidget);
+    expect(find.byType(ExplorePage), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'استكشف'), findsOneWidget);
+    expect(find.widgetWithText(NavigationDestination, 'استكشف'), findsOneWidget);
   });
 
   testWidgets('native iOS starts as a guest; the account tab has sign-in, register and legal links', (tester) async {
@@ -216,10 +218,10 @@ void main() {
     expect(srv.calls, contains('GET /market/home'));
     expect(find.text('هذا يحتاج حساباً'), findsNothing, reason: 'القراءات الخلفية لا تزعج الزائر');
 
-    // الفعاليات: لا «فعالياتي»، و«تذاكري» و«فعالية» يدعوان للدخول قبل أي طلب أو نموذج
+    // استكشف: لا «فعالياتي»، و«تذاكري» و«فعالية» يدعوان للدخول قبل أي طلب أو نموذج
     await _tab(tester, 'guest-tab-events');
     expect(find.text('فعالياتي'), findsNothing);
-    await tester.tap(find.byKey(const Key('events-tickets')));
+    await tester.tap(find.byKey(const Key('explore-tickets')));
     await _settle(tester);
     expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
     await _dismissSheet(tester);

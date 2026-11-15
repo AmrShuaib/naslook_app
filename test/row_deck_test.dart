@@ -22,6 +22,7 @@ import 'package:naslook/core/nav_provider.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/offers_page.dart';
 import 'package:naslook/pages/events/events_page.dart';
+import 'package:naslook/pages/explore/explore_page.dart';
 import 'package:naslook/pages/home/row_deck.dart';
 import 'package:naslook/pages/jobs/job_page.dart';
 import 'package:naslook/pages/map/map_page.dart';
@@ -455,7 +456,7 @@ void main() {
     var composed = 0;
     await tester.pumpWidget(MaterialApp(home: Scaffold(bottomNavigationBar: JoyNavBar(tabs: navTabIds, index: 0, onSelect: (i) => picked = i, onCompose: () => composed++, badges: const {'chats': 3}))));
     expect(navTabIds, ['home', 'circles', 'market', 'events', 'chats', 'me']);
-    for (final l in ['الخريطة', 'الدوائر', 'السوق', 'الفعاليات', 'المحادثات', 'ماي سبيس']) {
+    for (final l in ['الخريطة', 'الدوائر', 'السوق', 'استكشف', 'المحادثات', 'ماي سبيس']) {
       expect(find.text(l), findsOneWidget);
     }
     expect(find.text('3'), findsOneWidget);
@@ -468,7 +469,7 @@ void main() {
     expect(composed, 1);
     expect(HomeShell.pageOf('home'), isA<MapPage>().having((m) => m.home, 'home', isTrue));
     expect(HomeShell.pageOf('market'), isA<MarketPage>().having((m) => m.barActions.length, 'barActions', 1));
-    expect(HomeShell.pageOf('events'), isA<EventsPage>().having((m) => m.barActions.length, 'barActions', 1));
+    expect(HomeShell.pageOf('events'), isA<ExplorePage>().having((m) => m.barActions.length, 'barActions', 1));
     expect(HomeShell.ownBar('home'), isTrue);
     expect(HomeShell.ownBar('market'), isTrue, reason: 'شريط السوق وحده لا شريطان');
     expect(HomeShell.ownBar('events'), isTrue);

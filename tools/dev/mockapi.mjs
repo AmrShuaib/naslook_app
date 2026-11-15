@@ -101,7 +101,7 @@ const routes = {
   'GET /wallet': { balance: 12550, points: 3, currency: 'SAR', upcomingTickets: 1, testTopup: true, maxTopup: 10000000, recent: [{ id: 't1', kind: 'transfer_in', amount: 2500, peer: person('SA0000002', 'sara'), ref: null, note: 'هدية', createdAt: now }] },
   'GET /wallet/transactions': [],
   'GET /events': [{ id: '22222222-2222-2222-2222-222222222222', host: person('SA0000002', 'sara'), vesselId: null, title: 'لقاء المطورين', description: 'نتكلم عن Flutter', startsAt: new Date(Date.now() + 86400000).toISOString(), endsAt: null, placeName: 'جدة', lat: 21.5, lng: 39.2, cancelled: false, tiers: [{ id: '33333333-3333-3333-3333-333333333333', name: 'عادي', description: '', price: 5000, quantity: 50, sold: 3, left: 47 }], going: 3, myTickets: 0, isHost: false }],
-  'GET /tickets': [{ id: 'tk1', code: 'NAS-ABCD1234', status: 'valid', paid: 5000, eventId: '22222222-2222-2222-2222-222222222222', title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tier: 'عادي', createdAt: now, usedAt: null }],
+  'GET /tickets': [{ id: 'tk1', code: 'NAS-ABCD1234', status: 'valid', paid: 5000, eventId: '22222222-2222-2222-2222-222222222222', title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tier: 'عادي', createdAt: now, usedAt: null }, { id: 'tk2', code: 'NAS-ABCD1235', status: 'valid', paid: 5000, eventId: '22222222-2222-2222-2222-222222222222', title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tier: 'عادي', createdAt: now, usedAt: null }, { id: 'tk3', code: 'NAS-ABCD1236', status: 'valid', paid: 5000, eventId: '22222222-2222-2222-2222-222222222222', title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tier: 'عادي', createdAt: now, usedAt: null }],
   'GET /market': [{ id: '55555555-5555-4555-8555-555555555555', seller: me, kind: 'product', category: 'food', title: 'برجر لحم', description: 'طازج', price: 5000, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'hidden', createdAt: now, mine: true }, { id: '44444444-4444-4444-4444-444444444444', seller: person('SA0000002', 'sara'), kind: 'product', category: 'coffee', title: 'قهوة مختصة', description: 'حبوب إثيوبية', price: 4500, imageUrl: null, placeName: 'جدة', lat: 21.5, lng: 39.2, status: 'active', createdAt: now, mine: false, payOnReceipt: true, delivery: true, deliveryFee: 1500, deliveryMaxKm: 25 }],
   'GET /market/orders': [],
 };
@@ -1574,6 +1574,51 @@ http.createServer((req, res) => {
   if (key === 'POST /chat/requests') { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => { const b = JSON.parse(raw || '{}'); const r = { messageId: b.messageId, kind: b.kind, from: me.id, to: b.peerId, amount: b.amount ?? 0, n: b.n ?? 1, share: b.kind === 'split' ? Math.ceil((b.amount ?? 0) / Math.max(1, b.n ?? 1)) : (b.amount ?? 0), note: b.note ?? '', when: b.when ?? '', place: b.place ?? '', status: b.kind === 'send' ? 'paid' : 'pending', createdAt: new Date().toISOString(), resolvedAt: null, expiresAt: new Date(Date.now() + 86400000).toISOString() }; chatRequests[b.messageId] = r; console.log(key, b.kind, b.messageId, '-> 200'); res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, request: r })); }); return; }
   { const rm = key.match(/^POST \/chat\/requests\/([^/]+)\/(pay|accept|decline|cancel)$/); if (rm) { const r = chatRequests[rm[1]]; if (!r) { res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"error":"not-found"}'); } if (r.status !== 'pending') { res.writeHead(409, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: 'not-pending', status: r.status })); } r.status = { pay: 'paid', accept: 'accepted', decline: 'declined', cancel: 'cancelled' }[rm[2]]; r.resolvedAt = new Date().toISOString(); if (rm[2] === 'pay') routes['GET /wallet'].balance -= r.share; console.log(key, '-> 200'); res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, request: r })); } }
   if (key === 'POST /chat/react') { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => { const b = JSON.parse(raw || '{}'); const cur = chatReactions[b.messageId] ?? []; const mine = cur.find(r => r.mine); const emoji = mine && mine.emoji === b.emoji ? null : (b.emoji || null); let out = cur.map(r => r.mine ? { ...r, count: r.count - 1, mine: false } : { ...r }).filter(r => r.count > 0); if (emoji) { const e = out.find(r => r.emoji === emoji); if (e) { e.count++; e.mine = true; } else out.push({ emoji, count: 1, mine: true }); } chatReactions[b.messageId] = out.sort((a, b2) => b2.count - a.count); console.log(key, b.messageId, emoji, '-> 200'); res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, messageId: b.messageId, reactions: chatReactions[b.messageId] })); }); return; }
+  // ---- توزيع التذاكر (ticket_share.js): إرسال معلّق لكل تذكرة إلى مستخدم أو برابط لشخص واحد، وتذكرة تجريبية واردة
+  if (url.pathname.startsWith('/tickets/') || key === 'POST /tickets/claim') {
+    const st = (globalThis.__ticketShares ??= { out: {}, incoming: [{ transferId: 'tr-in-1', from: person('SA0000002', 'sara'), ticket: { id: 'tk-in-1', eventId: '22222222-2222-2222-2222-222222222222', title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tier: 'عادي' }, createdAt: now }] });
+    const send = (code, out) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(out)); };
+    const body = (fn) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => fn(JSON.parse(raw || '{}'))); };
+    const mine = routes['GET /tickets'];
+    const asTicket = (t) => ({ id: t.id, code: 'NAS-' + Math.random().toString(36).slice(2, 10).toUpperCase(), status: 'valid', paid: 0, eventId: t.eventId, title: t.title, startsAt: t.startsAt, placeName: t.placeName, tier: t.tier, createdAt: new Date().toISOString(), usedAt: null });
+    if (key === 'GET /tickets/shares') return send(200, { outgoing: Object.values(st.out), incoming: st.incoming });
+    let m = key.match(/^(POST|DELETE) \/tickets\/([^/]+)\/(send|link)$/);
+    if (m) {
+      const t = mine.find((x) => x.id === m[2]);
+      if (!t) return send(404, { error: 'not-found' });
+      if (m[1] === 'DELETE') { if (!st.out[t.id]) return send(404, { error: 'not-found' }); delete st.out[t.id]; return send(200, { ok: true }); }
+      if (t.status !== 'valid') return send(409, { error: 'not-transferable' });
+      const cur = st.out[t.id];
+      if (m[3] === 'link') {
+        if (cur) return cur.mode === 'link' ? send(200, cur) : send(409, { error: 'already-pending' });
+        return send(200, st.out[t.id] = { ticketId: t.id, transferId: 'tr-' + Date.now(), mode: 'link', to: null, url: 'https://naslife.app/t/mock' + String(Date.now()).padStart(16, '0'), createdAt: new Date().toISOString() });
+      }
+      return body((b) => {
+        if (cur) return send(409, { error: 'already-pending' });
+        if (b.userId === me.id) return send(400, { error: 'self' });
+        const to = routes['GET /contacts'].find((c) => c.id === b.userId);
+        if (!to) return send(400, { error: 'bad-user' });
+        send(200, st.out[t.id] = { ticketId: t.id, transferId: 'tr-' + Date.now(), mode: 'user', to, url: null, createdAt: new Date().toISOString() });
+      });
+    }
+    m = key.match(/^POST \/tickets\/transfers\/([^/]+)\/(accept|decline)$/);
+    if (m) {
+      const i = st.incoming.findIndex((x) => x.transferId === m[1]);
+      if (i < 0) return send(404, { error: 'not-found' });
+      const [x] = st.incoming.splice(i, 1);
+      if (m[2] === 'decline') return send(200, { ok: true });
+      const t = asTicket(x.ticket); mine.push(t); return send(200, t);
+    }
+    m = key.match(/^GET \/tickets\/claim\/([A-Za-z0-9_-]{16,64})$/);
+    if (m) return send(200, { title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tier: 'عادي', from: { nickname: 'sara', avatarUrl: null }, status: (st.claimed ??= new Set()).has(m[1]) ? 'gone' : 'pending' });
+    if (key === 'POST /tickets/claim') return body((b) => {
+      if (!/^[A-Za-z0-9_-]{16,64}$/.test(String(b.token || ''))) return send(404, { error: 'not-found' });
+      if (Object.values(st.out).some((o) => o.url?.endsWith('/t/' + b.token))) return send(400, { error: 'self' });
+      if ((st.claimed ??= new Set()).has(b.token)) return send(409, { error: 'gone' });
+      st.claimed.add(b.token);
+      const t = asTicket({ id: 'tk-claim-' + Date.now(), eventId: '22222222-2222-2222-2222-222222222222', title: 'لقاء المطورين', startsAt: new Date(Date.now() + 86400000).toISOString(), placeName: 'جدة', tier: 'عادي' }); mine.push(t); send(200, t);
+    });
+  }
   // ---- قائمة الحضور ومسح التذاكر (commerce.js): للمضيف فقط، صفحات بمؤشر، ولا رموز في القائمة إلا عند البحث بالرمز
   { const am = url.pathname.match(/^\/events\/([0-9a-f-]{36})\/(attendees|checkin)$/); if (am) {
     const send = (code, out) => { console.log(key, url.search, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(out)); };

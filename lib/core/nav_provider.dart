@@ -17,7 +17,8 @@ const navTabs = <NavTabMeta>[
   NavTabMeta('home', 'الخريطة', Icons.map_outlined, Icons.map_rounded),
   NavTabMeta('circles', 'الدوائر', Icons.groups_outlined, Icons.groups_rounded),
   NavTabMeta('market', 'السوق', Icons.shopping_bag_outlined, Icons.shopping_bag_rounded),
-  NavTabMeta('events', 'الفعاليات', Icons.event_outlined, Icons.event_rounded),
+  // المعرّف بقي 'events' (يستعمله openNavTab في أماكن كثيرة)؛ القسم صار «استكشف»: كل ما يُحجز في مكان واحد
+  NavTabMeta('events', 'استكشف', Icons.explore_outlined, Icons.explore_rounded),
   NavTabMeta('chats', 'المحادثات', Icons.chat_bubble_outline_rounded, Icons.chat_bubble_rounded),
   NavTabMeta('me', 'ماي سبيس', Icons.person_outline_rounded, Icons.person_rounded),
 ];

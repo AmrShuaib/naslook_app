@@ -43,6 +43,8 @@ Future<bool> openNotification(BuildContext context, WidgetRef ref, AppNotificati
   }
   // طلب توثيق جديد: يُفتح قسم الدوائر على طابور التوثيق مباشرة
   if (n.kind == 'biz_verification') ref.read(adminBizSegmentProvider.notifier).state = 'verifications';
+  // تذكرة قُبلت أو رُفضت أو وصلت: قائمة «تذاكري» المحفوظة صارت قديمة
+  if (n.kind.startsWith('ticket_')) ref.invalidate(ticketsProvider);
   final page = notificationTarget(n);
   if (page == null || !context.mounted) return false;
   await Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
@@ -103,6 +105,11 @@ Widget? notificationTarget(AppNotification n) {
     case 'ticket_sale':
     case 'event_cancelled':
       return event == null ? const EventsPage() : EventDetailPage(eventId: event);
+    // توزيع التذاكر (ticket_share.js): تذكرة وصلتني تُقبل من «تذاكري»، وقبول ما أرسلته أو رفضه يُرى فيها
+    case 'ticket_gift':
+    case 'ticket_accepted':
+    case 'ticket_declined':
+      return const MyTicketsPage();
     // السوق (commerce.js وmarket_plus.js وmarket_b.js): كل نوع إلى شاشته من حمولته، والاحتياط «عروضي وطلباتي» حين تغيب
     // الطلب: طلب جديد للبائع، مراحل الطلب، تكليف المندوب أو إلغاؤه، النزاع وحسمه (المدير يرى الطلب أيضاً)
     case 'market_order':
@@ -328,6 +335,10 @@ Widget? _moderatedTarget(AppNotification n) {
     case 'ticket_sale':
     case 'event_cancelled':
       return (icon: Icons.event_outlined, color: Joy.accent);
+    case 'ticket_gift':
+    case 'ticket_accepted':
+    case 'ticket_declined':
+      return (icon: Icons.confirmation_number_outlined, color: Joy.accent);
     case 'transfer_in':
     case 'wallet_credit':
       return (icon: Icons.account_balance_wallet_outlined, color: Joy.primary);

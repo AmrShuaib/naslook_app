@@ -1,6 +1,6 @@
-// الشريط السفلي بستة أقسام (قرار المالك): الخريطة، الدوائر، السوق | الكاميرا | الفعاليات، المحادثات، ماي سبيس.
+// الشريط السفلي بستة أقسام (قرار المالك): الخريطة، الدوائر، السوق | الكاميرا | استكشف، المحادثات، ماي سبيس.
 // يتسع لجوال 360 و390 بخط التطبيق الحقيقي (Rubik) وتكبير النص 1.25 و1.6 بلا قصّ ولا فيض، كل قسم قابل للمس والكاميرا
-// في المنتصف تماماً؛ الأقسام تُبنى عند أول زيارة (لا طلبات للسوق والفعاليات عند الإقلاع، والشارات حيّة)، السوق والفعاليات
+// في المنتصف تماماً؛ الأقسام تُبنى عند أول زيارة (لا طلبات للسوق و«استكشف» عند الإقلاع، والشارات حيّة)، السوق و«استكشف»
 // بشريط علوي واحد فيه أفعالهما مع البحث والجرس وزرهما العائم فوق الكبسولة، صفحة تُفتح فوق الأقسام بلا تعارض Hero،
 // اختصارات «اللحظات» الفارغة تبدّل القسم (والزائر تُفتح له الصفحة)، السوق ظاهر في iOS، و«المشتريات» تفتح الطلبات.
 import 'dart:convert';
@@ -24,7 +24,7 @@ import 'package:naslook/core/location.dart';
 import 'package:naslook/core/nav_provider.dart';
 import 'package:naslook/core/platform.dart';
 import 'package:naslook/pages/chat/chats_page.dart';
-import 'package:naslook/pages/events/events_page.dart';
+import 'package:naslook/pages/explore/explore_page.dart';
 import 'package:naslook/pages/home/row_deck.dart';
 import 'package:naslook/pages/map/map_page.dart';
 import 'package:naslook/pages/market/market_page.dart';
@@ -47,7 +47,7 @@ class _SignedOut extends AppStateNotifier {
   }
 }
 
-const _labels = {'home': 'الخريطة', 'circles': 'الدوائر', 'market': 'السوق', 'events': 'الفعاليات', 'chats': 'المحادثات', 'me': 'ماي سبيس'};
+const _labels = {'home': 'الخريطة', 'circles': 'الدوائر', 'market': 'السوق', 'events': 'استكشف', 'chats': 'المحادثات', 'me': 'ماي سبيس'};
 
 var _fontLoaded = false;
 
@@ -213,11 +213,11 @@ void main() {
     final (srv, _) = await _pump(tester, appTheme: true, size: const Size(360, 844));
     expect(find.byType(HomeShell), findsOneWidget);
     expect(find.byType(MapPage), findsOneWidget);
-    for (final t in [MarketPage, EventsPage, ChatsPage, MySpacePage]) {
+    for (final t in [MarketPage, ExplorePage, ChatsPage, MySpacePage]) {
       expect(find.byType(t, skipOffstage: false), findsNothing, reason: '$t لم يُزر بعد');
     }
     // (طبقة السوق على الخريطة تطلب GET /market بنفسها؛ صفحة السوق تبدأ بـ /market/home)
-    expect(srv.calls.where((c) => c == 'GET /market/home' || c == 'GET /events'), isEmpty, reason: 'لا طلبات لصفحتي السوق والفعاليات عند الإقلاع');
+    expect(srv.calls.where((c) => c == 'GET /market/home' || c == 'GET /events'), isEmpty, reason: 'لا طلبات لصفحتي السوق و«استكشف» عند الإقلاع');
     // شارة المحادثات وجرس التنبيهات حيّان قبل زيارة المحادثات
     expect(srv.calls, contains('GET /chats'));
     expect(srv.calls, contains('GET /notify/unread'));
@@ -232,10 +232,10 @@ void main() {
     expect(tester.getRect(find.byKey(const Key('market-sell'))).bottom, closeTo(capsuleTop - 16, 1));
 
     await _tab(tester, 'events');
-    expect(find.byType(EventsPage), findsOneWidget);
+    expect(find.byType(ExplorePage), findsOneWidget);
     expect(srv.calls, contains('GET /events'));
-    _oneBar(tester, 'الفعاليات');
-    expect(find.byKey(const Key('events-tickets')).hitTestable(), findsOneWidget);
+    _oneBar(tester, 'استكشف');
+    expect(find.byKey(const Key('explore-tickets')).hitTestable(), findsOneWidget);
     expect(find.byKey(const Key('events-create')).hitTestable(), findsOneWidget);
     expect(find.byKey(const Key('market-sell')).hitTestable(), findsNothing, reason: 'زر السوق المخفي لا يُلمس');
     expect(tester.getRect(find.byKey(const Key('events-create'))).bottom, closeTo(capsuleTop - 16, 1));
@@ -245,10 +245,10 @@ void main() {
     expect(find.byType(ChatsPage), findsOneWidget);
     _oneBar(tester, 'المحادثات');
     await _tab(tester, 'events');
-    await tester.tap(find.byKey(const Key('events-tickets')));
+    await tester.tap(find.byKey(const Key('explore-tickets')));
     await _settle(tester);
     expect(tester.takeException(), isNull);
-    expect(find.byType(EventsPage), findsNothing, reason: 'صفحة التذاكر فوقها');
+    expect(find.byType(ExplorePage), findsNothing, reason: 'صفحة التذاكر فوقها');
     Navigator.of(tester.element(find.byType(Scaffold).last)).pop();
     await _settle(tester);
     expect(tester.takeException(), isNull);
@@ -277,7 +277,7 @@ void main() {
     expect(tester.getRect(find.byType(MarketPage)).bottom, lessThanOrEqualTo(capsuleTop + 0.5));
     expect(tester.getRect(find.byKey(const Key('market-sell'))).bottom, closeTo(capsuleTop - 16, 1));
     await _tab(tester, 'events');
-    expect(tester.getRect(find.byType(EventsPage)).bottom, lessThanOrEqualTo(capsuleTop + 0.5));
+    expect(tester.getRect(find.byType(ExplorePage)).bottom, lessThanOrEqualTo(capsuleTop + 0.5));
     expect(tester.getRect(find.byKey(const Key('events-create'))).bottom, closeTo(capsuleTop - 16, 1));
     await _tab(tester, 'circles');
     expect(tester.getRect(find.byKey(const Key('circles-fab'))).bottom, closeTo(capsuleTop - 16, 1));
@@ -324,7 +324,7 @@ void main() {
       await _settle(tester);
       expect(find.byType(TimelinePage), findsNothing, reason: kind);
       expect(c.read(navIndexProvider), navTabIds.indexOf(tab), reason: kind);
-      expect(find.byType(tab == 'market' ? MarketPage : EventsPage), findsOneWidget, reason: 'القسم نفسه لا صفحة ثانية فوقه');
+      expect(find.byType(tab == 'market' ? MarketPage : ExplorePage), findsOneWidget, reason: 'القسم نفسه لا صفحة ثانية فوقه');
       expect(find.byType(HomeShell).hitTestable(), findsOneWidget);
     }
     await tester.pumpWidget(const SizedBox());

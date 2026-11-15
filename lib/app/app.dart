@@ -17,11 +17,12 @@ import '../core/require_adult.dart' show AdultGate;
 import '../core/share/legal_links.dart';
 import '../core/share/share_links.dart';
 import '../pages/business/business_list.dart';
-import '../pages/events/events_page.dart';
+import '../pages/explore/explore_page.dart';
 import '../pages/market/market_page.dart';
 import '../ui/widgets.dart';
 import '../pages/business/business_page.dart';
 import '../pages/business/owner/manage_link_page.dart';
+import '../pages/events/ticket_claim_page.dart';
 import '../pages/profile/public_profile_page.dart';
 import '../api/client.dart';
 import '../core/push/push_service.dart';
@@ -91,8 +92,8 @@ class AuthGate extends ConsumerWidget {
         // رابط عام (دائرة أو حساب) بلا جلسة: نعرض الوجهة كزائر مع شريط للدخول؛ ووضع التصفّح بلا حساب يعرض تبويبات الزائر،
         // إلا إن طلب الزائر الدخول
         if (!ref.watch(guestWantsLoginProvider)) {
-          // رابط إدارة الدائرة ليس وجهة للزائر: شاشة الدخول أولاً ثم اللوحة
-          if (pendingLink != null && !pendingLink!.isManage) return GuestShell(link: pendingLink!);
+          // رابط إدارة الدائرة أو استلام تذكرة ليس وجهة للزائر: شاشة الدخول أولاً ثم الوجهة
+          if (pendingLink != null && !pendingLink!.needsAccount) return GuestShell(link: pendingLink!);
           if (ref.watch(guestBrowseProvider)) return const GuestShell();
         }
         return const LoginPage();
@@ -108,17 +109,17 @@ class AuthGate extends ConsumerWidget {
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
-  /// صفحة كل قسم من الأقسام الستة الثابتة. السوق والفعاليات بشريطيهما وأفعالهما، ويُلحق بهما البحث والجرس كبقية الأقسام.
+  /// صفحة كل قسم من الأقسام الستة الثابتة. السوق و«استكشف» بشريطيهما وأفعالهما، ويُلحق بهما البحث والجرس كبقية الأقسام.
   static Widget pageOf(String tab) => switch (tab) {
         'home' => const MapPage(home: true),
         'circles' => const CirclesPage(),
         'market' => const MarketPage(barActions: [ShellBarActions()]),
-        'events' => const EventsPage(barActions: [ShellBarActions()]),
+        'events' => const ExplorePage(barActions: [ShellBarActions()]),
         'chats' => const ChatsPage(),
         _ => const MySpacePage(),
       };
 
-  /// أقسام تبني شريطها العلوي بنفسها: الخريطة (بحثها وجرسها فوقها)، والسوق والفعاليات (شريط واحد بأفعالهما لا شريطان).
+  /// أقسام تبني شريطها العلوي بنفسها: الخريطة (بحثها وجرسها فوقها)، والسوق و«استكشف» (شريط واحد بأفعالهما لا شريطان).
   static bool ownBar(String tab) => tab == 'home' || tab == 'market' || tab == 'events';
 
   @override
@@ -130,7 +131,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   StreamSubscription<Map<String, dynamic>>? _socketSub;
   // نقرة إشعار دفع والتطبيق مفتوح: تُفتح وجهته الآن (لا ننتظر إقلاعاً جديداً يقرأ #/n/<id>)
   StreamSubscription<String>? _pushOpenSub;
-  // القسم يُبنى أول مرة يُفتح فقط: لا يطلب السوق موقعه ولا تُجلب الفعاليات والملف قبل زيارتها
+  // القسم يُبنى أول مرة يُفتح فقط: لا يطلب السوق موقعه ولا تُجلب بيانات «استكشف» والملف قبل زيارتها
   final _visited = <int>{};
   late final MessageBell _bell = MessageBell(ref.read);
   // iOS يعلّق المقبس في الخلفية؛ عند العودة نعيد الاتصال فوراً بدل انتظار مهلة إعادة المحاولة
@@ -313,7 +314,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           if (!_visited.contains(x))
             const SizedBox.shrink()
           else
-            // الأقسام المخفية بلا Hero (لكل من الدوائر والسوق والفعاليات والمحادثات زر عائم بالوسم الافتراضي نفسه،
+            // الأقسام المخفية بلا Hero (لكل من الدوائر والسوق و«استكشف» والمحادثات زر عائم بالوسم الافتراضي نفسه،
             // وبقاؤها معاً يُفشل انتقال أي صفحة تُفتح) وبلا مؤقتات حركة
             HeroMode(
               enabled: x == i,
@@ -344,7 +345,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       );
 }
 
-/// البحث والجرس في الشريط العلوي لأقسام الشريط السفلي (الدوائر والمحادثات وماي سبيس، ويُلحقان بشريطي السوق والفعاليات).
+/// البحث والجرس في الشريط العلوي لأقسام الشريط السفلي (الدوائر والمحادثات وماي سبيس، ويُلحقان بشريطي السوق و«استكشف»).
 /// الجرس يجمع الرسائل غير المقروءة وإشعارات التجارة والإدارة.
 class ShellBarActions extends ConsumerWidget {
   const ShellBarActions({super.key});
@@ -372,16 +373,17 @@ Widget pendingLinkPage(PendingLink l) => switch (l.kind) {
       'circle' => BusinessPage(id: l.value),
       'listing' => ListingPage(l.value),
       'manage' => const ManageLinkPage(),
+      'ticket' => TicketClaimPage(token: l.value),
       _ => PublicProfilePage(handle: l.value),
     };
 
-/// تصفّح كزائر. مع رابط مشترك: الوجهة مع شريط سفلي للدخول. بلا رابط: تبويبات عامة (الخريطة، الأماكن، السوق، الفعاليات،
+/// تصفّح كزائر. مع رابط مشترك: الوجهة مع شريط سفلي للدخول. بلا رابط: تبويبات عامة (الخريطة، الأماكن، السوق، استكشف،
 /// حسابي). أي فعل يتطلب حساباً (401 أو [requireAccount]) يعرض دعوة للدخول.
 class GuestShell extends ConsumerStatefulWidget {
   final PendingLink? link;
   const GuestShell({super.key, this.link});
 
-  static const titles = ['الخريطة', 'الأماكن', 'السوق', 'الفعاليات', 'حسابي'];
+  static const titles = ['الخريطة', 'الأماكن', 'السوق', 'استكشف', 'حسابي'];
 
   @override
   ConsumerState<GuestShell> createState() => _GuestShellState();
@@ -392,7 +394,7 @@ class _GuestShellState extends ConsumerState<GuestShell> {
   int _tab = 0;
   /// غادر الزائر صفحة الرابط المشترك إلى الخريطة («عرض على الخريطة» من لحظة فتحها في الملف أو الدائرة)
   bool _linkClosed = false;
-  // التبويب يُبنى أول مرة يُفتح فقط، فلا تُطلب بيانات السوق والفعاليات قبل أن يزورها الزائر
+  // التبويب يُبنى أول مرة يُفتح فقط، فلا تُطلب بيانات السوق و«استكشف» قبل أن يزورها الزائر
   final _visited = <int>{0};
 
   @override
@@ -446,7 +448,7 @@ class _GuestShellState extends ConsumerState<GuestShell> {
         0 => const MapPage(home: true, floatingNav: false),
         1 => Scaffold(backgroundColor: Joy.bg, appBar: AppBar(title: const Text('الأماكن')), body: const BizListView()),
         2 => const MarketPage(),
-        3 => const EventsPage(),
+        3 => const ExplorePage(),
         _ => _GuestAccountTab(onLogin: () => _login(), onRegister: () => _login(register: true)),
       };
 
@@ -470,7 +472,7 @@ class _GuestShellState extends ConsumerState<GuestShell> {
     if (inLink) return _linkView(link);
     return Scaffold(
       key: const Key('guest-shell'),
-      // HeroMode: لكل من السوق والفعاليات زر عائم بوسم Hero الافتراضي؛ بقاؤهما معاً في IndexedStack يُفشل انتقال أي صفحة تُفتح
+      // HeroMode: لكل من السوق و«استكشف» زر عائم بوسم Hero الافتراضي؛ بقاؤهما معاً في IndexedStack يُفشل انتقال أي صفحة تُفتح
       body: IndexedStack(index: _tab, children: [for (var i = 0; i < GuestShell.titles.length; i++) _visited.contains(i) ? HeroMode(enabled: i == _tab, child: _screen(i)) : const SizedBox.shrink()]),
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(color: Joy.surface, border: Border(top: BorderSide(color: Joy.line))),
@@ -484,7 +486,7 @@ class _GuestShellState extends ConsumerState<GuestShell> {
             NavigationDestination(key: Key('guest-tab-map'), icon: Icon(Icons.map_outlined), selectedIcon: Icon(Icons.map_rounded), label: 'الخريطة'),
             NavigationDestination(key: Key('guest-tab-places'), icon: Icon(Icons.storefront_outlined), selectedIcon: Icon(Icons.storefront_rounded), label: 'الأماكن'),
             NavigationDestination(key: Key('guest-tab-market'), icon: Icon(Icons.shopping_bag_outlined), selectedIcon: Icon(Icons.shopping_bag_rounded), label: 'السوق'),
-            NavigationDestination(key: Key('guest-tab-events'), icon: Icon(Icons.event_outlined), selectedIcon: Icon(Icons.event_rounded), label: 'الفعاليات'),
+            NavigationDestination(key: Key('guest-tab-events'), icon: Icon(Icons.explore_outlined), selectedIcon: Icon(Icons.explore_rounded), label: 'استكشف'),
             NavigationDestination(key: Key('guest-tab-account'), icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded), label: 'حسابي'),
           ],
         ),
