@@ -10,6 +10,7 @@ import 'package:naslook/api/client.dart';
 import 'package:naslook/api/notify_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/core/notify_open.dart';
+import 'package:naslook/pages/admin/admin_entry.dart';
 import 'package:naslook/pages/admin/admin_shell.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/my_bookings_page.dart';
@@ -102,6 +103,9 @@ Future<void> _pump(WidgetTester tester, _Srv srv, Widget home) async {
 
 AppNotification _n(String kind, [Map<String, dynamic> data = const {}]) => AppNotification(id: 'x', kind: kind, title: 't', data: data);
 
+// القسم الذي تفتحه اللوحة المؤجَّلة: بالمعرّف إن أُعطي وإلا بالرقم
+int _adminSec(Object? w) { final e = w as AdminEntry; return e.sectionId != null ? adminSections.indexWhere((s) => s.$1 == e.sectionId) : e.initialSection; }
+
 void main() {
   test('capturePendingNotification reads #/n/<id> only', () {
     capturePendingNotification(Uri.parse('https://naslife.app/#/n/$_n1'));
@@ -118,7 +122,7 @@ void main() {
     expect(notificationTarget(_n('claim_decided', {'bizId': 'biz-vox', 'approved': false})), isA<BusinessPage>());
     expect(notificationTarget(_n('order_status', {'bizId': 'biz-vox'})), isA<MyBookingsPage>());
     expect(notificationTarget(_n('transfer_in')), isA<WalletPage>());
-    expect(notificationTarget(_n('report_new')), isA<AdminShell>().having((a) => a.initialSection, 'reports section', 2));
+    expect(notificationTarget(_n('report_new')), isA<AdminEntry>().having(_adminSec, 'reports section', 2));
     expect(notificationTarget(_n('biz_order')), isNull, reason: 'بلا معرّف دائرة لا وجهة');
     expect(notificationTarget(_n('account_warning')), isNull);
   });

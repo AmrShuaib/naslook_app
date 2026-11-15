@@ -19,7 +19,7 @@ import 'package:naslook/core/notify_open.dart';
 import 'package:naslook/core/platform.dart';
 import 'package:naslook/pages/admin/admin_biz_disputes.dart';
 import 'package:naslook/pages/admin/admin_settings.dart';
-import 'package:naslook/pages/admin/admin_shell.dart';
+import 'package:naslook/pages/admin/admin_entry.dart';
 import 'package:naslook/pages/business/biz_order_page.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/my_bookings_page.dart';
@@ -453,7 +453,7 @@ void main() {
     final page = notificationTarget(n({'orderId': 'o1', 'bizId': 'biz-shop', 'side': 'team'}));
     expect(page, isA<BizOrderPage>());
     expect((page as BizOrderPage).orderId, 'o1');
-    expect(notificationTarget(n({'side': 'admin'})), isA<AdminShell>());
+    expect(notificationTarget(n({'side': 'admin'})), isA<AdminEntry>());
     expect(notificationTarget(n({'side': 'customer'})), isA<MyBookingsPage>());
     expect(notificationStyle('biz_dispute').icon, Icons.gavel_rounded);
   });

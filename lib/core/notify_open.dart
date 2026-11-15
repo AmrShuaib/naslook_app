@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/models.dart' show Person;
 import '../api/notify_api.dart';
-import '../pages/admin/admin_shell.dart';
+import '../pages/admin/admin_entry.dart';
 import '../state/admin_providers.dart';
 import '../pages/business/biz_order_page.dart';
 import '../pages/business/business_page.dart';
@@ -64,7 +64,7 @@ Widget? notificationTarget(AppNotification n) {
   switch (n.kind) {
     // مراجعة العروض: للفريق (manage) لوحة توظيف الدائرة؛ وللمشرفين (بانتظار الموافقة) قسم التوظيف في الإدارة
     case 'job_review':
-      if (n.data['manage'] != true) return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'jobs').clamp(0, adminSections.length - 1));
+      if (n.data['manage'] != true) return AdminEntry(standalone: false, sectionId: 'jobs');
       return biz == null ? null : BusinessDashboardPage(id: biz, initialTab: BusinessDashboardPage.jobsTab);
     case 'biz_order':
     case 'order_cancelled':
@@ -100,7 +100,7 @@ Widget? notificationTarget(AppNotification n) {
     // «لدي مشكلة» على طلب دائرة (business.js): فتحها والرد عليها وحسمها؛ الطلب نفسه لكل طرف (العميل والفريق والإدارة)
     case 'biz_dispute':
       if (order != null) return BizOrderPage(orderId: order);
-      if (n.data['side'] == 'admin') return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'market').clamp(0, adminSections.length - 1));
+      if (n.data['side'] == 'admin') return AdminEntry(standalone: false, sectionId: 'market');
       return n.data['side'] == 'team' && biz != null ? BusinessDashboardPage(id: biz, initialTab: 1) : const MyBookingsPage();
     case 'ticket_sale':
     case 'event_cancelled':
@@ -131,7 +131,7 @@ Widget? notificationTarget(AppNotification n) {
       return listing != null ? ListingPage(listing) : order != null ? OrderPage(order) : const OrdersPage(initialTab: 0);
     // عرض بانتظار المراجعة (للمديرين): قسم السوق في الإدارة حيث القبول والرفض
     case 'market_pending':
-      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'market').clamp(0, adminSections.length - 1));
+      return AdminEntry(standalone: false, sectionId: 'market');
     // «أبحث عن»: طلب مشترٍ يطابق ما أقدّمه، أو عرض وصل على طلبي
     case 'market_wanted':
       final wanted = n.str('wantedId');
@@ -150,28 +150,28 @@ Widget? notificationTarget(AppNotification n) {
     case 'wallet':
       return const WalletPage();
     case 'biz_claim':
-      return const AdminShell(standalone: false, initialSection: 3);
+      return const AdminEntry(standalone: false, initialSection: 3);
     // طلب توثيق جديد: قسم الدوائر في الإدارة على طابور التوثيق (المقطع يُضبط عند الفتح في openNotification)
     case 'biz_verification':
-      return const AdminShell(standalone: false, initialSection: 3);
+      return const AdminEntry(standalone: false, initialSection: 3);
     case 'report_new':
-      return const AdminShell(standalone: false, initialSection: 2);
+      return const AdminEntry(standalone: false, initialSection: 2);
     case 'admin_granted':
     case 'team_added':
     case 'team_role':
-      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'team').clamp(0, adminSections.length - 1));
+      return AdminEntry(standalone: false, sectionId: 'team');
     case 'task_assigned':
     case 'task_status':
     case 'task_comment':
     case 'task_due':
     case 'task_overdue':
-      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'tasks').clamp(0, adminSections.length - 1));
+      return AdminEntry(standalone: false, sectionId: 'tasks');
     case 'inbox_message':
     case 'inbox_assigned':
     case 'inbox_note':
     case 'inbox_send_failed':
     case 'inbox_unsnoozed':
-      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'inbox').clamp(0, adminSections.length - 1));
+      return AdminEntry(standalone: false, sectionId: 'inbox');
     case 'post_blocked':
       return const MyPostsPage();
     // تفاعل أو إعجاب على لحظتي (moment_extras.js وmap_posts.js): تُفتح اللحظة نفسها في العارض
@@ -205,10 +205,10 @@ Widget? notificationTarget(AppNotification n) {
       return _moderatedTarget(n);
     // بلاغات كثيرة على دائرة (لا تُخفى تلقائياً): طابور البلاغات في الإدارة
     case 'content_reported_many':
-      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'reports').clamp(0, adminSections.length - 1));
+      return AdminEntry(standalone: false, sectionId: 'reports');
     // استرداد رصيد حساب محذوف (account_delete.js): المالية في الإدارة
     case 'account_refund':
-      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'finance').clamp(0, adminSections.length - 1));
+      return AdminEntry(standalone: false, sectionId: 'finance');
     case 'wish_price_drop':
     case 'wish_available':
     case 'wish_event_reminder':
@@ -218,7 +218,7 @@ Widget? notificationTarget(AppNotification n) {
     // إخفاء تلقائي بعد بلاغات، أو بلاغات محتوى جديدة (notify.js): طابور البلاغات (كان الفهرس 5 = المالية بعد إعادة ترتيب الأقسام)
     case 'content_autohidden':
     case 'content_reports_new':
-      return AdminShell(standalone: false, initialSection: adminSections.indexWhere((s) => s.$1 == 'reports').clamp(0, adminSections.length - 1));
+      return AdminEntry(standalone: false, sectionId: 'reports');
     case 'community_post':
     case 'community_reply':
     case 'community_hidden':

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../pages/admin/admin_shell.dart';
+import '../pages/admin/admin_entry.dart';
 import '../state/admin_providers.dart';
 import 'i18n/l10n.dart';
 import '../core/app_theme.dart';
@@ -101,7 +101,7 @@ class AuthGate extends ConsumerWidget {
         // بوابة التأكيد: كلمة السر صحيحة أو الحساب أُنشئ للتو، ولا دخول قبل رمز البريد
         return const VerifyEmailPage();
       case AuthStatus.signedIn:
-        return ref.watch(adminModeProvider) ? const AdminShell() : const HomeShell();
+        return ref.watch(adminModeProvider) ? const AdminEntry() : const HomeShell();
     }
   }
 }

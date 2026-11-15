@@ -21,6 +21,7 @@ import 'package:naslook/app/app.dart';
 import 'package:naslook/core/location.dart';
 import 'package:naslook/core/notify_open.dart';
 import 'package:naslook/core/share/share_links.dart';
+import 'package:naslook/pages/admin/admin_entry.dart';
 import 'package:naslook/pages/admin/admin_shell.dart';
 import 'package:naslook/pages/business/owner/business_dashboard_page.dart';
 import 'package:naslook/pages/chat/live_share.dart';
@@ -131,6 +132,9 @@ Future<void> _settle(WidgetTester tester, [int n = 4]) async {
 
 AppNotification _n(String kind, [Map<String, dynamic> data = const {}]) => AppNotification(id: 'n-$kind', kind: kind, title: kind, data: data);
 
+// القسم الذي تفتحه اللوحة المؤجَّلة: بالمعرّف إن أُعطي وإلا بالرقم
+int _adminSec(Object? w) { final e = w as AdminEntry; return e.sectionId != null ? adminSections.indexWhere((s) => s.$1 == e.sectionId) : e.initialSection; }
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
@@ -200,7 +204,7 @@ void main() {
         expect(notificationTarget(_n(k, {'orderId': _order, 'status': 'completed'})), isA<OrderPage>().having((p) => p.id, 'id', _order), reason: k);
         expect(notificationTarget(_n(k)), isA<OrdersPage>(), reason: '$k بلا طلب → عروضي وطلباتي');
       }
-      expect(notificationTarget(_n('market_pending', listing)), isA<AdminShell>().having((s) => s.initialSection, 'section', adminSections.indexWhere((s) => s.$1 == 'market')));
+      expect(notificationTarget(_n('market_pending', listing)), isA<AdminEntry>().having(_adminSec, 'section', adminSections.indexWhere((s) => s.$1 == 'market')));
       expect(notificationTarget(_n('market_wanted', {'wantedId': 'w-1'})), isA<WantedDetailPage>().having((p) => p.id, 'id', 'w-1'));
       expect(notificationTarget(_n('market_wanted')), isA<WantedPage>());
       expect(notificationTarget(_n('market_bazaar', {'bazaarId': 'bz-1'})), isA<BazaarPage>().having((p) => p.id, 'id', 'bz-1'));

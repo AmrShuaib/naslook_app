@@ -12,6 +12,7 @@ import 'package:naslook/api/models.dart';
 import 'package:naslook/api/notify_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/core/notify_open.dart';
+import 'package:naslook/pages/admin/admin_entry.dart';
 import 'package:naslook/pages/admin/admin_shell.dart';
 import 'package:naslook/pages/business/owner/business_dashboard_page.dart';
 import 'package:naslook/pages/business/owner/job_candidate_page.dart';
@@ -157,6 +158,9 @@ Future<void> _pump(WidgetTester tester, _Srv srv, Widget home, {double height = 
 }
 
 JobsBoard _board({bool ai = true}) => JobsBoard(team: [const Person(id: 'SA0000001', nickname: 'amr'), const Person(id: 'SA0000003', nickname: 'khalid')], aiAvailable: ai, plan: const JobPlan(active: 1));
+
+// القسم الذي تفتحه اللوحة المؤجَّلة: بالمعرّف إن أُعطي وإلا بالرقم
+int _adminSec(Object? w) { final e = w as AdminEntry; return e.sectionId != null ? adminSections.indexWhere((s) => s.$1 == e.sectionId) : e.initialSection; }
 
 void main() {
   testWidgets('dashboard shows the jobs tab with plan card, overview and jobs list', (tester) async {
@@ -345,8 +349,8 @@ void main() {
     expect((review as BusinessDashboardPage).initialTab, BusinessDashboardPage.jobsTab);
     // بلا manage: إشعار المشرفين «بانتظار الموافقة» يفتح قسم التوظيف في الإدارة، وتغيّر المرحلة/المقابلة يخص المرشح
     final adminReview = t('job_review', {'bizId': 'biz-cafe', 'jobId': _job1});
-    expect(adminReview, isA<AdminShell>());
-    expect((adminReview as AdminShell).initialSection, adminSections.indexWhere((s) => s.$1 == 'jobs'));
+    expect(adminReview, isA<AdminEntry>());
+    expect(_adminSec(adminReview), adminSections.indexWhere((s) => s.$1 == 'jobs'));
     expect(t('job_stage', {'bizId': 'biz-cafe', 'jobId': _job1, 'matchId': _mSara, 'stage': 'interview'}), isA<JobOfferPage>());
     expect(t('job_interview', {'bizId': 'biz-cafe', 'jobId': _job1, 'matchId': _mSara, 'interviewId': 'i'}), isA<JobOfferPage>());
   });

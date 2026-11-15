@@ -22,6 +22,7 @@ import 'package:naslook/app/app.dart';
 import 'package:naslook/core/location.dart';
 import 'package:naslook/core/notify_open.dart';
 import 'package:naslook/core/push/push_service.dart';
+import 'package:naslook/pages/admin/admin_entry.dart';
 import 'package:naslook/pages/admin/admin_shell.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/community_page.dart';
@@ -79,6 +80,9 @@ class _Srv {
   }
 }
 
+// القسم الذي تفتحه اللوحة المؤجَّلة: بالمعرّف إن أُعطي وإلا بالرقم
+int _adminSec(Object? w) { final e = w as AdminEntry; return e.sectionId != null ? adminSections.indexWhere((s) => s.$1 == e.sectionId) : e.initialSection; }
+
 void main() {
   group('notification destinations', () {
     test('the six kinds that opened nothing now open their screen', () {
@@ -135,12 +139,12 @@ void main() {
 
     test('other kinds that opened nothing: admin queues for reports, inbox notes and refunds', () {
       for (final k in ['content_reported_many', 'inbox_note', 'inbox_send_failed', 'inbox_unsnoozed', 'account_refund']) {
-        expect(notificationTarget(_n(k)), isA<AdminShell>(), reason: k);
+        expect(notificationTarget(_n(k)), isA<AdminEntry>(), reason: k);
       }
       // الإخفاء التلقائي وبلاغات المحتوى الجديدة: قسم البلاغات (كان content_autohidden يفتح المالية بفهرس قديم)
       final reports = adminSections.indexWhere((s) => s.$1 == 'reports');
       for (final k in ['content_autohidden', 'content_reports_new', 'content_reported_many']) {
-        expect((notificationTarget(_n(k)) as AdminShell).initialSection, reports, reason: k);
+        expect(_adminSec(notificationTarget(_n(k))), reports, reason: k);
       }
       expect(notificationTarget(_n('test')), isNull, reason: 'الإشعار التجريبي لا وجهة له');
       expect(notificationTarget(_n('something_new')), isNull);
