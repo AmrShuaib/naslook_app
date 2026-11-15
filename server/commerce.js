@@ -83,6 +83,8 @@ export default async function commerce(app, opts) {
     ALTER TABLE market_questions ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE market_wanted_replies ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE events ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
+    -- من دفع ثمن التذكرة: يبقى كما هو حين تُحوَّل لصاحب (ticket_share.js)، فيعود الاسترداد إليه لا إلى حاملها
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS payer_id TEXT;
   `);
   // الدفع عند الاستلام (بند 10 من نواقص الإطلاق): البائع يسمح به على العرض، والطلب يحمل طريقة دفعه ولا يمر بالمحفظة.
   // cancel_reason يميّز اعتذار البائع وعدم حضور المشتري وانتهاء المهلة عن الإلغاء العادي (عدّاد «لم يحضر» يُحسب منه)
@@ -431,12 +433,19 @@ export default async function commerce(app, opts) {
     try {
       holders = await tx(async (c) => {
         await c.query("UPDATE events SET cancelled=true WHERE id=$1", [ev.id]);
-        const ts = (await c.query("UPDATE tickets SET status='refunded' WHERE event_id=$1 AND status='valid' RETURNING user_id, paid", [ev.id])).rows;
-        for (const t of ts) if (Number(t.paid) > 0) {
-          await ledger(c, t.user_id, "refund", Number(t.paid), { peerId: uid, ref: ev.id, note: ev.title });
-          await ledger(c, uid, "refund_out", -Number(t.paid), { peerId: t.user_id, ref: ev.id, note: ev.title });
+        const ts = (await c.query("UPDATE tickets SET status='refunded' WHERE event_id=$1 AND status='valid' RETURNING user_id, paid, payer_id", [ev.id])).rows;
+        // التذكرة المحوَّلة يُسترد ثمنها لمن دفعه، وحاملها يصله إشعار الإلغاء بلا مبلغ
+        const out = [];
+        for (const t of ts) {
+          const payer = t.payer_id || t.user_id;
+          if (Number(t.paid) > 0) {
+            await ledger(c, payer, "refund", Number(t.paid), { peerId: uid, ref: ev.id, note: ev.title });
+            await ledger(c, uid, "refund_out", -Number(t.paid), { peerId: payer, ref: ev.id, note: ev.title });
+          }
+          out.push({ user_id: payer, paid: t.paid });
+          if (payer !== t.user_id) out.push({ user_id: t.user_id, paid: 0 });
         }
-        return ts;
+        return out;
       });
     } catch (e) {
       // سباق: أُنفق الرصيد بين الفحص والمعاملة؛ المعاملة تراجعت كاملة
