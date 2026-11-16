@@ -43,6 +43,9 @@
     /* التطبيق كله من اليمين إلى اليسار بينما يترك Flutter اتجاه الحقل الخفي LTR، فيرسم المتصفح النص المختلط
        (عربي + إنجليزي) بترتيب مغاير لما يُرسم على الشاشة؛ نوحّد الاتجاه حتى يطابق التحديد والمؤشر ما يراه المستخدم. */
     flt-text-editing-host input, flt-text-editing-host textarea, flutter-view input, flutter-view textarea, flt-glass-pane input, flt-glass-pane textarea { direction: rtl !important; }
+    /* ارتفاع السطر في الحقل الخفي يتبع الخط (نحو 1.19) بينما يرسم التطبيق حقوله بارتفاع 1.5، فكان السطر الثاني وما
+       بعده في الحقل الخفي أعلى مما على الشاشة ويقع تحديد النص على السطر الخطأ؛ نوحّده مع ما يرسمه التطبيق. */
+    flt-text-editing-host textarea, flutter-view textarea, flt-glass-pane textarea { line-height: 1.5 !important; }
     /* مقدمة التطبيق: الشعار فوق كل شيء حتى يرسم Flutter أول إطار (web/boot.js يخفيه)، وبالمقاس والموضع نفسيهما في
        lib/ui/launch_splash.dart فلا يرى المستخدم قفزة. لا سكربت هنا: CSP يمنع المضمّن. */
     #splash { position: fixed; inset: 0; z-index: 2147483000; background: #FFFFFF; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; transition: opacity .35s ease, visibility .35s; }

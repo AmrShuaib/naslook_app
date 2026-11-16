@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/app_theme.dart';
+import '../../../core/media/permissions.dart';
 import '../../../core/speech/dictation.dart';
 import '../../../ui/widgets.dart';
 import '../chat_cards.dart';
@@ -79,6 +80,8 @@ class _ChatComposerState extends State<ChatComposer> {
   // التسجيل بالضغط المطوّل
   bool _hold = false, _locked = false, _releasedEarly = false;
   double _cancelDx = 0, _lockDy = 0;
+  // تركيز الحقل: يُعاد بعد الإرسال حتى تبقى لوحة المفاتيح مفتوحة للرسالة التالية
+  final _focus = FocusNode();
 
   @override
   void initState() {
@@ -113,6 +116,7 @@ class _ChatComposerState extends State<ChatComposer> {
   void dispose() {
     widget.controller.removeListener(_onText);
     _dict?.dispose();
+    _focus.dispose();
     super.dispose();
   }
 
@@ -148,7 +152,18 @@ class _ChatComposerState extends State<ChatComposer> {
         onError: (e) {
           if (!mounted) return;
           setState(() => _dictating = false);
-          toast(context, 'تعذّر الإملاء، حاول مرة أخرى', error: true);
+          final code = '$e';
+          // صمت أو إيقاف: ليس خطأ يستحق رسالة
+          if (code.contains('no-speech') || code.contains('aborted')) return;
+          if (code.contains('service-not-allowed')) {
+            toast(context, 'الإملاء غير متاح في هذا المتصفح. استخدم زر الميكروفون في لوحة المفاتيح', error: true);
+            return;
+          }
+          if (code.contains('not-allowed')) {
+            handlePermissionError(context, const MediaPermissionDenied('mic'));
+            return;
+          }
+          toast(context, code.contains('network') ? 'الإملاء يحتاج اتصالاً بالإنترنت' : 'تعذّر الإملاء، حاول مرة أخرى', error: true);
         },
         onEnd: () {
           if (mounted) setState(() => _dictating = false);
@@ -188,6 +203,13 @@ class _ChatComposerState extends State<ChatComposer> {
           ),
         ),
       );
+
+  // ---- الإرسال بالزر: لمس الزر قد يسحب التركيز من الحقل فتنغلق لوحة المفاتيح بين رسالة وأخرى؛ نعيده إن كان فيه
+  void _sendKeepingKeyboard() {
+    final had = _focus.hasFocus;
+    widget.onSend();
+    if (had && mounted) _focus.requestFocus();
+  }
 
   // ---- النقرة على الميكروفون (المسار القديم): تبدأ التسجيل حتى الإرسال أو الإلغاء
   void _tapRecord() {
@@ -318,7 +340,10 @@ class _ChatComposerState extends State<ChatComposer> {
     return TextField(
       key: const Key('composer-field'),
       controller: widget.controller,
-      style: const TextStyle(fontSize: 16),
+      focusNode: _focus,
+      // ارتفاع السطر وتباعد الحروف صريحان ومطابقان لقاعدة CSS في web/index.html: حقل الإدخال الخفي في المتصفح
+      // يجب أن يلفّ النص ويصفّ أسطره كما يُرسم هنا، وإلا وقع تحديد النص على آيفون على غير ما لُمس
+      style: const TextStyle(fontSize: 16, height: 1.5, letterSpacing: 0),
       minLines: 1,
       maxLines: 5,
       textInputAction: TextInputAction.send,
@@ -378,7 +403,7 @@ class _ChatComposerState extends State<ChatComposer> {
     return GestureDetector(
       key: const Key('composer-main'),
       behavior: HitTestBehavior.opaque,
-      onTap: rec ? () => widget.onStopRecording(send: true) : (_hasText ? widget.onSend : _tapRecord),
+      onTap: rec ? () => widget.onStopRecording(send: true) : (_hasText ? _sendKeepingKeyboard : _tapRecord),
       onLongPressStart: _holdStart,
       onLongPressMoveUpdate: _holdMove,
       onLongPressEnd: _holdEnd,

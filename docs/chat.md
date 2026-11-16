@@ -413,3 +413,27 @@ chat_live(id UUID PK, from_id TEXT, to_id TEXT, lat DOUBLE PRECISION, lng DOUBLE
 - `NASLIFE_TEST_DB=naslife_test_x server/test/run.sh harness_profile_v2.mjs` (قسم «الفحص المسبق»: الجميع، النفس، 401/404، الأصدقاء للصديق والغريب وبالاسم، طلب من طرف واحد، رسالتي السابقة لا تفتح، الرد على من كتب أولاً، `none`، الحظر بالاتجاهين وفشل فحص الحظر، `flags.canMessage/messageReason`، `naslifeCanMessage`، وبلا جداول النواة).
 - `NASLIFE_TEST_DB=naslife_test_x server/test/run.sh harness_jobs.mjs` و`harness_market_b.mjs` و`harness.mjs` (علاقات `jobs` و`market-orders` و`biz-orders`) و`harness_safety.mjs` (`naslifeHasBlocked` باتجاه واحد).
 - `flutter test test/message_gate_test.dart` (الأصدقاء يمنع الغريب، وردّ `ok` من الخادم يُبقي المؤلّف — قاعدة الصديق نفسها في الحزمة —، «إضافة صديق»، الرد حين كتب الطرف الآخر أولاً بلا فحص، فتح المؤلّف عند وصول رسالته، إرسال أثناء الفحص، نص معبّأ يُرسل قبل وصول السجل، خطأ السجل لا يُسقط الفحص، ضغطتان = رسالة واحدة، «موقعي الحي» ينتظر الفحص، `none`، 404 يسمح، «محادثة جديدة» بفحص واحد، إعادة التوجيه، مشاركة اللحظة). `test/profile_v2_test.dart`: «بانتظار قبول طلب الصداقة» و«طلب مُرسل» بدل «صديق» حين أضفته ولم يضفني، ونص المنع بحسب السبب.
+
+## 5. الميكروفون والإملاء وتحديد النص على الويب (16 نوفمبر 2026)
+
+بلاغ من مستخدم على آيفون (التطبيق مثبّت على الشاشة الرئيسية): التسجيل يعرض خطأ إنجليزياً خاماً
+(`NotAllowedError: The request is not allowed…`) والإملاء يعرض «تعذّر الإملاء»، وتحديد النص في المؤلّف يقع على غير ما لُمس.
+
+- **رفض الميكروفون**: `VoiceRecordSession.start` على الويب يمرّر خطأ `getUserMedia` عبر `mapMicError`
+  (`lib/core/media/permissions.dart`): الرفض يصير `MediaPermissionDenied('mic')` وغيره `MediaUnavailable` بنص عربي
+  (لا ميكروفون، أو مشغول). و`handlePermissionError` على الويب يعرض للميكروفون ورقة `showMicHelp` (المفتاح `mic-help`)
+  بخطوات البيئة: `lib/core/media/browser_env.dart` يصنّفها (`BrowserHost`: متصفح داخلي لتطبيق آخر، مثبّت على شاشة
+  آيفون، سفاري، متصفح آخر على آيفون، غيره) من نص المتصفح و`navigator.standalone`. المتصفح الداخلي يُطلب منه
+  الفتح في Safari لأنه يمنع الميكروفون بلا إعداد.
+- **الإملاء**: التطبيق المثبّت على شاشة آيفون والمتصفحات الداخلية تعرّف `SpeechRecognition` ولا تشغّله، فـ
+  `Dictation.supported` هناك false ويختفي الزر (يبقى ميكروفون لوحة المفاتيح). الأخطاء: `no-speech` و`aborted` بلا
+  رسالة، `not-allowed` ورقة الميكروفون، `service-not-allowed` و`network` برسالة تخصّها.
+- **تحديد النص**: حقل الإدخال الخفي الذي ينشئه Flutter يأخذ الخط والحجم فقط، فكان ارتفاع سطره (نحو 1.19) وتباعد
+  حروفه (0) يخالفان ما يُرسم (1.5 و0.5 من طباعة Material 3)، فيختلف لفّ الأسطر وموضعها بين ما يراه المستخدم وما
+  يحدده النظام. الآن: `bodyLarge` بلا تباعد حروف في `app_theme.dart`، والمؤلّف بـ`height: 1.5, letterSpacing: 0`
+  صريحين، وقاعدة CSS `textarea { line-height: 1.5 !important }` في `web/index.html` (وفي `web/boot.js` داخل shadow
+  DOM). **حقل متعدد الأسطر بارتفاع سطر غير 1.5 سيخالف هذه القاعدة**؛ إن احتيج فليُضبط الاثنان معاً.
+- **لوحة المفاتيح**: زر الإرسال يعيد التركيز إلى الحقل إن كان فيه (`_sendKeepingKeyboard`) حتى لا تنغلق بين الرسائل.
+- **لم يُتحقق منه على جهاز**: كُتبت هذه التعديلات في جلسة بلا Flutter SDK (الشبكة تمنع تنزيله)، فلم يُشغَّل
+  `dart analyze` ولا `flutter test` ولا بناء الويب؛ فُحصت الصياغة بمحلّل tree-sitter فقط. تُشغَّل الثلاثة قبل الدمج،
+  ويُؤكَّد تحديد النص على آيفون حقيقي بعد النشر.
