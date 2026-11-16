@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:naslook/api/models.dart';
+import 'package:naslook/api/row_api.dart';
 import 'package:naslook/pages/map/map_cluster.dart';
 
 MapItem _pin(String id, double lat, double lng, {Duration? ago}) => MapItem.pin(Pin(
@@ -48,6 +49,54 @@ void main() {
     test('radius shrinks with zoom', () {
       expect(clusterRadiusFor(10) > clusterRadiusFor(14), isTrue);
       expect(clusterRadiusFor(14) > clusterRadiusFor(17), isTrue);
+    });
+  });
+
+  group('groupPins (home map)', () {
+    test('merges crowded pins, keeps the shown card pin and people alone, and orders clusters first and the kept pin last', () {
+      final me = MapItem.person(const Presence(id: 'SA9', nickname: 'sara', lat: 21.5001, lng: 39.2001));
+      // أربعة متلاصقة (~20 م) واحد منها بطاقة الصف المعروضة، وشخص بينها، ودبّوس بعيد
+      final items = [_pin('a', 21.5000, 39.2000), _pin('b', 21.5001, 39.2000), _pin('c', 21.5000, 39.2001), _pin('sel', 21.5001, 39.2001), me, _pin('far', 21.5300, 39.2000)];
+      final g = groupPins(items, zoom: 14, keepKey: 'pin:sel');
+      expect(g.length, 4);
+      expect(g[0].count, 3, reason: 'المجموعة أولاً');
+      expect(g[0].items.map((i) => i.id).toSet(), {'a', 'b', 'c'});
+      expect(g[1].first.id, 'far');
+      expect(g[2].first.kind, MapItemKind.person, reason: 'صورة الصديق لا تدخل دائرة برقم');
+      expect(g.last.isSingle, isTrue);
+      expect(g.last.first.id, 'sel', reason: 'المختار آخراً فيُرسم فوق الجميع');
+      // مركز المجموعة متوسط عناصرها
+      expect(g[0].lat, closeTo((21.5000 + 21.5001 + 21.5000) / 3, 1e-9));
+      // بلا مختار: الأربعة مجموعة واحدة
+      expect(groupPins(items, zoom: 14).first.count, 4);
+    });
+
+    test('the same pins separate when zoomed in, and a custom radius is honoured', () {
+      // ~110 م بين المتجاورين
+      final items = [_pin('a', 21.500, 39.200), _pin('b', 21.501, 39.200), _pin('c', 21.502, 39.200)];
+      expect(groupPins(items, zoom: 12).single.count, 3);
+      expect(groupPins(items, zoom: 16).length, 3);
+      expect(groupPins(items, zoom: 16).every((c) => c.isSingle), isTrue);
+      expect(groupPins(items, zoom: 16, radiusPx: 400).single.count, 3);
+      expect(groupPins(const [], zoom: 12), isEmpty);
+    });
+
+    test('filter kinds: row kinds map to their chips, layer pins to theirs, people and legacy pins only under «الكل»', () {
+      expect(mapFilterIds, ['all', 'moment', 'offer', 'event', 'listing', 'circle', 'job']);
+      expect([for (final id in mapFilterIds) mapFilterLabel(id)], ['الكل', 'لحظات', 'عروض', 'فعاليات', 'السوق', 'دوائر', 'وظائف']);
+      expect(rowFilterKind(const RowItem(kind: 'job', id: 'j')), 'job');
+      expect(rowFilterKind(const RowItem(kind: 'hologram', id: 'h')), 'moment', reason: 'نوع غير معروف بطاقته «لحظة»');
+      final ev = MapItem.row(const RowItem(kind: 'event', id: 'e', lat: 21.5, lng: 39.2))!;
+      final biz = MapItem.business(const Business(id: 'b', name: 'n', category: 'c', description: '', lat: 21.5, lng: 39.2))!;
+      final person = MapItem.person(const Presence(id: 'SA9', nickname: 'sara', lat: 21.5, lng: 39.2));
+      expect(mapFilterKind(ev), 'event');
+      expect(mapFilterKind(biz), 'circle');
+      expect(mapFilterKind(_pin('a', 21.5, 39.2)), isNull);
+      expect(mapFilterKind(person), isNull);
+      expect(mapFilterAllows('all', person), isTrue);
+      expect(mapFilterAllows('circle', person), isFalse);
+      expect(mapFilterAllows('circle', biz), isTrue);
+      expect(mapFilterAllows('event', biz), isFalse);
     });
   });
 

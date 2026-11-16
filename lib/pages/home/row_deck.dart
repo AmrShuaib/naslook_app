@@ -8,7 +8,7 @@ import '../../api/row_api.dart';
 import '../../core/app_theme.dart';
 import '../posts/album_badge.dart';
 
-/// «واحد» بشكل البطاقة (النموذج أ): بطاقة مدمجة واحدة فوق الخريطة تُسحب جانبياً فتأتي التالية، وفوقها صف عدّاد بسهمين.
+/// «واحد» بشكل البطاقة (النموذج أ): بطاقة مدمجة واحدة فوق الخريطة تُسحب جانبياً فتأتي التالية، وفوقها نقاط الصفحات.
 /// الودجة لا تعرف الخريطة: الأب يملك الفهرس ([index]) ويحرّك الخريطة عند تغيّره ([onIndex])، وزر البطاقة الوحيد يفتح
 /// رحلة العنصر ([onAct]). الدوران حلقي: بعد الأخيرة تعود الأولى.
 class RowDeck extends StatefulWidget {
@@ -20,16 +20,19 @@ class RowDeck extends StatefulWidget {
   final bool loading;
   /// رُتّب الصف بموقع المستخدم («الأقرب أولاً»)، وإلا بالأحدث.
   final bool located;
-  const RowDeck({super.key, required this.items, required this.index, required this.onIndex, required this.onAct, this.loading = false, this.located = true});
+  /// رقاقة تصفية مختارة بلا نتائج: بطاقة «لا شيء من هذا النوع» وزر «وسّع البحث» يستدعي هذا؛ null = لا تصفية.
+  final VoidCallback? onClearFilter;
+  const RowDeck({super.key, required this.items, required this.index, required this.onIndex, required this.onAct, this.loading = false, this.located = true, this.onClearFilter});
 
-  static const counterHeight = 30.0, gap = 6.0, cardHeight = 84.0;
+  /// النقاط فوق البطاقة: ارتفاع منطقتها (النقطة 6 وحولها مجال لمس)، وأقصى عدد يُعرض.
+  static const dotsHeight = 24.0, cardHeight = 84.0, maxDots = 7;
   /// مسافة السحب التي تُبدّل البطاقة.
   static const swipeThreshold = 60.0;
 
   /// الارتفاع الذي تحجزه المجموعة فوق شريط التنقّل (تقديري مع تكبير النص حتى لا تغطي الأزرار العائمة).
   static double heightFor(BuildContext context) {
     final s = MediaQuery.textScalerOf(context).scale(1.0);
-    return counterHeight + gap + math.max(cardHeight, 16 + 52 * s + 4);
+    return dotsHeight + math.max(cardHeight, 16 + 52 * s + 4);
   }
 
   @override
@@ -51,6 +54,13 @@ class _RowDeckState extends State<RowDeck> {
     widget.onIndex((_index + step + _count) % _count);
   }
 
+  /// قفز من نقطة: البطاقة تخرج بجهة الحركة كما في السحب.
+  void _jump(int i) {
+    if (i == _index || i < 0 || i >= _count) return;
+    _dir = i > _index ? -1 : 1;
+    widget.onIndex(i);
+  }
+
   void _onDragEnd(double width) {
     final dx = _dragX;
     setState(() {
@@ -64,29 +74,14 @@ class _RowDeckState extends State<RowDeck> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.loading && widget.items.isEmpty) return const _Skeleton();
-    if (widget.items.isEmpty) return const _EmptyCard();
+    // الحالات بلا بطاقات تحجز مكان النقاط أيضاً حتى لا تقفز البطاقة حين يصل الصف
+    Widget padded(Widget card) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [const SizedBox(height: RowDeck.dotsHeight), card]);
+    if (widget.loading && widget.items.isEmpty) return padded(const _Skeleton());
+    if (widget.items.isEmpty) return padded(widget.onClearFilter != null ? _FilterEmptyCard(onClear: widget.onClearFilter!) : const _EmptyCard());
     final it = widget.items[_index];
-    final n = widget.index.clamp(0, _count - 1) + 1;
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      SizedBox(
-        height: RowDeck.counterHeight,
-        child: Row(children: [
-          _Arrow(key: const Key('row-prev'), icon: Icons.chevron_right_rounded, tip: 'السابق', onTap: () => _go(-1, 1)),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Container(
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: BoxDecoration(color: Joy.surface.withValues(alpha: .94), borderRadius: BorderRadius.circular(999), boxShadow: const [BoxShadow(color: Color(0x1F000000), blurRadius: 8, offset: Offset(0, 2))]),
-              child: Text('$n من $_count · ${widget.located ? 'الأقرب أولاً' : 'الأحدث أولاً'}', key: const Key('row-count'), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF374151))),
-            ),
-          ),
-          const SizedBox(width: 6),
-          _Arrow(key: const Key('row-next'), icon: Icons.chevron_left_rounded, tip: 'التالي', onTap: () => _go(1, -1)),
-        ]),
-      ),
-      const SizedBox(height: RowDeck.gap),
+      // النقاط فوق البطاقة لا تحتها: زر «+» في وسط الشريط يعلو الكبسولة فكان يغطيها
+      RowDots(key: const Key('row-dots'), count: _count, index: _index, located: widget.located, onTap: (i) => _jump(i)),
       LayoutBuilder(builder: (context, box) {
         final w = box.maxWidth;
         return GestureDetector(
@@ -124,22 +119,59 @@ class _RowDeckState extends State<RowDeck> {
   }
 }
 
-class _Arrow extends StatelessWidget {
-  final IconData icon;
-  final String tip;
-  final VoidCallback onTap;
-  const _Arrow({super.key, required this.icon, required this.tip, required this.onTap});
+/// نافذة نقاط الصفحات: أول نقطة تُعرض حين يزيد العدد عن [max]، بحيث تبقى الحالية في الوسط ما أمكن.
+int dotWindowStart(int count, int index, {int max = 7}) {
+  if (count <= max) return 0;
+  return (index - max ~/ 2).clamp(0, count - max);
+}
+
+/// نقاط الصفحات فوق البطاقة بدل العدّاد والسهمين: نقطة لكل بطاقة بحد [RowDeck.maxDots] مع نافذة تنزلق مع الحالية،
+/// والحالية ممدودة. لمس نقطة يقفز إلى بطاقتها. قارئ الشاشة يسمع «2 من 7 · الأقرب أولاً» كما كان العدّاد يعرض.
+class RowDots extends StatelessWidget {
+  final int count, index;
+  final bool located;
+  final ValueChanged<int>? onTap;
+  const RowDots({super.key, required this.count, required this.index, this.located = true, this.onTap});
+
   @override
-  Widget build(BuildContext context) => Tooltip(
-        message: tip,
-        child: Material(
-          color: Joy.surface.withValues(alpha: .94),
-          shape: const CircleBorder(),
-          elevation: 2,
-          shadowColor: Colors.black26,
-          child: InkWell(customBorder: const CircleBorder(), onTap: onTap, child: SizedBox(width: RowDeck.counterHeight, height: RowDeck.counterHeight, child: Icon(icon, size: 20, color: Joy.text))),
-        ),
-      );
+  Widget build(BuildContext context) {
+    final shown = math.min(count, RowDeck.maxDots);
+    final start = dotWindowStart(count, index, max: RowDeck.maxDots);
+    return Semantics(
+      label: '${index + 1} من $count · ${located ? 'الأقرب أولاً' : 'الأحدث أولاً'}',
+      child: SizedBox(
+        height: RowDeck.dotsHeight,
+        // بطاقة واحدة لا تحتاج نقاطاً، والمكان يبقى محجوزاً
+        child: count <= 1
+            ? null
+            // حبّة شبه شفافة تحمل النقاط حتى تُقرأ فوق أي خريطة
+            : Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  decoration: BoxDecoration(color: Joy.surface.withValues(alpha: .88), borderRadius: BorderRadius.circular(999)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    for (var i = start; i < start + shown; i++)
+                      GestureDetector(
+                        key: Key('row-dot-$i'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onTap == null || i == index ? null : () => onTap!(i),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2.5, vertical: 5),
+                          child: AnimatedContainer(
+                            key: i == index ? const Key('row-dot-on') : null,
+                            duration: const Duration(milliseconds: 200),
+                            width: i == index ? 16 : 6,
+                            height: 6,
+                            decoration: BoxDecoration(color: i == index ? Joy.text : const Color(0x4025272A), borderRadius: BorderRadius.circular(3)),
+                          ),
+                        ),
+                      ),
+                  ]),
+                ),
+              ),
+      ),
+    );
+  }
 }
 
 const _cardShadow = [BoxShadow(color: Color(0x33000000), blurRadius: 28, offset: Offset(0, 10))];
@@ -230,6 +262,31 @@ class _EmptyCard extends StatelessWidget {
           Container(width: 68, height: 68, decoration: BoxDecoration(color: Joy.primarySoft, borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.auto_awesome_rounded, color: Joy.primary, size: 28)),
           const SizedBox(width: 10),
           const Expanded(child: Text('لا شيء حولك الآن… جرّب أن تنشر لحظة', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Joy.text, height: 1.5))),
+        ]),
+      );
+}
+
+/// رقاقة مختارة بلا نتائج قريبة: سطر واحد وزر يلغي التصفية.
+class _FilterEmptyCard extends StatelessWidget {
+  final VoidCallback onClear;
+  const _FilterEmptyCard({required this.onClear});
+  @override
+  Widget build(BuildContext context) => Container(
+        key: const Key('row-filter-empty'),
+        constraints: const BoxConstraints(minHeight: RowDeck.cardHeight),
+        padding: const EdgeInsets.all(8),
+        decoration: _cardBox(),
+        child: Row(children: [
+          Container(width: 68, height: 68, decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.filter_alt_off_rounded, color: Joy.textMuted, size: 28)),
+          const SizedBox(width: 10),
+          const Expanded(child: Text('لا شيء من هذا النوع قريب منك', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Joy.text, height: 1.5))),
+          const SizedBox(width: 8),
+          FilledButton(
+            key: const Key('row-widen'),
+            onPressed: onClear,
+            style: FilledButton.styleFrom(minimumSize: const Size(0, 34), padding: const EdgeInsets.symmetric(horizontal: 13), visualDensity: VisualDensity.compact, tapTargetSize: MaterialTapTargetSize.shrinkWrap, textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+            child: const Text('وسّع البحث'),
+          ),
         ]),
       );
 }

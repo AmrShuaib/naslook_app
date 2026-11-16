@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -27,6 +28,7 @@ import 'package:naslook/pages/chat/chat_thread_page.dart';
 import 'package:naslook/pages/explore/explore_page.dart';
 import 'package:naslook/pages/map/map_page.dart';
 import 'package:naslook/pages/market/market_page.dart';
+import 'package:naslook/pages/posts/post_composer.dart';
 import 'package:naslook/pages/posts/post_viewer.dart';
 import 'package:naslook/pages/profile/user_profile_page.dart';
 import 'package:naslook/screens/login_page.dart';
@@ -164,6 +166,7 @@ void main() {
     expect(find.text('أشخاص'), findsNothing);
     expect(find.text('دبابيس'), findsNothing);
     expect(find.byTooltip('إظهار موقعي'), findsNothing);
+    expect(find.byKey(const Key('map-here-visibility')), findsNothing);
     for (final k in ['guest-tab-map', 'guest-tab-places', 'guest-tab-market', 'guest-tab-events', 'guest-tab-account']) {
       expect(find.byKey(Key(k)), findsOneWidget, reason: k);
     }
@@ -208,7 +211,9 @@ void main() {
     iosNativeOverride = true;
     final srv = await _pump(tester);
     // الخريطة تطلب طبقاتها العامة فقط
-    await tester.tap(find.byTooltip('تحديث'));
+    // زر «تحديث» أُزيل من الرئيسية: العودة إلى التطبيق تعيد جلب الطبقات كلها
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await _settle(tester);
     for (final k in ['guest-tab-places', 'guest-tab-market', 'guest-tab-events', 'guest-tab-account', 'guest-tab-map']) {
       await _tab(tester, k);
@@ -301,10 +306,19 @@ void main() {
   testWidgets('posting from the map asks a guest to sign in before the composer opens', (tester) async {
     iosNativeOverride = true;
     await _pump(tester);
-    await tester.tap(find.byTooltip('منشور جديد'));
+    // زر الكاميرا الجانبي أُزيل: النشر من الخريطة عبر «أنا هنا» (ثم «هنا الآن») أو الضغط المطوّل، وكلاهما يدعو الزائر للدخول
+    expect(find.byTooltip('منشور جديد'), findsNothing);
+    await tester.tap(find.byKey(const Key('map-here')));
     await _settle(tester);
     expect(find.text('هذا يحتاج حساباً'), findsOneWidget);
     expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+    expect(find.byKey(const Key('map-here-sheet')), findsNothing, reason: 'لا ورقة موقع قبل الدخول');
+    expect(find.byType(PostComposerPage), findsNothing);
+    await _dismissSheet(tester);
+    await tester.longPressAt(tester.getCenter(find.byType(FlutterMap)) + const Offset(120, 120));
+    await _settle(tester);
+    expect(find.byKey(const Key('guest-login-sheet')), findsOneWidget);
+    expect(find.text('عند هذه النقطة'), findsNothing);
   });
 
   testWidgets('a guest opens a listing (view ping stays silent) and ordering shows the sign-in prompt', (tester) async {

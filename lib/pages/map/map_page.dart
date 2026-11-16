@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -38,6 +39,7 @@ import '../../state/notify_providers.dart';
 import '../../state/offers_providers.dart';
 import '../../state/live_providers.dart';
 import '../../state/row_providers.dart';
+import '../../state/search_providers.dart';
 import '../business/offers_page.dart';
 import '../../ui/joy_nav_bar.dart';
 import '../home/row_deck.dart';
@@ -49,8 +51,9 @@ import '../search/search_page.dart';
 const double kAreaListZoom = 13;
 
 class MapPage extends ConsumerStatefulWidget {
-  /// وضع الرئيسية (نظام «واحد»/«الصف»): خريطة كاملة، بحث زجاجي وجرس فوقها، وبطاقة واحدة مدمجة في الأسفل تُسحب جانبياً
-  /// والخريطة تتبعها. لا ورقة ولا رقائق ولا أقسام ولا تخصيص. الوضع غير الرئيسي يُبقي الرقائق ولوحة المنطقة كما كانت.
+  /// وضع الرئيسية (نظام «واحد»/«الصف»): خريطة كاملة، بحث وجرس فوقها وتحتهما رقائق الأنواع، زران عائمان («موقعي» و«أنا هنا»)،
+  /// وبطاقة واحدة مدمجة في الأسفل تُسحب جانبياً والخريطة تتبعها (تبسيط 16 نوفمبر 2026 في docs/row.md). لا ورقة ولا أقسام
+  /// ولا تخصيص. الوضع غير الرئيسي يُبقي رقائق الطبقات ولوحة المنطقة وأزراره كما كانت.
   final bool home;
   /// الخريطة تمتد خلف كبسولة التنقّل العائمة (HomeShell) فتُرفع البطاقة فوقها؛ واجهة الزائر بشريط عادي فلا تحتاج ذلك.
   final bool floatingNav;
@@ -160,12 +163,77 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
   RowItem? _rowSel;
   bool _rowSyncPending = false;
   double _mapHeight = 0;
+  /// رقاقة التصفية المختارة في الرئيسية ([mapFilterIds])؛ تحصر دبابيس الخريطة وبطاقات الصف معاً.
+  String _filter = 'all';
+  /// «ابحث في هذه المنطقة»: يظهر بعد أن يبتعد المستخدم بيده عن آخر موضع وضعته فيه الخريطة ([_anchor]).
+  bool _searchArea = false;
+  LatLng? _anchor;
+  double _anchorZoom = 13;
+  bool _forceAreaCheck = false;
   /// نتيجة اختبار اللمس على طبقة مناطق خدمة الدوائر المتنقلة (flutter_map يملؤها قبل أن يصل onTap).
   final _areaHit = ValueNotifier<LayerHitResult<String>?>(null);
 
   static const _sheetMin = 0.11, _sheetInitial = 0.26, _sheetMax = 0.74;
 
+  /// حركات مصدرها يد المستخدم (سحب، قرص، عجلة، نقر مزدوج)، لا تتبّع البطاقة ولا «موقعي».
+  static const _userSources = {
+    MapEventSource.onDrag, MapEventSource.dragEnd, MapEventSource.onMultiFinger, MapEventSource.multiFingerEnd, MapEventSource.flingAnimationController,
+    MapEventSource.doubleTapZoomAnimationController, MapEventSource.doubleTapHold, MapEventSource.scrollWheel, MapEventSource.keyboard,
+  };
+  /// أقل إزاحة بالبكسل أو فرق تكبير يُعدّ ابتعاداً ملحوظاً، وأقل بُعد بالأمتار عن مركز الصف الحالي.
+  static const areaMovePx = 120.0, areaZoomDelta = 1.0, areaMinMeters = 300.0;
+
+  /// مركز الصف المعروض: المنطقة التي اختارها المستخدم، وإلا موقعه.
+  LatLng? get _rowCenter => ref.read(rowCenterProvider) ?? ref.read(userLocationProvider).valueOrNull;
+
+  /// الصف لا يتبع الخريطة، فنعرض الزر حين يبتعد المستخدم بيده: إزاحة ملحوظة عن آخر موضع برمجي (حتى لا يظهر لمجرد أن
+  /// الخريطة تبعت بطاقة بعيدة) وبُعد فعلي عن مركز الصف (حتى يختفي إن عاد). [force] لزر «موقعي»: يكفي البُعد عن مركز الصف.
+  void _trackArea(MapEvent e) {
+    final cam = e.camera;
+    final byUser = _userSources.contains(e.source);
+    final force = _forceAreaCheck && !byUser;
+    if (!byUser) {
+      _anchor = cam.center;
+      _anchorZoom = cam.zoom;
+      _forceAreaCheck = false;
+    }
+    final a = _anchor;
+    var show = false;
+    if (force || (byUser && a != null)) {
+      final rc = _rowCenter;
+      final far = rc == null || const Distance().as(LengthUnit.Meter, rc, cam.center) >= areaMinMeters;
+      var moved = force;
+      if (!moved && a != null) {
+        final p0 = projectToPixels(a.latitude, a.longitude, cam.zoom), p1 = projectToPixels(cam.center.latitude, cam.center.longitude, cam.zoom);
+        moved = p0.distanceTo(p1) >= areaMovePx || (cam.zoom - _anchorZoom).abs() >= areaZoomDelta;
+      }
+      // بلا موقع معروف ولا منطقة مختارة: «موقعي» لم يجد شيئاً يبحث حوله
+      show = moved && far && !(force && rc == null);
+    }
+    // بلا setState: الحدث قد يصل أثناء البناء، و[_onMapEvent] يعيد البناء بعد إطار على أي حال
+    _searchArea = show;
+  }
+
+  /// يعيد جلب الصف لمركز الخريطة الحالي ويخفي الزر.
+  void _searchHere() {
+    final c = _map.camera.center;
+    _anchor = c;
+    _anchorZoom = _map.camera.zoom;
+    ref.read(rowCenterProvider.notifier).state = LatLng(c.latitude, c.longitude);
+    setState(() => _searchArea = false);
+  }
+
+  void _setFilter(String id) {
+    if (id == _filter) return;
+    setState(() => _filter = id);
+    // البطاقة المختارة تبقى إن بقيت ضمن النوع، وإلا أول بطاقة منه
+    _syncRow(_rowItems);
+  }
+
+  List<RowItem> _filterRow(List<RowItem> all) => _filter == 'all' ? all : [for (final r in all) if (rowFilterKind(r) == _filter) r];
+
   void _onMapEvent(MapEvent e) {
+    if (widget.home) _trackArea(e);
     // تحديث فوري (مُخفَّف لإطار واحد) للتجميع ولوحة المنطقة
     _frame ??= Timer(const Duration(milliseconds: 40), () {
       _frame = null;
@@ -238,7 +306,8 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // العودة من الخلفية (أو من تطبيق الكاميرا) تعيد جلب الصف فيظهر ما نُشر أثناء الغياب
-    if (state == AppLifecycleState.resumed && widget.home && mounted) ref.invalidate(rowProvider);
+    // وطبقات الخريطة معه: زر «تحديث» أُزيل من الرئيسية فهذا بديله مع القناة الحية والتحديث الدوري
+    if (state == AppLifecycleState.resumed && widget.home && mounted) _refresh();
   }
 
   /// يجمع عناصر الخريطة من الطبقات والصف. [hereUntil] يُملأ بنهاية الدبّوس المؤقت «هنا اليوم» لكل دبّوس دائرة يحمله
@@ -335,7 +404,8 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
 
   // ------------------------------------------------------------------ الصف
 
-  List<RowItem> get _rowItems => widget.home ? (ref.read(rowProvider).valueOrNull?.items ?? const <RowItem>[]) : const <RowItem>[];
+  /// بطاقات الصف بعد رقاقة التصفية: هي ما تعرضه البطاقة وما يقفز إليه الدبّوس.
+  List<RowItem> get _rowItems => widget.home ? _filterRow(ref.read(rowProvider).valueOrNull?.items ?? const <RowItem>[]) : const <RowItem>[];
 
   /// يختار بطاقة ويحرّك الخريطة إليها.
   void _selectRow(List<RowItem> items, int i) {
@@ -357,10 +427,24 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
       _rowSyncPending = false;
       if (!mounted) return;
       if (items.isEmpty) {
-        if (_rowSel != null) setState(() => _rowSel = null);
+        if (_rowSel != null || _rowIndex != 0) {
+          setState(() {
+            _rowSel = null;
+            _rowIndex = 0;
+          });
+        }
         return;
       }
-      var i = _rowSel == null ? -1 : items.indexWhere((r) => r.pinKey == _rowSel!.pinKey);
+      final sel = _rowSel;
+      var i = sel == null ? -1 : items.indexWhere((r) => r.pinKey == sel.pinKey);
+      // البطاقة نفسها في مكانها (تحديث دوري أو حي): لا نعيد الخريطة إليها، فقد يكون المستخدم يتجوّل بعيداً عنها
+      if (i >= 0 && sel != null && items[i].lat == sel.lat && items[i].lng == sel.lng) {
+        setState(() {
+          _rowIndex = i;
+          _rowSel = items[i];
+        });
+        return;
+      }
       if (i < 0) i = 0;
       _selectRow(items, i);
     });
@@ -398,6 +482,8 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     ref.listen(mapFocusProvider, (_, next) {
       if (next == null) return;
       ref.read(mapFocusProvider.notifier).state = null;
+      // رابط يركّز على دبّوس: رقاقة تصفية قد تخفيه
+      if (_filter != 'all') _setFilter('all');
       try {
         _map.move(LatLng(next.lat, next.lng), 16.5);
       } catch (_) {}
@@ -406,7 +492,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
       ref.listen<LiveChannel>(liveChannelProvider, (_, next) { if (next != _live) _subscribeLive(next); });
       ref.listen<AsyncValue<RowFeed>>(rowProvider, (_, next) {
         final items = next.valueOrNull?.items;
-        if (items != null && !next.isLoading) _syncRow(items);
+        if (items != null && !next.isLoading) _syncRow(_filterRow(items));
       });
     }
     final mine = ref.watch(myPresenceProvider).value;
@@ -414,12 +500,16 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     final signedIn = ref.watch(signedInProvider);
     final loading = ref.watch(presenceProvider).isLoading || ref.watch(storiesProvider).isLoading || ref.watch(pinsProvider).isLoading || ref.watch(businessesProvider).isLoading || ref.watch(mapPostsProvider).isLoading || ref.watch(mapMarketProvider).isLoading;
     final row = widget.home ? ref.watch(rowProvider) : null;
-    final rowItems = row?.valueOrNull?.items ?? const <RowItem>[];
+    final rowAll = row?.valueOrNull?.items ?? const <RowItem>[];
+    final rowItems = _filterRow(rowAll);
     // الصف وصل قبل أن تُبنى الخريطة (مثلاً عند العودة إلى التبويب): نختار الأولى
     if (widget.home && rowItems.isNotEmpty && _rowSel == null) _syncRow(rowItems);
     final hereUntil = <String, DateTime>{};
     final areas = <BizPresence>[];
-    final items = _collect(rowItems, hereUntil: hereUntil, areas: areas);
+    final collected = _collect(rowItems, hereUntil: hereUntil, areas: areas);
+    // الرقاقة المختارة تحصر الدبابيس كما تحصر البطاقات، ومناطق خدمة الدوائر المتنقلة مع «الكل» و«دوائر» فقط
+    final items = !widget.home || _filter == 'all' ? collected : [for (final it in collected) if (mapFilterAllows(_filter, it)) it];
+    if (widget.home && _filter != 'all' && _filter != 'circle') areas.clear();
     final b = _bounds;
     final visible = b == null ? items : itemsInBounds(items, minLat: b.south, minLng: b.west, maxLat: b.north, maxLng: b.east);
     final panelItems = sortForPanel(visible);
@@ -427,17 +517,66 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     final bell = widget.home && signedIn ? ref.watch(unreadCountProvider) + (ref.watch(notifyUnreadProvider).valueOrNull ?? 0) : 0;
     final selectedKey = widget.home && rowItems.isNotEmpty ? rowItems[_rowIndex.clamp(0, rowItems.length - 1)].pinKey : null;
 
-    // بلا تجميع: كل عنصر نقطة صغيرة بلونها ورمزها حسب نوع المحتوى، وحجمها يتبع مستوى التكبير
     final dot = dotSizeFor(_zoom);
-    final markers = <Marker>[
-      for (final it in items)
-        Marker(
+    final markers = <Marker>[];
+    // أسماء الدوائر للدبابيس المنفردة فقط: اسم دائرة داخل مجموعة برقم يضلّل
+    var labelItems = items;
+    if (widget.home) {
+      // الرئيسية: دبابيس تُقرأ بلون النوع ورمزه، والمتزاحم عند هذا التكبير يُجمع في دائرة داكنة بعدده
+      final groups = groupPins(items, zoom: _zoom, keepKey: selectedKey);
+      labelItems = [for (final g in groups) if (g.isSingle) g.first];
+      // مجموعة تقع تحت دبّوس البطاقة المعروضة (جيرانه عند التصغير): عددها شارة «+N» على الدبّوس نفسه بدل دائرة يغطيها
+      final kept = groups.isNotEmpty && groups.last.isSingle && groups.last.first.key == selectedKey ? groups.last.first : null;
+      MapCluster? attached;
+      if (kept != null) {
+        final kp = projectToPixels(kept.lat, kept.lng, _zoom);
+        var best = double.infinity;
+        for (final g in groups) {
+          if (g.isSingle) continue;
+          final gp = projectToPixels(g.lat, g.lng, _zoom);
+          final dx = (gp.x - kp.x).abs(), dy = gp.y - kp.y;
+          // دائرة المجموعة تتقاطع مع جسم الدبّوس (فوق نقطته بارتفاعه)
+          final hit = dx < (_KindPin.selectedSize + _ClusterPin.size) / 2 && dy > -(_KindPin.selectedSize + _KindPin.pointer + _ClusterPin.size / 2) && dy < _ClusterPin.size / 2;
+          if (hit && gp.distanceTo(kp) < best) {
+            best = gp.distanceTo(kp);
+            attached = g;
+          }
+        }
+      }
+      for (final g in groups) {
+        if (identical(g, attached)) continue;
+        if (!g.isSingle) {
+          markers.add(Marker(point: LatLng(g.lat, g.lng), width: _ClusterPin.size, height: _ClusterPin.size, child: _ClusterPin(count: g.count, onTap: () => _tapCluster(g))));
+          continue;
+        }
+        final it = g.first;
+        final sel = it.key == selectedKey;
+        if (it.kind == MapItemKind.person) {
+          markers.add(Marker(point: LatLng(it.lat, it.lng), width: 40, height: 40, child: _ItemMarker(item: it, dot: 22, onTap: () => _tapPin(it))));
+          continue;
+        }
+        final d = sel ? _KindPin.selectedSize : _KindPin.normalSize;
+        // رأس المؤشر عند الإحداثية: العلامة كلها فوق النقطة
+        final more = sel ? attached : null;
+        markers.add(Marker(
           point: LatLng(it.lat, it.lng),
-          width: _markerBox(it.kind, dot) + (it.key == selectedKey ? 14 : 0),
-          height: _markerBox(it.kind, dot) + (it.key == selectedKey ? 14 : 0),
-          child: _ItemMarker(item: it, dot: dot, selected: it.key == selectedKey, dimmed: selectedKey != null && it.key != selectedKey, hereUntil: hereUntil[it.key], onTap: () => _tapDot(it, items, dot)),
-        ),
-    ];
+          width: d + (more != null ? 40 : 10),
+          height: d + _KindPin.pointer + 2,
+          alignment: Alignment.topCenter,
+          child: _KindPin(item: it, size: d, selected: sel, hereUntil: hereUntil[it.key], onTap: () => _tapPin(it), more: more?.count, onMore: more == null ? null : () => _tapCluster(more)),
+        ));
+      }
+    } else {
+      // بلا تجميع: كل عنصر نقطة صغيرة بلونها ورمزها حسب نوع المحتوى، وحجمها يتبع مستوى التكبير
+      for (final it in items) {
+        markers.add(Marker(
+          point: LatLng(it.lat, it.lng),
+          width: _markerBox(it.kind, dot),
+          height: _markerBox(it.kind, dot),
+          child: _ItemMarker(item: it, dot: dot, hereUntil: hereUntil[it.key], onTap: () => _tapDot(it, items, dot)),
+        ));
+      }
+    }
 
     return LayoutBuilder(builder: (context, box) {
       _mapHeight = box.maxHeight;
@@ -445,7 +584,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
       final controlsHidden = !widget.home && _sheetFraction > 0.45;
       // في وضع الرئيسية البطاقة فوق كبسولة التنقّل العائمة، والأزرار العائمة فوق البطاقة
       final deckBottom = (widget.floatingNav ? JoyNavBar.inset(context) : MediaQuery.viewPaddingOf(context).bottom) + 6;
-      final controlsBottom = widget.home ? deckBottom + RowDeck.heightFor(context) + 12 : sheetPx + 12;
+      final controlsBottom = widget.home ? deckBottom + RowDeck.heightFor(context) + 10 : sheetPx + 12;
       return Stack(children: [
         FlutterMap(
           mapController: _map,
@@ -472,7 +611,11 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
           ),
           children: [
             // البلاطات تُمرَّر عبر خادم Naslife نفسه (server/tiles.js) فلا تحتاج مصادر خارجية
-            TileLayer(urlTemplate: '${ref.read(apiClientProvider).baseUrl}/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
+            // والرئيسية تهدّئ ألوانها (أفتح وأقل تشبعاً) حتى تبرز دبابيسنا؛ البلاطات نفسها فتبقى الأسماء العربية
+            if (widget.home)
+              ColorFiltered(key: const Key('map-calm-tiles'), colorFilter: calmTilesFilter, child: TileLayer(urlTemplate: '${ref.read(apiClientProvider).baseUrl}/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'))
+            else
+              TileLayer(urlTemplate: '${ref.read(apiClientProvider).baseUrl}/tiles/{z}/{x}/{y}.png', userAgentPackageName: 'app.naslife'),
             // مناطق خدمة الدوائر المتنقلة: قرص شفاف بنصف قطرها بالأمتار بلا دبّوس؛ لمسة داخله تفتح الدائرة كدبّوسها
             // (اختبار اللمس يفشل خارج الأقراص فيبقى سحب الخريطة كما هو، والدبابيس فوقه تفوز باللمسة)
             if (areas.isNotEmpty)
@@ -492,18 +635,51 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
               ),
             MarkerLayer(markers: markers),
             // أسماء الدوائر بلا تداخل (تُعاد حساباتها مع كل حركة للكاميرا)
-            MapLabelLayer(items: items, dot: dot, onTap: (it) => _tapDot(it, items, dot)),
+            if (widget.home) MapLabelLayer(items: labelItems, dot: 8, onTap: _tapPin) else MapLabelLayer(items: items, dot: dot, onTap: (it) => _tapDot(it, items, dot)),
             if (!widget.home) const SimpleAttributionWidget(source: Text('© OpenStreetMap contributors', style: TextStyle(fontSize: 10))),
           ],
         ),
-        // وضع الرئيسية: بحث زجاجي وجرس فقط؛ وإلا شريط التصفية
+        // وضع الرئيسية: بحث وجرس، تحتهما رقائق الأنواع، ثم «ابحث في هذه المنطقة» حين يبتعد المستخدم
+        if (widget.home)
+          Positioned(
+            top: 10,
+            left: 0,
+            right: 0,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: _HomeTopBar(bell: bell, signedIn: signedIn)),
+              const SizedBox(height: 8),
+              _HomeChips(filter: _filter, jobs: ref.watch(jobsEnabledProvider), onFilter: (id) => _setFilter(id == _filter ? 'all' : id)),
+              if (_searchArea)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Material(
+                    color: Joy.surface,
+                    borderRadius: BorderRadius.circular(999),
+                    elevation: 3,
+                    shadowColor: Colors.black38,
+                    child: InkWell(
+                      key: const Key('map-search-area'),
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: _searchHere,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.search_rounded, size: 16, color: Joy.primary),
+                          SizedBox(width: 6),
+                          Text('ابحث في هذه المنطقة', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Joy.primary)),
+                        ]),
+                      ),
+                    ),
+                  ),
+                ),
+            ]),
+          ),
+        if (!widget.home)
         Positioned(
           top: 10,
           left: 12,
           right: 12,
-          child: widget.home
-              ? _HomeTopBar(bell: bell, signedIn: signedIn)
-              : Row(children: [
+          child: Row(children: [
                   Expanded(
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
@@ -536,54 +712,53 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
             child: AnimatedOpacity(
               duration: const Duration(milliseconds: 150),
               opacity: controlsHidden ? 0 : 1,
-              child: Column(children: [
-                _fab(Icons.add_a_photo_rounded, _newPostHere, filled: true, tip: 'منشور جديد'),
-                const SizedBox(height: 8),
-                _fab(Icons.my_location_rounded, _goToMe, tip: 'موقعي'),
-                const SizedBox(height: 8),
-                _fab(Icons.refresh_rounded, _refresh, tip: 'تحديث'),
-                if (signedIn) const SizedBox(height: 8),
-                if (signedIn) _fab(mine?.visible == true ? Icons.visibility_rounded : Icons.visibility_off_rounded, _togglePresence, filled: mine?.visible == true, tip: mine?.visible == true ? 'إخفاء موقعي' : 'إظهار موقعي'),
-              ]),
+              child: widget.home
+                  // الرئيسية: زران فقط. النشر من «+» في الشريط، والتحديث تلقائي، والعين داخل «أنا هنا»
+                  ? Column(children: [
+                      _fab(Icons.my_location_rounded, _goToMe, tip: 'موقعي', key: const Key('map-locate')),
+                      const SizedBox(height: 8),
+                      _fab(Icons.person_pin_circle_rounded, _hereSheet, filled: true, tip: 'أنا هنا', key: const Key('map-here')),
+                    ])
+                  : Column(children: [
+                      _fab(Icons.add_a_photo_rounded, _newPostHere, filled: true, tip: 'منشور جديد'),
+                      const SizedBox(height: 8),
+                      _fab(Icons.my_location_rounded, _goToMe, tip: 'موقعي'),
+                      const SizedBox(height: 8),
+                      _fab(Icons.refresh_rounded, _refresh, tip: 'تحديث'),
+                      if (signedIn) const SizedBox(height: 8),
+                      if (signedIn) _fab(mine?.visible == true ? Icons.visibility_rounded : Icons.visibility_off_rounded, _togglePresence, filled: mine?.visible == true, tip: mine?.visible == true ? 'إخفاء موقعي' : 'إظهار موقعي'),
+                    ]),
             ),
           ),
         ),
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 120),
-          right: 12,
-          bottom: controlsBottom,
-          child: IgnorePointer(
-            ignoring: controlsHidden,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 150),
-              opacity: controlsHidden ? 0 : 1,
-              child: FilledButton.icon(
-                onPressed: () async {
-                  if (!requireAccount(context)) return;
-                  final gps = await DeviceLocation.browse(precise: true);
-                  if (gps != null) _map.move(gps, 16);
-                  if (mounted) _hereMenu(gps ?? _map.camera.center);
-                },
-                icon: const Icon(Icons.add_location_alt_rounded),
-                label: const Text('هنا الآن'),
+        if (!widget.home)
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 120),
+            right: 12,
+            bottom: controlsBottom,
+            child: IgnorePointer(
+              ignoring: controlsHidden,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 150),
+                opacity: controlsHidden ? 0 : 1,
+                child: FilledButton.icon(onPressed: _hereNow, icon: const Icon(Icons.add_location_alt_rounded), label: const Text('هنا الآن')),
               ),
             ),
           ),
-        ),
-        // نسب الخريطة في الرئيسية: سطر صغير تحت شريط البحث بدل أسفل الخريطة حيث كان يظهر في فراغ فوق الكبسولة
+        // نسب الخريطة في الرئيسية: سطر صغير هادئ فوق البطاقة في الجهة المقابلة للزرين (مكانه القديم صار للرقائق)
         if (widget.home)
           Positioned(
-            top: 62,
-            left: 14,
+            bottom: controlsBottom,
+            right: 14,
             child: IgnorePointer(
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: Colors.white.withValues(alpha: .7), borderRadius: BorderRadius.circular(6)),
-                child: const Text('© OpenStreetMap', style: TextStyle(fontSize: 9, color: Joy.textMuted)),
+                decoration: BoxDecoration(color: Colors.white.withValues(alpha: .6), borderRadius: BorderRadius.circular(6)),
+                child: const Text('© OpenStreetMap', key: Key('map-attribution'), style: TextStyle(fontSize: 8.5, color: Joy.textMuted)),
               ),
             ),
           ),
-        // «الصف»: عدّاد وبطاقة واحدة فوق شريط التنقّل
+        // «الصف»: بطاقة واحدة ونقاط صفحاتها فوق شريط التنقّل
         if (widget.home)
           Positioned(
             left: 12,
@@ -592,7 +767,9 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
             child: RowDeck(
               items: rowItems,
               index: _rowIndex,
-              loading: row?.isLoading ?? false,
+              // الهيكل لصف لم يصل بعد فقط؛ رقاقة بلا نتائج أثناء تحديث تعرض بطاقتها لا الهيكل
+              loading: (row?.isLoading ?? false) && rowAll.isEmpty,
+              onClearFilter: _filter == 'all' ? null : () => _setFilter('all'),
               located: row?.valueOrNull?.located ?? true,
               onIndex: (i) => _selectRow(rowItems, i),
               onAct: _actRow,
@@ -640,7 +817,24 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     if (widget.home) ref.invalidate(rowProvider);
   }
 
-  /// يقرّب الخريطة إلى العنصر ويفتح تفاصيله.
+  /// الرئيسية: دبّوس من «الصف» يُظهر بطاقته (وزر البطاقة يفتح التفاصيل)، وغيره يفتح تفاصيله كما كان.
+  void _tapPin(MapItem item) {
+    final rows = _rowItems;
+    final i = rows.indexWhere((r) => r.pinKey == item.key);
+    if (i >= 0) return _selectRow(rows, i);
+    _showItem(item);
+  }
+
+  /// لمسة على مجموعة: تقريب يملأ الشاشة بعناصرها حتى تتفرق من لمسة واحدة (مستوى على الأقل)، وعند أقصى تقريب
+  /// (عناصر في النقطة نفسها) قائمتها.
+  void _tapCluster(MapCluster c) {
+    if (_zoom >= 17.5) return _listSheet(c.items, title: 'عند هذه النقطة · ${c.count}', onPick: _tapPin);
+    final b = c.bounds;
+    // هوامش تُبقي العناصر خارج شريط البحث والرقائق في الأعلى والبطاقة في الأسفل
+    final fit = CameraFit.bounds(bounds: LatLngBounds(LatLng(b.minLat, b.minLng), LatLng(b.maxLat, b.maxLng)), padding: EdgeInsets.fromLTRB(56, 150, 56, 150 + RowDeck.heightFor(context)), maxZoom: 18).fit(_map.camera);
+    _map.move(fit.center, fit.zoom.clamp(math.min(18.0, _zoom + 1), 18.0));
+  }
+
   /// نقرة على نقطة: إن تراكبت مع نقاط أخرى في الموضع نفسه نعرض قائمتها، وإلا نفتح العنصر مباشرة.
   void _tapDot(MapItem item, List<MapItem> all, double dot) {
     // وضع الرئيسية: دبّوس من «الصف» يقفز بالبطاقة إليه بدل فتح تفاصيله
@@ -679,9 +873,10 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
         ),
       );
 
-  Widget _fab(IconData icon, VoidCallback onTap, {bool filled = false, String? tip}) => Tooltip(
+  Widget _fab(IconData icon, VoidCallback onTap, {bool filled = false, String? tip, Key? key}) => Tooltip(
         message: tip ?? '',
         child: Material(
+          key: key,
           color: filled ? Joy.primary : Joy.surface,
           shape: const CircleBorder(side: BorderSide(color: Joy.line)),
           elevation: 2,
@@ -706,7 +901,46 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
       return;
     }
     if (DeviceLocation.outsideServiceArea) toast(context, 'ناس لايف متاح حالياً في جدة والدمام؛ نعرض لك جدة');
+    // عاد إلى موقعه والصف لمنطقة أخرى: نعرض «ابحث في هذه المنطقة» بلا انتظار سحب
+    _forceAreaCheck = widget.home;
     _map.move(gps, 16);
+    _forceAreaCheck = false;
+  }
+
+  /// «هنا الآن»: يذهب إلى موقع المستخدم ويفتح قائمة ما يُنشر عنده.
+  Future<void> _hereNow() async {
+    if (!requireAccount(context)) return;
+    final gps = await DeviceLocation.browse(precise: true);
+    if (gps != null) _map.move(gps, 16);
+    if (mounted) _hereMenu(gps ?? _map.camera.center);
+  }
+
+  /// زر «أنا هنا» في الرئيسية: ورقة صغيرة تجمع «هنا الآن» وإظهار موقعي أو إخفاءه (كانا زرين منفصلين).
+  Future<void> _hereSheet() async {
+    // الفعلان يحتاجان حساباً: الزائر يُدعى للدخول قبل الورقة
+    if (!requireAccount(context)) return;
+    final visible = ref.read(myPresenceProvider).value?.visible == true;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(key: const Key('map-here-sheet'), mainAxisSize: MainAxisSize.min, children: [
+          const Padding(padding: EdgeInsets.fromLTRB(20, 0, 20, 6), child: Align(alignment: AlignmentDirectional.centerStart, child: Text('أنا هنا', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17)))),
+          ListTile(key: const Key('map-here-now'), leading: const Icon(Icons.add_location_alt_rounded, color: Joy.primary), title: const Text('هنا الآن'), subtitle: const Text('انشر لحظة أو اظهر لأصدقائك عند موقعك الحالي'), onTap: () => Navigator.pop(ctx, 'now')),
+          ListTile(
+            key: const Key('map-here-visibility'),
+            leading: Icon(visible ? Icons.visibility_off_rounded : Icons.visibility_rounded, color: Joy.primary),
+            title: Text(visible ? 'إخفاء موقعي' : 'إظهار موقعي'),
+            subtitle: Text(visible ? 'أنت ظاهر لأصدقائك على الخريطة الآن' : 'موقعك مخفي عن الخريطة الآن'),
+            onTap: () => Navigator.pop(ctx, 'eye'),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'now') await _hereNow();
+    if (choice == 'eye') await _togglePresence();
   }
 
   Future<void> _togglePresence() async {
@@ -787,7 +1021,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
         builder: (_) => SafeArea(child: Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 20), child: child)),
       );
 
-  void _listSheet(List<MapItem> items, {required String title}) => showModalBottomSheet(
+  void _listSheet(List<MapItem> items, {required String title, ValueChanged<MapItem>? onPick}) => showModalBottomSheet(
         context: context,
         showDragHandle: true,
         builder: (ctx) => SafeArea(
@@ -803,7 +1037,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
                     for (final it in sortForPanel(items))
                       _ItemRow(item: it, onTap: () {
                         Navigator.pop(ctx);
-                        _showItem(it);
+                        (onPick ?? _showItem)(it);
                       }),
                   ],
                 ),
@@ -1115,15 +1349,14 @@ IconData _itemIcon(MapItem item) => switch (item.kind) {
     };
 
 /// نقطة صغيرة احترافية لعنصر واحد: دائرة ملونة بحدّ أبيض وظل خفيف ورمز يعبّر عن نوع المحتوى؛
-/// الأشخاص يظهرون بصورتهم المصغّرة. في وضع الرئيسية: دبّوس البطاقة المختارة أكبر بحلقة خضراء، والبقية باهتة.
+/// الأشخاص يظهرون بصورتهم المصغّرة. الرئيسية ترسم غير الأشخاص بـ [_KindPin].
 class _ItemMarker extends StatelessWidget {
   final MapItem item;
   final double dot;
   final VoidCallback onTap;
-  final bool selected, dimmed;
   /// دبّوس دائرة مؤقت «هنا اليوم»: نهايته (شارة ساعة صغيرة وتلميح بالوقت).
   final DateTime? hereUntil;
-  const _ItemMarker({required this.item, required this.dot, required this.onTap, this.selected = false, this.dimmed = false, this.hereUntil});
+  const _ItemMarker({required this.item, required this.dot, required this.onTap, this.hereUntil});
 
   @override
   Widget build(BuildContext context) {
@@ -1166,19 +1399,8 @@ class _ItemMarker extends StatelessWidget {
         ]),
       );
     }
-    if (selected) {
-      child = Container(
-        key: const Key('map-pin-selected'),
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.surface, border: Border.all(color: Joy.primary, width: 3), boxShadow: const [BoxShadow(color: Color(0x40000000), blurRadius: 10, offset: Offset(0, 2))]),
-        child: Transform.scale(scale: 1.15, child: child),
-      );
-    } else if (dimmed) {
-      child = Opacity(opacity: .6, child: child);
-    }
     return Semantics(
       button: true,
-      selected: selected,
       label: '${_kindLabel(item.kind)} ${item.title}',
       child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: onTap, child: Center(child: child)),
     );
@@ -1197,6 +1419,207 @@ class _ItemMarker extends StatelessWidget {
         'university' => Icons.school_rounded,
         _ => Icons.storefront_rounded,
       };
+}
+
+// ------------------------------------------------- دبابيس الرئيسية (تبسيط 16 نوفمبر 2026)
+
+/// تهدئة البلاطات في الرئيسية: تشبّع 55٪ ثم تفتيح (88٪ من اللون + 12٪ أبيض) حتى تبرز الدبابيس والأسماء تبقى مقروءة.
+const calmTilesFilter = ColorFilter.matrix(<double>[
+  0.5682, 0.2832, 0.0286, 0, 30.6,
+  0.0842, 0.7672, 0.0286, 0, 30.6,
+  0.0842, 0.2832, 0.5126, 0, 30.6,
+  0, 0, 0, 1, 0,
+]);
+
+/// لون دبّوس الرئيسية: لون نوعه الثابت ([Joy.kindColor]) كما في الرقائق والبطاقة؛ الدبابيس القديمة بلا نوع بلونها.
+Color _pinColor(MapItem item) {
+  final k = mapFilterKind(item);
+  return k == null ? _itemColor(item) : Joy.kindColor(k);
+}
+
+/// رمز دبّوس الرئيسية: رمز النوع، وللدائرة رمز تخصصها (مقهى، فندق…).
+IconData _pinIcon(MapItem item) {
+  final d = item.data;
+  if (d is Business) return _ItemMarker._bizIcon(d.kind);
+  final k = mapFilterKind(item);
+  return k == null ? _itemIcon(item) : rowKindIcon(k);
+}
+
+/// دبّوس يُقرأ: دائرة بلون النوع ورمزه بحدّ أبيض ومؤشر صغير رأسه عند الإحداثية؛ دبّوس البطاقة المعروضة أكبر.
+class _KindPin extends StatelessWidget {
+  final MapItem item;
+  final double size;
+  final bool selected;
+  final DateTime? hereUntil;
+  final VoidCallback onTap;
+  /// عدد الدبابيس المتزاحمة تحت هذا الدبّوس (المختار فقط): شارة «+N» لمسها يقرّب عليها.
+  final int? more;
+  final VoidCallback? onMore;
+  const _KindPin({required this.item, required this.size, required this.onTap, this.selected = false, this.hereUntil, this.more, this.onMore});
+
+  static const normalSize = 32.0, selectedSize = 44.0, pointer = 7.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _pinColor(item);
+    final on = color.computeLuminance() > .5 ? Joy.sunText : Colors.white;
+    final until = hereUntil;
+    Widget circle = Container(
+      key: selected ? const Key('map-pin-selected') : null,
+      width: size,
+      height: size,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: color, border: Border.all(color: Colors.white, width: selected ? 3.5 : 2.5), boxShadow: [BoxShadow(color: const Color(0x4D25272A), blurRadius: selected ? 10 : 6, offset: const Offset(0, 3))]),
+      child: Icon(_pinIcon(item), size: size * .48, color: on),
+    );
+    if (until != null) {
+      // شارة ساعة صغيرة في زاوية الدبّوس المؤقت «هنا اليوم»، والتلميح يذكر نهايته
+      circle = Tooltip(
+        message: hereUntilLabel(until),
+        child: Stack(clipBehavior: Clip.none, children: [
+          circle,
+          PositionedDirectional(bottom: -2, start: -3, child: Container(key: const Key('map-here-badge'), width: 14, height: 14, decoration: const BoxDecoration(shape: BoxShape.circle, color: Joy.surface, boxShadow: _markerShadow), child: const Icon(Icons.schedule_rounded, size: 10, color: Joy.primary))),
+        ]),
+      );
+    }
+    final pin = Semantics(
+      button: true,
+      selected: selected,
+      label: '${_kindLabel(item.kind)} ${item.title}',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          circle,
+          // المؤشر يدخل تحت الدائرة قليلاً فيتصل بحدّها الأبيض
+          Transform.translate(offset: const Offset(0, -2), child: const CustomPaint(size: Size(11, pointer), painter: _PointerPainter())),
+        ]),
+      ),
+    );
+    final n = more;
+    if (n == null) return pin;
+    return Stack(alignment: Alignment.topCenter, children: [
+      pin,
+      Positioned(
+        top: 0,
+        right: 0,
+        child: Semantics(
+          button: true,
+          label: '$n أخرى في هذا الموضع، اضغط للتقريب',
+          child: GestureDetector(
+            key: const Key('map-cluster'),
+            behavior: HitTestBehavior.opaque,
+            onTap: onMore,
+            child: Container(
+              constraints: const BoxConstraints(minWidth: 26),
+              height: 22,
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 5),
+              decoration: BoxDecoration(color: Joy.text, borderRadius: BorderRadius.circular(11), border: Border.all(color: Colors.white, width: 2)),
+              child: Text(n > 99 ? '+99' : '+$n', textDirection: TextDirection.ltr, textScaler: TextScaler.noScaling, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 11, height: 1)),
+            ),
+          ),
+        ),
+      ),
+    ]);
+  }
+}
+
+class _PointerPainter extends CustomPainter {
+  const _PointerPainter();
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = ui.Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..close();
+    canvas.drawShadow(path, const Color(0x5525272A), 1.5, false);
+    canvas.drawPath(path, Paint()..color = Colors.white);
+  }
+
+  @override
+  bool shouldRepaint(_PointerPainter old) => false;
+}
+
+/// دبابيس متزاحمة عند التكبير الحالي: دائرة داكنة بعددها؛ لمسها يقرّب الخريطة عليها.
+class _ClusterPin extends StatelessWidget {
+  final int count;
+  final VoidCallback onTap;
+  const _ClusterPin({required this.count, required this.onTap});
+  static const size = 44.0;
+  @override
+  Widget build(BuildContext context) => Semantics(
+        button: true,
+        label: '$count في هذا الموضع، اضغط للتقريب',
+        child: GestureDetector(
+          key: const Key('map-cluster'),
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Center(
+            child: Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.text, border: Border.all(color: Colors.white, width: 3), boxShadow: const [BoxShadow(color: Color(0x4D25272A), blurRadius: 6, offset: Offset(0, 3))]),
+              child: Text(count > 99 ? '+99' : '$count', textScaler: TextScaler.noScaling, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5, height: 1)),
+            ),
+          ),
+        ),
+      );
+}
+
+/// رقائق الأنواع تحت البحث: صف واحد يُمرَّر أفقياً، نقطة بلون النوع واسمه، والمختارة داكنة. آخره رقاقة «اللحظات»
+/// (الشبكة) التي كانت زراً مستديراً بجانب البحث.
+class _HomeChips extends StatelessWidget {
+  final String filter;
+  final bool jobs;
+  final ValueChanged<String> onFilter;
+  const _HomeChips({required this.filter, required this.jobs, required this.onFilter});
+
+  Widget _pill({required Key key, required bool on, required VoidCallback onTap, required List<Widget> children, String? label}) => Padding(
+        padding: const EdgeInsetsDirectional.only(end: 6),
+        child: Semantics(
+          button: true,
+          selected: on,
+          label: label,
+          child: Material(
+            color: on ? Joy.text : Joy.surface,
+            borderRadius: BorderRadius.circular(999),
+            elevation: on ? 0 : 2,
+            shadowColor: Colors.black38,
+            child: InkWell(
+              key: key,
+              borderRadius: BorderRadius.circular(999),
+              onTap: onTap,
+              child: ConstrainedBox(constraints: const BoxConstraints(minHeight: 34), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), child: Row(mainAxisSize: MainAxisSize.min, children: children))),
+            ),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+        key: const Key('map-chips'),
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 2, 6, 6),
+        child: Row(children: [
+          for (final id in mapFilterIds)
+            if (id != 'job' || jobs)
+              _pill(key: Key('map-chip-$id'), on: filter == id, onTap: () => onFilter(id), children: [
+                if (id != 'all') ...[
+                  // نقطة بلون النوع؛ على الرقاقة الداكنة حدّ أبيض حتى تبقى نقطة «دوائر» (بلون الحبر) ظاهرة
+                  Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: Joy.kindColor(id), border: filter == id ? Border.all(color: Colors.white, width: 1) : null)),
+                  const SizedBox(width: 6),
+                ],
+                Text(mapFilterLabel(id), style: TextStyle(fontSize: 12.5, fontWeight: filter == id ? FontWeight.w700 : FontWeight.w500, color: filter == id ? Colors.white : Joy.text)),
+              ]),
+          _pill(key: const Key('home-timeline'), on: false, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TimelinePage())), children: const [
+            Icon(Icons.grid_view_rounded, size: 15, color: Joy.primary),
+            SizedBox(width: 6),
+            Text('اللحظات', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Joy.text)),
+          ]),
+        ]),
+      );
 }
 
 // ------------------------------------------------------------ لوحة المنطقة
@@ -1301,7 +1724,7 @@ class _AreaPanel extends StatelessWidget {
   }
 }
 
-/// بحث زجاجي مع صورة الحساب، وجرس التنبيهات: فوق الخريطة في وضع الرئيسية. البحث مفتوح للزائر (الخادم يقبله بلا حساب،
+/// بحث زجاجي مع صورة الحساب، وجرس التنبيهات: فوق الخريطة في وضع الرئيسية («اللحظات» انتقلت إلى آخر صف الرقائق). البحث مفتوح للزائر (الخادم يقبله بلا حساب،
 /// وصفحته تحرس بنفسها ما يحتاج حساباً)، والجرس وحده يدعوه للدخول.
 class _HomeTopBar extends ConsumerWidget {
   final int bell;
@@ -1331,19 +1754,6 @@ class _HomeTopBar extends ConsumerWidget {
               ]),
             ),
           ),
-        ),
-      ),
-      const SizedBox(width: 8),
-      Material(
-        color: Joy.surface,
-        shape: const CircleBorder(),
-        elevation: 4,
-        shadowColor: Colors.black38,
-        child: InkWell(
-          key: const Key('home-timeline'),
-          customBorder: const CircleBorder(),
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TimelinePage())),
-          child: const SizedBox(width: 44, height: 44, child: Icon(Icons.view_agenda_outlined, color: Joy.text)),
         ),
       ),
       const SizedBox(width: 8),

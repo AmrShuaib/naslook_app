@@ -280,3 +280,64 @@ List<MapItem> sortForPanel(Iterable<MapItem> items) {
 /// العناصر الواقعة داخل الحدود المرئية.
 List<MapItem> itemsInBounds(Iterable<MapItem> items, {required double minLat, required double minLng, required double maxLat, required double maxLng}) =>
     [for (final i in items) if (i.lat >= minLat && i.lat <= maxLat && i.lng >= minLng && i.lng <= maxLng) i];
+
+// ------------------------------------------------- تبسيط الخريطة (16 نوفمبر 2026)
+
+/// رقائق التصفية في الرئيسية بترتيبها: `all` ثم أنواع «الصف» الستة.
+const mapFilterIds = ['all', 'moment', 'offer', 'event', 'listing', 'circle', 'job'];
+
+/// اسم الرقاقة.
+String mapFilterLabel(String id) => switch (id) {
+      'moment' => 'لحظات',
+      'offer' => 'عروض',
+      'event' => 'فعاليات',
+      'listing' => 'السوق',
+      'circle' => 'دوائر',
+      'job' => 'وظائف',
+      _ => 'الكل',
+    };
+
+/// نوع بطاقة «الصف» في التصفية: نوع غير معروف يُعامل كلحظة لأن بطاقته تُعرض بتسمية «لحظة».
+String rowFilterKind(RowItem r) => const {'offer', 'event', 'listing', 'circle', 'job'}.contains(r.kind) ? r.kind : 'moment';
+
+/// نوع الدبّوس في التصفية؛ null للأشخاص والدبابيس القديمة (لا رقاقة لهما فيظهران مع «الكل» فقط).
+String? mapFilterKind(MapItem it) {
+  final d = it.data;
+  if (d is RowItem) return rowFilterKind(d);
+  return switch (it.kind) {
+    MapItemKind.post || MapItemKind.story => 'moment',
+    MapItemKind.offer => 'offer',
+    MapItemKind.event => 'event',
+    MapItemKind.listing => 'listing',
+    MapItemKind.business => 'circle',
+    MapItemKind.job => 'job',
+    MapItemKind.person || MapItemKind.pin => null,
+  };
+}
+
+/// هل يظهر الدبّوس مع الرقاقة المختارة.
+bool mapFilterAllows(String filter, MapItem it) => filter == 'all' || mapFilterKind(it) == filter;
+
+/// يجمع الدبابيس المتزاحمة على الشاشة عند التكبير الحالي ([clusterItems])، ويُبقي منفرداً دبّوس البطاقة المعروضة
+/// ([keepKey]) والأشخاص: المختار يجب أن يبقى ظاهراً دائماً، وصورة الصديق لا تُخفى في دائرة برقم.
+/// المجموعات أولاً ثم المنفردات، والمختار آخراً حتى يُرسم فوق الجميع.
+List<MapCluster> groupPins(Iterable<MapItem> items, {required double zoom, String? keepKey, double? radiusPx}) {
+  final crowd = <MapItem>[], alone = <MapItem>[];
+  MapItem? kept;
+  for (final it in items) {
+    if (it.key == keepKey) {
+      kept = it;
+    } else if (it.kind == MapItemKind.person) {
+      alone.add(it);
+    } else {
+      crowd.add(it);
+    }
+  }
+  final groups = clusterItems(crowd, zoom: zoom, radiusPx: radiusPx);
+  return [
+    for (final g in groups) if (!g.isSingle) g,
+    for (final g in groups) if (g.isSingle) g,
+    for (final it in alone) MapCluster([it], it.lat, it.lng),
+    if (kept != null) MapCluster([kept], kept.lat, kept.lng),
+  ];
+}
