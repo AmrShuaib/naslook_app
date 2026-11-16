@@ -133,8 +133,12 @@ String timeAgo(DateTime? t) {
   if (d.inHours < 24) return 'قبل ${d.inHours} س';
   if (d.inDays == 1) return 'أمس';
   if (d.inDays < 7) return 'قبل ${d.inDays} أيام';
-  return '${t.day}/${t.month}';
+  // أقدم من أسبوع: تاريخ يُقرأ («8 نوفمبر» لا «8/11» الذي لا يُعرف أيه اليوم وأيه الشهر)، ومعه السنة إن لم تكن الحالية
+  final date = '${t.day} ${_arMonths[t.month - 1]}';
+  return t.year == DateTime.now().year ? date : '$date ${t.year}';
 }
+
+const _arMonths = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
 
 String clockOf(DateTime? t) {
   if (t == null) return '';

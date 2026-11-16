@@ -99,7 +99,11 @@ class WantedDetailPage extends ConsumerWidget {
           SectionTitle('العروض (${x.replyList.length})'),
           if (x.replyList.isEmpty) const Text('لا عروض بعد', style: TextStyle(color: Joy.textMuted)),
           for (final r in x.replyList) if (!isBlockedId(blocked, r.seller.id)) JoyCard(key: Key('wanted-reply-${r.id}'), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [ProfileAvatar(person: r.seller, size: 32), const SizedBox(width: 8), Expanded(child: Text(r.seller.nickname, style: const TextStyle(fontWeight: FontWeight.w600))), if (r.price != null) Text(money(r.price!), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary)),
+            Row(children: [ProfileAvatar(person: r.seller, size: 32), const SizedBox(width: 8), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(r.seller.nickname, style: const TextStyle(fontWeight: FontWeight.w600)),
+                // وقت تقديم العرض: بلا تاريخ لا يعرف صاحب الطلب أي العروض جديد
+                if (r.createdAt != null) Text(timeAgo(r.createdAt), key: Key('wanted-reply-time-${r.id}'), style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
+              ])), if (r.price != null) Text(money(r.price!), style: const TextStyle(fontWeight: FontWeight.w800, color: Joy.primary)),
               if (!r.mine) SizedBox(height: 32, child: ReportMenuButton(type: 'wanted-reply', id: r.id, author: r.seller, keyPrefix: 'wreply-${r.id}', reportLabel: 'إبلاغ عن الرد',
                 onReported: (o) { if (o.hidden) ref.invalidate(wantedProvider(id)); }))]),
             if (r.text.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(r.text)),
