@@ -96,6 +96,8 @@ class AppTheme {
         headlineSmall: display.copyWith(fontSize: 24),
         titleLarge: display.copyWith(fontSize: 22),
         titleMedium: body.titleMedium?.copyWith(fontWeight: FontWeight.w600, fontSize: 16),
+        // نص حقول الكتابة: بلا تباعد حروف (الافتراضي 0.5) ليطابق حقل الإدخال الخفي في المتصفح فيصحّ تحديد النص
+        bodyLarge: body.bodyLarge?.copyWith(letterSpacing: 0),
         bodyMedium: body.bodyMedium?.copyWith(fontSize: 15, height: 1.6),
         bodySmall: body.bodySmall?.copyWith(fontSize: 13, color: Joy.textMuted, height: 1.5),
         labelLarge: body.labelLarge?.copyWith(fontWeight: FontWeight.w600, fontSize: 15),

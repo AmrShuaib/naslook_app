@@ -4,6 +4,7 @@ import 'dart:js_interop_unsafe';
 
 import 'package:web/web.dart' as web;
 
+import '../media/browser_env.dart';
 import 'dictation.dart';
 
 /// منشئ SpeechRecognition: كروم وسفاري يعرّفانه بالسابقة webkit فلا يكفي الاسم القياسي
@@ -15,7 +16,14 @@ JSFunction? _ctor() {
   return null;
 }
 
-bool get supported => _ctor() != null;
+/// التطبيق المثبّت على شاشة آيفون والمتصفحات الداخلية للتطبيقات تعرّف SpeechRecognition لكنها ترفض تشغيله
+/// (service-not-allowed)، فالزر هناك لا يفعل إلا إظهار خطأ؛ نخفيه ويبقى ميكروفون لوحة المفاتيح.
+bool get _blockedHost {
+  final h = browserHost;
+  return h == BrowserHost.iosStandalone || h == BrowserHost.inApp;
+}
+
+bool get supported => _ctor() != null && !_blockedHost;
 
 Dictation createDictation() => _WebDictation();
 

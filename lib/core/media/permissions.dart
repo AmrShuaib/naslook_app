@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show PlatformException;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_theme.dart';
+import 'browser_env.dart';
 
 /// رفض المستخدم (أو النظام) الوصول إلى الكاميرا أو الصور أو الميكروفون.
 /// نصّه عربي حتى تبقى رسائل الخطأ الحالية (toast بنص الاستثناء) مفهومة.
@@ -16,6 +17,26 @@ class MediaPermissionDenied implements Exception {
 
   @override
   String toString() => 'اسمح بالوصول إلى $label من الإعدادات';
+}
+
+/// الميكروفون موجود لكنه لا يعمل الآن (لا جهاز، أو يستخدمه تطبيق آخر). نصّه عربي جاهز للعرض.
+class MediaUnavailable implements Exception {
+  final String message;
+  const MediaUnavailable(this.message);
+
+  @override
+  String toString() => message;
+}
+
+/// يحوّل أخطاء getUserMedia في المتصفح (NotAllowedError وأخواتها، ونصها إنجليزي خام) إلى أخطاء بنص عربي:
+/// الرفض يصير [MediaPermissionDenied] فتُعرض خطوات السماح، وغيره [MediaUnavailable].
+Object mapMicError(Object e) {
+  if (e is MediaPermissionDenied || e is MediaUnavailable) return e;
+  final s = '$e';
+  if (s.contains('NotAllowedError') || s.contains('SecurityError') || s.contains('PermissionDenied') || s.contains('Permission denied')) return const MediaPermissionDenied('mic');
+  if (s.contains('NotFoundError') || s.contains('DevicesNotFound') || s.contains('OverconstrainedError')) return const MediaUnavailable('لا يوجد ميكروفون متاح على هذا الجهاز');
+  if (s.contains('NotReadableError') || s.contains('TrackStartError') || s.contains('AbortError')) return const MediaUnavailable('الميكروفون مشغول في تطبيق آخر. أغلقه ثم أعد المحاولة');
+  return e;
 }
 
 /// يحوّل أخطاء image_picker على iOS/Android (camera_access_denied / photo_access_denied …) إلى [MediaPermissionDenied].
@@ -73,9 +94,37 @@ Future<void> showPermissionHelp(BuildContext context, MediaPermissionDenied e) =
       ),
     );
 
+/// ورقة الويب بعد رفض الميكروفون: خطوات السماح في بيئة المستخدم (لا زر إعدادات: الويب لا يفتحها).
+Future<void> showMicHelp(BuildContext context, BrowserHost host) => showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(host == BrowserHost.inApp ? Icons.open_in_browser_rounded : Icons.mic_off_outlined, size: 44, color: Joy.primary),
+            const SizedBox(height: 10),
+            Text(micDeniedTitle(host), key: const Key('mic-help'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 6),
+            Text(micDeniedHelp(host), textAlign: TextAlign.center, style: const TextStyle(color: Joy.textMuted, height: 1.6)),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('فهمت')),
+            ),
+          ]),
+        ),
+      ),
+    );
+
 /// يعرض المساعدة إن كان الخطأ رفضاً للإذن ويعيد true؛ وإلا يعيد false ليعرض المستدعي خطأه المعتاد.
 bool handlePermissionError(BuildContext context, Object e) {
   if (e is! MediaPermissionDenied || !context.mounted) return false;
+  if (kIsWeb && e.what == 'mic') {
+    // طريق السماح يختلف بين سفاري والتطبيق المثبّت والمتصفح الداخلي لتطبيق آخر: نعرض خطوات هذه البيئة بالذات
+    showMicHelp(context, browserHost);
+    return true;
+  }
   if (kIsWeb) {
     // لا يستطيع الويب فتح إعدادات المتصفح؛ نشرح الطريق فقط
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اسمح بالوصول من إعدادات المتصفح لهذا الموقع ثم أعد المحاولة')));

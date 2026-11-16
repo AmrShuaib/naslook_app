@@ -66,6 +66,13 @@
   var observe = function (root) {
     if (!root || root.__naslifeObserved) return;
     root.__naslifeObserved = true;
+    // داخل shadow DOM لا تصل قواعد index.html: نضع القواعد نفسها (الاتجاه وارتفاع السطر) في ورقة أنماط هناك
+    if (root !== document && root.appendChild && !root.querySelector('style[data-naslife]')) {
+      var st = document.createElement('style');
+      st.setAttribute('data-naslife', '1');
+      st.textContent = 'input, textarea { direction: rtl !important; } textarea { line-height: 1.5 !important; }';
+      root.appendChild(st);
+    }
     scan(root);
     new MutationObserver(function (muts) {
       muts.forEach(function (m) {

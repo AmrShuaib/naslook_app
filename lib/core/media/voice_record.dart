@@ -58,8 +58,15 @@ class _RealVoiceRecordSession implements VoiceRecordSession {
     if (kIsWeb) {
       // الويب كما هو: MediaRecorder (webm/opus) بلا مسار ملف
       if (WebMedia.available) {
-        _web = VoiceRecorder();
-        await _web!.start();
+        final rec = VoiceRecorder();
+        try {
+          await rec.start();
+        } catch (e) {
+          // رفض الإذن يأتي من المتصفح نصاً إنجليزياً خاماً (NotAllowedError…): نحوّله إلى خطأ بنص عربي وخطوات
+          try { await rec.cancel(); } catch (_) {}
+          throw mapMicError(e);
+        }
+        _web = rec;
       } else {
         if (!await _native.hasPermission()) throw const MediaPermissionDenied('mic');
         await _native.start(const RecordConfig(encoder: AudioEncoder.opus, bitRate: 64000, sampleRate: 48000, numChannels: 1), path: '');
