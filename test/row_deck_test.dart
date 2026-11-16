@@ -15,6 +15,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:naslook/api/client.dart';
+import 'package:naslook/api/models.dart';
 import 'package:naslook/api/row_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/app/app.dart';
@@ -26,7 +27,9 @@ import 'package:naslook/pages/events/events_page.dart';
 import 'package:naslook/pages/explore/explore_page.dart';
 import 'package:naslook/pages/home/row_deck.dart';
 import 'package:naslook/pages/jobs/job_page.dart';
+import 'package:naslook/pages/map/map_cluster.dart';
 import 'package:naslook/pages/map/map_page.dart';
+import 'package:naslook/pages/map/map_stories.dart';
 import 'package:naslook/pages/market/listing_page.dart';
 import 'package:naslook/pages/market/market_page.dart' show MarketPage;
 import 'package:naslook/pages/posts/post_viewer.dart';
@@ -241,7 +244,9 @@ void main() {
     expect(_count(tester), '1 من 7 · الأقرب أولاً');
     expect(find.byKey(const Key('home-search')), findsOneWidget);
     expect(find.byKey(const Key('home-bell')), findsOneWidget);
-    // تبسيط الخريطة: لا سهمان ولا عدّاد، وزران عائمان فقط («موقعي» و«أنا هنا»)
+    // تبسيط الخريطة: لا سهمان ولا عدّاد، وثلاثة أزرار عائمة («عرض عمودي» و«موقعي» و«أنا هنا»)
+    expect(find.byKey(const Key('map-vertical-open')), findsOneWidget);
+    expect(find.byKey(const Key('map-stories')), findsNothing, reason: 'عند تكبير التتبع البطاقة لا الشريط');
     for (final k in ['row-prev', 'row-next', 'row-count']) {
       expect(find.byKey(Key(k)), findsNothing, reason: k);
     }
@@ -710,6 +715,10 @@ void main() {
     await _settle(tester, 3);
     expect(find.byKey(const Key('map-cluster')), findsNothing);
     expect(_markers(tester).length, 7);
+    // التقريب على المجموعة يبلغ وضع القصص: الشريط يعرض ما كان تحتها، والبطاقة تعود عند التصغير بلا تغيير
+    expect(find.byKey(const Key('map-stories')), findsOneWidget);
+    await tester.sendEventToBinding(pointer.scroll(const Offset(0, 800)));
+    await _settle(tester, 3);
     expect(_count(tester), '1 من 7 · الأقرب أولاً', reason: 'البطاقة المعروضة لم تتغير');
   });
 
@@ -752,6 +761,120 @@ void main() {
       expect(b.contains(LatLng(m['lat'] as double, m['lng'] as double)), isTrue, reason: 'عناصر المجموعة كلها ضمن الشاشة');
     }
     expect(find.byKey(const Key('map-search-area')), findsNothing, reason: 'تقريب برمجي لا يعرض زر المنطقة');
+  });
+
+  group('قصص الخريطة', () {
+    MapItem item(String id, double lat, double lng) => MapItem.row(RowItem(kind: 'listing', id: id, title: id, lat: lat, lng: lng))!;
+
+    test('storyGroups: nearest to the centre first, overlapping points merge into one group', () {
+      final a = item('a', 21.5400, 39.1700), a2 = item('a2', 21.54001, 39.17001), far = item('far', 21.5460, 39.1760), mid = item('mid', 21.5415, 39.1712);
+      final g = storyGroups([far, a2, mid, a], zoom: 17, centerLat: 21.5401, centerLng: 39.1701);
+      expect([for (final x in g) [for (final i in x) i.id]], [['a2', 'a'], ['mid'], ['far']]);
+      // من بعيد يتراكب الجميع، ومن أقرب تتفرّق
+      expect(storyGroups([far, a2, mid, a], zoom: 10, centerLat: 21.54, centerLng: 39.17).length, 1);
+    });
+
+    test('MapStory: what each kind shows, people and old pins are not stories, and distance text', () {
+      final off = MapStory.of(MapItem.row(RowItem.fromJson(_items()[0]))!)!;
+      expect([off.kind, off.kindLabel, off.title, off.who, off.act, off.image], ['offer', 'عرض', 'خصم ٢٠٪ على اللاتيه', 'أوفردوز', 'استخدم', null]);
+      expect(off.initial, 'خ');
+      final c = MapStory.of(MapItem.business(const Business(id: 'b1', name: 'برو 92', category: 'مقهى', description: '', lat: 21.5, lng: 39.1))!, logos: {'b1': 'asset:biz/brew92.png'})!;
+      expect([c.kind, c.title, c.sub, c.act, c.image], ['circle', 'برو 92', 'مقهى', 'زيارة', 'asset:biz/brew92.png']);
+      expect(MapStory.of(MapItem.business(const Business(id: 'b2', name: 'بلا شعار', category: '', description: '', lat: 21.5, lng: 39.1))!)!.image, isNull, reason: 'تظهر بحرفها الأول');
+      expect(MapStory.of(const MapItem(kind: MapItemKind.pin, id: 'p', lat: 1, lng: 1, title: 'x', data: 0)), isNull);
+      expect([storyDistance(20), storyDistance(640), storyDistance(2440)], ['50 م', '650 م', '2.4 كم']);
+    });
+
+    Future<void> zoomIn(WidgetTester tester) async {
+      final pointer = TestPointer(1, PointerDeviceKind.mouse);
+      await tester.sendEventToBinding(pointer.hover(tester.getCenter(find.byType(FlutterMap))));
+      await tester.sendEventToBinding(pointer.scroll(const Offset(0, -400)));
+      await _settle(tester, 3);
+      expect(_camera(tester).zoom, greaterThanOrEqualTo(kStoryZoom));
+    }
+
+    testWidgets('zooming in swaps the card for the story strip; a ring opens the vertical screen, and its mini map returns to the map there', (tester) async {
+      await _pump(tester);
+      expect(find.byKey(const Key('row-card')), findsOneWidget);
+      await zoomIn(tester);
+      expect(find.byKey(const Key('map-stories')), findsOneWidget);
+      expect(find.byKey(const Key('row-card')), findsNothing, reason: 'الشريط يحل محل البطاقة عند التقريب');
+      expect(find.byKey(const Key('map-pin-selected')), findsNothing, reason: 'لا بطاقة مختارة في وضع القصص');
+      final groups = tester.widget<StoryStrip>(find.byType(StoryStrip)).groups;
+      final total = groups.fold<int>(0, (n, g) => n + g.length);
+      expect(total, greaterThan(1));
+      expect(find.text('$total في ${groups.length} مكان'), findsOneWidget);
+      // الدائرة الثانية: الشاشة العمودية تبدأ من أول منشور في مجموعتها
+      await tester.tap(find.byKey(const Key('map-story-1')));
+      await _settle(tester, 3);
+      expect(find.byType(MapVerticalPage), findsOneWidget);
+      final at = groups[0].length;
+      expect(tester.widget<Text>(find.byKey(const Key('mv-count'))).data, '${at + 1} من $total');
+      final first = MapStory.of(groups[1].first)!;
+      expect(tester.widget<Text>(find.byKey(const Key('mv-title'))).data, first.title);
+      expect(tester.widget<Text>(find.byKey(const Key('mv-sub'))).data, contains('يبعد'));
+      // سحب للأعلى: المنشور التالي
+      await tester.drag(find.byType(PageView), const Offset(0, -1000));
+      await _settle(tester, 6);
+      expect(tester.widget<Text>(find.byKey(const Key('mv-count'))).data, '${at + 2} من $total');
+      // الخريطة الصغيرة تعيد إلى الخريطة عند مكان المنشور المعروض
+      final flat = [for (final g in groups) ...g];
+      await tester.tap(find.byKey(const Key('mv-map')).hitTestable());
+      await _settle(tester, 3);
+      expect(find.byType(MapVerticalPage), findsNothing);
+      final c = _camera(tester).center;
+      expect(c.latitude, closeTo(flat[at + 1].lat, 1e-6));
+      expect(c.longitude, closeTo(flat[at + 1].lng, 1e-6));
+      // تصغير: البطاقة تعود
+      final pointer = TestPointer(2, PointerDeviceKind.mouse);
+      await tester.sendEventToBinding(pointer.hover(tester.getCenter(find.byType(FlutterMap))));
+      await tester.sendEventToBinding(pointer.scroll(const Offset(0, 800)));
+      await _settle(tester, 3);
+      expect(find.byKey(const Key('map-stories')), findsNothing);
+      expect(find.byKey(const Key('row-card')), findsOneWidget);
+    });
+
+    testWidgets('in story mode a pin opens the vertical screen at its post', (tester) async {
+      await _pump(tester);
+      await zoomIn(tester);
+      // دبّوس منفرد من الشريط: جسمه فوق نقطته
+      final groups = tester.widget<StoryStrip>(find.byType(StoryStrip)).groups;
+      final one = groups.firstWhere((g) => g.length == 1).first;
+      final at = tester.getTopLeft(find.byType(FlutterMap)) + _camera(tester).latLngToScreenOffset(LatLng(one.lat, one.lng)) - const Offset(0, 18);
+      await tester.tapAt(at);
+      await _settle(tester, 3);
+      expect(find.byType(MapVerticalPage), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const Key('mv-title'))).data, MapStory.of(one)!.title);
+    });
+
+    testWidgets('«عرض عمودي» lists everything on the map nearest first; chips filter by kind and the button opens the existing journey', (tester) async {
+      await _pump(tester);
+      await tester.tap(find.byKey(const Key('map-vertical-open')));
+      await _settle(tester, 3);
+      expect(find.byType(MapVerticalPage), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const Key('mv-count'))).data, '1 من 7');
+      // الأقرب إلى موقع المستخدم (21.5433, 39.1728) هو الفعالية
+      expect(tester.widget<Text>(find.byKey(const Key('mv-title'))).data, 'بازار الحي');
+      for (final id in ['all', 'moment', 'offer', 'event', 'listing', 'job']) {
+        expect(find.byKey(Key('mv-chip-$id')), findsOneWidget, reason: id);
+      }
+      expect(find.byKey(const Key('mv-chip-circle')), findsNothing, reason: 'لا رقاقة لنوع غير موجود');
+      await tester.tap(find.byKey(const Key('mv-chip-listing')));
+      await _settle(tester, 2);
+      expect(tester.widget<Text>(find.byKey(const Key('mv-count'))).data, '1 من 1');
+      expect(tester.widget<Text>(find.byKey(const Key('mv-title'))).data, 'كاميرا فوجي X-T20');
+      await tester.tap(find.byKey(const Key('mv-act')));
+      await _settle(tester, 3);
+      expect(find.byType(ListingPage), findsOneWidget);
+      // الرجوع يعيد إلى الشاشة العمودية ثم إلى الخريطة
+      await tester.pageBack();
+      await _settle(tester, 3);
+      expect(find.byType(MapVerticalPage), findsOneWidget);
+      await tester.tap(find.byKey(const Key('mv-back')));
+      await _settle(tester, 3);
+      expect(find.byType(MapVerticalPage), findsNothing);
+      expect(find.byKey(const Key('row-card')), findsOneWidget);
+    });
   });
 
   testWidgets('deck widget alone: loading skeleton, then cards driven by the parent index', (tester) async {

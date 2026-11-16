@@ -31,6 +31,7 @@ import '../posts/post_viewer.dart';
 import '../posts/timeline_page.dart';
 import 'map_cluster.dart';
 import 'map_labels.dart';
+import 'map_stories.dart';
 import '../../api/client.dart';
 import '../../api/offers_map_api.dart';
 import '../../api/live_api.dart';
@@ -165,6 +166,11 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
   double _mapHeight = 0;
   /// رقاقة التصفية المختارة في الرئيسية ([mapFilterIds])؛ تحصر دبابيس الخريطة وبطاقات الصف معاً.
   String _filter = 'all';
+  /// شريط القصص: مجموعات ما في الإطار عند التقريب ([kStoryZoom])، فارغة = بطاقة الصف كما هي. تُحسب في البناء.
+  List<List<MapItem>> _storyGroups = const [];
+  /// كل قصص الخريطة بعد الرقاقة (للشاشة العمودية من الزر)، وشعارات الدوائر بمعرّفاتها.
+  List<MapItem> _storyAll = const [];
+  Map<String, String?> _logos = const {};
   /// «ابحث في هذه المنطقة»: يظهر بعد أن يبتعد المستخدم بيده عن آخر موضع وضعته فيه الخريطة ([_anchor]).
   bool _searchArea = false;
   LatLng? _anchor;
@@ -515,7 +521,16 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     final panelItems = sortForPanel(visible);
     // جرس التنبيهات للمسجّلين فقط (الزائر لا يطلب مسارات الحساب)
     final bell = widget.home && signedIn ? ref.watch(unreadCountProvider) + (ref.watch(notifyUnreadProvider).valueOrNull ?? 0) : 0;
-    final selectedKey = widget.home && rowItems.isNotEmpty ? rowItems[_rowIndex.clamp(0, rowItems.length - 1)].pinKey : null;
+    // شريط القصص: عند التقريب بيد المستخدم يحل محل البطاقة ويعرض ما في الإطار، الأقرب إلى وسطه أولاً
+    if (widget.home) {
+      _logos = {for (final c in ref.watch(mapCirclesProvider).valueOrNull?.circles ?? const <Biz>[]) c.id: c.logoUrl};
+      _storyAll = [for (final it in items) if (MapStory.of(it) != null) it];
+      final inFrame = b != null && _ready && _zoom >= kStoryZoom ? [for (final it in visible) if (MapStory.of(it) != null) it] : const <MapItem>[];
+      _storyGroups = inFrame.isEmpty ? const [] : storyGroups(inFrame, zoom: _zoom, centerLat: (b!.north + b.south) / 2, centerLng: (b.east + b.west) / 2);
+    }
+    final storyMode = _storyGroups.isNotEmpty;
+    // في وضع القصص لا بطاقة مختارة، فلا دبّوس مكبَّر
+    final selectedKey = widget.home && !storyMode && rowItems.isNotEmpty ? rowItems[_rowIndex.clamp(0, rowItems.length - 1)].pinKey : null;
 
     final dot = dotSizeFor(_zoom);
     final markers = <Marker>[];
@@ -584,7 +599,7 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
       final controlsHidden = !widget.home && _sheetFraction > 0.45;
       // في وضع الرئيسية البطاقة فوق كبسولة التنقّل العائمة، والأزرار العائمة فوق البطاقة
       final deckBottom = (widget.floatingNav ? JoyNavBar.inset(context) : MediaQuery.viewPaddingOf(context).bottom) + 6;
-      final controlsBottom = widget.home ? deckBottom + RowDeck.heightFor(context) + 10 : sheetPx + 12;
+      final controlsBottom = widget.home ? deckBottom + (storyMode ? StoryStrip.height : RowDeck.heightFor(context)) + 10 : sheetPx + 12;
       return Stack(children: [
         FlutterMap(
           mapController: _map,
@@ -715,6 +730,8 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
               child: widget.home
                   // الرئيسية: زران فقط. النشر من «+» في الشريط، والتحديث تلقائي، والعين داخل «أنا هنا»
                   ? Column(children: [
+                      _fab(Icons.view_day_rounded, _openAllVertical, tip: 'عرض عمودي', key: const Key('map-vertical-open')),
+                      const SizedBox(height: 8),
                       _fab(Icons.my_location_rounded, _goToMe, tip: 'موقعي', key: const Key('map-locate')),
                       const SizedBox(height: 8),
                       _fab(Icons.person_pin_circle_rounded, _hereSheet, filled: true, tip: 'أنا هنا', key: const Key('map-here')),
@@ -764,7 +781,9 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
             left: 12,
             right: 12,
             bottom: deckBottom,
-            child: RowDeck(
+            child: storyMode
+                ? StoryStrip(groups: _storyGroups, logos: _logos, onOpen: _openStoryGroup)
+                : RowDeck(
               items: rowItems,
               index: _rowIndex,
               // الهيكل لصف لم يصل بعد فقط؛ رقاقة بلا نتائج أثناء تحديث تعرض بطاقتها لا الهيكل
@@ -817,8 +836,56 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
     if (widget.home) ref.invalidate(rowProvider);
   }
 
+  /// دائرة في شريط القصص: الشاشة العمودية على كل قصص الإطار بدءاً من مجموعتها.
+  void _openStoryGroup(int g) {
+    final groups = _storyGroups;
+    if (g < 0 || g >= groups.length) return;
+    var at = 0;
+    for (var i = 0; i < g; i++) {
+      at += groups[i].length;
+    }
+    _openVertical([for (final x in groups) ...x], initial: at);
+  }
+
+  /// زر «عرض عمودي»: كل قصص الخريطة، الأقرب إلى موقع المستخدم (أو مركز الخريطة) أولاً.
+  void _openAllVertical() {
+    final c = _map.camera.center;
+    final from = ref.read(userLocationProvider).valueOrNull ?? LatLng(c.latitude, c.longitude);
+    const d = Distance();
+    final list = [..._storyAll]..sort((a, b) => d.as(LengthUnit.Meter, from, LatLng(a.lat, a.lng)).compareTo(d.as(LengthUnit.Meter, from, LatLng(b.lat, b.lng))));
+    if (list.isEmpty) return toast(context, 'لا شيء منشور على الخريطة هنا بعد');
+    _openVertical(list);
+  }
+
+  /// يفتح الشاشة العمودية؛ ضغط الخريطة الصغيرة فيها يعيد إلى الخريطة عند ذلك المنشور.
+  Future<void> _openVertical(List<MapItem> items, {int initial = 0}) async {
+    if (items.isEmpty) return;
+    final picked = await MapVerticalPage.open(
+      context,
+      items: items,
+      initial: initial,
+      logos: _logos,
+      origin: ref.read(userLocationProvider).valueOrNull,
+      tilesUrl: '${ref.read(apiClientProvider).baseUrl}/tiles/{z}/{x}/{y}.png',
+      onOpen: _showItem,
+    );
+    if (picked == null || !mounted) return;
+    try {
+      _map.move(LatLng(picked.lat, picked.lng), math.max(_zoom, 17));
+    } catch (_) {}
+  }
+
   /// الرئيسية: دبّوس من «الصف» يُظهر بطاقته (وزر البطاقة يفتح التفاصيل)، وغيره يفتح تفاصيله كما كان.
   void _tapPin(MapItem item) {
+    // وضع القصص: الدبّوس يفتح الشاشة العمودية عند منشوره (البطاقة غير معروضة)
+    if (_storyGroups.isNotEmpty) {
+      final flat = [for (final g in _storyGroups) ...g];
+      final at = flat.indexWhere((x) => x.key == item.key);
+      if (at >= 0) {
+        _openVertical(flat, initial: at);
+        return;
+      }
+    }
     final rows = _rowItems;
     final i = rows.indexWhere((r) => r.pinKey == item.key);
     if (i >= 0) return _selectRow(rows, i);
@@ -828,7 +895,15 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
   /// لمسة على مجموعة: تقريب يملأ الشاشة بعناصرها حتى تتفرق من لمسة واحدة (مستوى على الأقل)، وعند أقصى تقريب
   /// (عناصر في النقطة نفسها) قائمتها.
   void _tapCluster(MapCluster c) {
-    if (_zoom >= 17.5) return _listSheet(c.items, title: 'عند هذه النقطة · ${c.count}', onPick: _tapPin);
+    if (_zoom >= 17.5) {
+      // عناصر في النقطة نفسها: تُعرض قصصاً متتابعة بدل قائمة؛ ما ليس قصة (دبابيس قديمة) يبقى بقائمته
+      final stories = [for (final it in c.items) if (MapStory.of(it) != null) it];
+      if (widget.home && stories.length == c.items.length) {
+        _openVertical(stories);
+        return;
+      }
+      return _listSheet(c.items, title: 'عند هذه النقطة · ${c.count}', onPick: _tapPin);
+    }
     final b = c.bounds;
     // هوامش تُبقي العناصر خارج شريط البحث والرقائق في الأعلى والبطاقة في الأسفل
     final fit = CameraFit.bounds(bounds: LatLngBounds(LatLng(b.minLat, b.minLng), LatLng(b.maxLat, b.maxLng)), padding: EdgeInsets.fromLTRB(56, 150, 56, 150 + RowDeck.heightFor(context)), maxZoom: 18).fit(_map.camera);
