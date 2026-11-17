@@ -11,6 +11,7 @@ import 'core/media/voice_player.dart';
 import 'core/push/push_service.dart';
 import 'core/share/share_links.dart';
 import 'core/swr.dart';
+import 'pages/welcome/welcome_seen.dart';
 import 'state/admin_providers.dart';
 import 'state/notify_providers.dart';
 
@@ -34,5 +35,7 @@ void main() {
   VoicePlayer.prepareSound();
   // تجهيز تخزين «اعرض المحفوظ ثم حدّث» بلا انتظار: يسبق أول قائمة لأن استعادة الجلسة تأخذ أطول منه
   unawaited(Swr.prime());
+  // هل رأى هذا الجهاز جولة الترحيب؟ تُقرأ أثناء استعادة الجلسة، وقبل وصولها لا تظهر الجولة
+  unawaited(WelcomeSeen.prime());
   runApp(const ProviderScope(child: MainApp()));
 }

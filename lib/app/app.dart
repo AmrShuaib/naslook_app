@@ -46,6 +46,8 @@ import '../pages/chat/chats_page.dart';
 import '../core/update/app_update.dart';
 import '../ui/update_banner.dart';
 import '../ui/launch_splash.dart';
+import '../pages/welcome/welcome_seen.dart';
+import '../pages/welcome/welcome_tour_page.dart';
 
 export '../core/require_account.dart' show guestWantsLoginProvider, guestBrowseProvider;
 
@@ -89,6 +91,11 @@ class AuthGate extends ConsumerWidget {
         // مقدمة التطبيق: الشعار نفسه الذي عرضه index.html قبل تحميل Flutter، حتى تُستعاد الجلسة
         return const LaunchSplash();
       case AuthStatus.signedOut:
+        // جولة الترحيب مرة واحدة لزائر جديد، قبل واجهة الزائر أو شاشة الدخول. القادم برابط مشترك يذهب إلى وجهته مباشرة،
+        // ورابط لوحة الإدارة إلى الدخول
+        if (pendingLink == null && !ref.watch(adminModeProvider) && !ref.watch(welcomeSeenProvider)) {
+          return const WelcomeTourPage(onDone: WelcomeSeen.markSeen);
+        }
         // رابط عام (دائرة أو حساب) بلا جلسة: نعرض الوجهة كزائر مع شريط للدخول؛ ووضع التصفّح بلا حساب يعرض تبويبات الزائر،
         // إلا إن طلب الزائر الدخول
         if (!ref.watch(guestWantsLoginProvider)) {

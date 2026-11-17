@@ -34,6 +34,7 @@ import '../profile/privacy_control_page.dart';
 import '../profile/user_profile_page.dart';
 import '../market/market_page.dart';
 import '../posts/my_posts_page.dart';
+import '../welcome/welcome_tour_page.dart';
 import 'delete_account_page.dart';
 import '../../core/share/legal_links.dart';
 import 'saved_searches_page.dart';
@@ -218,6 +219,9 @@ class MySpacePage extends ConsumerWidget {
           JoyCard(
             padding: EdgeInsets.zero,
             child: Column(children: [
+              // إعادة جولة الترحيب: صفحة عادية تُغلق بالرجوع، ولا تغيّر حالة «رآها»
+              ListTile(key: const Key('welcome-replay'), leading: const Icon(Icons.tour_outlined, color: Joy.text), title: const Text('جولة في التطبيق'), onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WelcomeTourPage()))),
+              const Divider(indent: 16, endIndent: 16),
               ListTile(key: const Key('contact-us'), leading: const Icon(Icons.support_agent_rounded, color: Joy.text), title: const Text('تواصل معنا'), subtitle: Text(supportEmail, textDirection: TextDirection.ltr, textAlign: TextAlign.end), onTap: () => _contactSheet(context, supportEmail)),
               const Divider(indent: 16, endIndent: 16),
               ListTile(key: const Key('legal-privacy'), leading: const Icon(Icons.privacy_tip_outlined, color: Joy.text), title: const Text('سياسة الخصوصية'), onTap: () => LegalLinks.open('privacy')),
