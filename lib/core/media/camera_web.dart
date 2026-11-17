@@ -346,12 +346,12 @@ class _WebCamera implements LiveCamera {
 
   static const _videoTypes = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
 
-  /// بث التسجيل: إطارات الكاميرا (مقصوصة مع التقريب الرقمي) تُرسم في canvas داخل صندوق 720p ويُدمج صوت المسار الأصلي.
-  /// الكاميرا تعمل بدقة عالية للصور (1920×1440)، ولو سُجّل الفيديو بها لأعاد الخادم ترميزه كله قبل أن يرد على الرفع؛ بهذا
-  /// الحجم يجده خفيفاً فيحفظه كما هو والنشر يكتمل في ثوانٍ.
+  /// بث مقصوص للتسجيل مع التقريب الرقمي فقط: إطارات الفيديو تُرسم مقصوصة في canvas داخل صندوق 720p ويُدمج صوت المسار الأصلي.
+  /// بلا تقريب يُسجَّل بث الكاميرا مباشرة ([_lighten] يصغّره): تسجيل القماش على الآيفون يخرج نحو 3 إطارات في الثانية
+  /// (جُرّب في 17 نوفمبر 2026 على كل التسجيلات فخرج الفيديو متقطعاً كالحركة البطيئة)، فلا يُستخدم إلا حيث لا بديل.
   web.MediaStream? _croppedStream(web.MediaStream s) {
     final v = _video;
-    if (v == null || v.videoWidth == 0) return null;
+    if (v == null || v.videoWidth == 0 || _digital <= 1.001) return null;
     try {
       final w = v.videoWidth, h = v.videoHeight;
       // حدّا الخادم للفيديو الخفيف (LIGHT_VIDEO في server/chat_tools.js): الضلع الأطول 1280 والأقصر 720، وأبعاد زوجية لـ H.264
@@ -384,11 +384,44 @@ class _WebCamera implements LiveCamera {
     _cropStream = null;
   }
 
+  /// أبعاد مسار الكاميرا قبل تصغيره للتسجيل، لتُعاد بعده (الصور تحتاج الدقة العالية).
+  ({int w, int h})? _fullSize;
+
+  /// يطلب من الكاميرا نفسها بثاً داخل صندوق 720p طوال التسجيل (حدّا LIGHT_VIDEO في server/chat_tools.js: الأطول 1280 والأقصر
+  /// 720)، فيخرج المقطع خفيفاً بإطاراته كاملة ولا يعيد الخادم ترميزه. أي رفض أو تأخر = التسجيل بالدقة الحالية كما كان.
+  Future<void> _lighten(web.MediaStream s) async {
+    try {
+      final track = s.getVideoTracks().toDart.firstOrNull;
+      if (track == null) return;
+      final st = track.getSettings();
+      final w = st.width, h = st.height;
+      if (w <= 0 || h <= 0) return;
+      final scale = math.min(1280 / math.max(w, h), 720 / math.min(w, h));
+      if (scale >= 1) return;
+      final tw = (w * scale).round() & ~1, th = (h * scale).round() & ~1;
+      await track.applyConstraints({'width': {'ideal': tw}, 'height': {'ideal': th}}.jsify()! as web.MediaTrackConstraints).toDart.timeout(const Duration(milliseconds: 1500));
+      _fullSize = (w: w, h: h);
+    } catch (_) {}
+  }
+
+  /// يعيد دقة الكاميرا بعد التسجيل؛ الفشل لا يهم لأن الكاميرا تُغلق بعد اللقطة عادةً.
+  void _restoreSize() {
+    final full = _fullSize;
+    _fullSize = null;
+    if (full == null) return;
+    try {
+      final track = _stream?.getVideoTracks().toDart.firstOrNull;
+      track?.applyConstraints({'width': {'ideal': full.w}, 'height': {'ideal': full.h}}.jsify()! as web.MediaTrackConstraints).toDart.catchError((Object _) => null);
+    } catch (_) {}
+  }
+
   @override
   Future<void> startVideo() async {
     final s = _stream;
     if (s == null || _rec != null) return;
     _chunks.clear();
+    if (_digital <= 1.001) await _lighten(s);
+    if (_stream != s || _rec != null) return; // أُغلقت الكاميرا أو بدأ تسجيل آخر أثناء الانتظار
     _recMime = _videoTypes.firstWhere((t) => web.MediaRecorder.isTypeSupported(t), orElse: () => '');
     final src = _croppedStream(s) ?? s;
     final rec = _recMime.isEmpty ? web.MediaRecorder(src) : web.MediaRecorder(src, web.MediaRecorderOptions(mimeType: _recMime, videoBitsPerSecond: 2000000));
@@ -408,6 +441,7 @@ class _WebCamera implements LiveCamera {
     if (rec.state != 'inactive') rec.stop();
     await stopped.future.timeout(const Duration(seconds: 5), onTimeout: () {});
     _stopCrop();
+    _restoreSize();
     final sec = _recStart == null ? null : DateTime.now().difference(_recStart!).inSeconds;
     _recStart = null;
     if (_chunks.isEmpty) return null;
