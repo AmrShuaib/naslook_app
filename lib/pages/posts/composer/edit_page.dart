@@ -6,8 +6,10 @@ import '../../../api/posts_api.dart';
 import '../../../core/app_theme.dart';
 import '../../../core/media/filters.dart';
 import '../overlay_canvas.dart';
+import '../../../core/media/video_view.dart';
 import '../post_media.dart';
 import 'composer_draft.dart';
+import 'video_preview.dart';
 import 'text_board.dart' show contrastTextColor, kBoardMaxChars;
 import 'voice_layer.dart';
 
@@ -42,6 +44,8 @@ class _EditPageState extends State<EditPage> {
   // الجديد حيث رآه المستخدم (بمفاتيح القياس هذه)
   final _canvasKey = GlobalKey(), _editorKey = GlobalKey();
   bool _editingNew = false;
+  /// متحكم مراجعة الفيديو: زر الصوت في عمود الأدوات يكتم ويفتح عبره
+  final _video = VideoViewController();
 
   bool get isImage => d.kind == 'image';
   bool get isVideo => d.kind == 'video';
@@ -51,6 +55,7 @@ class _EditPageState extends State<EditPage> {
   void dispose() {
     _inline.dispose();
     _inlineFocus.dispose();
+    _video.dispose();
     super.dispose();
   }
 
@@ -227,6 +232,12 @@ class _EditPageState extends State<EditPage> {
                           if (isImage && !existing) _tool('crop', Icons.crop_rotate_rounded, 'قصّ', () => setState(() => tool = tool == 'crop' ? null : 'crop')),
                           if (isImage && !existing) _tool('filter', Icons.auto_fix_high_rounded, 'فلاتر', () => setState(() => tool = tool == 'filter' ? null : 'filter')),
                           if (!isVideo) _tool('voice', Icons.mic_rounded, 'صوت', _voiceTool, on: voice != null),
+                          // صوت المراجعة: الفيديو يبدأ صامتاً (قيد المتصفحات)، واللمسة تفتح صوته
+                          if (isVideo && d.video != null)
+                            ListenableBuilder(
+                              listenable: _video,
+                              builder: (_, __) => _tool('sound', _video.value.muted ? Icons.volume_off_rounded : Icons.volume_up_rounded, _video.value.muted ? 'شغّل الصوت' : 'كتم', _video.toggleMuted, on: !_video.value.muted),
+                            ),
                         ]),
                       ),
                     // أثناء الكتابة: الحقل يتوسط ما يظهر من القماش فوق لوحة المفاتيح، ودرج الأنماط فوقها مباشرة
@@ -251,7 +262,12 @@ class _EditPageState extends State<EditPage> {
 
   Widget _media() {
     if (d.isText) return Container(color: colorFromHex(d.board, Colors.white));
-    if (isVideo) return PostMedia(kind: 'video', bytes: d.video?.bytes, mime: d.video?.mime, url: d.editing?.mediaUrl, durationSec: d.videoSec ?? d.editing?.durationSec);
+    if (isVideo) {
+      // فيديو صُوّر للتو: يُشغَّل من الجهاز للمراجعة قبل النشر؛ تعديل منشور قائم يبقى بإطاره الثابت
+      final v = d.video;
+      if (v != null) return ComposerVideoPreview(bytes: v.bytes, mime: v.mime, durationSec: d.videoSec, controller: _video);
+      return PostMedia(kind: 'video', url: d.editing?.mediaUrl, durationSec: d.videoSec ?? d.editing?.durationSec);
+    }
     final shot = d.coverShot;
     Widget img;
     if (shot != null) {

@@ -61,6 +61,56 @@ class _PublishPageState extends ConsumerState<PublishPage> {
   bool get editingExisting => d.editing != null;
 
   @override
+  void initState() {
+    super.initState();
+    // الفيديو يُرفع الآن والمستخدم يكتب التعليق ويختار الوجهة
+    if (d.video != null) WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) setState(() => _videoUpload()); });
+  }
+
+  /// رفع فيديو المسودة: يعيد الجاري أو المكتمل للمقطع نفسه، ويبدأ جديداً إن تغيّر المقطع أو طُلبت إعادة بعد فشل.
+  VideoUpload _videoUpload({bool retry = false}) {
+    final v = d.video!;
+    final cur = d.videoUpload;
+    if (cur != null && identical(cur.shot.bytes, v.bytes) && !(retry && cur.failed)) return cur;
+    return d.videoUpload = VideoUpload.start(ref.read(apiClientProvider), v);
+  }
+
+  /// سطر حالة رفع الفيديو فوق زر النشر: نسبة حقيقية على الويب، وشريط بلا نسبة في غيره.
+  Widget _videoStatus(VideoUpload up) => ListenableBuilder(
+        listenable: up,
+        builder: (_, __) {
+          final sent = up.sent;
+          final (IconData icon, Color color, String text) = up.finished
+              ? (Icons.check_circle_rounded, Joy.success, 'الفيديو جاهز للنشر')
+              : up.failed
+                  ? (Icons.error_outline_rounded, Joy.accent, 'تعذّر رفع الفيديو، سنحاول مرة أخرى عند النشر')
+                  : sent == null
+                      ? (Icons.cloud_upload_outlined, Joy.primary, 'يُرفع الفيديو…')
+                      : sent < 1
+                          ? (Icons.cloud_upload_outlined, Joy.primary, 'يُرفع الفيديو ${(sent * 100).round()}%')
+                          : (Icons.hourglass_top_rounded, Joy.primary, 'يُجهَّز الفيديو على الخادم…');
+          final running = !up.finished && !up.failed;
+          return Container(
+            key: const Key('pub-video-status'),
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            decoration: BoxDecoration(color: Joy.surface2, borderRadius: BorderRadius.circular(14)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(children: [
+                Icon(icon, size: 18, color: color),
+                const SizedBox(width: 8),
+                Expanded(child: Text(text, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+              ]),
+              if (running) ...[
+                const SizedBox(height: 8),
+                ClipRRect(borderRadius: BorderRadius.circular(3), child: LinearProgressIndicator(key: const Key('pub-video-progress'), value: sent == null || sent >= 1 ? null : sent, minHeight: 5, backgroundColor: Joy.line)),
+              ],
+            ]),
+          );
+        },
+      );
+
+  @override
   void dispose() {
     _syncDraft();
     if (!published && !editingExisting) _saveDraft();
@@ -123,7 +173,17 @@ class _PublishPageState extends ConsumerState<PublishPage> {
         }
       }
       String? videoUrl;
-      if (d.video != null) videoUrl = (await api.uploadMedia(d.video!.bytes, contentType: d.video!.mime, fileName: d.video!.name)).url;
+      if (d.video != null) {
+        // الرفع بدأ عند فتح الشاشة: ننتظر ما بقي منه فقط. إن فشل المبكر نحاول مرة ثانية هنا حتى يظهر الخطأ للمستخدم
+        var up = _videoUpload();
+        var url = await up.done;
+        if (url == null) {
+          up = _videoUpload(retry: true);
+          url = await up.done;
+          if (url == null) throw up.error ?? const ApiException(0, 'تعذّر رفع الفيديو');
+        }
+        videoUrl = url;
+      }
       String? audioUrl;
       final v = d.voice;
       if (v != null) audioUrl = (await api.uploadMedia(v.bytes, contentType: v.mime, fileName: v.name)).url;
@@ -266,6 +326,7 @@ class _PublishPageState extends ConsumerState<PublishPage> {
           Destination.market => _marketOptions(),
         },
         const SizedBox(height: 24),
+        if (d.video != null && d.videoUpload != null) _videoStatus(d.videoUpload!),
         FilledButton(key: const Key('pub-go'), style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54), textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)), onPressed: busy ? null : _publish, child: Text(busy ? 'جارٍ النشر…' : editingExisting ? 'حفظ' : switch (d.destination) { Destination.map => 'نشر الآن', Destination.circle => 'نشر في الدائرة', Destination.market => 'نشر العرض' })),
         const SizedBox(height: 8),
         if (!editingExisting) const Center(child: Text('يُحفظ تعليقك وإعداداتك تلقائياً كمسودة حتى تنشر', style: TextStyle(color: Joy.textMuted, fontSize: 12))),

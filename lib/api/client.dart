@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'upload_xhr.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/platform.dart' as platform;
@@ -40,6 +41,8 @@ class ApiClient {
 
   final String baseUrl;
   final http.Client _http;
+  /// العميل أنشأ اتصاله بنفسه (لا عميل اختبار محقون): عندها فقط يجوز تجاوزه برفع XHR على الويب.
+  final bool _ownHttp;
   final Duration timeout;
 
   /// رمز الجلسة في صندوق مشترك بين العميل الأصلي ونُسخه (ApiClient.view) حتى يظل الرمز واحداً مهما تعدّدت النسخ.
@@ -56,6 +59,7 @@ class ApiClient {
   ApiClient({String? baseUrl, http.Client? httpClient, this.timeout = const Duration(seconds: 20)})
       : baseUrl = _normalize(baseUrl ?? resolveBaseUrl()),
         _http = httpClient ?? http.Client(),
+        _ownHttp = httpClient == null,
         _box = _TokenBox() {
     _currentBase = this.baseUrl;
   }
@@ -65,6 +69,7 @@ class ApiClient {
   ApiClient.view(ApiClient base)
       : baseUrl = base.baseUrl,
         _http = base._http,
+        _ownHttp = base._ownHttp,
         timeout = base.timeout,
         _box = base._box;
 
@@ -270,8 +275,12 @@ class ApiClient {
       );
 
   /// رفع جسم ثنائي كما هو (الملف نفسه هو الجسم) مع نوع المحتوى وترويسات إضافية.
-  Future<Map<String, dynamic>> postBytes(String path, Uint8List bytes, {required String contentType, Map<String, String>? headers, Duration? timeout}) =>
-      _send(() => _http.post(_uri(path), headers: {..._headers(json: false), 'Content-Type': contentType, ...?headers}, body: bytes), timeout: timeout);
+  /// [onProgress] نسبة ما أُرسل من الملف (0..1): تصل على الويب فقط (رفع XHR)، وفي غيره لا تُستدعى فيعرض المستدعي تقدّماً بلا نسبة.
+  Future<Map<String, dynamic>> postBytes(String path, Uint8List bytes, {required String contentType, Map<String, String>? headers, Duration? timeout, void Function(double sent)? onProgress}) {
+    final h = {..._headers(json: false), 'Content-Type': contentType, ...?headers};
+    if (onProgress != null && _ownHttp && xhrUploadSupported) return _send(() => xhrPost(_uri(path), h, bytes, onProgress), timeout: timeout);
+    return _send(() => _http.post(_uri(path), headers: h, body: bytes), timeout: timeout);
+  }
 
   Future<Map<String, dynamic>> patch_(String path, Object body) => _send(
         () => _http.patch(_uri(path), headers: _headers(), body: jsonEncode(body)),

@@ -1,4 +1,7 @@
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
+
+import '../../../api/chat_tools_api.dart';
+import '../../../api/client.dart';
 
 import '../../../api/posts_api.dart';
 import '../../../core/media/filters.dart';
@@ -28,6 +31,37 @@ const boardTemplates = [
 ];
 const boardColors = ['#FFFFFF', '#FFF4D6', '#E0F3F4', '#FDEBE6', '#111111'];
 
+/// رفع الفيديو المبكر: يبدأ حين يصل المستخدم شاشة النشر (بعد أن راجع المقطع) ويجري وهو يكتب التعليق ويختار الوجهة، فلا
+/// ينتظره عند ضغط «نشر». [sent] نسبة ما أُرسل (null = بلا نسبة خارج الويب)، و[done] يكتمل بالرابط أو null عند الفشل.
+class VideoUpload extends ChangeNotifier {
+  final Shot shot;
+  double? sent;
+  String? url;
+  Object? error;
+  late final Future<String?> done;
+  VideoUpload._(this.shot);
+
+  bool get failed => error != null;
+  bool get finished => url != null;
+
+  factory VideoUpload.start(ApiClient api, Shot shot) {
+    final u = VideoUpload._(shot);
+    u.done = api.uploadMedia(shot.bytes, contentType: shot.mime, fileName: shot.name, onProgress: (p) {
+      u.sent = p;
+      u.notifyListeners();
+    }).then<String?>((m) {
+      u.url = m.url;
+      u.notifyListeners();
+      return m.url;
+    }, onError: (Object e) {
+      u.error = e;
+      u.notifyListeners();
+      return null;
+    });
+    return u;
+  }
+}
+
 /// أين يُنشر المحتوى: على الخريطة عند موقعك، في مجتمع دائرة، أو كعرض في السوق.
 enum Destination { map, circle, market }
 
@@ -39,6 +73,8 @@ class ComposerDraft {
   int cover;
   Shot? video;
   int? videoSec;
+  /// رفع [video] الجاري أو المكتمل؛ يُتجاهل إن كان لمقطع سابق (أعاد المستخدم التصوير)
+  VideoUpload? videoUpload;
   /// لوحة النص
   String board;
   String template;

@@ -346,14 +346,17 @@ class _WebCamera implements LiveCamera {
 
   static const _videoTypes = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
 
-  /// بث مقصوص للتسجيل مع التقريب الرقمي: إطارات الفيديو تُرسم مقصوصة في canvas (حتى 1280 بكسل) ويُدمج صوت المسار الأصلي.
+  /// بث التسجيل: إطارات الكاميرا (مقصوصة مع التقريب الرقمي) تُرسم في canvas داخل صندوق 720p ويُدمج صوت المسار الأصلي.
+  /// الكاميرا تعمل بدقة عالية للصور (1920×1440)، ولو سُجّل الفيديو بها لأعاد الخادم ترميزه كله قبل أن يرد على الرفع؛ بهذا
+  /// الحجم يجده خفيفاً فيحفظه كما هو والنشر يكتمل في ثوانٍ.
   web.MediaStream? _croppedStream(web.MediaStream s) {
     final v = _video;
-    if (v == null || v.videoWidth == 0 || _digital <= 1.001) return null;
+    if (v == null || v.videoWidth == 0) return null;
     try {
       final w = v.videoWidth, h = v.videoHeight;
-      final scale = math.min(1.0, 1280 / math.max(w, h));
-      final cw = (w * scale).round(), ch = (h * scale).round();
+      // حدّا الخادم للفيديو الخفيف (LIGHT_VIDEO في server/chat_tools.js): الضلع الأطول 1280 والأقصر 720، وأبعاد زوجية لـ H.264
+      final scale = math.min(1.0, math.min(1280 / math.max(w, h), 720 / math.min(w, h)));
+      final cw = (w * scale).round() & ~1, ch = (h * scale).round() & ~1;
       final canvas = web.HTMLCanvasElement()..width = cw..height = ch;
       final ctx = canvas.getContext('2d') as web.CanvasRenderingContext2D;
       void draw() {
@@ -388,7 +391,7 @@ class _WebCamera implements LiveCamera {
     _chunks.clear();
     _recMime = _videoTypes.firstWhere((t) => web.MediaRecorder.isTypeSupported(t), orElse: () => '');
     final src = _croppedStream(s) ?? s;
-    final rec = _recMime.isEmpty ? web.MediaRecorder(src) : web.MediaRecorder(src, web.MediaRecorderOptions(mimeType: _recMime, videoBitsPerSecond: 2500000));
+    final rec = _recMime.isEmpty ? web.MediaRecorder(src) : web.MediaRecorder(src, web.MediaRecorderOptions(mimeType: _recMime, videoBitsPerSecond: 2000000));
     rec.ondataavailable = ((web.BlobEvent e) { if (e.data.size > 0) _chunks.add(e.data); }).toJS;
     rec.start(500);
     _rec = rec;

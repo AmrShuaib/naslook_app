@@ -47,18 +47,18 @@ bool isHeaderRejection(ApiException e, Duration elapsed) =>
 
 /// مسارات إضافة أدوات المحادثات (server/chat_tools.js): رفع الوسائط وبيانات الرسائل الإضافية.
 extension ChatToolsApi on ApiClient {
-  Future<UploadedMedia> uploadMedia(Uint8List bytes, {required String contentType, String? fileName}) async {
+  Future<UploadedMedia> uploadMedia(Uint8List bytes, {required String contentType, String? fileName, void Function(double sent)? onProgress}) async {
     // ترويسات HTTP لا تقبل إلا حروف ISO-8859-1؛ اسم ملف عربي يجعل WebKit يرمي "Type error"، فنرسل اسماً لاتينياً نظيفاً فقط
     final safeName = _asciiName(fileName, contentType);
     final timeout = uploadTimeoutFor(contentType, fileName: fileName);
     final started = Stopwatch()..start();
     Map<String, dynamic> d;
     try {
-      d = await postBytes('/chat/upload', bytes, contentType: contentType, headers: {if (safeName != null) 'x-file-name': safeName}, timeout: timeout);
+      d = await postBytes('/chat/upload', bytes, contentType: contentType, headers: {if (safeName != null) 'x-file-name': safeName}, timeout: timeout, onProgress: onProgress);
     } on ApiException catch (e) {
       // احتياط: إن رفض المتصفح الترويسة نعيد المحاولة بدونها (الخادم يستنتج النوع من content-type)، ولا نعيد عند المهلة أو انقطاع متأخر
       if (safeName == null || !isHeaderRejection(e, started.elapsed)) rethrow;
-      d = await postBytes('/chat/upload', bytes, contentType: contentType, timeout: timeout);
+      d = await postBytes('/chat/upload', bytes, contentType: contentType, timeout: timeout, onProgress: onProgress);
     }
     final url = (d['url'] ?? '').toString();
     if (url.isEmpty) throw const ApiException(500, 'الخادم لم يُرجع رابط الملف');

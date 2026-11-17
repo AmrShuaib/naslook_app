@@ -75,6 +75,9 @@ export function videoArgs(probe, ext = "mp4") {
   if (Math.min(w, h) > L.maxShort || Math.max(w, h) > L.maxLong) reasons.push("size");
   if (bitrate > L.maxBitrate) reasons.push("bitrate");
   if (!reasons.length) return ext === "mp4" ? { keep: true, copy: true, reasons, args: [] } : { keep: false, copy: true, reasons, args: ["-c", "copy"] };
+  // الصورة خفيفة والمخالف هو الصوت وحده (كروم يسجّل MP4 بصوت Opus): إعادة تغليف تنسخ الصورة وترمّز الصوت إلى AAC في ثانية
+  // (remux)، بدل إعادة ترميز الفيديو كله
+  if (reasons.length === 1 && reasons[0] === "audio") return { keep: false, copy: true, reasons, args: ["-c:v", "copy", "-c:a", "aac", "-b:a", L.audio] };
   const capFps = fps != null && fps > L.maxFps + 0.01;
   const outFps = capFps ? L.maxFps : fps ?? L.maxFps;
   // إطار مرجعي كل ثانية: التقديم بالسحب والتشغيل من منتصف الملف يبدآن فوراً
@@ -265,7 +268,14 @@ async function setup(app, opts) {
       if (!located && await moovFirst(inFile)) return inFile;
       return fastPath(inFile, ext, probe, located ? "location" : "faststart", located);
     }
-    if (plan.copy) return fastPath(inFile, ext, probe, "copy", located);
+    if (plan.copy) {
+      // صوت غير AAC فوق صورة خفيفة: إعادة التغليف إلزامية حتى لو كان الملف MP4 جاهزاً (fastPath يُبقيه كما رُفع)، لأن remux يرمّز الصوت
+      if (plan.reasons.includes("audio")) {
+        try { const out = await remux(inFile, probe); logger(`chat_tools: video remuxed ${path.basename(out)} (audio)`); return out; }
+        catch (e) { logger(`chat_tools: audio remux failed, keeping original: ${e?.message || e}`); return inFile; }
+      }
+      return fastPath(inFile, ext, probe, "copy", located);
+    }
     // طابور ممتلئ: لا ننتظر حتى لا تتكدس ملفات 30 م.ب في الذاكرة ويتجاوز الطلب مهلة التطبيق
     if (transcodeSlots.full && transcodeSlots.waiting >= ENC.queue) return fastPath(inFile, ext, probe, "queue-full", located);
     const release = await transcodeSlots.acquire(ENC.waitMs);

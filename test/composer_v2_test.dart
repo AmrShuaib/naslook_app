@@ -17,6 +17,8 @@ import 'package:image/image.dart' as img;
 import 'package:naslook/core/media/camera.dart';
 import 'package:naslook/core/media/encode.dart';
 import 'package:naslook/core/media/filters.dart';
+import 'package:naslook/core/media/local_media.dart';
+import 'package:naslook/core/media/video_view.dart';
 import 'package:naslook/core/media/pick_image.dart';
 import 'package:naslook/core/media/voice_player.dart';
 import 'package:naslook/core/media/voice_record.dart';
@@ -99,12 +101,57 @@ class _FakePlayer extends VoicePlayerBase {
   Future<void> seek(Duration position) async {}
 }
 
+/// مشغّل مراجعة وهمي: يرتبط بالمتحكم ويبلّغه بحالة الكتم كما يفعل المشغّل الحقيقي.
+class _FakeReview extends StatefulWidget {
+  final VideoViewController controller;
+  final bool muted;
+  const _FakeReview(this.controller, {required this.muted});
+  static bool? lastMuted;
+  @override
+  State<_FakeReview> createState() => _FakeReviewState();
+}
+
+class _FakeReviewState extends State<_FakeReview> implements VideoViewBackend {
+  @override
+  void initState() {
+    super.initState();
+    _FakeReview.lastMuted = widget.muted;
+    widget.controller.attach(this);
+    widget.controller.report(VideoPlayback(playing: true, muted: widget.muted, firstFrame: true));
+  }
+
+  @override
+  void dispose() {
+    widget.controller.detach(this);
+    super.dispose();
+  }
+
+  @override
+  void play() {}
+  @override
+  void pause() {}
+  @override
+  void setRate(double rate) {}
+  @override
+  void seekBy(Duration delta) {}
+  @override
+  void setMuted(bool muted) {
+    _FakeReview.lastMuted = muted;
+    widget.controller.report(VideoPlayback(playing: true, muted: muted, firstFrame: true));
+  }
+
+  @override
+  Widget build(BuildContext context) => const ColoredBox(color: Colors.black);
+}
+
 const _pid = 'aaaaaaaa-0000-4000-8000-000000000001';
 
 class _Srv {
   final calls = <String>[];
   final bodies = <String, Map<String, dynamic>>{};
   final uploads = <String>[];
+  /// عدد طلبات الرفع التالية التي تفشل (500)
+  int failUploads = 0;
   /// إقرار 18+: null خادم بلا المسار (الافتراضي، لا يحبس)، false لم يُقرّ بعد
   bool? adult;
   /// رفض POST /mapposts بهذا الجسم (400) بدل قبوله
@@ -122,6 +169,7 @@ class _Srv {
       case 'POST /chat/upload':
         final ct = req.headers['content-type'] ?? '';
         uploads.add(ct);
+        if (failUploads > 0) { failUploads--; return _json({'error': 'boom'}, 500); }
         final n = uploads.length;
         return _json({'url': ct.startsWith('audio') ? '/chat/media/voice$n.weba' : ct.startsWith('video') ? '/chat/media/clip$n.webm' : '/chat/media/img$n.jpg', 'type': ct, 'kind': ct.split('/').first, 'size': req.bodyBytes.length});
       case 'POST /mapposts':
@@ -671,6 +719,75 @@ void main() {
     expect(body['kind'], 'video');
     expect(body['mediaUrl'], '/chat/media/clip1.webm');
     expect(body['durationSec'], 5);
+  });
+
+  testWidgets('the recorded video plays for review before publishing, muted first, and the sound tool unmutes it', (tester) async {
+    localMediaUrlOverride = (bytes, mime) async => 'blob:review';
+    addTearDown(() => localMediaUrlOverride = null);
+    String? played;
+    bool? looped, startMuted;
+    VideoView.controlledFactoryOverride = (url, c, {autoplay = true, loop = false, muted = false, poster}) {
+      played = url;
+      startMuted = muted;
+      looped = loop;
+      return _FakeReview(c, muted: muted);
+    };
+    addTearDown(() => VideoView.controlledFactoryOverride = null);
+    await _pump(tester);
+    await tester.longPress(find.byKey(const Key('shutter')));
+    await _settle(tester);
+    expect(find.byKey(const Key('edit-video-preview')), findsOneWidget, reason: 'المقطع يُشغَّل من الجهاز للمراجعة');
+    expect(played, 'blob:review');
+    expect(startMuted, isTrue, reason: 'المتصفحات لا تسمح بتشغيل تلقائي بصوت');
+    expect(looped, isTrue, reason: 'المراجعة تعيد المقطع حلقةً');
+    expect(find.text('شغّل الصوت'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('tool-sound')));
+    await tester.pump();
+    expect(find.text('كتم'), findsOneWidget);
+    expect(_FakeReview.lastMuted, isFalse);
+    expect(find.widgetWithText(TextButton, 'إعادة التصوير'), findsOneWidget);
+  });
+
+  testWidgets('without a local player the review falls back to the still frame', (tester) async {
+    localMediaUrlOverride = (bytes, mime) async => null;
+    addTearDown(() => localMediaUrlOverride = null);
+    await _pump(tester);
+    await tester.longPress(find.byKey(const Key('shutter')));
+    await _settle(tester);
+    expect(find.byKey(const Key('edit-video-static')), findsOneWidget);
+    expect(find.byKey(const Key('edit-video-preview')), findsNothing);
+    expect(find.byKey(const Key('edit-next')), findsOneWidget);
+  });
+
+  testWidgets('the video uploads while the user is still on the publish screen, once, and publishing reuses it', (tester) async {
+    final srv = await _pump(tester);
+    await tester.longPress(find.byKey(const Key('shutter')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    expect(srv.uploads, ['video/webm'], reason: 'الرفع بدأ قبل ضغط «نشر»');
+    expect(find.byKey(const Key('pub-video-status')), findsOneWidget);
+    expect(find.text('الفيديو جاهز للنشر'), findsOneWidget);
+    expect(find.byKey(const Key('pub-video-progress')), findsNothing);
+    expect(srv.calls.where((c) => c == 'POST /mapposts'), isEmpty);
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.uploads.length, 1, reason: 'لا رفع ثانٍ عند النشر');
+    expect(srv.bodies['POST /mapposts']!['mediaUrl'], '/chat/media/clip1.webm');
+  });
+
+  testWidgets('an early upload that fails is retried when publishing', (tester) async {
+    final srv = await _pump(tester);
+    srv.failUploads = 1;
+    await tester.longPress(find.byKey(const Key('shutter')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('edit-next')));
+    await _settle(tester);
+    expect(find.text('تعذّر رفع الفيديو، سنحاول مرة أخرى عند النشر'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('pub-go')));
+    await _settle(tester);
+    expect(srv.uploads.length, 2);
+    expect(srv.bodies['POST /mapposts']!['mediaUrl'], '/chat/media/clip2.webm');
   });
 
   testWidgets('without a live camera the system camera is the fallback and leads to the same edit screen', (tester) async {

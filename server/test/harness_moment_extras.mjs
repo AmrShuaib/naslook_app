@@ -41,6 +41,8 @@ d = videoArgs(pr({ ...h264(1280, 720), codec_name: 'hevc' }, aac, { bit_rate: '1
 check(!d.copy && JSON.stringify(d.reasons) === '["codec"]', 'hevc → re-encode (codec)', JSON.stringify(d.reasons));
 d = videoArgs(pr({ ...h264(640, 360), codec_name: 'vp9' }, { codec_type: 'audio', codec_name: 'opus' }, { bit_rate: '600000' }), 'webm');
 check(!d.copy && d.reasons.includes('codec') && d.reasons.includes('audio') && !d.reasons.includes('size'), 'webm vp9/opus → re-encode (codec, audio)', JSON.stringify(d.reasons));
+d = videoArgs(pr(h264(960, 720), { codec_type: 'audio', codec_name: 'opus' }, { bit_rate: '2000000' }), 'mp4');
+check(!d.keep && d.copy && JSON.stringify(d.reasons) === '["audio"]' && argOf(d.args, '-c:v') === 'copy' && argOf(d.args, '-c:a') === 'aac', 'light h264 with opus audio → remux, audio only to aac (no video re-encode)', JSON.stringify(d));
 d = videoArgs(pr(h264(640, 360), aac, { bit_rate: '5000000' }), 'mp4');
 check(!d.copy && JSON.stringify(d.reasons) === '["bitrate"]', 'small but 5Mbps → re-encode (bitrate)', JSON.stringify(d.reasons));
 d = videoArgs(pr(h264(640, 360), aac, {}), 'mp4');
