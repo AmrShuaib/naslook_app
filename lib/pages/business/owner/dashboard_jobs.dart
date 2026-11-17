@@ -72,7 +72,12 @@ class JobsTab extends ConsumerWidget {
               _Overview(board: b, overview: overview),
               const SizedBox(height: 4),
               if (b.items.isEmpty)
-                const EmptyState(icon: Icons.work_outline_rounded, title: 'لا عروض وظيفية بعد', subtitle: 'اكتب نقاطاً عن الوظيفة ويصوغ لك المحرك العرض كاملاً، ثم يصل لمن يطابقه من الباحثين عن عمل في مدينتك.')
+                EmptyState(
+                  icon: Icons.work_outline_rounded, tint: Joy.kindColor('job'),
+                  title: 'لا عروض وظيفية بعد', subtitle: 'اكتب نقاطاً عن الوظيفة ويصوغ لك المحرك العرض كاملاً، ثم يصل لمن يطابقه من الباحثين عن عمل.',
+                  actionKey: const Key('empty-biz-jobs-action'), actionLabel: 'أنشئ عرضاً وظيفياً', actionIcon: Icons.add_rounded,
+                  onAction: () => openJobEditor(context, ref, biz.id, board: b),
+                )
               else
                 SectionTitle('العروض · ${b.items.length}'),
               for (final j in b.items) _JobRow(bizId: biz.id, board: b, job: j),

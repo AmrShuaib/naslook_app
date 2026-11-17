@@ -6,6 +6,7 @@ import '../../api/biz_models.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
 import '../../core/location.dart';
+import '../../core/require_account.dart';
 import '../../state/biz_providers.dart';
 import '../../state/jobs_public_providers.dart';
 import '../../state/providers.dart';
@@ -14,6 +15,7 @@ import '../jobs/jobs_page.dart';
 import 'business_page.dart';
 import 'my_bookings_page.dart';
 import 'owner/my_businesses_page.dart';
+import 'register_circle_page.dart' show openRegisterCircle;
 
 /// مركز جدة: بديل الترتيب بالقرب حين يتعذّر تحديد الموقع.
 const LatLng kJeddahCenter = LatLng(21.5433, 39.1728);
@@ -92,7 +94,19 @@ class _BizListViewState extends ConsumerState<BizListView> {
         child: list.when(
           skipLoadingOnReload: true,
           data: (items) => items.isEmpty
-              ? EmptyState(icon: open ? Icons.schedule_rounded : Icons.storefront_outlined, title: open ? 'لا شيء مفتوح الآن في هذه الفئة' : 'لا دوائر تجارية بعد', subtitle: open ? 'أزل فلتر «مفتوح الآن» أو جرّب فئة أخرى.' : null)
+              ? (open
+                  ? EmptyState(
+                      icon: Icons.schedule_rounded, tint: Joy.kindColor('circle'),
+                      title: 'لا شيء مفتوح الآن في هذه الفئة', subtitle: 'أظهر كل الدوائر مهما كانت ساعات عملها، أو جرّب فئة أخرى.',
+                      actionKey: const Key('empty-biz-clear'), actionLabel: 'أظهر المغلق أيضاً', onAction: () => setState(() => open = false),
+                    )
+                  : EmptyState(
+                      icon: Icons.storefront_outlined, tint: Joy.kindColor('circle'),
+                      title: cat.isEmpty ? 'لا دوائر تجارية بعد' : 'لا دوائر في هذه الفئة بعد',
+                      subtitle: 'الدوائر التجارية هي المتاجر والمقاهي والخدمات حولك. إن كان لك نشاط فسجّله ليظهر هنا وعلى الخريطة.',
+                      actionKey: const Key('empty-biz-action'), actionLabel: 'سجّل دائرتك', actionIcon: Icons.add_business_outlined,
+                      onAction: () { if (requireAccount(context)) openRegisterCircle(context); },
+                    ))
               : RefreshIndicator(
                   onRefresh: () async => ref.invalidate(bizListProvider(key)),
                   child: ListView.separated(

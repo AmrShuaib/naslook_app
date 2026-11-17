@@ -56,18 +56,20 @@ class _MyOffersPageState extends ConsumerState<MyOffersPage> {
                 ),
                 const SizedBox(height: 12),
                 if (_tab == 0) ...[
-                  if (m.active.isEmpty) const EmptyState(icon: Icons.local_offer_outlined, title: 'لا عروض متاحة الآن', subtitle: 'انضم إلى الدوائر التي تحبها لتظهر عروضها هنا وتُطبّق تلقائياً على طلباتك.'),
+                  if (m.active.isEmpty)
+                    EmptyState(
+                      icon: Icons.local_offer_outlined, tint: Joy.kindColor('offer'),
+                      title: 'لا عروض متاحة الآن', subtitle: 'عروض الدوائر التي انضممت إليها تظهر هنا وتُطبّق تلقائياً على طلباتك. انضم إلى ما تحبه منها.',
+                      actionKey: const Key('empty-my-offers-action'), actionLabel: 'تصفّح الدوائر', actionIcon: Icons.storefront_outlined,
+                      onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BusinessesPage())),
+                    ),
                   for (final o in m.active) Padding(padding: const EdgeInsets.only(bottom: 10), child: OfferCard(offer: o, member: true, showBiz: true)),
                 ] else if (_tab == 1) ...[
-                  if (m.used.isEmpty) const EmptyState(icon: Icons.receipt_long_outlined, title: 'لم تستخدم عرضاً بعد', subtitle: 'حين تطلب من دائرة وعرضها متاح لك يُخصم تلقائياً ويُسجّل هنا.'),
+                  if (m.used.isEmpty) const EmptyState(icon: Icons.receipt_long_outlined, tint: Joy.sun, title: 'لم تستخدم عرضاً بعد', subtitle: 'حين تطلب من دائرة وعرضها متاح لك يُخصم تلقائياً ويُسجّل هنا.'),
                   if (m.used.isNotEmpty) JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, u) in m.used.indexed) OfferUseRow(u, last: i == m.used.length - 1)])),
                 ] else ...[
-                  if (m.expired.isEmpty) const EmptyState(icon: Icons.history_rounded, title: 'لا عروض منتهية', subtitle: 'تبقى العروض المنتهية هنا 30 يوماً للرجوع إليها.'),
+                  if (m.expired.isEmpty) const EmptyState(icon: Icons.history_rounded, tint: Joy.sun, title: 'لا عروض منتهية', subtitle: 'تبقى العروض المنتهية هنا 30 يوماً للرجوع إليها.'),
                   for (final o in m.expired) Padding(padding: const EdgeInsets.only(bottom: 10), child: OfferCard(offer: o, member: true, showBiz: true, compact: true)),
-                ],
-                if (m.active.isEmpty && m.used.isEmpty && _tab == 0) ...[
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BusinessesPage())), icon: const Icon(Icons.storefront_outlined, size: 18), label: const Text('تصفّح الدوائر')),
                 ],
               ],
             ),

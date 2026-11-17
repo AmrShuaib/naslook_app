@@ -355,7 +355,7 @@ class _CircleOffersPageState extends ConsumerState<CircleOffersPage> {
               children: [
                 _MemberLine(member: p.member, notify: p.notify, busy: _busy, onJoin: _join, onNotify: () => showNotifyLevelSheet(context, ref, bizId: widget.bizId, current: p.notify ?? 'all')),
                 const SizedBox(height: 12),
-                if (empty) const EmptyState(icon: Icons.local_offer_outlined, title: 'لا عروض حالياً', subtitle: 'حين تنشر الدائرة عرضاً يظهر هنا، ويصل الأعضاء حسب مستوى التنبيه الذي اختاروه.'),
+                if (empty) EmptyState(icon: Icons.local_offer_outlined, tint: Joy.kindColor('offer'), title: 'لا عروض حالياً', subtitle: p.member ? 'حين تنشر الدائرة عرضاً يظهر هنا ويُطبّق تلقائياً على طلبك.' : 'حين تنشر الدائرة عرضاً يظهر هنا. انضم إليها من الأعلى ليصلك تنبيه بكل عرض جديد.'),
                 if (p.active.isNotEmpty) ...[
                   const SectionTitle('السارية'),
                   for (final o in p.active) Padding(padding: const EdgeInsets.only(bottom: 10), child: OfferCard(offer: o, member: p.member, onJoin: _join)),

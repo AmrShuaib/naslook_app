@@ -328,7 +328,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
 
   Widget _services(Profile? pc) {
     final offers = pc?.offerings ?? const [];
-    if (offers.isEmpty) return const EmptyState(icon: Icons.handshake_outlined, title: 'لا خدمات بعد');
+    if (offers.isEmpty) return const EmptyState(compact: true, icon: Icons.handshake_outlined, title: 'لا خدمات بعد', subtitle: 'الخدمات التي يقدمها صاحب هذا الملف تظهر هنا حين يضيفها.');
     return Column(key: const Key('services-tab'), children: [
       for (final o in offers)
         Padding(
@@ -344,7 +344,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
 
   Widget _reviews(ProfileV2? p2) {
     final s = p2?.stats;
-    if (s == null || s.ratingCount == 0) return const EmptyState(icon: Icons.star_outline_rounded, title: 'لا تقييمات بعد', subtitle: 'تظهر هنا تقييمات المشترين بعد اكتمال الطلبات');
+    if (s == null || s.ratingCount == 0) return const EmptyState(compact: true, icon: Icons.star_outline_rounded, tint: Joy.sun, title: 'لا تقييمات بعد', subtitle: 'تظهر هنا تقييمات المشترين بعد اكتمال طلباتهم من السوق.');
     final avg = s.ratingAvg ?? 0;
     return JoyCard(
       key: const Key('reviews-tab'),
@@ -382,7 +382,7 @@ class _UserProfilePageState extends ConsumerState<UserProfilePage> {
         // الرقم SA للأصدقاء فقط دائماً (ويُنسخ من بطاقة الدردشة)
         row('الرقم SA', isMe || isFriend ? id : 'يظهر للأصدقاء فقط', key: const Key('sa-row')),
       ])),
-      if (pc == null && p2 == null) const EmptyState(icon: Icons.person_outline_rounded, title: 'لم يضف تفاصيل بعد'),
+      if (pc == null && p2 == null) const EmptyState(compact: true, icon: Icons.person_outline_rounded, title: 'لم يضف تفاصيل بعد', subtitle: 'النبذة والروابط تظهر هنا حين يكتبها صاحب الملف.'),
     ]);
   }
 
@@ -562,7 +562,7 @@ class _PostsTab extends ConsumerWidget {
       loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
       error: (_, __) => _fallback(context, ref),
       data: (list) => list.isEmpty
-          ? const EmptyState(icon: Icons.auto_awesome_motion_outlined, title: 'لا منشورات نشطة الآن', subtitle: 'المنشورات تبقى على الخريطة حتى 7 أيام')
+          ? const EmptyState(compact: true, icon: Icons.auto_awesome_motion_outlined, title: 'لا لحظات نشطة الآن', subtitle: 'اللحظات تبقى على الخريطة مدة محدودة ثم تختفي. ما يُنشر من جديد يظهر هنا.')
           : GridView.builder(
               key: const Key('posts-grid'),
               shrinkWrap: true,
@@ -624,7 +624,7 @@ class _MarketTab extends ConsumerWidget {
       loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
       error: (e, _) => JoyCard(child: Text('تعذر جلب عروض السوق', style: const TextStyle(color: Joy.textMuted))),
       data: (list) => list.isEmpty
-          ? const EmptyState(icon: Icons.storefront_outlined, title: 'لا عروض في السوق')
+          ? const EmptyState(compact: true, icon: Icons.storefront_outlined, tint: Joy.green, title: 'لا عروض في السوق', subtitle: 'ما يعرضه صاحب هذا الملف للبيع يظهر هنا.')
           : GridView.builder(
               key: const Key('market-grid'),
               shrinkWrap: true,

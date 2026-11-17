@@ -131,7 +131,7 @@ class _ExplorePageState extends ConsumerState<ExplorePage> {
               if (shown.isEmpty && failed == null)
                 const Padding(
                   padding: EdgeInsets.only(top: 60),
-                  child: EmptyState(key: Key('explore-empty'), icon: Icons.explore_outlined, title: 'لا شيء للحجز الآن', subtitle: 'تظهر هنا الفعاليات والأنشطة التي تستقبل الحجز حين تتوفر. اسحب للتحديث.'),
+                  child: EmptyState(key: Key('explore-empty'), icon: Icons.explore_outlined, title: 'لا شيء للحجز الآن', subtitle: 'استكشف يجمع ما يُحجز حولك في مكان واحد: فعاليات وسينما ومطاعم وفنادق ومواعيد. يظهر هنا فور توفره، واسحب للتحديث.'),
                 )
               else if (current == 'all')
                 for (final s in shown) ...[

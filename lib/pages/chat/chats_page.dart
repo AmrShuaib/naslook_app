@@ -276,7 +276,11 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
           final q = _q.toLowerCase();
           final list = q.isEmpty ? all : all.where((c) => c.peer.nickname.toLowerCase().contains(q) || c.peer.id.toLowerCase().contains(q) || (c.lastContent?.toLowerCase().contains(q) ?? false)).toList();
           if (all.isEmpty && pending.isEmpty && jobOffers.isEmpty) {
-            return EmptyState(icon: Icons.chat_bubble_outline_rounded, title: 'لا محادثات بعد', subtitle: 'أضف صديقاً بنك نيمه وابدأ الحديث.', action: OutlinedButton(onPressed: _newChat, child: const Text('محادثة جديدة')));
+            return EmptyState(
+              icon: Icons.chat_bubble_outline_rounded,
+              title: 'لا محادثات بعد', subtitle: 'هنا رسائلك مع أصدقائك والبائعين. ابحث عن شخص بنك نيمه وابدأ الحديث.',
+              actionKey: const Key('empty-chats-action'), actionLabel: 'ابدأ محادثة', actionIcon: Icons.edit_rounded, onAction: _newChat,
+            );
           }
           return RefreshIndicator(
             onRefresh: _refresh,
@@ -329,7 +333,12 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
                     subtitle: const Text('من غير الأصدقاء · اقبل أو تجاهل', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Joy.textMuted)),
                     trailing: const Icon(Icons.chevron_left_rounded, color: Joy.textMuted),
                   ),
-                if (list.isEmpty && _hits.isEmpty && !_searchingServer) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('لا نتائج', style: TextStyle(color: Joy.textMuted)))),
+                if (list.isEmpty && _hits.isEmpty && !_searchingServer)
+                  EmptyState(
+                    compact: true, icon: Icons.search_off_rounded,
+                    title: 'لا نتائج', subtitle: 'لا محادثة ولا رسالة تطابق «$_q».',
+                    actionKey: const Key('empty-chats-clear'), actionLabel: 'امسح البحث', onAction: () { _search.clear(); _onQuery(''); },
+                  ),
                 for (final (i, c) in list.indexed)
                   _ChatRow(
                     c,
@@ -354,7 +363,7 @@ class _ChatsPageState extends ConsumerState<ChatsPage> {
   /// قسم «التوظيف» أولاً (بطاقات عروض بأزرار الرد) ثم طلبات المراسلة كما هي.
   Widget _requestsTab(AsyncValue<List<FriendRequest>> requests, List<JobMatch> jobOffers) => requests.when(
         data: (list) => list.isEmpty && jobOffers.isEmpty
-            ? const EmptyState(icon: Icons.mark_email_read_outlined, title: 'لا طلبات مراسلة', subtitle: 'رسائل من غير أصدقائك وعروض التوظيف تظهر هنا أولاً حتى تقبلها أو تتجاهلها.')
+            ? const EmptyState(icon: Icons.mark_email_read_outlined, title: 'لا طلبات مراسلة', subtitle: 'رسائل من غير أصدقائك وعروض التوظيف تظهر هنا أولاً، فلا تدخل محادثاتك حتى تقبلها.')
             : RefreshIndicator(
                 onRefresh: () async {
                   ref.invalidate(requestsProvider);

@@ -1516,7 +1516,7 @@ class _ChatThreadPageState extends ConsumerState<ChatThreadPage> with WidgetsBin
     if (_messages.isEmpty) {
       return _gated
           ? const EmptyState(icon: Icons.lock_outline_rounded, title: 'لا رسائل بينكما بعد')
-          : EmptyState(icon: Icons.waving_hand_rounded, title: 'قل مرحباً لـ ${widget.peer.nickname}');
+          : EmptyState(icon: Icons.waving_hand_rounded, title: 'قل مرحباً لـ ${widget.peer.nickname}', subtitle: 'لا رسائل بينكما بعد. اكتب رسالتك في الأسفل أو أرسل صورة أو تسجيلاً صوتياً.');
     }
     final q = _searching ? _searchCtl.text.trim() : '';
     return ScrollablePositionedList.builder(
@@ -1633,7 +1633,7 @@ class _PeoplePickerState extends State<_PeoplePicker> {
             const SizedBox(height: 8),
             Expanded(
               child: list.isEmpty
-                  ? const EmptyState(icon: Icons.person_search_rounded, title: 'لا أحد بهذا الاسم')
+                  ? const EmptyState(compact: true, icon: Icons.person_search_rounded, title: 'لا أحد بهذا الاسم', subtitle: 'جرّب جزءاً من الاسم أو تأكد من كتابته.')
                   : ListView.builder(itemCount: list.length, itemBuilder: (_, i) => ListTile(leading: Avatar(name: list[i].nickname, url: list[i].avatarUrl, size: 40), title: Text(list[i].nickname), subtitle: Text(list[i].id, style: const TextStyle(fontSize: 11)), onTap: () => Navigator.pop(context, list[i]))),
             ),
           ]),

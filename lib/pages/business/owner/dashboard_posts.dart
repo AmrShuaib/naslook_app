@@ -24,7 +24,12 @@ class PostsTab extends ConsumerWidget {
       backgroundColor: Joy.bg,
       floatingActionButton: biz.canManage ? FloatingActionButton.extended(onPressed: () => openPostEditor(context, biz), backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.campaign_outlined), label: const Text('منشور جديد')) : null,
       body: posts.isEmpty
-          ? const EmptyState(icon: Icons.campaign_outlined, title: 'لا أخبار أو عروض بعد', subtitle: 'انشر عرضاً بتاريخ انتهاء أو خبراً عن نشاطك ليظهر في صفحتك ولمتابعيك.')
+          ? EmptyState(
+              icon: Icons.campaign_outlined,
+              title: 'لا أخبار بعد', subtitle: 'الخبر يظهر في صفحة دائرتك ويصل متابعيها: افتتاح، صنف جديد، أو عرض بتاريخ انتهاء.',
+              actionKey: const Key('empty-biz-posts-action'), actionLabel: biz.canManage ? 'اكتب أول خبر' : null, actionIcon: Icons.campaign_outlined,
+              onAction: () => openPostEditor(context, biz),
+            )
           : ListView.separated(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 96),
               itemCount: posts.length,

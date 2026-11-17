@@ -44,7 +44,7 @@ class ReviewsTab extends ConsumerWidget {
       ])),
       if (unanswered > 0) Padding(padding: const EdgeInsets.only(top: 8), child: Text('$unanswered تقييم بلا رد؛ الرد السريع يرفع ثقة العملاء.', style: const TextStyle(color: Joy.accent, fontSize: 12.5, fontWeight: FontWeight.w600))),
       const SizedBox(height: 12),
-      if (reviews.isEmpty) const EmptyState(icon: Icons.star_outline_rounded, title: 'لا تقييمات بعد'),
+      if (reviews.isEmpty) const EmptyState(compact: true, icon: Icons.star_outline_rounded, tint: Joy.sun, title: 'لا تقييمات بعد', subtitle: 'يقيّم العملاء الدائرة من صفحتها بعد التجربة، وتظهر تقييماتهم هنا لترد عليها.'),
       for (final r in reviews) Padding(padding: const EdgeInsets.only(bottom: 8), child: _ReviewCard(biz: biz, r: r)),
     ]);
   }
@@ -149,7 +149,13 @@ class TeamTab extends ConsumerWidget {
           else
             const JoyCard(child: Text('لا مالك بعد (دائرة تعريفية من Naslife)', style: TextStyle(color: Joy.textMuted))),
           SectionTitle('الفريق · ${t.staff.length}', action: canEdit ? 'إضافة' : null, onAction: canEdit ? () => _add(context, ref, t) : null),
-          if (t.staff.isEmpty) const EmptyState(icon: Icons.group_add_outlined, title: 'لا أعضاء بعد', subtitle: 'أضف مديراً يساعدك في الإدارة أو موظفاً يؤكد الاستلام عند الباب.'),
+          if (t.staff.isEmpty)
+            EmptyState(
+              compact: true, icon: Icons.group_add_outlined,
+              title: 'لا أعضاء بعد', subtitle: canEdit ? 'أضف مديراً يساعدك في الإدارة أو موظفاً يؤكد الاستلام عند الباب.' : 'لم يُضف المالك أعضاء إلى الفريق بعد.',
+              actionKey: const Key('empty-team-action'), actionLabel: canEdit ? 'أضف عضواً' : null, actionIcon: Icons.person_add_alt_1_outlined,
+              onAction: () => _add(context, ref, t),
+            ),
           for (final s in t.staff)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),

@@ -46,7 +46,13 @@ class OffersTab extends ConsumerWidget {
                 ]),
                 const SizedBox(height: 6),
                 if (m.offers.isEmpty)
-                  const EmptyState(icon: Icons.local_offer_outlined, title: 'لا عروض بعد', subtitle: 'ابدأ بقالب جاهز: ساعة هادئة، أول طلب، أو مكافأة الرواد. يصل العرض لأعضاء دائرتك حسب تنبيهاتهم ويُطبّق تلقائياً على طلباتهم.'),
+                  EmptyState(
+                    icon: Icons.local_offer_outlined, tint: Joy.kindColor('offer'),
+                    title: 'لا عروض بعد',
+                    subtitle: 'العرض يصل أعضاء دائرتك حسب تنبيهاتهم ويُطبّق تلقائياً على طلباتهم. ابدأ بقالب جاهز: ساعة هادئة، أول طلب، أو مكافأة الرواد.',
+                    actionKey: const Key('empty-offers-action'), actionLabel: biz.canManage ? 'أنشئ أول عرض' : null, actionIcon: Icons.local_offer_outlined,
+                    onAction: () => openOfferTemplates(context, biz, m.templates),
+                  ),
                 if (live.isNotEmpty) ...[
                   const SectionTitle('السارية'),
                   for (final o in live) _ManageOfferCard(biz: biz, offer: o),

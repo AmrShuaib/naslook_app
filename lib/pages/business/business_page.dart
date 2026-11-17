@@ -216,7 +216,7 @@ class _BusinessPageState extends ConsumerState<BusinessPage> {
               const SizedBox(height: 16),
               PlaceMomentsEntry(bizId: biz.id),
               SectionTitle(biz.category.catalogTitle),
-              if (biz.items.isEmpty) const EmptyState(icon: Icons.inventory_2_outlined, title: 'لا عناصر بعد'),
+              if (biz.items.isEmpty) EmptyState(compact: true, icon: Icons.inventory_2_outlined, tint: Joy.kindColor('circle'), title: 'لا شيء معروض بعد', subtitle: 'لم تُضف هذه الدائرة ما تقدمه بعد. عُد لاحقاً لترى جديدها.'),
               for (final it in biz.items)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10),
@@ -1311,7 +1311,7 @@ class _Reviews extends ConsumerWidget {
     // تقييمات المحظورين لا تظهر (احتياط في التطبيق)
     final blocked = ref.watch(blockedIdsProvider);
     final reviews = [for (final r in biz.reviews) if (!isBlockedId(blocked, r.user.id)) r];
-    if (reviews.isEmpty) return const EmptyState(icon: Icons.star_outline_rounded, title: 'لا تقييمات بعد', subtitle: 'كن أول من يقيّم هذه الدائرة.');
+    if (reviews.isEmpty) return const EmptyState(compact: true, icon: Icons.star_outline_rounded, tint: Joy.sun, title: 'لا تقييمات بعد', subtitle: 'جرّبت هذه الدائرة؟ اضغط «قيّم» بجانب العنوان وكن أول من يكتب رأيه.');
     return JoyCard(
       padding: EdgeInsets.zero,
       child: Column(children: [

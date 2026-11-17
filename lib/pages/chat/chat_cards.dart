@@ -651,7 +651,7 @@ Future<String?> _pickSheet<T>(BuildContext context, {required String title, requ
                 if (snap.hasError) return ErrorState(snap.error!);
                 if (!snap.hasData) return const Center(child: CircularProgressIndicator());
                 final list = snap.data!;
-                if (list.isEmpty) return EmptyState(icon: Icons.inbox_outlined, title: empty);
+                if (list.isEmpty) return EmptyState(compact: true, icon: Icons.inbox_outlined, title: empty);
                 return ListView.builder(itemCount: list.length, itemBuilder: (_, i) => tile(list[i]));
               },
             ),

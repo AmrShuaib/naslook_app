@@ -9,6 +9,7 @@ import '../../ui/widgets.dart';
 import 'job_offer_page.dart';
 import 'job_profile_page.dart';
 import 'job_trust.dart';
+import 'jobs_page.dart';
 
 /// «عروض التوظيف»: الواردة (بطاقات بانتظار الرد ثم المؤجّلة) وطلباتي (الجارية ثم السابقة).
 class JobOffersPage extends ConsumerStatefulWidget {
@@ -58,8 +59,10 @@ class _JobOffersPageState extends ConsumerState<JobOffersPage> {
           final later = d.items.where((m) => !m.pending).toList();
           if (d.items.isEmpty) {
             return EmptyState(
-              icon: Icons.work_outline_rounded, title: 'لا عروض واردة الآن', subtitle: 'حين تنشر دائرة وظيفة تناسب ملفك تصلك بطاقتها هنا وفي تبويب «الطلبات».',
-              action: OutlinedButton(key: const Key('offers-empty-profile'), onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobProfilePage())), child: const Text('ملفي الوظيفي')),
+              icon: Icons.work_outline_rounded, tint: Joy.kindColor('job'),
+              title: 'لا عروض واردة الآن', subtitle: 'حين تنشر دائرة وظيفة تناسب ملفك تصلك بطاقتها هنا وفي تبويب «الطلبات». كلما اكتمل ملفك زادت العروض المطابقة.',
+              actionKey: const Key('offers-empty-profile'), actionLabel: 'ملفي الوظيفي', actionIcon: Icons.badge_outlined,
+              onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobProfilePage())),
             );
           }
           return RefreshIndicator(
@@ -82,7 +85,12 @@ class _JobOffersPageState extends ConsumerState<JobOffersPage> {
   Widget _mine(AsyncValue<JobInbox> mine) => mine.when(
         data: (d) {
           if (d.active.isEmpty && d.history.isEmpty) {
-            return const EmptyState(icon: Icons.assignment_outlined, title: 'لا طلبات بعد', subtitle: 'حين تقبل عرضاً يظهر هنا مع مرحلته والمقابلات.');
+            return EmptyState(
+              icon: Icons.assignment_outlined, tint: Joy.kindColor('job'),
+              title: 'لا طلبات توظيف بعد', subtitle: 'حين تقبل عرضاً أو تقدّم على وظيفة يظهر طلبك هنا مع مرحلته ومواعيد المقابلات.',
+              actionKey: const Key('empty-job-apps-action'), actionLabel: 'تصفّح الوظائف', actionIcon: Icons.work_outline_rounded,
+              onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobsPage())),
+            );
           }
           return RefreshIndicator(
             onRefresh: () async => ref.invalidate(myJobsProvider),

@@ -77,7 +77,15 @@ class BazaarPage extends ConsumerWidget {
               ])),
             )),
             if (x.items.isEmpty)
-              const SliverFillRemaining(hasScrollBody: false, child: EmptyState(icon: Icons.celebration_outlined, title: 'لا عروض بعد', subtitle: 'كن أول من يضيف عرضه إلى هذا البازار.'))
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: EmptyState(
+                  icon: Icons.celebration_outlined, tint: Joy.kindColor('market'),
+                  title: 'لا عروض في البازار بعد', subtitle: x.state == 'ended' ? 'انتهى هذا البازار ولم تُضف إليه عروض.' : 'البازار يجمع عروض البائعين في موسم واحد. كن أول من يضيف عرضه.',
+                  actionKey: const Key('empty-bazaar-action'), actionLabel: x.state == 'ended' ? null : 'أضف عروضك', actionIcon: Icons.add_business_outlined,
+                  onAction: () => _pickMine(context, ref, x),
+                ),
+              )
             else
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),

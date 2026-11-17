@@ -82,7 +82,7 @@ class WalletPage extends ConsumerWidget {
               ]),
               const SizedBox(height: 18),
               SectionTitle('آخر الحركات', action: 'كشف الحساب', onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StatementPage()))),
-              if (wallet.recent.isEmpty) EmptyState(icon: Icons.account_balance_wallet_outlined, title: 'لا حركات بعد', subtitle: ios ? 'تظهر هنا مشترياتك وحجوزاتك.' : 'رصيدك يُشحن عبر الإدارة حالياً، وتظهر هنا مشترياتك وتحويلاتك.'),
+              if (wallet.recent.isEmpty) EmptyState(compact: true, icon: Icons.account_balance_wallet_outlined, title: 'لا حركات بعد', subtitle: ios ? 'تظهر هنا مشترياتك وحجوزاتك.' : 'رصيدك يُشحن عبر الإدارة حالياً، وتظهر هنا مشترياتك وتحويلاتك.'),
               JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, t) in wallet.recent.indexed) TxRow(t, last: i == wallet.recent.length - 1)])),
             ],
           ),
@@ -254,7 +254,7 @@ class StatementPage extends ConsumerWidget {
       appBar: AppBar(title: const Text('كشف الحساب')),
       body: tx.when(
         data: (list) => list.isEmpty
-            ? const EmptyState(icon: Icons.receipt_long_outlined, title: 'لا حركات بعد')
+            ? const EmptyState(icon: Icons.receipt_long_outlined, title: 'لا حركات بعد', subtitle: 'كشف الحساب يسجّل كل شراء واسترداد وإضافة رصيد بتاريخها.')
             : ListView(padding: const EdgeInsets.all(20), children: [JoyCard(padding: EdgeInsets.zero, child: Column(children: [for (final (i, t) in list.indexed) TxRow(t, last: i == list.length - 1)]))]),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(walletTxProvider)),

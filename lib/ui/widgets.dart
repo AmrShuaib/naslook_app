@@ -91,25 +91,68 @@ class JoyCard extends StatelessWidget {
   }
 }
 
+/// شاشة فارغة مفيدة: عنوان يقول ما الناقص، جملة تشرح لماذا هذا المكان أو كيف يمتلئ، وزر واحد للخطوة التالية.
+/// الزر إما ودجة جاهزة في [action] (الشكل القديم) أو [actionLabel] مع [onAction] فيُبنى زر موحّد.
+/// [tint] لون نوع المحتوى (من `Joy.kindColor`) للأيقونة والزر، و[compact] للاستخدام داخل بطاقة أو قسم.
 class EmptyState extends StatelessWidget {
   final IconData icon;
   final String title;
   final String? subtitle;
   final Widget? action;
-  const EmptyState({super.key, required this.icon, required this.title, this.subtitle, this.action});
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final IconData? actionIcon;
+  final Key? actionKey;
+  final Color? tint;
+  final bool compact;
+  const EmptyState({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.action,
+    this.actionLabel,
+    this.onAction,
+    this.actionIcon,
+    this.actionKey,
+    this.tint,
+    this.compact = false,
+  });
+
+  Widget? _button() {
+    if (action != null) return action;
+    if (actionLabel == null || onAction == null) return null;
+    // لون النوع الفاتح (أصفر العروض) لا يُقرأ عليه الأبيض: نص داكن حينها
+    final bg = tint ?? Joy.primary;
+    final fg = bg.computeLuminance() > .45 ? Joy.text : Colors.white;
+    final style = FilledButton.styleFrom(backgroundColor: bg, foregroundColor: fg, visualDensity: compact ? VisualDensity.compact : null);
+    final label = Text(actionLabel!, textAlign: TextAlign.center);
+    return actionIcon == null
+        ? FilledButton(key: actionKey, onPressed: onAction, style: style, child: label)
+        : FilledButton.icon(key: actionKey, onPressed: onAction, style: style, icon: Icon(actionIcon, size: 18), label: label);
+  }
+
   @override
-  Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(width: 72, height: 72, decoration: const BoxDecoration(color: Joy.primarySoft, shape: BoxShape.circle), child: Icon(icon, color: Joy.primary, size: 32)),
-            const SizedBox(height: 14),
-            Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600), textAlign: TextAlign.center),
-            if (subtitle != null) ...[const SizedBox(height: 6), Text(subtitle!, style: const TextStyle(color: Joy.textMuted), textAlign: TextAlign.center)],
-            if (action != null) ...[const SizedBox(height: 16), action!],
-          ]),
-        ),
-      );
+  Widget build(BuildContext context) {
+    final color = tint ?? Joy.primary;
+    final soft = tint == null ? Joy.primarySoft : color.withValues(alpha: .12);
+    final disc = compact ? 48.0 : 72.0;
+    final button = _button();
+    final body = Padding(
+      padding: EdgeInsets.all(compact ? 16 : 28),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(width: disc, height: disc, decoration: BoxDecoration(color: soft, shape: BoxShape.circle), child: Icon(icon, color: color, size: compact ? 22 : 32)),
+        SizedBox(height: compact ? 10 : 14),
+        Text(title, style: TextStyle(fontSize: compact ? 15 : 17, fontWeight: FontWeight.w600), textAlign: TextAlign.center),
+        if (subtitle != null) ...[const SizedBox(height: 6), Text(subtitle!, style: TextStyle(color: Joy.textMuted, fontSize: compact ? 13 : null, height: 1.5), textAlign: TextAlign.center)],
+        if (button != null) ...[SizedBox(height: compact ? 12 : 16), button],
+      ]),
+    );
+    // داخل قائمة عمودية الارتفاع مفتوح فلا طفح؛ وخارجها (جسم صفحة بارتفاع محدود) يحميه التمرير حين يكبر الخط.
+    // لا نضيف تمريراً داخل قائمة حتى لا يصير في الصفحة قابلان للتمرير.
+    final inList = Scrollable.maybeOf(context, axis: Axis.vertical) != null;
+    return Center(child: inList ? body : SingleChildScrollView(child: body));
+  }
 }
 
 class ErrorState extends StatelessWidget {

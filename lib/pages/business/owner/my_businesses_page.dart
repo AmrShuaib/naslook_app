@@ -42,7 +42,13 @@ class MyBusinessesPage extends ConsumerWidget {
           onRefresh: () async => ref.invalidate(myBusinessesProvider),
           child: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 96), children: [
             if (m.circles.isEmpty && m.claims.isEmpty)
-              const EmptyState(icon: Icons.storefront_outlined, title: 'لا دوائر تجارية بعد', subtitle: 'سجّل دائرة نشاطك في دقيقتين: متجر أو مقهى أو عيادة أو خدمة متنقلة، وتظهر على الخريطة فوراً. أو اطلب ملكية دائرة موجودة من صفحتها.'),
+              EmptyState(
+                icon: Icons.storefront_outlined, tint: Joy.kindColor('circle'),
+                title: 'لا دوائر تجارية بعد',
+                subtitle: 'سجّل دائرة نشاطك في دقيقتين: متجر أو مقهى أو عيادة أو خدمة متنقلة، وتظهر على الخريطة فوراً. أو اطلب ملكية دائرة موجودة من صفحتها.',
+                actionKey: const Key('empty-my-biz-action'), actionLabel: 'سجّل دائرتك', actionIcon: Icons.add_business_outlined,
+                onAction: () => openRegisterCircle(context),
+              ),
             if (m.circles.isNotEmpty) const SectionTitle('دوائري'),
             for (final b in m.circles) Padding(padding: const EdgeInsets.only(bottom: 10), child: _OwnedRow(b)),
             if (m.claims.isNotEmpty) ...[
@@ -101,7 +107,7 @@ class ClaimsPage extends ConsumerWidget {
       appBar: AppBar(title: const Text('طلبات الملكية')),
       body: claims.when(
         data: (list) => list.isEmpty
-            ? const EmptyState(icon: Icons.fact_check_outlined, title: 'لا طلبات معلّقة')
+            ? const EmptyState(icon: Icons.fact_check_outlined, title: 'لا طلبات معلّقة', subtitle: 'حين يطلب أحد ملكية دائرة موجودة يظهر طلبه هنا لتعتمده أو ترفضه.')
             : ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
                 for (final c in list)
                   JoyCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

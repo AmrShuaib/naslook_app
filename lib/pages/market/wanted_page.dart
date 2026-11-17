@@ -30,7 +30,7 @@ class WantedPage extends ConsumerWidget {
         body: const TabBarView(children: [_List(mine: false), _List(mine: true)]),
       ));
 
-  Future<void> _create(BuildContext context, WidgetRef ref) async {
+  static Future<void> _create(BuildContext context, WidgetRef ref) async {
     // الزائر يُدعى للدخول قبل النموذج، وإلا ملأه ثم رفضه الخادم (401) وضاع
     if (!requireAccount(context)) return;
     final title = TextEditingController(), desc = TextEditingController(), budget = TextEditingController(); String cat = 'services';
@@ -55,7 +55,13 @@ class _List extends ConsumerWidget {
     final l = ref.watch(wantedListProvider(mine));
     final blocked = ref.watch(blockedIdsProvider);
     return l.when(
-      data: (all) => switch ([for (final w in all) if (!isBlockedId(blocked, w.user.id)) w]) { final items => items.isEmpty ? EmptyState(icon: Icons.campaign_outlined, title: mine ? 'لم تنشر طلباً بعد' : 'لا طلبات مفتوحة حالياً', subtitle: mine ? 'اضغط «أبحث عن…» واكتب ما تحتاجه.' : 'الطلبات القريبة منك تظهر هنا ويمكنك الرد عليها بعرض.')
+      data: (all) => switch ([for (final w in all) if (!isBlockedId(blocked, w.user.id)) w]) { final items => items.isEmpty ? EmptyState(
+              icon: Icons.campaign_outlined, tint: Joy.kindColor('market'),
+              title: mine ? 'لم تنشر طلباً بعد' : 'لا طلبات مفتوحة حالياً',
+              subtitle: mine ? 'اكتب ما تبحث عنه وميزانيتك، فيرد عليك البائعون القريبون بعروضهم.' : 'هنا يكتب المشترون ما يبحثون عنه ليرد عليهم البائعون بعروض. اكتب طلبك وانتظر العروض.',
+              actionKey: Key(mine ? 'empty-wanted-mine-action' : 'empty-wanted-action'), actionLabel: 'أبحث عن…', actionIcon: Icons.campaign_outlined,
+              onAction: () => WantedPage._create(context, ref),
+            )
           : RefreshIndicator(onRefresh: () async => ref.invalidate(wantedListProvider), child: ListView.separated(padding: const EdgeInsets.all(20), itemCount: items.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) {
               final w = items[i];
               return JoyCard(onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => WantedDetailPage(w.id))), child: Row(children: [
@@ -97,7 +103,7 @@ class WantedDetailPage extends ConsumerWidget {
           if (x.description.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(x.description, style: const TextStyle(height: 1.6))),
           Padding(padding: const EdgeInsets.only(top: 6), child: Text('${marketCategories[x.category] ?? x.category}${x.budgetMax != null ? ' · الميزانية حتى ${money(x.budgetMax!)}' : ''}${x.placeName != null ? ' · ${x.placeName}' : ''}', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5))),
           SectionTitle('العروض (${x.replyList.length})'),
-          if (x.replyList.isEmpty) const Text('لا عروض بعد', style: TextStyle(color: Joy.textMuted)),
+          if (x.replyList.isEmpty) const Text('لا عروض بعد. حين يرد بائع على هذا الطلب يظهر عرضه هنا.', style: TextStyle(color: Joy.textMuted)),
           for (final r in x.replyList) if (!isBlockedId(blocked, r.seller.id)) JoyCard(key: Key('wanted-reply-${r.id}'), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [ProfileAvatar(person: r.seller, size: 32), const SizedBox(width: 8), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(r.seller.nickname, style: const TextStyle(fontWeight: FontWeight.w600)),

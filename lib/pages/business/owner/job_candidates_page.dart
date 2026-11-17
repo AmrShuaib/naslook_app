@@ -84,9 +84,13 @@ class _JobCandidatesPageState extends ConsumerState<JobCandidatesPage> {
               ),
               const SizedBox(height: 10),
               if (d.items.isEmpty)
-                const EmptyState(icon: Icons.people_outline_rounded, title: 'لا مرشحين بعد', subtitle: 'تصل بطاقات العرض تلقائياً لمن يطابقه من الباحثين عن عمل، ويظهر هنا من يشاهدها أو يقبلها.')
+                const EmptyState(icon: Icons.people_outline_rounded, tint: Joy.job, title: 'لا مرشحين بعد', subtitle: 'تصل بطاقات العرض تلقائياً لمن يطابقه من الباحثين عن عمل، ويظهر هنا من يشاهدها أو يقبلها.')
               else if (items.isEmpty)
-                const EmptyState(icon: Icons.filter_alt_off_outlined, title: 'لا مرشحين في هذه المرحلة'),
+                EmptyState(
+                  compact: true, icon: Icons.filter_alt_off_outlined, tint: Joy.kindColor('job'),
+                  title: 'لا مرشحين في هذه المرحلة', subtitle: 'ينتقل المرشح إلى هنا حين تغيّر مرحلته من بطاقته.',
+                  actionKey: const Key('empty-candidates-clear'), actionLabel: 'كل المراحل', onAction: () => setState(() => stage = ''),
+                ),
               for (final c in items) CandidateRow(candidate: c, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => JobCandidatePage(bizId: widget.bizId, jobId: widget.jobId, matchId: c.id)))),
             ]),
           );

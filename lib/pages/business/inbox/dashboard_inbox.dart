@@ -122,7 +122,11 @@ class _InboxTabState extends ConsumerState<InboxTab> {
                     EmptyState(
                       icon: Icons.forum_outlined,
                       title: _filter == 'mine' ? 'لا محادثات مسندة إليك' : _filter == 'closed' ? 'لا محادثات مغلقة' : 'لا رسائل من العملاء بعد',
-                      subtitle: 'يراسل العملاء الدائرة من صفحتها العامة بزر «راسل الدائرة»، وتصل رسائلهم هنا للفريق.',
+                      subtitle: _filter == 'mine'
+                          ? 'حين يسند إليك زميل محادثة عميل تظهر هنا لتتابعها.'
+                          : _filter == 'closed'
+                              ? 'المحادثات التي يغلقها الفريق بعد حلها تُحفظ هنا.'
+                              : 'يراسل العملاء الدائرة من صفحتها العامة بزر «راسل الدائرة»، وتصل رسائلهم هنا للفريق.',
                     ),
                   ])
                 : ListView.builder(

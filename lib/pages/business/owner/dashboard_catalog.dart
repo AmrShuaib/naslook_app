@@ -33,7 +33,13 @@ class CatalogTab extends ConsumerWidget {
             ])
           : null,
       body: items.isEmpty
-          ? EmptyState(icon: Icons.inventory_2_outlined, title: 'الكتالوج فارغ', subtitle: 'أضف ${_addLabel(biz.category).replaceFirst('إضافة ', '')} ليظهر في صفحتك ويستطيع العملاء طلبه.')
+          ? EmptyState(
+              icon: Icons.inventory_2_outlined,
+              title: 'الكتالوج فارغ',
+              subtitle: biz.canManage ? 'الكتالوج هو ما يراه العملاء في صفحتك ويطلبونه. أضف أول صنف، أو صوّر المنيو ليُقرأ لك.' : 'لم يُضف إلى الكتالوج شيء بعد. يضيفه المالك أو المدير.',
+              actionKey: const Key('empty-catalog-action'), actionLabel: biz.canManage ? 'أضف أول صنف' : null, actionIcon: Icons.add_rounded,
+              onAction: () => openItemEditor(context, biz),
+            )
           : RefreshIndicator(
               onRefresh: () async => invalidateBizAll(ref, biz.id),
               child: ListView.separated(

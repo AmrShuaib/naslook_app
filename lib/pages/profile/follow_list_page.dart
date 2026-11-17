@@ -12,6 +12,7 @@ import '../../state/profile_v2_providers.dart';
 import '../../state/providers.dart' show signedInProvider;
 import '../../ui/widgets.dart';
 import '../chat/chat_thread_page.dart' show errText;
+import '../search/search_page.dart';
 import 'user_profile_page.dart';
 
 /// «متابِعون» و«يتابع» لملف [userId] في تبويبين ([followers] يختار المفتوح أولاً): صفحات تُجلب عند الاقتراب من النهاية، والضغط على
@@ -140,11 +141,23 @@ class _FollowListViewState extends ConsumerState<FollowListView> {
         onRefresh: _load,
         child: ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
           const SizedBox(height: 40),
-          EmptyState(
-            key: const Key('follow-empty'),
-            icon: widget.followers ? Icons.people_outline_rounded : Icons.person_search_outlined,
-            title: widget.followers ? 'لا متابِعين بعد' : 'لا يتابع أحداً بعد',
-          ),
+          // قائمتي أنا تدعو إلى البحث عن أشخاص؛ قائمة غيري تشرح فقط
+          if (ref.watch(appStateProvider.select((s) => s.user?.id)) == widget.userId)
+            EmptyState(
+              key: const Key('follow-empty'),
+              icon: widget.followers ? Icons.people_outline_rounded : Icons.person_search_outlined,
+              title: widget.followers ? 'لا متابِعين بعد' : 'لا تتابع أحداً بعد',
+              subtitle: widget.followers ? 'من يتابعك تصله لحظاتك أولاً. انشر لحظات للجميع ليجدك الناس.' : 'تابع أشخاصاً من ملفاتهم لتصلك لحظاتهم في «أتابعهم».',
+              actionKey: const Key('empty-follow-action'), actionLabel: widget.followers ? null : 'ابحث عن أشخاص', actionIcon: Icons.person_search_rounded,
+              onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SearchPage())),
+            )
+          else
+            EmptyState(
+              key: const Key('follow-empty'),
+              icon: widget.followers ? Icons.people_outline_rounded : Icons.person_search_outlined,
+              title: widget.followers ? 'لا متابِعين بعد' : 'لا يتابع أحداً بعد',
+              subtitle: widget.followers ? 'لم يتابع أحد هذا الملف بعد.' : 'من يتابعهم صاحب هذا الملف يظهرون هنا.',
+            ),
         ]),
       );
     }

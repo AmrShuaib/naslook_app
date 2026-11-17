@@ -156,10 +156,11 @@ class _Empty extends ConsumerWidget {
   const _Empty({required this.filtered, required this.onClear});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (filtered) return EmptyState(icon: Icons.search_off_rounded, title: 'لا وظائف مطابقة', subtitle: 'جرّب كلمة أخرى أو أزل الفلاتر.', action: OutlinedButton(onPressed: onClear, child: const Text('إزالة الفلاتر')));
+    if (filtered) return EmptyState(icon: Icons.search_off_rounded, tint: Joy.kindColor('job'), title: 'لا وظائف مطابقة', subtitle: 'لا وظيفة تطابق بحثك أو فلاترك الآن. جرّب كلمة أخرى أو امسح التصفية.', actionKey: const Key('empty-jobs-clear'), actionLabel: 'امسح التصفية', actionIcon: Icons.filter_alt_off_rounded, onAction: onClear);
     final hasProfile = ref.watch(_myJobProfileProvider).valueOrNull?.profile != null;
     return EmptyState(
       icon: Icons.work_outline_rounded,
+      tint: Joy.kindColor('job'),
       title: 'لا وظائف شاغرة الآن',
       subtitle: hasProfile ? 'ملفك «أبحث عن عمل» جاهز؛ ستصلك بطاقات العروض المطابقة فور نشرها.' : 'أنشئ ملف «أبحث عن عمل» لتصلك بطاقات العروض المطابقة فور نشرها.',
       action: hasProfile

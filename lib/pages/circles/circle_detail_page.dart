@@ -106,7 +106,13 @@ class _CircleDetailPageState extends ConsumerState<CircleDetailPage> {
                 const SizedBox(height: 16),
                 const SectionTitle('المنشورات'),
                 if (posts.isEmpty)
-                  EmptyState(icon: Icons.forum_outlined, title: 'لا منشورات بعد', subtitle: vessel.member ? 'كن أول من يكتب في هذه الدائرة.' : 'انضم لتشارك.'),
+                  EmptyState(
+                    compact: true, icon: Icons.forum_outlined, tint: Joy.kindColor('circle'),
+                    title: 'لا منشورات بعد',
+                    subtitle: vessel.member ? 'هنا يتبادل أعضاء الدائرة الأخبار والأسئلة. كن أول من يكتب.' : 'انضم إلى الدائرة لتقرأ جديدها وتشارك أعضاءها.',
+                    actionKey: const Key('empty-circle-posts-action'), actionLabel: vessel.member ? 'اكتب أول منشور' : 'انضم إلى الدائرة',
+                    onAction: vessel.member ? _newPost : () => _join(vessel),
+                  ),
                 for (final p in posts)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),

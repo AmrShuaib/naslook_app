@@ -14,6 +14,7 @@ import '../events/events_page.dart';
 import '../market/market_page.dart';
 import '../posts/moment_actions.dart' show momentGone;
 import '../posts/post_viewer.dart';
+import '../posts/timeline_page.dart';
 
 /// «محفوظاتي»: ما حفظه المستخدم من لحظات ومنتجات وخدمات وفعاليات، وأمنيات حرة يكتبها بنفسه.
 /// تصفية حسب النوع («اللحظات» تُفتح في العارض)، فتح المصدر، تعليم "تحقّقت"، ملاحظة، وحذف.
@@ -58,8 +59,25 @@ class _WishlistPageState extends ConsumerState<WishlistPage> {
             Expanded(
               child: shown.isEmpty
                   ? (filter == 'post'
-                      ? const EmptyState(key: Key('wish-moments-empty'), icon: Icons.bookmark_border_rounded, title: 'لا لحظات محفوظة', subtitle: 'اضغط «حفظ» على أي لحظة في العارض لتجدها هنا ولو انتهت على الخريطة.')
-                      : const EmptyState(icon: Icons.favorite_border_rounded, title: 'قائمتك فارغة', subtitle: 'اضغط رمز الحفظ على أي لحظة أو منتج أو خدمة أو فعالية ليُحفظ هنا، أو أضف أمنية حرة.'))
+                      ? EmptyState(
+                          key: const Key('wish-moments-empty'), icon: Icons.bookmark_border_rounded,
+                          title: 'لا لحظات محفوظة', subtitle: 'اضغط «حفظ» على أي لحظة في العارض لتجدها هنا ولو انتهت على الخريطة.',
+                          actionKey: const Key('empty-saved-action'), actionLabel: 'تصفّح اللحظات', actionIcon: Icons.auto_awesome_motion_outlined,
+                          onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TimelinePage())),
+                        )
+                      : filter == 'all'
+                          ? EmptyState(
+                              icon: Icons.favorite_border_rounded,
+                              title: 'لا محفوظات بعد', subtitle: 'اضغط رمز الحفظ على أي لحظة أو منتج أو خدمة أو فعالية لتعود إليه من هنا، أو أضف أمنية حرة بالزر في الأسفل.',
+                              actionKey: const Key('empty-wishlist-action'), actionLabel: 'تصفّح اللحظات', actionIcon: Icons.auto_awesome_motion_outlined,
+                              onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TimelinePage())),
+                            )
+                          // نوع مختار بلا محفوظات: نرجع إلى الكل
+                          : EmptyState(
+                              icon: Icons.filter_alt_off_outlined,
+                              title: 'لا محفوظات من هذا النوع', subtitle: 'ما حفظته من الأنواع الأخرى في «الكل».',
+                              actionKey: const Key('empty-wishlist-clear'), actionLabel: 'اعرض الكل', onAction: () => setState(() => filter = 'all'),
+                            ))
                   : RefreshIndicator(
                       onRefresh: () async => ref.invalidate(wishlistProvider),
                       child: ListView.separated(

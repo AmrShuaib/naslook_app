@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../api/biz_inbox_api.dart';
 import '../../../api/biz_models.dart';
 import '../../../core/app_theme.dart';
+import '../../../core/nav_provider.dart';
 import '../../../core/require_account.dart';
 import '../../../ui/widgets.dart';
 import 'biz_inbox_providers.dart';
@@ -64,7 +65,12 @@ class BizThreadsTab extends ConsumerWidget {
     final data = ref.watch(myBizThreadsProvider);
     return data.when(
       data: (d) => d.threads.isEmpty
-          ? const EmptyState(icon: Icons.storefront_outlined, title: 'لا رسائل مع الدوائر بعد', subtitle: 'افتح صفحة أي دائرة واضغط «راسل الدائرة» لتسأل فريقها بشكل خاص.')
+          ? EmptyState(
+              icon: Icons.storefront_outlined, tint: Joy.kindColor('circle'),
+              title: 'لا رسائل مع الدوائر بعد', subtitle: 'هنا محادثاتك الخاصة مع المتاجر والخدمات. افتح صفحة أي دائرة واضغط «راسل الدائرة» لتسأل فريقها.',
+              actionKey: const Key('empty-biz-threads-action'), actionLabel: 'تصفّح الدوائر', actionIcon: Icons.groups_rounded,
+              onAction: () => backToNavTab(context, ref, 'circles'),
+            )
           : RefreshIndicator(
               onRefresh: () async {
                 ref.invalidate(myBizThreadsProvider);

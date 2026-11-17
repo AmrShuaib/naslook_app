@@ -74,7 +74,7 @@ class _BizActivityPageState extends ConsumerState<BizActivityPage> {
                     child: ListView(key: const Key('activity-list'), padding: const EdgeInsets.fromLTRB(20, 12, 20, 32), children: [
                       Text('ما فعله الفريق في الدائرة. يُحفظ $keepDays يوماً.', style: const TextStyle(color: Joy.textMuted, fontSize: 12.5)),
                       const SizedBox(height: 10),
-                      if (items.isEmpty) const EmptyState(icon: Icons.history_rounded, title: 'لا نشاط بعد', subtitle: 'يظهر هنا كل تعديل على الفريق والقائمة والعروض والطلبات.'),
+                      if (items.isEmpty) const EmptyState(compact: true, icon: Icons.history_rounded, title: 'لا نشاط بعد', subtitle: 'يُسجَّل هنا كل تعديل يجريه الفريق على الأعضاء والقائمة والعروض والطلبات، لتعرف من فعل ماذا.'),
                       for (final a in items)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8),

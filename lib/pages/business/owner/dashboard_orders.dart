@@ -63,7 +63,16 @@ class _OrdersTabState extends ConsumerState<OrdersTab> {
         child: list.when(
           data: (orders) {
             final shown = q.isEmpty ? orders : orders.where((o) => o.code.contains(q) || (o.customer?.nickname.toUpperCase().contains(q) ?? false)).toList();
-            if (shown.isEmpty) return EmptyState(icon: Icons.receipt_long_outlined, title: q.isEmpty ? 'لا طلبات هنا' : 'لا نتائج', subtitle: status == 'upcoming' ? 'الطلبات والحجوزات القادمة تظهر هنا فور وصولها.' : null);
+            if (shown.isEmpty) {
+              // بحث بلا نتائج غير قائمة فارغة: الأول يشرح، والثاني يرجع إلى «القادمة» إن كان فلتر آخر مختاراً
+              if (q.isNotEmpty) return const EmptyState(icon: Icons.search_off_rounded, title: 'لا نتائج', subtitle: 'لا طلب بهذا الرمز أو باسم هذا العميل في هذه القائمة. جرّب قائمة أخرى من الرقائق.');
+              return EmptyState(
+                icon: Icons.receipt_long_outlined,
+                title: 'لا طلبات هنا',
+                subtitle: status == 'upcoming' ? 'الطلبات والحجوزات القادمة تظهر هنا فور وصولها، ويصلك إشعار بكل طلب.' : 'لا طلب بهذه الحالة الآن.',
+                actionKey: const Key('empty-biz-orders-clear'), actionLabel: status == 'upcoming' ? null : 'اعرض القادمة', onAction: () => setState(() => status = 'upcoming'),
+              );
+            }
             return RefreshIndicator(
               onRefresh: () async => ref.invalidate(bizOrdersProvider),
               child: ListView.builder(

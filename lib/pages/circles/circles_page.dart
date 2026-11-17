@@ -89,7 +89,14 @@ class _CirclesPageState extends ConsumerState<CirclesPage> {
         Expanded(
           child: discover.when(
             data: (list) => list.isEmpty
-                ? const EmptyState(icon: Icons.groups_rounded, title: 'لا دوائر مطابقة', subtitle: 'جرّب كلمة أخرى أو أنشئ دائرة جديدة.')
+                ? (q.isEmpty
+                    ? EmptyState(
+                        icon: Icons.groups_rounded, tint: Joy.kindColor('circle'),
+                        title: 'لا دوائر للاكتشاف الآن', subtitle: 'الدوائر مجتمعات يجتمع فيها أصحاب الاهتمام الواحد. ابدأ دائرتك وادعُ من حولك.',
+                        actionKey: const Key('empty-discover-action'), actionLabel: 'أنشئ دائرة', actionIcon: Icons.add_rounded, onAction: _create,
+                      )
+                    // بحث بلا نتائج: لا زر مسح لأن حقل البحث فوقه مباشرة
+                    : EmptyState(icon: Icons.search_off_rounded, tint: Joy.kindColor('circle'), title: 'لا دوائر مطابقة', subtitle: 'لا دائرة باسم «$q» أو موضوعها. جرّب كلمة أخرى أو أنشئ دائرة جديدة.'))
                 : RefreshIndicator(
                     onRefresh: () async {
                       ref.invalidate(myVesselsProvider);
@@ -203,7 +210,15 @@ class _MineTab extends ConsumerWidget {
             data: (all) {
               final posts = [for (final p in all) if (!isBlockedId(blocked, p.author.id)) p];
               return posts.isEmpty
-                  ? const Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: EmptyState(icon: Icons.forum_outlined, title: 'لا منشورات بعد', subtitle: 'انضم إلى دائرة أو انشر أول منشور فيها.'))
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      // بلا دوائر: البطاقة فوقه تحمل «اكتشف» فلا يتكرر الزر
+                      child: EmptyState(
+                        compact: true, icon: Icons.forum_outlined, tint: Joy.kindColor('circle'),
+                        title: 'لا منشورات بعد', subtitle: 'تظهر هنا آخر منشورات الدوائر التي انضممت إليها.',
+                        actionKey: const Key('empty-circles-feed-action'), actionLabel: list.isEmpty ? null : 'اكتشف دوائر أخرى', onAction: onDiscover,
+                      ),
+                    )
                   : Column(children: [for (final p in posts.take(20)) Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 10), child: PostCard(p))]);
             },
             loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),

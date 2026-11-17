@@ -44,7 +44,7 @@ class NotificationsPage extends ConsumerWidget {
             SectionTitle('الإشعارات', action: unread > 0 ? 'تعليم الكل كمقروء' : null, onAction: unread > 0 ? () => _readAll(context, ref) : null),
             notif.when(
               data: (p) => p.items.isEmpty
-                  ? const _Hint('تصلك هنا الطلبات والحجوزات والتحويلات والتقييمات وإجراءات الإدارة')
+                  ? const _Hint('لا إشعارات بعد. تصلك هنا الطلبات والحجوزات والتقييمات والمتابعات وإجراءات الإدارة.')
                   : Column(children: [for (final n in p.items.take(40)) Padding(padding: const EdgeInsets.only(bottom: 8), child: NotificationCard(n))]),
               loading: () => const LinearProgressIndicator(),
               error: (e, _) => _Hint(e.toString()),
@@ -53,7 +53,7 @@ class NotificationsPage extends ConsumerWidget {
             const SectionTitle('طلبات مراسلة'),
             reqs.when(
               data: (list) => list.isEmpty
-                  ? const _Hint('لا طلبات جديدة')
+                  ? const _Hint('لا طلبات جديدة. من يراسلك من غير أصدقائك يظهر هنا لتقبله أو تتجاهله.')
                   : Column(children: [for (final r in list) Padding(padding: const EdgeInsets.only(bottom: 8), child: _RequestRow(r))]),
               loading: () => const LinearProgressIndicator(),
               error: (e, _) => _Hint(e.toString()),
@@ -77,7 +77,7 @@ class NotificationsPage extends ConsumerWidget {
               ),
             const SizedBox(height: 14),
             const SectionTitle('جديد في دوائرك'),
-            if (feed.isEmpty) const _Hint('لا منشورات جديدة')
+            if (feed.isEmpty) const _Hint('لا جديد الآن. منشورات الدوائر التي انضممت إليها تظهر هنا.')
             else for (final p in feed.take(10))
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),

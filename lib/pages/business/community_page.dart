@@ -333,9 +333,10 @@ class _CommunityPageState extends ConsumerState<CommunityPage> {
               child: posts.isEmpty
                   ? ListView(children: [
                       EmptyState(
-                        icon: Icons.forum_outlined,
+                        icon: Icons.forum_outlined, tint: Joy.kindColor('circle'),
                         title: _topic == null ? 'المساحة هادئة الآن' : 'لا مشاركات في هذا الموضوع',
-                        subtitle: 'كن أول من يشارك تجربته أو صورة أو تسجيلاً صوتياً هنا.',
+                        subtitle: _topic == null ? 'مساحة زوار هذه الدائرة لتبادل التجارب والصور والتسجيلات. كن أول من يشارك.' : 'لم يكتب أحد في هذا الموضوع بعد. اعرض كل المواضيع أو اكتب أول مشاركة فيه.',
+                        actionKey: const Key('empty-community-clear'), actionLabel: _topic == null ? null : 'كل المواضيع', onAction: () => _setTopic(null),
                       ),
                     ])
                   : ListView.builder(
@@ -628,7 +629,7 @@ class _ItemPickerState extends ConsumerState<_ItemPicker> {
             data: (b) {
               final q = _q.toLowerCase();
               final items = b.items.where((i) => i.active && (q.isEmpty || i.title.toLowerCase().contains(q) || i.description.toLowerCase().contains(q))).toList();
-              if (items.isEmpty) return const EmptyState(icon: Icons.local_cafe_outlined, title: 'لا أصناف مطابقة');
+              if (items.isEmpty) return EmptyState(compact: true, icon: Icons.search_off_rounded, title: q.isEmpty ? 'لا أصناف في القائمة بعد' : 'لا أصناف مطابقة', subtitle: q.isEmpty ? 'لم تُضف الدائرة أصنافاً يمكن الإشارة إليها.' : 'جرّب اسماً أقصر أو كلمة أخرى.');
               return ListView.separated(
                 padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
                 itemCount: items.length,

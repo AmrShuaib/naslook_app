@@ -474,9 +474,9 @@ class _MomentPeoplePickerState extends State<MomentPeoplePicker> {
             const SizedBox(height: 8),
             Expanded(
               child: widget.people.isEmpty
-                  ? const EmptyState(icon: Icons.forum_outlined, title: 'لا محادثات بعد', subtitle: 'ابدأ محادثة أو أضف صديقاً لترسل له اللحظة.')
+                  ? const EmptyState(compact: true, icon: Icons.forum_outlined, title: 'لا محادثات بعد', subtitle: 'تُرسل اللحظة لمن بينك وبينه محادثة. ابدأ محادثة من قسم «المحادثات» ثم عُد لإرسالها.')
                   : list.isEmpty
-                      ? const EmptyState(icon: Icons.person_search_rounded, title: 'لا أحد بهذا الاسم')
+                      ? const EmptyState(compact: true, icon: Icons.person_search_rounded, title: 'لا أحد بهذا الاسم', subtitle: 'جرّب جزءاً من الاسم أو تأكد من كتابته.')
                       : ListView.builder(
                           itemCount: list.length,
                           itemBuilder: (_, i) => ListTile(

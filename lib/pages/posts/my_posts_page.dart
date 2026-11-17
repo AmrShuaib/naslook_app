@@ -65,7 +65,12 @@ class MyPostsPage extends ConsumerWidget {
       floatingActionButton: FloatingActionButton.extended(onPressed: () => composePostHere(context, ref), backgroundColor: Joy.primary, foregroundColor: Joy.primaryOn, icon: const Icon(Icons.add_a_photo_rounded), label: const Text('منشور جديد')),
       body: list.when(
         data: (posts) => posts.isEmpty
-            ? const EmptyState(icon: Icons.auto_awesome_motion_outlined, title: 'لا منشورات بعد', subtitle: 'انشر صورة أو فيديو قصيراً أو تسجيلاً صوتياً أو نصاً على الخريطة، مع نصوص وملصقات وزر إجراء.')
+            ? EmptyState(
+                icon: Icons.auto_awesome_motion_outlined,
+                title: 'لم تنشر لحظة بعد', subtitle: 'هنا كل ما نشرته على الخريطة مع مشاهداته وتفاعلاته. انشر صورة أو فيديو قصيراً أو نصاً من مكانك.',
+                actionKey: const Key('empty-my-posts-action'), actionLabel: 'انشر لحظة', actionIcon: Icons.add_a_photo_rounded,
+                onAction: () => composePostHere(context, ref),
+              )
             : RefreshIndicator(
                 onRefresh: () async => ref.invalidate(myPostsProvider),
                 child: ListView.separated(

@@ -209,7 +209,12 @@ class ComparePage extends ConsumerWidget {
       backgroundColor: Joy.bg,
       appBar: AppBar(title: const Text('مقارنة'), actions: [if (items.isNotEmpty) TextButton(onPressed: () => ref.read(compareProvider.notifier).state = const [], child: const Text('مسح'))]),
       body: items.isEmpty
-          ? const EmptyState(icon: Icons.compare_arrows_rounded, title: 'لا عروض للمقارنة', subtitle: 'من قائمة «المزيد» في أي عرض اختر «أضف للمقارنة».')
+          ? EmptyState(
+              icon: Icons.compare_arrows_rounded, tint: Joy.kindColor('market'),
+              title: 'لا عروض للمقارنة', subtitle: 'قارن حتى ثلاثة عروض جنباً إلى جنب. من قائمة «المزيد» في أي عرض اختر «أضف للمقارنة».',
+              actionKey: const Key('empty-compare-action'), actionLabel: 'تصفّح السوق', actionIcon: Icons.shopping_bag_outlined,
+              onAction: () => Navigator.of(context).pop(),
+            )
           : SingleChildScrollView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.all(20), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               for (final l in items) SizedBox(width: 200, child: Padding(padding: const EdgeInsets.only(left: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 ListingCard(l),

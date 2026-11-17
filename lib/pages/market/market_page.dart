@@ -148,7 +148,23 @@ class _MarketPageState extends ConsumerState<MarketPage> {
           SliverToBoxAdapter(child: _ControlRow(mq: mq, count: list.valueOrNull?.length)),
           list.when(
             data: (items) => items.isEmpty
-                ? SliverFillRemaining(hasScrollBody: false, child: EmptyState(icon: Icons.storefront_outlined, title: mq.q.isEmpty && mq.category == null ? 'لا عروض بعد' : 'لا نتائج', subtitle: mq.q.isEmpty && mq.category == null ? 'كن أول من يعرض منتجاً أو خدمة لمن حوله.' : 'جرّب تصنيفاً آخر أو وسّع النطاق.'))
+                ? SliverFillRemaining(
+                    hasScrollBody: false,
+                    // فارغ فعلاً يدعو إلى البيع؛ وبلا نتائج يقترح مسح التصفية
+                    child: _marketFiltered(mq)
+                        ? EmptyState(
+                            icon: Icons.search_off_rounded, tint: Joy.kindColor('market'),
+                            title: 'لا نتائج', subtitle: 'لا عرض يطابق بحثك أو تصفيتك الآن. جرّب كلمة أخرى أو امسح التصفية.',
+                            actionKey: const Key('empty-market-clear'), actionLabel: 'امسح التصفية', actionIcon: Icons.filter_alt_off_rounded,
+                            onAction: () { search.clear(); ref.read(marketQueryProvider.notifier).state = MarketQuery(sort: mq.sort); },
+                          )
+                        : EmptyState(
+                            icon: Icons.storefront_outlined, tint: Joy.kindColor('market'),
+                            title: 'لا عروض في السوق بعد', subtitle: 'السوق مكان يبيع فيه الناس منتجاتهم وخدماتهم لمن حولهم. كن أول من يعرض.',
+                            actionKey: const Key('empty-market-action'), actionLabel: 'اعرض للبيع', actionIcon: Icons.add_rounded,
+                            onAction: () => createListing(context, ref),
+                          ),
+                  )
                 : SliverPadding(
                     padding: const EdgeInsets.fromLTRB(20, 4, 20, 96),
                     sliver: SliverGrid(
@@ -209,6 +225,9 @@ class SpotlightStrip extends ConsumerWidget {
         )),
       ]);
 }
+
+/// بحث أو تصنيف أو فلتر مفعّل: الفراغ حينها «لا نتائج» لا «سوق فارغ»
+bool _marketFiltered(MarketQuery mq) => mq.q.isNotEmpty || mq.category != null || mq.kind != null || mq.condition != null || mq.min != null || mq.max != null || mq.radiusKm != null || mq.delivery;
 
 /// لا إعلانات في سبوت لايت الآن: سطر واحد هادئ يعرّف بالمساحة لمن يريد إعلانه فيها
 class _SpotlightEmpty extends ConsumerWidget {

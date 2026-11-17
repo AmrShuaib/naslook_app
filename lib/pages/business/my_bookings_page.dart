@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/hotel_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/nav_provider.dart';
 import '../../state/biz_providers.dart';
 import '../../state/hotel_providers.dart';
 import '../../ui/widgets.dart';
@@ -21,7 +22,14 @@ class MyBookingsPage extends ConsumerWidget {
       appBar: AppBar(title: const Text('حجوزاتي وطلباتي')),
       body: orders.when(
         data: (list) {
-          if (list.isEmpty && hotels.isEmpty) return const EmptyState(icon: Icons.receipt_long_outlined, title: 'لا حجوزات بعد', subtitle: 'احجز فندقاً أو سيارة أو تذاكر سينما أو اشترِ من براند، وستظهر هنا برموزها.');
+          if (list.isEmpty && hotels.isEmpty) {
+            return EmptyState(
+              icon: Icons.receipt_long_outlined,
+              title: 'لا حجوزات بعد', subtitle: 'هنا حجوزاتك وطلباتك من الدوائر برموز استلامها: فنادق وسيارات وتذاكر سينما ومشتريات.',
+              actionKey: const Key('empty-bookings-action'), actionLabel: 'استكشف ما يُحجز', actionIcon: Icons.explore_outlined,
+              onAction: () => backToNavTab(context, ref, 'events'),
+            );
+          }
           final up = list.where((o) => o.upcoming).toList(), past = list.where((o) => !o.upcoming).toList();
           return RefreshIndicator(
             onRefresh: () async {

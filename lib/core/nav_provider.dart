@@ -31,6 +31,12 @@ NavTabMeta? navTabMeta(String id) {
   return null;
 }
 
+/// زر الشاشات الفارغة («تصفّح السوق»، «استكشف الدوائر»): من صفحة مفتوحة فوق الأقسام يرجع إلى أولها ويفتح القسم.
+void backToNavTab(BuildContext context, WidgetRef ref, String tab) {
+  openNavTab(ref, tab);
+  Navigator.of(context).popUntil((r) => r.isFirst);
+}
+
 /// يفتح قسماً في الشريط السفلي بمعرّفه؛ يعيد false إن لم يكن من أقسام الشريط.
 /// يخص HomeShell وحدها: واجهة الزائر (GuestShell) تبويباتها منفصلة ولا تستمع لـ [navIndexProvider].
 bool openNavTab(WidgetRef ref, String tab) {

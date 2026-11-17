@@ -14,6 +14,7 @@ import '../../api/client.dart';
 import '../../api/commerce_api.dart';
 import '../../api/commerce_models.dart';
 import '../../core/app_theme.dart';
+import '../../core/nav_provider.dart';
 import '../../core/platform.dart';
 import '../../core/require_adult.dart';
 import '../../state/app_state.dart';
@@ -53,7 +54,12 @@ class _MyOrders extends ConsumerWidget {
     final o = ref.watch(ordersProvider);
     return o.when(
       data: (list) => list.isEmpty
-          ? const EmptyState(icon: Icons.receipt_long_outlined, title: 'لا طلبات بعد')
+          ? EmptyState(
+              icon: Icons.receipt_long_outlined, tint: Joy.kindColor('market'),
+              title: 'لا طلبات بعد', subtitle: 'هنا ما اشتريته وما طُلب منك، مع حالة كل طلب ورمز التسليم.',
+              actionKey: const Key('empty-orders-action'), actionLabel: 'تصفّح السوق', actionIcon: Icons.shopping_bag_outlined,
+              onAction: () => backToNavTab(context, ref, 'market'),
+            )
           : RefreshIndicator(onRefresh: () async => ref.invalidate(ordersProvider), child: ListView.separated(padding: const EdgeInsets.all(20), itemCount: list.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => OrderCard(list[i]))),
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(ordersProvider)),
@@ -68,7 +74,12 @@ class _MyListings extends ConsumerWidget {
     final l = ref.watch(myListingsProvider);
     return l.when(
       data: (list) => list.isEmpty
-          ? const EmptyState(icon: Icons.storefront_outlined, title: 'لم تعرض شيئاً للبيع بعد', subtitle: 'من صفحة السوق اضغط «اعرض للبيع» وأضف صوراً ووصفاً وسعراً.')
+          ? EmptyState(
+              icon: Icons.storefront_outlined, tint: Joy.kindColor('market'),
+              title: 'لم تعرض شيئاً للبيع بعد', subtitle: 'هنا عروضك مع مشاهداتها وطلباتها. أضف صوراً ووصفاً وسعراً ويراه من حولك.',
+              actionKey: const Key('empty-listings-action'), actionLabel: 'اعرض للبيع', actionIcon: Icons.add_rounded,
+              onAction: () => createListing(context, ref),
+            )
           : RefreshIndicator(onRefresh: () async => ref.invalidate(myListingsProvider), child: ListView.separated(padding: const EdgeInsets.all(20), itemCount: list.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => MyListingRow(list[i]))),
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => ErrorState(e, onRetry: () => ref.invalidate(myListingsProvider)),

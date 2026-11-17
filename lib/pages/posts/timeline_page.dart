@@ -871,15 +871,15 @@ class _Empty extends StatelessWidget {
           ]),
         );
       case 'offer':
-        return EmptyState(icon: Icons.local_offer_outlined, title: 'لا عروض حولك الآن', subtitle: 'عروض الدوائر القريبة تظهر هنا فور نشرها', action: _btn('tl-go-offer', Icons.groups_rounded, 'تصفّح الدوائر', () => onGoTab('circles')));
+        return EmptyState(icon: Icons.local_offer_outlined, tint: Joy.kindColor('offer'), title: 'لا عروض حولك الآن', subtitle: 'عروض الدوائر القريبة تظهر هنا فور نشرها', action: _btn('tl-go-offer', Icons.groups_rounded, 'تصفّح الدوائر', () => onGoTab('circles')));
       case 'event':
-        return EmptyState(icon: Icons.event_outlined, title: 'لا فعاليات قريبة', subtitle: 'الفعاليات القادمة حولك تظهر هنا', action: _btn('tl-go-event', Icons.event_rounded, 'كل الفعاليات', () => onGoTab('events')));
+        return EmptyState(icon: Icons.event_outlined, tint: Joy.kindColor('event'), title: 'لا فعاليات قريبة', subtitle: 'الفعاليات القادمة حولك تظهر هنا', action: _btn('tl-go-event', Icons.event_rounded, 'كل الفعاليات', () => onGoTab('events')));
       case 'job':
-        return EmptyState(icon: Icons.work_outline_rounded, title: 'لا وظائف معلنة الآن', subtitle: 'فرص الدوائر القريبة تظهر هنا', action: _btn('tl-go-job', Icons.work_rounded, 'كل الوظائف', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobsPage()))));
+        return EmptyState(icon: Icons.work_outline_rounded, tint: Joy.kindColor('job'), title: 'لا وظائف معلنة الآن', subtitle: 'فرص الدوائر القريبة تظهر هنا', action: _btn('tl-go-job', Icons.work_rounded, 'كل الوظائف', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JobsPage()))));
       case 'listing':
-        return EmptyState(icon: Icons.shopping_bag_outlined, title: 'السوق هادئ الآن', subtitle: 'إعلانات الجيران القريبة تظهر هنا', action: _btn('tl-go-listing', Icons.storefront_rounded, 'افتح السوق', () => onGoTab('market')));
+        return EmptyState(icon: Icons.shopping_bag_outlined, tint: Joy.kindColor('market'), title: 'السوق هادئ الآن', subtitle: 'إعلانات الجيران القريبة تظهر هنا', action: _btn('tl-go-listing', Icons.storefront_rounded, 'افتح السوق', () => onGoTab('market')));
       case 'circle':
-        return EmptyState(icon: Icons.storefront_outlined, title: 'لا دوائر «هنا اليوم» حولك', subtitle: 'الدوائر المتنقلة التي تثبّت دبوسها اليوم تظهر هنا', action: _btn('tl-go-circle', Icons.groups_rounded, 'تصفّح الدوائر', () => onGoTab('circles')));
+        return EmptyState(icon: Icons.storefront_outlined, tint: Joy.kindColor('circle'), title: 'لا دوائر «هنا اليوم» حولك', subtitle: 'الدوائر المتنقلة التي تثبّت دبوسها اليوم تظهر هنا', action: _btn('tl-go-circle', Icons.groups_rounded, 'تصفّح الدوائر', () => onGoTab('circles')));
       default:
         return EmptyState(
           key: const Key('tl-empty'),

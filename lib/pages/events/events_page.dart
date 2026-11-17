@@ -72,7 +72,12 @@ class _EventsPageState extends ConsumerState<EventsPage> {
         Expanded(
           child: list.when(
             data: (all) => switch ([for (final e in all) if (!isBlockedId(ref.watch(blockedIdsProvider), e.host.id)) e]) { final events => events.isEmpty
-                ? EmptyState(icon: Icons.event_outlined, title: shown == 0 ? 'لا فعاليات قادمة' : 'لم تنشئ فعالية بعد', subtitle: 'أنشئ فعالية ببيع تذاكر أو مجانية وشاركها في دائرتك.')
+                ? EmptyState(
+                    icon: Icons.event_outlined, tint: Joy.kindColor('event'),
+                    title: shown == 0 ? 'لا فعاليات قادمة' : 'لم تنشئ فعالية بعد',
+                    subtitle: shown == 0 ? 'هنا الفعاليات القادمة حولك وتذاكرها. أنشئ فعالية مجانية أو بتذاكر وادعُ الناس إليها.' : 'فعالياتك تظهر هنا مع حجوزاتها وقائمة الحضور. أنشئ واحدة مجانية أو بتذاكر.',
+                    actionKey: const Key('empty-events-action'), actionLabel: 'أنشئ فعالية', actionIcon: Icons.add_rounded, onAction: _create,
+                  )
                 : RefreshIndicator(
                     onRefresh: () async { ref.invalidate(eventsProvider); ref.invalidate(myEventsProvider); },
                     child: ListView.separated(padding: const EdgeInsets.fromLTRB(20, 0, 20, 96), itemCount: events.length, separatorBuilder: (_, __) => const SizedBox(height: 10), itemBuilder: (_, i) => EventCard(events[i])),
@@ -465,7 +470,14 @@ class MyTicketsPage extends ConsumerWidget {
         data: (list) {
           final up = list.where((t) => t.upcoming).toList(), past = list.where((t) => !t.upcoming).toList();
           final incoming = shares?.incoming ?? const <TicketShareIn>[];
-          if (list.isEmpty && incoming.isEmpty) return const EmptyState(icon: Icons.confirmation_number_outlined, title: 'لا تذاكر بعد', subtitle: 'احجز تذكرة فعالية وستظهر هنا برمزها.');
+          if (list.isEmpty && incoming.isEmpty) {
+            return EmptyState(
+              icon: Icons.confirmation_number_outlined, tint: Joy.kindColor('event'),
+              title: 'لا تذاكر بعد', subtitle: 'تذاكر الفعاليات التي تحجزها أو تصلك من أصدقائك تُحفظ هنا برمز الدخول.',
+              actionKey: const Key('empty-tickets-action'), actionLabel: 'تصفّح الفعاليات', actionIcon: Icons.event_outlined,
+              onAction: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EventsPage())),
+            );
+          }
           return RefreshIndicator(
             onRefresh: () async => _refresh(ref),
             child: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
