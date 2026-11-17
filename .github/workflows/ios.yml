@@ -3,16 +3,9 @@
 # بعد قبول حساب أبل تُضاف خطوة التوقيع والرفع إلى TestFlight بمفتاح App Store Connect API (أسرار المستودع).
 name: Naslife iOS build
 
+# يدوي فقط (قرار المالك 17 نوفمبر 2026): مهمة macOS تستهلك دقائق الحساب بعشرة أضعاف، وكانت تعمل مع كل دفعة تمس lib/core.
+# بناء iOS المعتمد عبر Codemagic (codemagic.yaml)؛ هذا الزر احتياط.
 on:
-  push:
-    branches:
-      - claude/intelligent-hypatia-owb3fk
-    paths:
-      - 'ios/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - 'lib/core/**'
-      - '.github/workflows/ios.yml'
   workflow_dispatch:
 
 concurrency:

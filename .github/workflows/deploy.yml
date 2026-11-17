@@ -1,7 +1,12 @@
-# بناء نسخة الويب ونشرها على خادم Naslife تلقائياً عند كل دفعة (push) إلى فرع العمل.
+# فحص كل دفعة (push) إلى فرع العمل، وبناء ونشر نسخة الويب عند التشغيل اليدوي فقط.
 #
-# 1) build : يبني Flutter web ويدفع الناتج إلى فرع webapp-build (ملفات ثابتة فقط).
-# 2) deploy: إن وُجد السر NASLIFE_SSH_KEY_B64 في إعدادات المستودع
+# 0) check : عند كل دفعة: التحليل والاختبارات كاملة. لا ينشر شيئاً.
+# النشر اليومي للويب يتم من الجلسة بـ tools/build_web.sh ثم tools/publish_bundle.sh. لذلك لا تبني هذه المهمة الويب
+# عند الدفع: ناشران على فرع webapp-build يتسابقان، والأبطأ يستبدل حزمة الأسرع (قرار المالك 17 نوفمبر 2026 بعد عودة
+# المهام للعمل). الزر اليدوي (Run workflow) يبني وينشر بالطريقة نفسها احتياطاً حين لا تتوفر جلسة.
+#
+# 1) build : (يدوي) يبني Flutter web بمعرّف بناء ويدفع الناتج مع build.json إلى فرع webapp-build.
+# 2) deploy: (يدوي) إن وُجد السر NASLIFE_SSH_KEY_B64 في إعدادات المستودع
 #            (Settings → Secrets and variables → Actions) يتصل بالخادم عبر SSH
 #            ويثبّت/يحدّث النشر التلقائي (server/install-autodeploy.sh) الذي يسحب
 #            webapp-build وإضافات server/*.js ويعيد تشغيل خدمة naslife عند الحاجة.
@@ -35,8 +40,25 @@ env:
   NASLIFE_HOST: '91.108.111.246'
 
 jobs:
+  check:
+    name: Analyze and test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
   build:
     name: Build Flutter web → webapp-build
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       build_sha: ${{ steps.push.outputs.build_sha }}
@@ -51,10 +73,8 @@ jobs:
 
       - run: flutter pub get
       - run: flutter analyze
-      # بدون Service Worker (كما في النسخ المنشورة سابقاً) حتى يصل كل تحديث فوراً دون ملفات مخزّنة قديمة
-      - run: flutter build web --release --pwa-strategy=none
-      # مفتاح إطفاء عامل الخدمة القديم مكان الملف الفارغ (انظر web/sw_reset.js)
-      - run: cp web/sw_reset.js build/web/flutter_service_worker.js
+      # السكربت نفسه الذي تبني به الجلسة: بلا Service Worker، بمعرّف بناء مضمّن، ومفتاح إطفاء عامل الخدمة القديم
+      - run: tools/build_web.sh
 
       - name: Checkout webapp-build branch
         uses: actions/checkout@v4
@@ -68,6 +88,8 @@ jobs:
           set -euo pipefail
           rsync -a --delete --exclude .git build/web/ webapp-build/
           cd webapp-build
+          # بصمة الحزمة كما يكتبها tools/publish_bundle.sh: التطبيق المفتوح يقارنها ويعرض «تحديث الآن»
+          printf '{"bundle":"%s","id":"%s","code":"%s","at":"%s"}\n' "$(md5sum main.dart.js | cut -c1-12)" "$(cat build_id.txt)" "${GITHUB_SHA::7}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > build.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
@@ -81,6 +103,7 @@ jobs:
 
   deploy:
     name: Deploy to server over SSH
+    if: github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     steps:
