@@ -300,6 +300,20 @@ class _WebCamera implements LiveCamera {
     _stream = null;
   }
 
+  /// يشغّل عنصر المعاينة بعد إعادة إلصاقه (محاولتان: فور الإلصاق وبعده بقليل، لأن الإلصاق يتم بعد عودة المصنع).
+  void _resume() {
+    for (final ms in const [0, 250]) {
+      Timer(Duration(milliseconds: ms), () {
+        final v = _video;
+        if (v == null || _stream == null || !v.paused) return;
+        try {
+          v.play().toDart.catchError((Object _) => null);
+        } catch (_) {}
+        _layout();
+      });
+    }
+  }
+
   @override
   Widget view() {
     if (!_registered) {
@@ -307,6 +321,9 @@ class _WebCamera implements LiveCamera {
       ui_web.platformViewRegistry.registerViewFactory(_viewId, (int viewId) {
         final v = _elements();
         if (_stream != null && v.srcObject == null) v.srcObject = _stream;
+        // المعاينة تُنزع من الصفحة حين تُفتح لوحة «نص» والمتصفح يوقف عنصر الفيديو المنزوع؛ عند عودتها يبقى متوقفاً (أسود على
+        // الآيفون) ما لم نشغّله بعد أن يُلصق من جديد
+        _resume();
         return _box!;
       });
     }
