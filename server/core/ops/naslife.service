@@ -1,0 +1,40 @@
+[Unit]
+Description=Naslife Server
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=naslife
+Group=naslife
+WorkingDirectory=/opt/naslife
+EnvironmentFile=/opt/naslife/.env
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=3
+# Loopback only; Caddy on this host is the public entry point.
+Environment=HOST=127.0.0.1
+
+# ---- hardening (every path the service writes to is listed explicitly) ----
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/naslife/uploads
+# ffmpeg/sharp need a scratch dir; PrivateTmp gives the service its own /tmp
+UMask=0027
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+# /etc/cron.d/naslife-backup — daily encrypted backup 03:00 UTC, weekly restore test Sunday 03:30 UTC.
+# Logs: /var/log/naslife-backup.log
+0 3 * * * root /opt/naslife/backup.sh >> /var/log/naslife-backup.log 2>&1
+30 3 * * 0 root /opt/naslife/backup.sh --verify >> /var/log/naslife-backup.log 2>&1
