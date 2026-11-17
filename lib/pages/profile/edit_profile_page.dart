@@ -10,6 +10,7 @@ import '../../api/models.dart';
 import '../../api/naslife_api.dart';
 import '../../api/profile_v2_api.dart';
 import '../../api/profile_v2_models.dart';
+import '../../api/profile_voice_api.dart';
 import '../../api/session.dart';
 import '../../core/app_theme.dart';
 import '../../core/media/pick_image.dart';
@@ -21,6 +22,7 @@ import '../../ui/widgets.dart';
 import '../chat/chat_thread_page.dart' show errText;
 import 'intro_card.dart';
 import 'profile_bits.dart';
+import 'voice_fill_sheet.dart';
 
 /// الحدود: صوت التعريف 60 ثانية، فيديو التعريف 30 ثانية.
 const introVoiceMax = Duration(seconds: 60);
@@ -30,6 +32,7 @@ const _maxSkills = 8;
 /// شاشة «تعديل الملف»: الغلاف والصورة (تُرفعان فوراً)، الاسم المعروض، اسم المستخدم بفحص التوفر، النبذة (160)،
 /// «عرّف بنفسك» صوتاً أو فيديو (يُحفظ فوراً)، نوع الحساب والمسمى، المدينة والحي، المهارات، الروابط (3)، والرقم SA ثابت.
 /// «حفظ» يرسل حقول النواة إلى PUT /me/profile وحقول v2 إلى PUT /me/profile/v2.
+/// «عرّف بنفسك بالصوت» (voice_fill_sheet.dart) يعبّئ الحقول من كلام المستخدم ويعلّمها حتى يراجعها؛ لا يحفظ شيئاً.
 class EditProfilePage extends ConsumerStatefulWidget {
   const EditProfilePage({super.key});
   @override
@@ -69,6 +72,11 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
   Duration _elapsed = Duration.zero;
   RecordedVoice? _take;
 
+  // «عرّف بنفسك بالصوت»: الحالة من الخادم (null = الزر مخفي)، وعلامات الحقول التي عُبّئت من الكلام (true = تأكّد من الكتابة)
+  VoiceFillStatus? _voice;
+  final _voiceMarks = <String, bool>{};
+  final _voiceSkills = <String>{};
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +85,7 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     _handle.text = _originalHandle;
     _avatar = me?.avatarUrl;
     _handle.addListener(_onHandleChanged);
+    _loadVoiceStatus();
   }
 
   @override
@@ -181,8 +190,9 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              _label('الاسم المعروض'),
-              TextField(key: const Key('edit-name'), controller: _name, maxLength: 40, decoration: const InputDecoration(hintText: 'اسمك كما يظهر للناس', counterText: '')),
+              if (_voice?.available ?? false) ...[VoiceFillButton(onTap: _saving ? null : _voiceFill), const SizedBox(height: 18)],
+              _label('الاسم المعروض', mark: 'displayName'),
+              TextField(key: const Key('edit-name'), controller: _name, maxLength: 40, onChanged: (_) => _unmark('displayName'), decoration: _marked('displayName', const InputDecoration(hintText: 'اسمك كما يظهر للناس', counterText: ''))),
               const SizedBox(height: 14),
               _label('اسم المستخدم'),
               TextField(
@@ -202,8 +212,8 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
                   ),
                 ),
               const SizedBox(height: 14),
-              _label('النبذة'),
-              TextField(key: const Key('edit-bio'), controller: _bio, maxLength: 160, maxLines: 3, decoration: const InputDecoration(hintText: 'من أنت وماذا تقدّم')),
+              _label('النبذة', mark: 'bio'),
+              TextField(key: const Key('edit-bio'), controller: _bio, maxLength: 160, maxLines: 3, onChanged: (_) => _unmark('bio'), decoration: _marked('bio', const InputDecoration(hintText: 'من أنت وماذا تقدّم'))),
               const SizedBox(height: 10),
               _label('عرّف بنفسك بصوتك أو بفيديو', hint: 'اختياري · يظهر أعلى ملفك'),
               _introSection(me?.nickname ?? ''),
@@ -216,19 +226,21 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
               ]),
               if (_accountType == 'pro') ...[
                 const SizedBox(height: 10),
-                _label('المسمى المهني (يظهر بجانب الاسم)'),
-                TextField(key: const Key('edit-job'), controller: _job, maxLength: 40, decoration: const InputDecoration(hintText: 'مصوّر، مدرّب، مستشار…', counterText: '')),
+                _label('المسمى المهني (يظهر بجانب الاسم)', mark: 'jobTitle'),
+                TextField(key: const Key('edit-job'), controller: _job, maxLength: 40, onChanged: (_) => _unmark('jobTitle'), decoration: _marked('jobTitle', const InputDecoration(hintText: 'مصوّر، مدرّب، مستشار…', counterText: ''))),
               ],
               const SizedBox(height: 14),
               Row(children: [
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_label('المدينة'), _cityField()])),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_label('المدينة', mark: 'city'), _cityField()])),
                 const SizedBox(width: 10),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_label('الحي'), _districtField()])),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_label('الحي', mark: 'district'), _districtField()])),
               ]),
               const SizedBox(height: 16),
-              _label('المهارات (حتى $_maxSkills)'),
+              _label('المهارات (حتى $_maxSkills)', mark: 'skills'),
               Wrap(spacing: 6, runSpacing: 6, children: [
-                for (final s in _skills) ProfileChip(s, onDelete: () => setState(() => _skills.remove(s))),
+                for (final s in _skills)
+                  // ما أُضيف من الكلام يحمل رمز الميكروفون حتى يُعرف بين المهارات القديمة
+                  ProfileChip(s, icon: _voiceSkills.contains(s) ? Icons.mic_none_rounded : null, onDelete: () => setState(() { _skills.remove(s); _clearSkillMarks(); })),
                 if (_skills.length < _maxSkills) ProfileChip('+ إضافة', key: const Key('skill-add'), bg: Joy.surface2, fg: Joy.text, onTap: _addSkill),
               ]),
               const SizedBox(height: 16),
@@ -236,17 +248,20 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
               for (final (i, l) in _links.indexed)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(children: [
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    if (_voiceMarks.containsKey('links.${l.kind}')) Padding(padding: const EdgeInsets.only(bottom: 4), child: VoiceTag('links.${l.kind}', unsure: _voiceMarks['links.${l.kind}']!)),
+                    Row(children: [
                     DropdownButton<String>(
                       key: Key('link-kind-$i'),
                       value: l.kind,
                       underline: const SizedBox(),
                       items: [for (final e in profileLinkKinds.entries) DropdownMenuItem(value: e.key, child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(profileLinkIcon(e.key), size: 18, color: Joy.primary), const SizedBox(width: 6), Text(e.value, style: const TextStyle(fontSize: 13))]))],
-                      onChanged: (v) => setState(() => l.kind = v ?? 'other'),
+                      onChanged: (v) => setState(() { _voiceMarks.remove('links.${l.kind}'); l.kind = v ?? 'other'; }),
                     ),
                     const SizedBox(width: 8),
-                    Expanded(child: TextField(key: Key('link-value-$i'), controller: l.ctl, textDirection: TextDirection.ltr, decoration: InputDecoration(hintText: _linkHint(l.kind), isDense: true))),
-                    IconButton(key: Key('link-remove-$i'), tooltip: 'حذف الرابط', onPressed: () => setState(() => _links.removeAt(i).ctl.dispose()), icon: const Icon(Icons.close_rounded, color: Joy.textMuted)),
+                    Expanded(child: TextField(key: Key('link-value-$i'), controller: l.ctl, textDirection: TextDirection.ltr, onChanged: (_) => _unmark('links.${l.kind}'), decoration: _marked('links.${l.kind}', InputDecoration(hintText: _linkHint(l.kind), isDense: true)))),
+                    IconButton(key: Key('link-remove-$i'), tooltip: 'حذف الرابط', onPressed: () => setState(() { _voiceMarks.remove('links.${l.kind}'); _links.removeAt(i).ctl.dispose(); }), icon: const Icon(Icons.close_rounded, color: Joy.textMuted)),
+                    ]),
                   ]),
                 ),
               if (_links.length < 3) TextButton.icon(key: const Key('link-add'), onPressed: () => setState(() => _links.add(_Link('instagram'))), icon: const Icon(Icons.add_rounded, size: 18), label: const Text('إضافة رابط')),
@@ -267,10 +282,14 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     );
   }
 
-  Widget _label(String t, {String? hint}) => Padding(
+  /// [mark] اسم الحقل في علامات «من كلامك»: تظهر شارته بجانب العنوان ما دام معلَّماً.
+  Widget _label(String t, {String? hint, String? mark}) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(t, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+          Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            Text(t, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+            if (mark != null && _voiceMarks.containsKey(mark)) VoiceTag(mark, unsure: _voiceMarks[mark]!),
+          ]),
           if (hint != null) Text(hint, style: const TextStyle(color: Joy.textMuted, fontSize: 12)),
         ]),
       );
@@ -288,7 +307,8 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
         isExpanded: true,
         hint: const Text('اختر'),
         items: [for (final c in cities) DropdownMenuItem(value: c, child: Text(c))],
-        onChanged: (v) => setState(() { _city = v; _district = null; }),
+        decoration: _marked('city', const InputDecoration()),
+        onChanged: (v) => setState(() { _city = v; _district = null; _voiceMarks..remove('city')..remove('district'); }),
       ),
     );
   }
@@ -303,7 +323,8 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
         isExpanded: true,
         hint: const Text('اختر'),
         items: [for (final d in list) DropdownMenuItem(value: d, child: Text(d))],
-        onChanged: _city == null ? null : (v) => setState(() => _district = v),
+        decoration: _marked('district', const InputDecoration()),
+        onChanged: _city == null ? null : (v) => setState(() { _district = v; _voiceMarks.remove('district'); }),
       ),
     );
   }
@@ -542,6 +563,106 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     }
   }
 
+  // ---- «عرّف بنفسك بالصوت»
+
+  /// فشل الجلب (خادم أقدم أو شبكة) يُبقي الزر مخفياً بلا رسالة: الشاشة تعمل كما كانت.
+  Future<void> _loadVoiceStatus() async {
+    try {
+      final s = await ref.read(apiClientProvider).profileVoiceStatus();
+      if (mounted) setState(() => _voice = s);
+    } catch (_) {}
+  }
+
+  /// لون الحقل المعلَّم: أزرق لما جاء من الكلام، وأصفر لما يحتاج تأكيد كتابته.
+  InputDecoration _marked(String field, InputDecoration d) {
+    final unsure = _voiceMarks[field];
+    if (unsure == null) return d;
+    final side = BorderSide(color: unsure ? Joy.sun : Joy.primary, width: 1.5);
+    return d.copyWith(filled: true, fillColor: VoiceTag.fill(unsure), enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: side));
+  }
+
+  /// تعديل المستخدم للحقل يزيل علامته: صار كلامه هو لا كلام المساعد.
+  void _unmark(String field) {
+    if (_voiceMarks.containsKey(field)) setState(() => _voiceMarks.remove(field));
+  }
+
+  void _clearSkillMarks() {
+    _voiceMarks.remove('skills');
+    _voiceSkills.clear();
+  }
+
+  Future<void> _voiceFill() async {
+    final st = _voice;
+    if (st == null) return;
+    FocusScope.of(context).unfocus();
+    final out = await runVoiceFill(context, ref.read(apiClientProvider), st, onConsented: () {
+      if (mounted) setState(() => _voice = _voice?.copyWith(consented: true));
+    });
+    if (!mounted) return;
+    if (out.withdrew) {
+      setState(() => _voice = _voice?.copyWith(consented: false));
+      toast(context, 'سُحبت موافقتك. لن يُرسل كلامك إلى المساعد الذكي.');
+      return;
+    }
+    final r = out.result;
+    if (r == null) return;
+    final n = _applyVoice(r);
+    toast(context, n == 0 ? 'ما قلته موجود في ملفك، لم يتغيّر شيء.' : 'عبّأنا من كلامك ما ذكرته. راجعه ثم اضغط «حفظ».');
+  }
+
+  /// يضع في الحقول ما قاله المستخدم فقط ويعلّم ما تغيّر. ما لم يُذكر يبقى كما هو، ولا يُفرَّغ حقل أبداً. يعيد عدد ما تغيّر.
+  int _applyVoice(VoiceFillResult r) {
+    var changed = 0;
+    void mark(String field) {
+      _voiceMarks[field] = r.unsure.contains(field);
+      changed++;
+    }
+
+    setState(() {
+      void text(String field, TextEditingController c, String? v) {
+        if (v == null || v == c.text.trim()) return;
+        c.text = v;
+        mark(field);
+      }
+
+      text('displayName', _name, r.displayName);
+      text('bio', _bio, r.bio);
+      // المسمى المهني حقل الحساب المهني وحده؛ لا نبدّل نوع الحساب من كلام عابر
+      if (_accountType == 'pro') text('jobTitle', _job, r.jobTitle);
+      if (r.city != null && r.city != _city) {
+        _city = r.city;
+        // الحي تابع للمدينة: يبقى إن كان من أحياء المدينة الجديدة، وإلا يُفرَّغ كما يفعل تغيير المدينة باليد
+        if (!(profileCities[_city]?.contains(_district) ?? false)) _district = null;
+        _voiceMarks.remove('district');
+        mark('city');
+      }
+      if (r.district != null && _city != null && r.district != _district) {
+        _district = r.district;
+        mark('district');
+      }
+      final added = [for (final s in r.skills) if (!_skills.contains(s)) s].take(_maxSkills - _skills.length).toList();
+      if (added.isNotEmpty) {
+        _skills.addAll(added);
+        _voiceSkills.addAll(added);
+        mark('skills');
+      }
+      for (final l in r.links) {
+        if (!profileLinkKinds.containsKey(l.kind)) continue;
+        final i = _links.indexWhere((x) => x.kind == l.kind);
+        if (i >= 0) {
+          if (_links[i].ctl.text.trim() == l.value) continue;
+          _links[i].ctl.text = l.value;
+        } else {
+          // ثلاثة روابط على الأكثر: الزائد يُترك ولا يُزاح رابط كتبه المستخدم
+          if (_links.length >= 3) continue;
+          _links.add(_Link(l.kind, l.value));
+        }
+        mark(l.field);
+      }
+    });
+    return changed;
+  }
+
   // ---- اسم المستخدم والمهارات والحفظ
 
   void _onHandleChanged() {
@@ -569,7 +690,7 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
     final s = await askText(context, title: 'مهارة جديدة', hint: 'تصوير منتجات، مونتاج…', confirm: 'إضافة', maxLines: 1);
     if (s == null || s.isEmpty || !mounted) return;
     if (_skills.contains(s) || _skills.length >= _maxSkills) return;
-    setState(() => _skills.add(s));
+    setState(() { _skills.add(s); _clearSkillMarks(); });
   }
 
   Future<void> _save() async {
@@ -605,6 +726,9 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
       ref.invalidate(profileProvider);
       ref.invalidate(myProfileV2Provider);
       if (!mounted) return;
+      // حُفظ ما راجعه المستخدم: لا علامات بعد الحفظ
+      _voiceMarks.clear();
+      _voiceSkills.clear();
       // الرسالة قبل الإغلاق: بعد pop لا سياق لهذه الشاشة
       toast(context, 'حُفظ ملفك');
       Navigator.of(context).pop(true);

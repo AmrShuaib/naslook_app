@@ -1282,6 +1282,28 @@ http.createServer((req, res) => {
     if (!A.adult && req.method === 'POST' && (/^\/(wallet\/(topup|transfer)|pay\/topup)$/.test(url.pathname) || /^\/biz\/[^/]+\/hotel\/book$/.test(url.pathname))) return aj(403, { error: 'adult-required' });
   }
   // ---- consent + age + legal identity (stream b1-consent) end
+  // ---- «عرّف بنفسك بالصوت» (server/profile_voice.js) start: الموافقة في الذاكرة واستخراج جاهز بلا نموذج، لعرض الرحلة في البناء الوهمي.
+  // MOCK_VOICE=off يخفي الزر (available:false). النص الذي فيه «لا شيء» يعيد حقولاً فارغة، وما فيه «حد» يعيد 429.
+  if (url.pathname === '/me/profile/voice/status' || url.pathname === '/me/profile/voice' || url.pathname === '/me/ai-consent') {
+    const V = (globalThis.__voice ??= { consented: false });
+    const vj = (code, body) => { console.log(key, '->', code); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); };
+    const vb = (cb) => { let raw = ''; req.on('data', (c) => raw += c); req.on('end', () => { let b = {}; try { b = JSON.parse(raw || '{}'); } catch { b = {}; } cb(b); }); };
+    const limits = { minChars: 20, maxChars: 1500, maxSec: 60, perHour: 6, perDay: 20 };
+    if (key === 'GET /me/profile/voice/status') return vj(200, { available: process.env.MOCK_VOICE !== 'off', consented: V.consented, consentVersion: '2026-11-17', limits, remaining: { hour: 6, day: 20 } });
+    if (key === 'POST /me/ai-consent') return vb((b) => { if (b.feature !== 'profile_voice') return vj(400, { error: 'bad-feature' }); V.consented = true; vj(200, { ok: true, feature: 'profile_voice', consented: true, version: '2026-11-17' }); });
+    if (key === 'DELETE /me/ai-consent') { if (url.searchParams.get('feature') !== 'profile_voice') return vj(400, { error: 'bad-feature' }); V.consented = false; return vj(200, { ok: true, feature: 'profile_voice', consented: false }); }
+    if (key === 'POST /me/profile/voice') return vb((b) => {
+      if (!V.consented) return vj(403, { error: 'ai-consent-required', feature: 'profile_voice' });
+      const t = typeof b.text === 'string' ? b.text.trim() : '';
+      if (t.length < limits.minChars) return vj(400, { error: 'text-too-short', min: limits.minChars });
+      if (t.length > limits.maxChars) return vj(400, { error: 'text-too-long', max: limits.maxChars });
+      if (t.includes('حد')) return vj(429, { error: 'rate-limited', scope: 'hour', retryAfterSec: 900 });
+      if (t.includes('لا شيء')) return vj(200, { fields: {}, unsure: [], remaining: { hour: 5, day: 19 } });
+      // استخراج جاهز يشبه رد الخادم: الحساب غير مؤكد دائماً
+      setTimeout(() => vj(200, { fields: { displayName: 'فهد الغامدي', bio: 'أصوّر المنتجات والمقاهي في جدة', jobTitle: 'مصوّر', city: 'جدة', district: 'الشاطئ', skills: ['تصوير منتجات', 'مونتاج'], links: [{ kind: 'instagram', value: 'fahad.shots' }] }, unsure: ['links.instagram'], remaining: { hour: 5, day: 19 } }), 1200);
+    });
+  }
+  // ---- «عرّف بنفسك بالصوت» end
   if (/^\/(me\/login-email|me\/recovery|mail\/status|adminapi\/mail|auth\/(register|forgot|reset|change-password|nickname-available))(\/|$)/.test(url.pathname) && mailRoute(req, res, url, key)) return;
   if (/^\/(profile\/v2\/status|handles\/check|me\/profile\/(v2|intro|stats)|me\/following\/ids|profiles\/[^/]+\/(v2|follow|followers|following|event))$/.test(url.pathname) && profileV2Route(req, res, url, key)) return; // ---- profile v2
   if (/^\/(me\/profile|me\/addresses|profile\/avatar|market(\/|$)|stories\/|map\/pins\/)/.test(url.pathname) && profileMarketRoute(req, res, url, key)) return;
