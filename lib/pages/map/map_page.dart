@@ -840,12 +840,16 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
   void _openStoryGroup(int g) {
     final groups = _storyGroups;
     if (g < 0 || g >= groups.length) return;
+    // دائرة لفيديو واحد: عارضه مباشرة؛ والمجموعات وغير الفيديو إلى الشاشة العمودية
+    if (groups[g].length == 1 && _isVideo(groups[g].first)) return _showItem(groups[g].first);
     var at = 0;
     for (var i = 0; i < g; i++) {
       at += groups[i].length;
     }
     _openVertical([for (final x in groups) ...x], initial: at);
   }
+
+  bool _isVideo(MapItem it) => MapStory.of(it)?.video ?? false;
 
   /// زر «عرض عمودي»: كل قصص الخريطة، الأقرب إلى موقع المستخدم (أو مركز الخريطة) أولاً.
   void _openAllVertical() {
@@ -882,13 +886,20 @@ class _MapPageState extends ConsumerState<MapPage> with WidgetsBindingObserver {
       final flat = [for (final g in _storyGroups) ...g];
       final at = flat.indexWhere((x) => x.key == item.key);
       if (at >= 0) {
+        // الفيديو يُفتح مباشرة في عارضه (قرار المالك: بلا ضغط «شاهد»)
+        if (_isVideo(item)) return _showItem(item);
         _openVertical(flat, initial: at);
         return;
       }
     }
     final rows = _rowItems;
     final i = rows.indexWhere((r) => r.pinKey == item.key);
-    if (i >= 0) return _selectRow(rows, i);
+    if (i >= 0) {
+      _selectRow(rows, i);
+      // دبّوس فيديو: البطاقة تقفز إليه ويُفتح عارضه فوراً
+      if (_isVideo(item)) _actRow(rows[i]);
+      return;
+    }
     _showItem(item);
   }
 

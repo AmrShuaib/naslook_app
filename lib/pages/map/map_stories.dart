@@ -12,6 +12,7 @@ import '../../api/offers_map_api.dart';
 import '../../api/posts_api.dart';
 import '../../api/row_api.dart';
 import '../../core/app_theme.dart';
+import '../../core/media/video_view.dart';
 import '../market/market_delivery.dart' show listingPriceText;
 import 'map_cluster.dart';
 
@@ -364,13 +365,23 @@ class _StoryCard extends StatelessWidget {
         // خلفية من الصورة نفسها معتمة تملأ الشاشة، وفوقها الصورة كاملة بلا قص
         Opacity(opacity: .35, child: storyImage(s.image, fallback: const SizedBox.shrink())),
         storyImage(s.image, fallback: plain, fit: BoxFit.contain, thumb: s.video),
+        // الفيديو يبدأ وحده حين تصل بطاقته (صامتاً ويدور، شفافاً حتى يجهز فيبقى مصغّره تحته)، ولمسته تفتحه بصوته في العارض:
+        // قرار المالك أن الفيديو يُفتح مباشرة بلا ضغط «شاهد»
+        if (s.video)
+          GestureDetector(
+            key: const Key('mv-video'),
+            behavior: HitTestBehavior.opaque,
+            onTap: onOpen,
+            child: IgnorePointer(child: VideoView(url: mediaUrl(s.image!), autoplay: true, loop: true, muted: true, controls: false, poster: thumbUrl(s.image!))),
+          ),
       ],
       const IgnorePointer(
         child: DecoratedBox(
           decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, stops: [0, .22, .5, 1], colors: [Color(0xB3000000), Color(0x00000000), Color(0x00000000), Color(0xD9000000)])),
         ),
       ),
-      if (s.video) const Center(child: IgnorePointer(child: Icon(Icons.play_circle_fill_rounded, color: Colors.white70, size: 64))),
+      // بلا وسائط (نادر): رمز التشغيل يدل على أنه فيديو
+      if (s.video && s.image == null) const Center(child: IgnorePointer(child: Icon(Icons.play_circle_fill_rounded, color: Colors.white70, size: 64))),
       PositionedDirectional(
         start: 16,
         end: 86,

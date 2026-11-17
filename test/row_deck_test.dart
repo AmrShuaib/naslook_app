@@ -20,6 +20,7 @@ import 'package:naslook/api/row_api.dart';
 import 'package:naslook/api/session.dart';
 import 'package:naslook/app/app.dart';
 import 'package:naslook/core/location.dart';
+import 'package:naslook/core/media/video_view.dart';
 import 'package:naslook/core/nav_provider.dart';
 import 'package:naslook/pages/business/business_page.dart';
 import 'package:naslook/pages/business/offers_page.dart';
@@ -845,6 +846,54 @@ void main() {
       await _settle(tester, 3);
       expect(find.byType(MapVerticalPage), findsOneWidget);
       expect(tester.widget<Text>(find.byKey(const Key('mv-title'))).data, MapStory.of(one)!.title);
+    });
+
+    Map<String, dynamic> videoItem() => {
+          'kind': 'moment', 'id': 'aaaaaaaa-0000-4000-8000-0000000000aa', 'title': 'جولة في الكورنيش', 'subtitle': 'قبل 5 د', 'who': 'amr', 'imageUrl': '/chat/media/tour.mp4', 'lat': 21.5395, 'lng': 39.1720, 'distanceKm': 0.3, 'act': 'شاهد',
+          'payload': {..._post(), 'id': 'aaaaaaaa-0000-4000-8000-0000000000aa', 'kind': 'video', 'mediaUrl': '/chat/media/tour.mp4', 'durationSec': 12, 'lat': 21.5395, 'lng': 39.1720},
+        };
+    void fakeVideo() {
+      VideoView.factoryOverride = (url, {autoplay = false, loop = false, muted = false, controls = true}) => SizedBox.expand(key: Key('fake-video:$url:$autoplay:$loop:$muted:$controls'));
+      VideoView.controlledFactoryOverride = (url, c, {autoplay = true, loop = false, muted = false, poster}) => const SizedBox.expand(key: Key('fake-player'));
+      addTearDown(() {
+        VideoView.factoryOverride = null;
+        VideoView.controlledFactoryOverride = null;
+      });
+    }
+
+    testWidgets('tapping a video pin opens its viewer directly, without pressing «شاهد»; a non-video pin still only selects its card', (tester) async {
+      fakeVideo();
+      await _pump(tester, srv: _Srv()..items = [..._items(), videoItem()]);
+      // دبّوس غير فيديو: البطاقة تقفز إليه فقط
+      await tester.tap(_pinIcon(Icons.work_rounded));
+      await _afterSwitch(tester);
+      expect(find.byType(PostViewerPage), findsNothing);
+      expect(find.text('يوظّف باريستا'), findsOneWidget);
+      // دبّوس الفيديو: العارض يُفتح فوراً والبطاقة عليه
+      final at = tester.getTopLeft(find.byType(FlutterMap)) + _camera(tester).latLngToScreenOffset(const LatLng(21.5395, 39.1720)) - const Offset(0, 18);
+      await tester.tapAt(at);
+      await _settle(tester, 4);
+      expect(find.byType(PostViewerPage), findsOneWidget);
+      // العارض ملء الشاشة بلا شريط علوي: نغلقه من المسار
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+      await _settle(tester, 3);
+      expect(find.byType(PostViewerPage), findsNothing);
+      expect(find.text('جولة في الكورنيش'), findsOneWidget, reason: 'البطاقة قفزت إلى الفيديو');
+    });
+
+    testWidgets('in the vertical screen a video plays by itself, muted and looping, and a tap opens it; no play button to press', (tester) async {
+      fakeVideo();
+      MapItem? opened;
+      final item = MapItem.row(RowItem.fromJson(videoItem()))!;
+      await tester.pumpWidget(MaterialApp(home: MapVerticalPage(items: [item], onOpen: (it) => opened = it)));
+      await tester.pump();
+      expect(MapStory.of(item)!.video, isTrue);
+      expect(find.byKey(const Key('mv-video')), findsOneWidget);
+      final fake = tester.widget<SizedBox>(find.descendant(of: find.byKey(const Key('mv-video')), matching: find.byType(SizedBox)).first);
+      expect(fake.key.toString(), contains('/chat/media/tour.mp4:true:true:true:false'), reason: 'تشغيل تلقائي، حلقة، صامت، بلا أزرار');
+      expect(find.byIcon(Icons.play_circle_fill_rounded), findsNothing);
+      await tester.tap(find.byKey(const Key('mv-video')));
+      expect(opened?.id, item.id);
     });
 
     testWidgets('«عرض عمودي» lists everything on the map nearest first; chips filter by kind and the button opens the existing journey', (tester) async {
