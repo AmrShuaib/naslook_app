@@ -210,6 +210,9 @@ export default async function accountDelete(app, opts = {}) {
       // الملف الشخصي v2 (profile_ext.js): الامتداد والمتابعات والزيارات والأحداث من الجانبين
       if (has("profile_ext", "user_id")) await run("profile_ext", "DELETE FROM profile_ext WHERE user_id=$1");
       if (has("user_follows", "follower_id", "user_id")) await run("user_follows", "DELETE FROM user_follows WHERE follower_id=$1 OR user_id=$1");
+      // بطاقة الدعوة: رمز الحساب المحذوف يتوقف (صفحته تصير الترحيب العام)، ولا يبقى أثر من دعا من
+      if (has("invite_codes", "user_id")) await run("invite_codes", "DELETE FROM invite_codes WHERE user_id=$1");
+      if (has("invite_joins", "invitee_id", "inviter_id")) await run("invite_joins", "DELETE FROM invite_joins WHERE invitee_id=$1 OR inviter_id=$1");
       // سجل حد إشعار «لحظة جديدة»: من تابع من ومتى أُشعر، من الجانبين (لا يبقى أثر للعلاقة بعد الحذف)
       if (has("follow_notify_log", "follower_id", "author_id")) await run("follow_notify_log", "DELETE FROM follow_notify_log WHERE follower_id=$1 OR author_id=$1");
       if (has("profile_views", "user_id", "viewer_id")) await run("profile_views", "DELETE FROM profile_views WHERE user_id=$1 OR viewer_id=$1");

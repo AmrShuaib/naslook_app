@@ -1282,6 +1282,12 @@ http.createServer((req, res) => {
     if (!A.adult && req.method === 'POST' && (/^\/(wallet\/(topup|transfer)|pay\/topup)$/.test(url.pathname) || /^\/biz\/[^/]+\/hotel\/book$/.test(url.pathname))) return aj(403, { error: 'adult-required' });
   }
   // ---- consent + age + legal identity (stream b1-consent) end
+  // ---- بطاقة الدعوة (server/invite.js) start: رمز ثابت وقبول يعيد داعياً ثابتاً، لعرض الرحلة في البناء الوهمي
+  if (key === 'GET /me/invite' || key === 'POST /invite/accept') {
+    console.log(key, '-> 200'); res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify(key === 'GET /me/invite' ? { code: 'abcdef12', url: 'https://naslife.app/hi/abcdef12', joined: 2 } : { ok: true, inviter: { id: 'SA0000002', nickname: 'amr', name: 'عمرو' } }));
+  }
+  // ---- بطاقة الدعوة end
   // ---- «عرّف بنفسك بالصوت» (server/profile_voice.js) start: الموافقة في الذاكرة واستخراج جاهز بلا نموذج، لعرض الرحلة في البناء الوهمي.
   // MOCK_VOICE=off يخفي الزر (available:false). النص الذي فيه «لا شيء» يعيد حقولاً فارغة، وما فيه «حد» يعيد 429.
   if (url.pathname === '/me/profile/voice/status' || url.pathname === '/me/profile/voice' || url.pathname === '/me/ai-consent') {

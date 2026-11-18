@@ -8,6 +8,8 @@ import '../pages/admin/admin_entry.dart';
 import '../state/admin_providers.dart';
 import 'i18n/l10n.dart';
 import '../core/app_theme.dart';
+import '../core/invite_ref.dart';
+import '../api/invite_api.dart';
 import '../core/nav_provider.dart';
 import '../core/notify/message_sound.dart';
 import '../api/notify_api.dart';
@@ -93,6 +95,8 @@ class AuthGate extends ConsumerWidget {
       case AuthStatus.signedOut:
         // جولة الترحيب مرة واحدة لزائر جديد، قبل واجهة الزائر أو شاشة الدخول. القادم برابط مشترك يذهب إلى وجهته مباشرة،
         // ورابط لوحة الإدارة إلى الدخول
+        // القادم من بطاقة دعوة رأى الترحيب في صفحتها: شاشة إنشاء الحساب مباشرة، إلا إن اختار التصفّح بلا حساب
+        if (InviteRef.arrived && !ref.watch(guestBrowseProvider)) return const LoginPage();
         if (pendingLink == null && !ref.watch(adminModeProvider) && !ref.watch(welcomeSeenProvider)) {
           return const WelcomeTourPage(onDone: WelcomeSeen.markSeen);
         }
@@ -154,6 +158,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       scheduleMicrotask(() { if (mounted) _openPendingNotification(); });
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingLink());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _acceptInvite());
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAskConsent());
     // رفض 403 adult-required من أي شاشة يعرض ورقة إقرار 18+ نفسها
     AdultGate.install(context, ref);
@@ -205,6 +210,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     } else if (ok == false) {
       await ref.read(appStateProvider.notifier).logout();
     }
+  }
+
+  /// حساب جديد جاء من بطاقة دعوة: يُحتسب لداعيه مرة واحدة ويُرحَّب به باسمه.
+  Future<void> _acceptInvite() async {
+    final name = await acceptPendingInvite(ref.read(apiClientProvider));
+    if (name != null && mounted) toast(context, 'أهلاً بك! دعاك $name، وصرت تتابعه');
   }
 
   /// رابط عام (`/c/<دائرة>` أو `/u/<نك نيم>` أو `/m/<لحظة>`) وصل عند الإقلاع: نفتح وجهته بعد الدخول.

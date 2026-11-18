@@ -44,3 +44,4 @@ await app.register((await import("./biz_landing.js")).default, {});
 await app.register((await import("./menu_scan.js")).default, { pool, auth });
 await app.register((await import("./ticket_share.js")).default, { pool, auth });
 await app.register((await import("./profile_voice.js")).default, { pool, auth });
+await app.register((await import("./invite.js")).default, { pool, auth });

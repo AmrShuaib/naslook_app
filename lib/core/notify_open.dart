@@ -184,6 +184,10 @@ Widget? notificationTarget(AppNotification n) {
       final moment = n.str('postId'), author = n.str('userId');
       if (moment != null) return MomentLinkPage(id: moment);
       return author == null ? null : UserProfilePage(person: Person(id: author, nickname: n.str('nickname') ?? author));
+    // صديق سجّل ببطاقة دعوتي (invite.js): ملفه
+    case 'invite_joined':
+      final joined = n.str('userId');
+      return joined == null ? null : UserProfilePage(person: Person(id: joined, nickname: n.str('nickname') ?? joined));
     // حجز فندق مؤكد (hotels.js): «حجوزاتي» وفيها الحجز برقم تأكيده
     case 'hotel_booked':
       return const MyBookingsPage();
@@ -373,6 +377,8 @@ Widget? _moderatedTarget(AppNotification n) {
       return (icon: Icons.favorite_border_rounded, color: Joy.accent);
     case 'follow_moment':
       return (icon: Icons.auto_awesome_outlined, color: Joy.primary);
+    case 'invite_joined':
+      return (icon: Icons.qr_code_2_rounded, color: Joy.success);
     case 'hotel_booked':
       return (icon: Icons.hotel_outlined, color: Joy.primary);
     case 'profile_follow':

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
 import '../core/app_theme.dart';
+import '../core/invite_ref.dart';
 import '../core/require_account.dart';
 import '../core/share/legal_links.dart';
 import '../state/app_state.dart';
@@ -42,7 +43,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   void initState() {
     super.initState();
     // «أنشئ حساباً» من تبويب الزائر: نبدأ على التسجيل ثم نعيد المفتاح (لا يُعدَّل مزوّد أثناء البناء)
-    if (ref.read(loginStartsRegisterProvider)) {
+    if (ref.read(loginStartsRegisterProvider) || InviteRef.takeRegister()) {
       _mode = _Mode.register;
       WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) ref.read(loginStartsRegisterProvider.notifier).state = false; });
     }

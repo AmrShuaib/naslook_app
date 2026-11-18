@@ -6,13 +6,14 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../api/client.dart';
 import '../../ui/widgets.dart';
 import '../app_theme.dart';
+import '../invite_ref.dart';
 import 'share_stub.dart' if (dart.library.js_interop) 'share_web.dart' if (dart.library.io) 'share_io.dart' as impl;
 
 /// رابط عام وصل عند الإقلاع: دائرة (`/c/<id>`) أو حساب (`/u/<نك نيم>`) أو لحظة (`/m/<uuid>`) أو عرض في السوق (`/l/<uuid>`)،
 /// بالمسار أو بالجزء (`#/c/…`)، أو لوحة إدارة الدائرة (`/business/manage` يحوّله الخادم إلى `#/manage`) وهذه تحتاج دخولاً،
 /// أو رابط تذكرة مُهداة (`/t/<رمز>` يحوّله الخادم إلى `#/t/<رمز>`) وهو يحتاج دخولاً أيضاً.
 class PendingLink {
-  final String kind; // circle | user | moment | listing | manage | ticket
+  final String kind; // circle | user | moment | listing | manage | ticket | invite (لا تُعلَّق: capturePendingLink يحوّلها إلى InviteRef)
   final String value;
   const PendingLink(this.kind, this.value);
   bool get isCircle => kind == 'circle';
@@ -39,6 +40,9 @@ final _listingRe = RegExp(r'^/?l/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
 // رابط تذكرة لشخص واحد: الرمز كما يولّده الخادم (حساس لحالة الأحرف)
 final _ticketRe = RegExp(r'^/?t/([A-Za-z0-9_-]{16,64})/?$');
 
+// بطاقة الدعوة: زر التسجيل في صفحة الترحيب (/hi/<رمز>) يفتح التطبيق على #/hi/<رمز>، أو #/hi للبطاقة العامة
+final _inviteRe = RegExp(r'^/?hi(?:/([a-z0-9]{6,12}))?/?$');
+
 final _manageRe = RegExp(r'^/?(?:business/)?manage/?$');
 
 PendingLink? parsePendingLink(Uri uri) {
@@ -54,13 +58,22 @@ PendingLink? parsePendingLink(Uri uri) {
     if (l != null) return PendingLink('listing', l.group(1)!.toLowerCase());
     final t = _ticketRe.firstMatch(s);
     if (t != null) return PendingLink('ticket', t.group(1)!);
+    final i = _inviteRe.firstMatch(s);
+    if (i != null) return PendingLink('invite', i.group(1) ?? '');
   }
   return null;
 }
 
 /// يُستدعى في main() قبل أن يعيد محرك Flutter كتابة الرابط.
 void capturePendingLink([Uri? uri]) {
-  pendingLink = parsePendingLink(uri ?? Uri.base);
+  final l = parsePendingLink(uri ?? Uri.base);
+  // الدعوة ليست وجهة تُفتح: تبدأ التسجيل ويُحفظ رمز الداعي حتى أول دخول
+  if (l != null && l.kind == 'invite') {
+    InviteRef.capture(l.value);
+    pendingLink = null;
+    return;
+  }
+  pendingLink = l;
 }
 
 /// أصل الروابط العامة: أصل الموقع على الويب (إلا محلياً)، وإلا الموقع الرسمي.
